@@ -15,6 +15,7 @@ import { en as sharedEn } from './shared/messages/en';
  */
 const ALLOW: Record<string, string> = {
   'src/ui/components/SettingsView.tsx::한국어': "LANGUAGE_NAMES: each language's name is written in that language",
+  'src/server/turn/language.ts::한국어': "the reply-language note names the language in that language too",
   'src/server/usage/GeminiUsagePoller.ts::사용': 'parses the Korean output of agy /usage (not shown to the user)',
 };
 

@@ -15,6 +15,12 @@ export function initUiLocale(pref: LangPref, languages: readonly string[] = navi
   return l;
 }
 
+/** Tags a `send` / `start_task` with this tab's UI language, so replies come in it (server/turn/language); other messages unchanged. */
+export function withLang<M extends { type: string }>(msg: M, lang: Locale = getLocale()): M {
+  if (msg.type !== 'send' && msg.type !== 'start_task') return msg;
+  return { ...msg, lang };
+}
+
 export function formatDateTime(ms: number, o?: Intl.DateTimeFormatOptions): string {
   return new Date(ms).toLocaleString(intlTag(getLocale()), o);
 }

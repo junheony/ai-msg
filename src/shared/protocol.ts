@@ -59,6 +59,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     ignoreFit: z.boolean().optional(),
     /** 간결 모드 (the device's pref): answer results-first, short, decisions as cards (shared/concise CONCISE_STYLE_PROMPT). Claude only for now. */
     concise: z.boolean().optional(),
+    /** The device's UI language (its resolved pick or browser): the reply language unless settings `language` is explicit (server/turn/language). */
+    lang: z.enum(LOCALES).optional(),
     /**
      * ⚡ 빠르게 (the session's switch on the device): a Claude turn runs on Opus with `fastMode` (billed to usage credits,
      * not the plan). Ignored on a handoff note and by Codex / Gemini / Grok.
@@ -146,7 +148,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
    * 백그라운드 작업 ('tasks' servers): run `text` as a new session in `cwd` (자동 engine and model), leaving the sending chat
    * free. Queued behind the soft cap (설정 taskSoftCap). Answered with `tasks` to every device; refused with `error`.
    */
-  z.object({ type: z.literal('start_task'), cwd: z.string().min(1).max(4096).refine((c) => c.startsWith('/'), { message: 'cwd must be an absolute path' }), text: z.string().trim().min(1).max(200_000), fromSessionId: z.string().min(1).max(200).nullable(), concise: z.boolean().optional(), clientRef: z.string().min(1).max(CLIENT_REF_MAX).optional() }),
+  z.object({ type: z.literal('start_task'), cwd: z.string().min(1).max(4096).refine((c) => c.startsWith('/'), { message: 'cwd must be an absolute path' }), text: z.string().trim().min(1).max(200_000), fromSessionId: z.string().min(1).max(200).nullable(), concise: z.boolean().optional(), lang: z.enum(LOCALES).optional(), clientRef: z.string().min(1).max(CLIENT_REF_MAX).optional() }),
   /** 닫기 on an ended task's card. */
   z.object({ type: z.literal('dismiss_task'), taskId: z.string().min(1).max(64) }),
   /** 백그라운드 작업 취소: a queued task leaves the list; a running one's turn is stopped (it ends as 취소됨). */

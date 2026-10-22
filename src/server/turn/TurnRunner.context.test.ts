@@ -16,6 +16,7 @@ import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 import { CONCISE_STYLE_PROMPT, conciseStylePrompt } from '../../shared/concise';
 import { DECK_CHOICES_PROMPT } from '../../shared/choices';
 import { deckAddendum, memoryNote } from '../../shared/memory';
+import { languageDirective } from './language';
 
 let base: string;
 beforeEach(async () => { base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'deck-tr-context-'))); });
@@ -80,6 +81,19 @@ describe('TurnRunner · deck context for GPT, Gemini and Grok', () => {
     expect(c.codexCalls[1]!.developerInstructions).toBe(deckAddendum({ choices: DECK_CHOICES_PROMPT, memory: memo.text }));
     expect(c.codexCalls[2]!.developerInstructions).toBeUndefined();
     expect(JSON.stringify(c.msgs)).not.toContain('금요일');
+  });
+
+  it('Codex, Gemini and Grok: the reply-language note joins the context for ko (deck-choices wording, no AskUserQuestion)', async () => {
+    const c = await setup({ text: '' });
+    const note = languageDirective('ko')!;
+    await c.runner.run({ turnId: 'x1', cwd: work(), sessionId: null, text: '하나', engine: 'codex', lang: 'ko' }, c.sink);
+    await c.runner.run({ turnId: 'g1', cwd: work(), sessionId: null, text: '하나', engine: 'gemini', lang: 'ko' }, c.sink);
+    await c.runner.run({ turnId: 'k1', cwd: work(), sessionId: null, text: '하나', engine: 'grok', lang: 'ko' }, c.sink);
+    expect(c.codexCalls[0]!.developerInstructions).toBe(deckAddendum({ choices: DECK_CHOICES_PROMPT, language: note }));
+    expect(c.geminiCalls[0]!.prompt).toContain(note);
+    expect(c.grokCalls[0]!.context).toBe(deckAddendum({ choices: DECK_CHOICES_PROMPT, language: note }));
+    expect(note).not.toContain('AskUserQuestion');
+    expect(JSON.stringify(c.msgs)).not.toContain('[deck language]');
   });
 
   it('Gemini: a hidden <system-reminder> on the first turn, again only when the context changes', async () => {

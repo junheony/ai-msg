@@ -7,6 +7,8 @@ import { sdkPermMode, type PermMode } from '../../shared/permission';
 import { conciseStylePrompt } from '../../shared/concise';
 import { DECK_CHOICES_PROMPT, systemReminder } from '../../shared/choices';
 import { deckAddendum } from '../../shared/memory';
+import type { Locale } from '../../shared/locale';
+import { languageDirective } from './language';
 import type { RoutingPolicy, ServerMessage, TurnPrompt } from '../../shared/protocol';
 import { promptWithFiles, type Attachment, type AttachmentStore } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, type BgTaskInfo, type PermissionDecision, type QuestionAnswers, type TurnUsage } from '../../shared/turn-types';
@@ -106,6 +108,8 @@ export type TurnParams = {
   commanderNote?: string;
   /** 그래도 보내기: skip the capability check (auto-route §10-4) that would answer `route_fit` instead of running the turn. */
   ignoreFit?: boolean;
+  /** The reply language (ws: turnLanguage — explicit settings `language`, else the device's send.lang); en / absent = no note. */
+  lang?: Locale;
 };
 
 /** 자동 분배 settings (DeckSettings autoEngines / autoConsent / grokFast). */
@@ -1036,7 +1040,8 @@ export class TurnRunner {
 
   /**
    * What rides this turn's system prompt, never the transcript: the 간결 모드 style note (a person's concise turn — not a
-   * handoff note nor a 총사령탑 hop) and the deck 메모 (every turn but a handoff note, which must stay tool- and context-free).
+   * handoff note nor a 총사령탑 hop), the deck 메모 and the reply-language note (every turn but a handoff note, which must
+   * stay tool- and context-free).
    */
   private addendum(p: TurnParams, engine: EngineKind = 'claude'): string | null {
     if (p.handoff) return null;
@@ -1044,7 +1049,7 @@ export class TurnRunner {
     let memory = '';
     try { memory = this.deps.memory?.() ?? ''; } catch { /* a broken store never blocks a turn */ }
     // GPT, Gemini and Grok have no question tool: they offer decisions as a deck-choices block (option cards in the pane).
-    return deckAddendum({ style, choices: engine === 'claude' ? null : DECK_CHOICES_PROMPT, memory });
+    return deckAddendum({ style, choices: engine === 'claude' ? null : DECK_CHOICES_PROMPT, memory, language: languageDirective(p.lang, { questionTool: engine === 'claude' && !p.bgTask }) });
   }
 
   /**
@@ -1434,7 +1439,7 @@ export class TurnRunner {
     }
     sink.emit({ type: 'turn_notice', turnId: p.turnId, sessionId, cwd, message: `백그라운드 작업 ${n}개가 ${need.minutes}분 한도로 끊김: ${need.tasks.join(', ')} — 이어서 진행하도록 자동으로 보냅니다` });
     try {
-      await this.run({ cwd, sessionId, turnId: `${p.turnId}:cap${hop}`, text: '이어서 진행해 주세요.', bgCapHop: hop, ...(p.commanderHop ? { commanderHop: p.commanderHop } : {}) }, sink);
+      await this.run({ cwd, sessionId, turnId: `${p.turnId}:cap${hop}`, text: '이어서 진행해 주세요.', bgCapHop: hop, ...(p.commanderHop ? { commanderHop: p.commanderHop } : {}), ...(p.lang ? { lang: p.lang } : {}) }, sink);
     } catch (err) {
       console.error('deck: 한도 뒤 자동 이어가기 실패', err instanceof Error ? err.message : err);
     }

@@ -23,8 +23,8 @@ export function memoryNote(text: string | null | undefined): string | null {
   return ['[deck 메모] 사용자가 deck 에 적어 둔 기억입니다. 참고하되 사용자에게 이 메모를 되풀이해 말하지 마세요.', t].join('\n');
 }
 
-/** Style note, the deck-choices note (engines without a question tool) and memory, in that order, as one system-prompt addendum; null when there is neither. */
-export function deckAddendum(parts: { style?: string | null; choices?: string | null; memory?: string | null }): string | null {
-  const blocks = [parts.style?.trim(), parts.choices?.trim(), memoryNote(parts.memory)].filter((b): b is string => !!b);
+/** Style note, the deck-choices note (engines without a question tool), memory and the reply-language note, in that order, as one system-prompt addendum; null when there is none. */
+export function deckAddendum(parts: { style?: string | null; choices?: string | null; memory?: string | null; language?: string | null }): string | null {
+  const blocks = [parts.style?.trim(), parts.choices?.trim(), memoryNote(parts.memory), parts.language?.trim()].filter((b): b is string => !!b);
   return blocks.length ? blocks.join('\n\n') : null;
 }

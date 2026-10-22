@@ -235,3 +235,45 @@ describe('ws · 백그라운드 작업', () => {
     ws.close();
   });
 });
+
+describe('ws · reply language', () => {
+  const callFor = (prompt: string) => until(() => calls.find((c) => c.prompt === prompt));
+
+  it("a send carries the device's lang: a Korean note for ko (with AskUserQuestion), none for en; never in the pane", async () => {
+    const { ws, msgs } = await open();
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'lang-ko', lang: 'ko' }));
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'lang-en', lang: 'en' }));
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'lang-none' }));
+    const ko = await callFor('lang-ko');
+    expect(ko.appendSystemPrompt).toContain('[deck language] Respond to the user in Korean');
+    expect(ko.appendSystemPrompt).toContain('AskUserQuestion');
+    expect((await callFor('lang-en')).appendSystemPrompt).toBeUndefined();
+    expect((await callFor('lang-none')).appendSystemPrompt).toBeUndefined();
+    expect(JSON.stringify(msgs)).not.toContain('[deck language]');
+    ws.close();
+  });
+
+  it("an explicit settings language wins over the device's", async () => {
+    const { ws } = await open();
+    await settings.set({ language: 'en' });
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'lang-explicit-en', lang: 'ko' }));
+    expect((await callFor('lang-explicit-en')).appendSystemPrompt).toBeUndefined();
+    await settings.set({ language: 'ko' });
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'lang-explicit-ko', lang: 'en' }));
+    expect((await callFor('lang-explicit-ko')).appendSystemPrompt).toContain('[deck language]');
+    await settings.set({ language: null });
+    ws.close();
+  });
+
+  it('a task keeps its lang; its note asks no AskUserQuestion and sits after the concise note', async () => {
+    const { ws, msgs } = await open();
+    await until(() => lastTasks(msgs));
+    ws.send(JSON.stringify({ type: 'start_task', cwd: work, text: 'lang-task', fromSessionId: 'from-l', concise: true, lang: 'ko' }));
+    const call = await callFor('lang-task');
+    expect(call.appendSystemPrompt).toContain('[deck language]');
+    expect(call.appendSystemPrompt).not.toContain('AskUserQuestion');
+    expect(call.appendSystemPrompt!.indexOf('[deck 간결 모드]')).toBeLessThan(call.appendSystemPrompt!.indexOf('[deck language]'));
+    await until(() => byTitle(msgs, 'lang-task')?.status === 'done');
+    ws.close();
+  });
+});

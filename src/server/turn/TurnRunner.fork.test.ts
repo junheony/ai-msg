@@ -13,6 +13,7 @@ import { writeCooldown } from '../routing/cooldown';
 import { COMMANDER_ENGINE_REFUSED, DECK_INTRO_NOTE, TurnRunner, type TurnRunnerDeps, type TurnSink } from './TurnRunner';
 import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
 import { CONCISE_STYLE_PROMPT } from '../../shared/concise';
+import { languageDirective } from './language';
 import { deckAddendum, memoryNote } from '../../shared/memory';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
@@ -242,6 +243,21 @@ describe('TurnRunner · 간결 모드 style note', () => {
     await c.runner.run({ turnId: 't3:cmd1', cwd: '/w/one', sessionId: PARENT, text: '목표: x', commanderHop: 1, concise: true }, c.sink);
     expect(eng.calls).toHaveLength(3);
     for (const call of eng.calls) expect(call.appendSystemPrompt).toBeUndefined();
+  });
+  it('the reply-language note follows the style note and 메모 for ko, is absent for en and on a handoff note; never in the pane', async () => {
+    const eng = new StubEngine(() => ok(PARENT));
+    const c = await setup(eng, { memory: () => 'M' });
+    await c.store.set({ sessionId: PARENT, cwd: '/w/one', account: 'c', projectDir: c.dir, lastTurnAtMs: NOW - 3_600_000, justCompacted: false, defaultModel: 'sonnet' });
+    await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: PARENT, text: '계속', concise: true, lang: 'ko' }, c.sink);
+    await c.runner.run({ turnId: 't2', cwd: '/w/one', sessionId: PARENT, text: '계속', lang: 'en' }, c.sink);
+    await c.runner.run({ turnId: 't3', cwd: '/w/one', sessionId: PARENT, text: '인계', handoff: true, lang: 'ko' }, c.sink);
+    const [ko, en, handoff] = eng.calls.map((x) => x.appendSystemPrompt);
+    expect(ko).toBe(deckAddendum({ style: CONCISE_STYLE_PROMPT, memory: 'M', language: languageDirective('ko', { questionTool: true }) }));
+    expect(ko!.indexOf('[deck 메모]')).toBeLessThan(ko!.indexOf('[deck language]'));
+    expect(en).toBe(memoryNote('M'));
+    expect(handoff).toBeUndefined();
+    expect(eng.calls.map((x) => x.prompt)).toEqual(['계속', '계속', expect.any(String)]);
+    expect(JSON.stringify(c.msgs)).not.toContain('[deck language]');
   });
   it('deck 메모 rides every turn but a handoff note, after the style note; never in the pane', async () => {
     const eng = new StubEngine(() => ok(PARENT));

@@ -107,6 +107,17 @@ describe('account ids on the wire', () => {
 });
 
 describe('⚡ 빠르게 on send', () => {
+  it("lang (the device's UI language) is optional on send and start_task, en | ko only", () => {
+    const send = { type: 'send', sessionId: null, cwd: '/w', text: 'hi' };
+    const task = { type: 'start_task', cwd: '/w', text: 'do it', fromSessionId: null };
+    for (const m of [send, task]) {
+      expect(ClientMessageSchema.parse({ ...m, lang: 'ko' })).toMatchObject({ lang: 'ko' });
+      expect(ClientMessageSchema.safeParse({ ...m, lang: 'en' }).success).toBe(true);
+      expect(ClientMessageSchema.safeParse({ ...m, lang: 'fr' }).success).toBe(false);
+      expect(ClientMessageSchema.safeParse({ ...m, lang: 'ko-KR' }).success).toBe(false);
+    }
+  });
+
   it('fast is an optional boolean on send; a background task never carries it', () => {
     const send = { type: 'send', sessionId: 'x', cwd: '/w', text: 'hi' };
     expect(ClientMessageSchema.safeParse({ ...send, fast: true }).success).toBe(true);
