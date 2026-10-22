@@ -96,6 +96,13 @@ describe('TurnRunner · 한도가 풀리면 자동으로 이어가기', () => {
     expect(c.deps.store.get('n1')?.pendingRetry).toBeUndefined();
   });
 
+  it('a background task turn books nothing (like the handover, it is not resent by itself)', async () => {
+    const c = await ctx(claudeLimit);
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w', sessionId: null, text: 'hi', bgTask: true }, c.sink);
+    expect(c.deps.store.get('n1')).toBeDefined();
+    expect(c.deps.store.get('n1')?.pendingRetry).toBeUndefined();
+  });
+
   it('booked at the earliest usage reset among the accounts that could take the turn (+1 min), the message itself when nothing ran', async () => {
     const u = await usage({ main: [100, 50 * MIN], second: [100, 20 * MIN], third: [100, 40 * MIN] });
     const c = await ctx(claudeLimit, {}, u);
@@ -146,6 +153,24 @@ describe('TurnRunner · 한도가 풀리면 자동으로 이어가기', () => {
     const c = await ctx(claudeLimit, { gemini });
     await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w', sessionId: null, text: 'hi gem', engine: 'gemini' }, c.sink);
     expect(c.deps.store.get('gs1')?.pendingRetry).toEqual({ text: 'hi gem', hops: 1, atMs: NOW + 61 * MIN });
+  });
+
+  it('Gemini: only the buckets of the model group the resume runs on count', async () => {
+    const iso = (ms: number) => new Date(NOW + ms).toISOString();
+    const gemini = fakeGemini(() => [
+      { kind: 'init', sessionId: 'gs1', model: 'm' },
+      { kind: 'result', sessionId: 'gs1', ok: false, text: '', usage: ZERO, errorText: 'You have exhausted your daily quota on this model.', stderr: null, errorKind: null, terminalReason: null },
+    ]);
+    const at = async (model: 'gemini-pro' | 'gemini-flash') => {
+      const u = await usage(FREE);
+      const real = u.snapshot.bind(u);
+      u.snapshot = () => ({ ...real(), geminiSeats: { g1: { status: 'ok', fetchedAt: iso(0), loggedIn: true, buckets: [{ name: 'Gemini · 5h', usedPct: 100, resetsAt: iso(10 * MIN) }, { name: 'Argon · 5h', usedPct: 100, resetsAt: iso(50 * MIN) }] } } });
+      const c = await ctx(claudeLimit, { gemini }, u);
+      await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w', sessionId: null, text: 'hi gem', engine: 'gemini', model }, c.sink);
+      return c.deps.store.get('gs1')?.pendingRetry?.atMs;
+    };
+    expect(await at('gemini-pro')).toBe(NOW + 51 * MIN);
+    expect(await at('gemini-flash')).toBe(NOW + 11 * MIN);
   });
 
   it('Grok rate limit books the resume; an aborted turn books nothing', async () => {

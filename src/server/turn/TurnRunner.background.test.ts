@@ -970,6 +970,18 @@ describe('TurnRunner: background work after the turn result', () => {
       expect(deps.store.get(SID)?.pendingRetry).toMatchObject({ text: '고쳐 줘', hops: 2 });
     });
 
+    it('a follow-up that got going (text out) before the limit is booked as the 계속 request, not sent again', async () => {
+      const { f, msgs, sink, runner, deps } = await setup({ usage: await usageCards(), move: okMove });
+      const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go', failoverHop: 2 }, sink);
+      f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', SID));
+      await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+      expect(runner.followUp(SID, { turnId: 'f1', text: '고쳐 줘' })).toEqual({ queuedBehind: null });
+      f.push(cli.delta('half'), limited);
+      await done;
+      expect(of(msgs, 'turn_result').at(-1)).toMatchObject({ turnId: 'f1', ok: false, errorText: expect.stringContaining('대안 계정 없음') });
+      expect(deps.store.get(SID)?.pendingRetry).toMatchObject({ text: '이어서 진행해 주세요.', hops: 1 });
+    });
+
     it('보안 #3: a commanderHop process failing with no account left books its retry (continuation or follow-up) with the hop', async () => {
       const a = await setup({ usage: await usageCards(), move: okMove });
       const doneA = a.runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go', failoverHop: 2, commanderHop: 2 }, a.sink);

@@ -97,6 +97,15 @@ describe('TurnRunner · 다른 AI 로 이어가기', () => {
     expect(c.deps.store.get('tid-x')).toMatchObject({ engine: 'codex', cwd: '/w/new' });
   });
 
+  it('an automatic resume handed over keeps its hop: the new session hitting a limit too books nothing past the cap', async () => {
+    const codex = fakeCodex(() => codexResult('tid-x', false, "You've hit your usage limit."));
+    const c = await ctx(claudeLimit, { codex: codex.engine });
+    await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi', retryHop: 2 }, c.sink);
+    expect(codex.calls).toHaveLength(1);
+    expect(c.deps.store.get('tid-x')).toBeDefined();
+    expect(c.deps.store.get('tid-x')?.pendingRetry).toBeUndefined();
+  });
+
   it('setting off (or no hook): the old behaviour — no handover, the retry is booked', async () => {
     const codex = fakeCodex(() => codexResult('tid-x', true, 'continued'));
     const c = await ctx(claudeLimit, { codex: codex.engine, crossEngineFailover: () => false });

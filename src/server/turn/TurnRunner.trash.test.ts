@@ -35,12 +35,21 @@ async function setup() {
     await fs.utimes(f, mtimeMs / 1000, mtimeMs / 1000);
     return f;
   };
-  return { base, roots, index, runner, put };
+  return { base, roots, index, runner, put, store };
 }
 
 const exists = (p: string) => fs.lstat(p).then(() => true, () => false);
 
 describe('TurnRunner: 삭제 (session-trash)', () => {
+  it('a booked 자동으로 이어가기 goes with the trashed conversation', async () => {
+    const c = await setup();
+    await c.put('a', NOW - 3_600_000);
+    await c.index.refresh();
+    await c.store.set({ sessionId: SID, cwd: '/w/one', account: 'a', projectDir: DIR, lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus', pendingRetry: { text: 'go', atMs: NOW + 60_000, hops: 1 } });
+    expect((await c.runner.trashSession(SID)).ok).toBe(true);
+    expect(c.store.get(SID)).not.toHaveProperty('pendingRetry');
+  });
+
   it('moves both profile copies to the trash and puts them back on undo', async () => {
     const c = await setup();
     const fa = await c.put('a', NOW - 3_600_000);

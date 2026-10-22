@@ -26,7 +26,7 @@ import { StreamRedactor, displayError, redactSecrets } from '../engine/redact';
 import { NO_ROTATION, chooseAccount, fixedAccount, onlyAccount, routeLogLine, type RouterInput } from '../routing/AccountRouter';
 import { chooseAutoModel } from '../routing/AutoModel';
 import { chooseRoute, clampEffort, classifyTask, turnFits, type RouteDecision } from '../routing/AutoRoute';
-import { buildEngineLimits } from '../routing/engineLimits';
+import { buildEngineLimits, geminiGroupOf } from '../routing/engineLimits';
 import { chooseEngine } from '../routing/EngineChoice';
 import { readAllCooldownsMs, writeCooldown } from '../routing/cooldown';
 import { resolveModel } from '../routing/ModelPolicy';
@@ -296,6 +296,8 @@ type Failover = {
   errorText: string | null;
   seg: { turnId: string; reason: string };
   followUp: { f: FollowUpParams; attachments: Attachment[] } | null;
+  /** The failed segment had streamed text or run a tool: its follow-up was taken in (sent again it would run twice). */
+  worked: boolean;
   tasks: string[];
   queued: Queued[];
 };
@@ -692,6 +694,9 @@ export class TurnRunner {
       const copies = await findCopies(this.deps.projectsRoots, sessionId, base.projectDir, base.account).catch(() => []);
       try {
         const r = await moveToTrash({ sessionId, projectDirs: copies.map((c) => c.projectDir), nowMs: this.now() });
+        // A booked 자동으로 이어가기 goes with the conversation (BottleneckWatch finds nothing to fire).
+        const cur = this.deps.store.get(sessionId);
+        if (cur?.pendingRetry) { const { pendingRetry: _gone, ...rest } = cur; await this.deps.store.set(rest as SessionState); }
         return { ok: true as const, trashId: r.trashId };
       } catch (err) {
         return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
@@ -1324,7 +1329,7 @@ export class TurnRunner {
     const scope = () => ({ turnId: cur.turnId, sessionId, cwd });
     // ⚡ Everything this process answers is billed as it was started (ws never joins a send asking otherwise).
     const fastNote = fastTurn(p) ? FAST_NOTE : null;
-    type Seg = { turnId: string; reason: string; modelNote: string | null; followUp?: { f: FollowUpParams; attachments: Attachment[] } };
+    type Seg = { turnId: string; reason: string; modelNote: string | null; followUp?: { f: FollowUpParams; attachments: Attachment[] }; worked?: boolean };
     let seg: Seg | null = null;
     let failover: Failover | null = null;
     /** The background wait limit ended the process with this work still running (EngineEvent bg_cap). */
@@ -1421,6 +1426,8 @@ export class TurnRunner {
       // Sent on after an ended process and this turn is held open again: what still waits for it goes in here, in order.
       for (const q of this.resending.get(sessionId)?.splice(0) ?? []) entry.submit(q.f, q.attachments);
     }
+    /** The open segment got going (text or a tool): a limit after this cuts it mid-way (failoverAfterBackground). */
+    const markWorked = () => { if (seg) seg.worked = true; };
     const { emitThinking, flushThinking } = this.thinkingStream(sink, scope);
     try {
       for (;;) {
@@ -1441,9 +1448,9 @@ export class TurnRunner {
           case 'sub_tool_call': sink.emit({ type: 'sub_tool_call', ...scope(), parentToolUseId: ev.parentToolUseId, toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
           case 'sub_tool_result': sink.emit({ type: 'sub_tool_result', ...scope(), parentToolUseId: ev.parentToolUseId, toolUseId: ev.toolUseId, isError: ev.isError }); break;
           case 'task_update': { const { kind: _k, ...u } = ev; sink.emit({ type: 'task_update', ...scope(), ...u, ...(u.summary ? { summary: redactSecrets(u.summary) } : {}) }); break; }
-          case 'delta': sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;
+          case 'delta': markWorked(); sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;
           case 'thinking': emitThinking(ev); break;
-          case 'tool_call': sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
+          case 'tool_call': markWorked(); sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
           case 'tool_result': sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
           case 'notice': this.notice(ev, sessionId, sink, scope()); break;
           // Only work that was really still running counts (an abort or shutdown racing the cap is theirs to report).
@@ -1466,7 +1473,7 @@ export class TurnRunner {
               // nothing sent meanwhile is left behind or refused as busy. The line takes over in `finally`.
               closing = true;
               await a.rest.return?.();
-              failover = { failure, errorText: ev.errorText, seg: { turnId: s.turnId, reason: s.reason }, followUp: s.followUp ?? null, tasks: [...tasks], queued: queue.splice(0) };
+              failover = { failure, errorText: ev.errorText, seg: { turnId: s.turnId, reason: s.reason }, followUp: s.followUp ?? null, worked: s.worked === true, tasks: [...tasks], queued: queue.splice(0) };
               break;
             }
             if (s) {
@@ -2483,7 +2490,7 @@ export class TurnRunner {
     const text = opts?.text ?? p.text;
     const attachmentIds = opts ? opts.attachmentIds : p.attachments;
     const exclude = [...new Set([...(p.excludeEngines ?? []), from.engine])];
-    const base: TurnParams = { turnId: `${p.turnId}:x${hop + 1}`, cwd: from.cwd, sessionId: null, text, engine: 'auto', model: 'auto', excludeEngines: exclude, crossHop: hop + 1, ...(attachmentIds?.length ? { attachments: attachmentIds } : {}), ...(p.lang ? { lang: p.lang } : {}), ...(p.concise ? { concise: true } : {}) };
+    const base: TurnParams = { turnId: `${p.turnId}:x${hop + 1}`, cwd: from.cwd, sessionId: null, text, engine: 'auto', model: 'auto', excludeEngines: exclude, crossHop: hop + 1, ...(p.retryHop ? { retryHop: p.retryHop } : {}), ...(attachmentIds?.length ? { attachments: attachmentIds } : {}), ...(p.lang ? { lang: p.lang } : {}), ...(p.concise ? { concise: true } : {}) };
     const d = await this.decideRoute(base, attachments).catch(() => null);
     if (!d || d.kind === 'no_route' || (d.fit && !d.fit.ok) || exclude.includes(d.engine) || (d.engine === 'codex' && !deps.codex)) return null;
     // The new engine never runs with more than the old session allowed: its mode / sandbox as a PermMode (a Codex / Gemini
@@ -2539,10 +2546,10 @@ export class TurnRunner {
   /**
    * 한도가 풀리면 자동으로 이어가기, for a turn that stopped on a limit with nowhere to hand it over: the turn's own message
    * when the model never got going, else a short 계속 request (the message was taken in — sent again it would run twice).
-   * Not for a handoff note, an interrupted turn, or an untouched message with files (they are not kept for later).
+   * Not for a handoff note, a background task turn, an interrupted turn, or an untouched message with files (they are not kept for later).
    */
   private async bookResume(p: TurnParams, sessionId: string | null, worked: boolean, errorText: string | null, aborted: boolean): Promise<void> {
-    if (!sessionId || aborted || p.handoff || (!worked && p.attachments?.length)) return;
+    if (!sessionId || aborted || p.handoff || p.bgTask || (!worked && p.attachments?.length)) return;
     await this.bookRetry(sessionId, worked ? sm().turn.crossContinue : p.text, p.retryHop, errorText, p.commanderHop)
       .catch((err: unknown) => console.error('deck: 자동 재시도 예약 실패', err instanceof Error ? err.message : err));
   }
@@ -2587,8 +2594,9 @@ export class TurnRunner {
       if (reset === null && u.gpt) add(freeAt([u.gpt.fiveHour, u.gpt.weekly]));
       cooled = [this.gptCooldownUntil];
     } else if (st.engine === 'gemini') {
-      // Buckets are per model group: each spent one is a candidate (the session's model is in one of them).
-      if (reset === null) for (const b of u.geminiSeats?.[st.account]?.buckets ?? []) if (b.usedPct >= 100) add(later(b.resetsAt));
+      // Buckets are per model group: only the group of the model the resume runs on (the session's stored one) counts.
+      const group = st.defaultModel === 'gemini-flash' ? 'flash' : 'pro';
+      if (reset === null) add(freeAt((u.geminiSeats?.[st.account]?.buckets ?? []).filter((b) => geminiGroupOf(b.name) === group)));
       cooled = [this.geminiCooldownUntil[st.account]];
     } else if (st.engine === 'grok') {
       const seat = u.grokSeats?.[st.account];
@@ -2631,8 +2639,9 @@ export class TurnRunner {
     const close = (errorText: string) => sink.emit({ type: 'turn_result', turnId: need.seg.turnId, sessionId, cwd, ok: false, text: '', badge: { account, model, reason: need.seg.reason, usage: ZERO_USAGE, modelNote: null }, errorText });
     const fail = (errorText: string) => { close(errorText); lineUp(); };
     const noneLeft = `${this.label(account)} 계정 ${why}${hint ? ` · ${hint}` : ''} · 대안 계정 없음${routerBase.sameVendorRotation === false ? `(${NO_ROTATION})` : ''}`;
-    // A background continuation is booked as the 계속 request (sm().turn.crossContinue), a failed follow-up as its own text (not with files).
-    const retryText = need.followUp ? (need.followUp.f.attachments?.length ? null : need.followUp.f.text) : sm().turn.crossContinue;
+    // A background continuation is booked as the 계속 request (sm().turn.crossContinue), a failed follow-up as its own text
+    // (not with files) — unless the segment got going (text or a tool): then the follow-up was taken in, so 계속 too.
+    const retryText = need.followUp && !need.worked ? (need.followUp.f.attachments?.length ? null : need.followUp.f.text) : sm().turn.crossContinue;
     const none = async () => {
       // 다른 AI 로 이어가기: the failed follow-up (or a 계속 request for cut background work) goes to another engine; the
       // follow-ups that waited behind the segment, then the rest of the session's line (sends that came meanwhile stay
