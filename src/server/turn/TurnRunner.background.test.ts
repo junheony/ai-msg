@@ -787,6 +787,72 @@ describe('TurnRunner: background work after the turn result', () => {
       expect(deps.store.get(SID)?.pendingRetry).toMatchObject({ text: '이어서 진행해 주세요.', hops: 1 });
     });
 
+    /** 다른 AI 로 이어가기 wired in (setting on, ws's hook), GPT taking the work when `gpt`; usage with a GPT card. */
+    async function crossSetup(o: { gpt: boolean; on?: boolean }) {
+      const resetsAt = new Date(NOW + 36 * 3_600_000).toISOString();
+      const card = (id: string, s: number, w: number) => ({ id, status: 'ok', fetchedAt: new Date(NOW - 10_000).toISOString(), rows: [{ label: 'Session (5h)', used: s, resetsAt }, { label: 'Weekly (7d)', used: w, resetsAt }, { label: 'Fable (7d)', used: 0, resetsAt }] });
+      const cards = [card('claude:main', 13, 7), card('claude:second', 2, 3), card('claude:third', 0, 91), { id: 'codex', status: 'ok', fetchedAt: new Date(NOW - 10_000).toISOString(), rows: [{ label: 'Weekly (7d)', used: 10 }] }];
+      const usage = new UsageService({ mode: 'usage-deck', accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards }) }), now: () => new Date(NOW) });
+      await usage.pollOnce();
+      const s = await setup({ usage, move: okMove });
+      const codexCalls: { prompt: string; resumeThreadId: string | null }[] = [];
+      Object.assign(s.deps, {
+        crossEngineFailover: () => o.on ?? true, findRollout: async () => null, readRateLimits: async () => null,
+        codex: o.gpt ? { async *runTurn(req: { prompt: string; resumeThreadId: string | null }) {
+          codexCalls.push(req);
+          yield { kind: 'init', sessionId: 'tid-x', model: 'gpt-6-sol' };
+          yield { kind: 'result', sessionId: 'tid-x', ok: true, text: 'ok', usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }, errorText: null, stderr: null, errorKind: null, terminalReason: 'completed' };
+        } } : null,
+      });
+      const handoffs: { engine: string; turnId: string; text: string }[] = [];
+      s.sink.crossEngine = async (c) => { handoffs.push(c); return { excerpt: 'User: q\nClaude: a' }; };
+      return { ...s, codexCalls, handoffs };
+    }
+
+    it('다른 AI 로 이어가기: with no Claude account left the segment goes on in a new GPT session, and the two follow-ups waiting follow it there in order', async () => {
+      const { f, msgs, sink, runner, deps, codexCalls, handoffs } = await crossSetup({ gpt: true });
+      const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go', failoverHop: 2 }, sink);
+      f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', SID));
+      await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+      f.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('half'));
+      await waitFor(() => of(msgs, 'delta').length === 1, 'continuation output');
+      expect(runner.followUp(SID, { turnId: 'f2', text: 'next', clientRef: 'r2', model: 'opus' })).toEqual({ queuedBehind: '백그라운드 계속' });
+      expect(runner.followUp(SID, { turnId: 'f3', text: 'after', clientRef: 'r3' })).toEqual({ queuedBehind: '백그라운드 계속' });
+      f.push(limited);
+      await done;
+      expect(handoffs).toEqual([expect.objectContaining({ engine: 'codex', turnId: 't1:bg1:x1', text: '이어서 진행해 주세요.' })]);
+      expect(codexCalls.map((r) => [r.prompt, r.resumeThreadId])).toEqual([['이어서 진행해 주세요.', null], ['next', 'tid-x'], ['after', 'tid-x']]);
+      expect(of(msgs, 'turn_result').map((m) => [m.turnId, m.ok])).toEqual([['t1', true], ['t1:bg1', false], ['t1:bg1:x1', true], ['f2', true], ['f3', true]]);
+      expect(of(msgs, 'turn_result')[1]!.errorText).toEqual(expect.stringContaining('Claude 한도가 차서 GPT 로 이어갑니다'));
+      expect(of(msgs, 'turn_started').filter((m) => m.turnId === 'f2' || m.turnId === 'f3').map((m) => [m.turnId, m.clientRef, m.sessionId])).toEqual([['f2', 'r2', 'tid-x'], ['f3', 'r3', 'tid-x']]);
+      expect(of(msgs, 'error')).toEqual([]);
+      expect(f.state.calls).toBe(1);
+      expect(runner.resendingFor(SID)).toBe(false);
+      expect(deps.store.get(SID)?.pendingRetry).toBeUndefined();
+    });
+
+    it('다른 AI 로 이어가기 with no other engine (or the setting off): the follow-ups waiting are refused together, in order, as before', async () => {
+      for (const o of [{ gpt: false }, { gpt: true, on: false }]) {
+        const { f, msgs, sink, runner, deps, codexCalls, handoffs } = await crossSetup(o);
+        const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go', failoverHop: 2 }, sink);
+        f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', SID));
+        await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+        f.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('half'));
+        await waitFor(() => of(msgs, 'delta').length === 1, 'continuation output');
+        runner.followUp(SID, { turnId: 'f2', text: 'next', clientRef: 'r2' });
+        runner.followUp(SID, { turnId: 'f3', text: 'after', clientRef: 'r3' });
+        f.push(limited, limited, limited);
+        await done;
+        expect(handoffs).toEqual([]);
+        expect(codexCalls).toEqual([]);
+        expect(of(msgs, 'turn_result').map((m) => [m.turnId, m.ok, m.errorText])).toEqual([['t1', true, null], ['t1:bg1', false, 'B 계정 사용 한도 도달 · 03:50 리셋 · 대안 계정 없음']]);
+        expect(of(msgs, 'error').map((m) => [m.turnId, m.clientRef, m.sessionId])).toEqual([['f2', 'r2', SID], ['f3', 'r3', SID]]);
+        expect(f.state.calls).toBe(1);
+        expect(runner.resendingFor(SID)).toBe(false);
+        expect(deps.store.get(SID)?.pendingRetry).toMatchObject({ text: '이어서 진행해 주세요.', hops: 1 });
+      }
+    });
+
     it('the other account refusing the continuation before it starts: the queued follow-up still goes on, before a later send', async () => {
       const { f, msgs, sink, runner } = await setup({ usage: await usageCards(), move: okMove });
       const real = runner.run.bind(runner);
