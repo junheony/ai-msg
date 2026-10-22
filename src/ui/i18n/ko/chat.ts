@@ -31,7 +31,11 @@ export const chat: Widen<typeof en> = {
     result: '결과',
     prompt: '지시',
     fallback: '에이전트',
+    background: '백그라운드',
+    tokens: (n: string) => `${n} 토큰`,
+    more: (n: number) => `+${n}개 더 보기`,
   },
   account: (name: string) => `계정 ${name}`,
+  accountNote: { unknown: '설정에 없는 계정', retired: '뺀 계정', pinned: '고정', pin: '고정 계정' },
   images: (n: number) => `이미지 ${n}장`,
 };

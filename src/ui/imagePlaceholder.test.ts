@@ -17,4 +17,10 @@ describe('stripImagePlaceholders', () => {
   it('a message of images only has no text left', () => {
     expect(stripImagePlaceholders('[이미지]\n[이미지]')).toEqual({ text: '', images: 2 });
   });
+  it('inside a code fence nothing is hidden or folded; outside it still is', () => {
+    const fenced = '```\n[이미지]\n\n\n\nx\n```';
+    expect(stripImagePlaceholders(fenced)).toEqual({ text: fenced, images: 0 });
+    expect(stripImagePlaceholders(`봐 줘\n[이미지]\n\n\n${fenced}\n[이미지]`)).toEqual({ text: `봐 줘\n\n${fenced}`, images: 2 });
+    expect(stripImagePlaceholders('~~~\n[Image #1]\n```\n[이미지]\n~~~\n[이미지]')).toEqual({ text: '~~~\n[Image #1]\n```\n[이미지]\n~~~', images: 1 });
+  });
 });

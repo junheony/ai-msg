@@ -177,7 +177,7 @@ export function AgentCard({ call, live }: { call: ToolCallItem; live: boolean })
   const callList = calls.length > 0 && (
     <ul className="agent-calls">
       {!all && calls.length > SHOW_CALLS && (
-        <li><button type="button" className="agent-more" onClick={() => setAll(true)}>+{calls.length - SHOW_CALLS}개 더 보기</button></li>
+        <li><button type="button" className="agent-more" onClick={() => setAll(true)}>{T.more(calls.length - SHOW_CALLS)}</button></li>
       )}
       {shown.map((c) => (
         <li key={c.toolUseId} className={c.isError ? 'error' : c.done ? 'done' : 'running'}>
@@ -193,10 +193,10 @@ export function AgentCard({ call, live }: { call: ToolCallItem; live: boolean })
         {icon}
         {showType && <span className="agent-type">{type}</span>}
         <span className="agent-desc" title={type && type !== title ? `${type} · ${title}` : title}>{title}</span>
-        {info?.backgrounded && <span className="agent-badge">백그라운드</span>}
+        {info?.backgrounded && <span className="agent-badge">{T.background}</span>}
         <span className="agent-meta">
           {ms !== null && <span>{clock(ms)}</span>}
-          {info?.usage && info.usage.totalTokens > 0 && <span>{tokens(info.usage.totalTokens)} 토큰</span>}
+          {info?.usage && info.usage.totalTokens > 0 && <span>{T.tokens(tokens(info.usage.totalTokens))}</span>}
           {!running && <span className={`agent-status ${status}`}>{STATUS_TEXT[status]}</span>}
         </span>
         {hasDetail && (

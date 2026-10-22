@@ -30,7 +30,11 @@ export const chat = {
     result: 'Result',
     prompt: 'Prompt',
     fallback: 'Agent',
+    background: 'Background',
+    tokens: (n: string) => `${n} tokens`,
+    more: (n: number) => `+${n} more`,
   },
   account: (name: string) => `Account ${name}`,
+  accountNote: { unknown: 'not in settings', retired: 'removed account', pinned: 'pinned', pin: 'Pinned account' },
   images: (n: number) => (n === 1 ? '1 image' : `${n} images`),
 };

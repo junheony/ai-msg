@@ -383,7 +383,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 
 /* Turn footer: role chip, muted and inline */
 .role-badge { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: calc(12.5px * var(--font-scale, 1)); color: var(--faint); }
-.role-summary { margin-right: 2px; }
 
 /* Permission / question — compact inline cards */
 .permission-card, .question-card { padding: 10px 12px; border-radius: var(--radius); background: var(--bg-raised); box-shadow: inset 0 0 0 1px var(--line-strong); font-size: calc(14px * var(--font-scale, 1)); }
@@ -868,7 +867,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .meta-cell { display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; }
 .meta-sep { flex-shrink: 0; width: 4px; text-align: center; color: var(--faint); }
 .meta-cell:first-child { padding-left: var(--meta-lead); }
-.meta-model, .meta-text { white-space: nowrap; }
+.meta-model, .turn-meta-text { white-space: nowrap; }
 .meta-item { position: relative; display: inline-flex; align-items: center; gap: 3px; min-width: 0; max-width: 100%; min-height: 28px; padding: 0 2px; border: 0; border-radius: var(--r-xs); background: none; color: inherit; font: inherit; cursor: pointer; user-select: none; transition: color var(--t-fast) var(--ease); }
 .meta-item:hover, .meta-item[aria-expanded="true"] { color: var(--fg); }
 .tool-caret.chev { flex-shrink: 0; color: var(--faint); transition: transform .15s ease; }
@@ -1247,6 +1246,8 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .agent-detail > .agent-calls { margin: 0 0 4px; padding: 0; border-left: 0; }
 .agent-card.running > .agent-detail { margin-left: 0; }
 /* Two or more subagents in a row: one rail, rows close together; a running card inside keeps its ring. */
+/* A lone subagent's wrapper stays out of layout; it exists only so the card keeps its identity when a second one joins. */
+.agent-run { display: contents; }
 .agent-group { display: flex; flex-direction: column; gap: 0; margin: 4px 0; padding-left: 10px; border-left: 1px solid var(--line-strong); }
 .agent-group > .agent-card.running { margin: 4px 0; }
 
@@ -2472,7 +2473,6 @@ html[data-concise='on'] .concise-progress {
   color: var(--muted);
   padding: 2px 0 8px;
 }
-html[data-concise='on'] .msg.assistant.streaming .work-log { margin-bottom: 4px; }
 html[data-concise='on'] .turn-status.concise .status-verb { color: var(--fg); }
 html[data-concise='on'] .concise-lead { color: var(--fg); margin-bottom: 2px; }
 html[data-concise='on'] .note.concise-note { font-size: calc(12.5px * var(--font-scale, 1)); color: var(--faint); }

@@ -322,3 +322,17 @@ describe('time dividers', () => {
     ]);
   });
 });
+
+describe('a message with "[이미지]" lines: the bubble hides them, copy and edit keep the original', () => {
+  it('copy writes and edit hands over the full text, placeholders included', async () => {
+    const onEdit = vi.fn();
+    const raw = '이건 뭐야\n[이미지]\n[이미지]';
+    render(<MessageActionsContext.Provider value={{ onEdit }}><MessageView item={{ kind: 'user', text: raw }} /></MessageActionsContext.Provider>);
+    expect(document.querySelector('.msg.user pre')!.textContent).toBe('이건 뭐야');
+    fireEvent.click(screen.getByLabelText('메시지 복사'));
+    await act(async () => {});
+    expect(writeText).toHaveBeenCalledWith(raw);
+    fireEvent.click(screen.getByLabelText('편집'));
+    expect(onEdit).toHaveBeenCalledWith(raw);
+  });
+});

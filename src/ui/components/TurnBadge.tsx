@@ -70,7 +70,8 @@ export function useTurnBadge(props: BadgeProps | null, open: boolean, onToggle: 
   const status = stopped ? (failed ? '실패' : '중단됨') : null;
   const tokens = `입력 ${k(u.inputTokens)} · 출력 ${k(u.outputTokens)} · 캐시 읽기 ${k(u.cacheReadTokens)} · 캐시 쓰기 ${k(u.cacheCreationTokens)}`;
   const modelName = modelLabelOf(model ?? badge.model);
-  const acctTitle = `계정 ${label}${look.kind === 'unknown' ? ' · 설정에 없는 계정' : look.kind === 'retired' ? ' · 뺀 계정' : ''}${badge.pinned ? ' · 고정' : ''}`;
+  const note = ui().chat.accountNote;
+  const acctTitle = [ui().chat.account(label), look.kind === 'unknown' ? note.unknown : look.kind === 'retired' ? note.retired : '', badge.pinned ? note.pinned : ''].filter(Boolean).join(' · ');
   const pill = (
     <button type="button" className={`turn-badge tb-pill${stopped ? ' stopped' : ''}`} data-testid="turn-badge" aria-expanded={open} aria-controls={panelId} title={repeat ? modelName : undefined} onClick={onToggle}>
       <span className={repeat ? 'tb-model sr-only' : 'tb-model'}>{modelName}</span>
@@ -78,7 +79,7 @@ export function useTurnBadge(props: BadgeProps | null, open: boolean, onToggle: 
         ? <span className="acct-text" title={acctTitle}>{ui().chat.account(label)}</span>
         : <span className={`acct ${look.kind === 'other' ? `acct-${badge.account}` : `acct-${look.kind}`}`} {...(look.slot !== null ? { 'data-acct-idx': look.slot } : {})} title={acctTitle}><span className="acct-name">{label}</span></span>}
       {fast && <span className={`tb-fast${fast === 'fell' ? ' fell' : ''}`} data-testid="badge-fast" title={badge.modelNote!}><span aria-hidden="true">{fast === 'on' ? '↯' : '↯→표준'}</span><span className="sr-only">{badge.modelNote}</span></span>}
-      {badge.pinned && <span className="tb-pin" data-testid="badge-pin"><PinIcon title="고정 계정" /></span>}
+      {badge.pinned && <span className="tb-pin" data-testid="badge-pin"><PinIcon title={note.pin} /></span>}
       {status && <span className="tb-stopped" title={tokens}>{status}</span>}
       {(cacheNote || cold) && <span className="tb-dot" data-testid="badge-dot"><span className="sr-only">캐시 알림</span></span>}
     </button>

@@ -28,7 +28,7 @@ export function foldedCalls(item: Assistant, concise: boolean) {
 /**
  * A reply's meta as one quiet line under it: model (or the turn pill) · thinking › · tools › · subagents › · background ✓ ›,
  * then the reply's actions. Each › item opens its detail under the line (thinking text, one row per call, the role chips,
- * the background task's result); Esc closes what is open. A reply with no text is just this line.
+ * the background task's result); Esc closes one panel at a time (the focused one, else the last opened). A reply with no text is just this line.
  */
 export function TurnMeta({ item, turnEnd, repeatModel, notices, last, stopped, failed, concise, cwd, actions, hold, markdown }: {
   item: Assistant; turnEnd: boolean; repeatModel: boolean; notices: InjectedNotice[]; last: boolean; stopped: boolean; failed: boolean; concise: boolean; cwd?: string;
@@ -62,8 +62,8 @@ export function TurnMeta({ item, turnEnd, repeatModel, notices, last, stopped, f
   );
 
   /** A › item: a button naming what opens under the line. */
-  const opener = (key: string, label: ReactNode, extra: { testId?: string; cls?: string; after?: ReactNode } = {}) => (
-    <button type="button" className={`meta-item${extra.cls ? ` ${extra.cls}` : ''}`} {...(extra.testId ? { 'data-testid': extra.testId } : {})} aria-expanded={isOpen(key)} aria-controls={panelId(key)} onClick={() => toggle(key)}>
+  const opener = (key: string, label: ReactNode, extra: { testId?: string; cls?: string; after?: ReactNode; title?: string } = {}) => (
+    <button type="button" className={`meta-item${extra.cls ? ` ${extra.cls}` : ''}`} {...(extra.testId ? { 'data-testid': extra.testId } : {})} {...(extra.title ? { title: extra.title } : {})} aria-expanded={isOpen(key)} aria-controls={panelId(key)} onClick={() => toggle(key)}>
       {label}{extra.after}<ChevronIcon />
     </button>
   );
@@ -82,7 +82,7 @@ export function TurnMeta({ item, turnEnd, repeatModel, notices, last, stopped, f
     const label = t.ms === null && streaming ? T.meta.thinking : secs !== null ? T.meta.thoughtFor(secs) : body ? T.meta.process : T.meta.thought;
     cells.push(body
       ? { key: 'thinking', node: opener('thinking', <span className="tool-label">{label}</span>, { testId: 'thinking' }), panel: panel('thinking', 'thinking-panel', markdown(body, 'markdown thinking-body')) }
-      : { key: 'thinking', node: <span className={`meta-text${conciseLive ? ' concise' : ''}`} data-testid="thinking">{label}</span> });
+      : { key: 'thinking', node: <span className={`turn-meta-text${conciseLive ? ' concise' : ''}`} data-testid="thinking">{label}</span> });
   }
 
   const calls = foldedCalls(item, concise);
@@ -110,7 +110,7 @@ export function TurnMeta({ item, turnEnd, repeatModel, notices, last, stopped, f
     const key = `notice-${i}`;
     cells.push({
       key,
-      node: opener(key, <span className="tool-label">{T.bg[tone]}</span>, { testId: 'meta-notice', cls: `notice ${tone}`, after: <span className="meta-mark" aria-hidden="true">{NOTICE_MARK[tone]}</span> }),
+      node: opener(key, <span className="tool-label">{T.bg[tone]}</span>, { testId: 'meta-notice', cls: `notice ${tone}`, title: [n.label, n.summary].filter(Boolean).join(' · '), after: <span className="meta-mark" aria-hidden="true">{NOTICE_MARK[tone]}</span> }),
       panel: panel(key, 'sys-detail notice-panel', <>
         {n.summary && <div className="notice-summary">{n.summary}</div>}
         {n.body && markdown(n.body, 'markdown')}
@@ -124,9 +124,11 @@ export function TurnMeta({ item, turnEnd, repeatModel, notices, last, stopped, f
     if (e.key !== 'Escape' || !open.length) return;
     e.preventDefault();
     e.stopPropagation();
-    const lastKey = open.at(-1)!;
-    setOpen([]);
-    rootRef.current?.querySelector<HTMLElement>(`[aria-controls="${panelId(lastKey)}"]`)?.focus();
+    // One panel per press: the one holding focus (or whose opener has it), else the one opened last.
+    const target = e.target as Element;
+    const key = open.find((k) => target.closest(`[id="${panelId(k)}"]`) || target.closest(`[aria-controls="${panelId(k)}"]`)) ?? open.at(-1)!;
+    setOpen((o) => o.filter((k) => k !== key));
+    rootRef.current?.querySelector<HTMLElement>(`[aria-controls="${panelId(key)}"]`)?.focus();
   };
   return (
     <div ref={rootRef} className="turn-foot" data-testid="turn-meta" onKeyDown={onKeyDown}>

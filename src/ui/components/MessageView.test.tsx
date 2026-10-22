@@ -164,6 +164,21 @@ describe('MessageView · meta line separators and subagent lines', () => {
     expect(panelOf(open).textContent).toContain('done');
   });
 
+  it('an open first subagent stays open when a second Agent call joins it (no remount into the group)', () => {
+    const running = (id: string, type: string) => agent(id, type, null);
+    const { getAllByTestId, rerender } = render(<MessageView item={reply({ streaming: true, text: '', toolCalls: [running('1', 'executor')] })} />);
+    const open = getAllByTestId('agent-card')[0]!.querySelector('.agent-open')!;
+    fireEvent.click(open);
+    expect(panelOf(open).hidden).toBe(false);
+    rerender(<MessageView item={reply({ streaming: true, text: '', toolCalls: [running('1', 'executor'), running('2', 'code-reviewer')] })} />);
+    const cards = getAllByTestId('agent-card');
+    expect(cards).toHaveLength(2);
+    expect(cards[0]!.closest('[data-testid="agent-group"]')).not.toBeNull();
+    expect(cards[0]!.querySelector('.agent-open')).toBe(open);
+    expect(open.getAttribute('aria-expanded')).toBe('true');
+    expect(panelOf(open).hidden).toBe(false);
+  });
+
   it('two or more subagents in a row share one group; a single one stands alone', () => {
     const many = render(<MessageView item={reply({ toolCalls: [agent('1', 'executor'), agent('2', 'code-reviewer'), bash('3')] })} />);
     expect(many.getAllByTestId('agent-group')).toHaveLength(1);
@@ -469,6 +484,28 @@ describe('MessageView · 대화 본문 다듬기', () => {
     expect(panelOf(tools).hidden).toBe(true);
     expect(document.activeElement).toBe(tools);
     expect(queryByTestId('tool-group')).toBeNull();
+  });
+
+  it('Esc closes one panel per press: the one holding focus, else the one opened last', () => {
+    const { getByTestId } = render(<MessageView item={reply({ thinking: { text: '먼저 확인', redacted: false, startedAt: 0, ms: 12000 }, toolCalls: [bash('1'), bash('2')] })} />);
+    const think = getByTestId('thinking').closest('button')!;
+    const tools = getByTestId('work-log');
+    fireEvent.click(think);
+    fireEvent.click(tools);
+    fireEvent.keyDown(panelOf(think), { key: 'Escape' });
+    expect(panelOf(think).hidden).toBe(true);
+    expect(panelOf(tools).hidden).toBe(false);
+    expect(document.activeElement).toBe(think);
+    fireEvent.click(think);
+    fireEvent.keyDown(getByTestId('turn-meta'), { key: 'Escape' });
+    expect(panelOf(think).hidden).toBe(true);
+    expect(panelOf(tools).hidden).toBe(false);
+  });
+
+  it('absorbed background notices keep their label and summary as a tooltip, so several stay apart', () => {
+    const n = (summary: string) => ({ kind: 'task' as const, label: '백그라운드 작업 완료', summary, status: 'completed', body: '', raw: 'r' });
+    const { getAllByTestId } = render(<MessageView item={reply()} notices={[n('테스트 실행'), n('빌드')]} />);
+    expect(getAllByTestId('meta-notice').map((b) => b.getAttribute('title'))).toEqual(['백그라운드 작업 완료 · 테스트 실행', '백그라운드 작업 완료 · 빌드']);
   });
 
   it('only the last block of a turn names the model', () => {

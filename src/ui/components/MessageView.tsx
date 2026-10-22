@@ -724,8 +724,12 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
       {item.notes.map((n, i) => <div key={i} className={`note${concise ? ' concise-note' : ''}`}>{n}</div>)}
       {(!concise || !item.streaming) && item.attempts.map((t, i) => <Markdown key={i} text={t} className="markdown failed-attempt muted" />)}
       {/* File edits and subagents stay out in the reply, in order; thinking and the other calls fold into the meta line. */}
-      {!concise && soloRuns(item.toolCalls).map((run) => (run.length > 1
-        ? <div key={run[0]!.toolUseId} className="agent-group" data-testid="agent-group">{run.map((c) => <ToolCalls key={c.toolUseId} calls={[c]} live={item.streaming} cwd={cwd} />)}</div>
+      {/* Subagent runs always sit in a wrapper (only its class follows the count), so a second Agent call joining doesn't
+          remount the first card and fold its open panel. Other solo calls (file edits) stay direct children of .msg. */}
+      {!concise && soloRuns(item.toolCalls).map((run) => (isAgentCall(run[0]!)
+        ? <div key={run[0]!.toolUseId} className={run.length > 1 ? 'agent-group' : 'agent-run'} {...(run.length > 1 ? { 'data-testid': 'agent-group' } : {})}>
+            {run.map((c) => <ToolCalls key={c.toolUseId} calls={[c]} live={item.streaming} cwd={cwd} />)}
+          </div>
         : <ToolCalls key={run[0]!.toolUseId} calls={run} live={item.streaming} cwd={cwd} />))}
       {/* Concise, mid-turn: text before the last tool call folds into a gray lead line; the text since streams live below it.
           With tool calls the progress ("계속 작업 중 · 단계 N") is the meta line's tools item, so this shows the lead only. */}
