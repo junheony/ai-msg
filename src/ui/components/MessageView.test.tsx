@@ -4,6 +4,8 @@ import { cleanup, fireEvent, render } from '@testing-library/react';
 import { MessageView } from './MessageView';
 import { codeFileName } from '../codeWrap';
 import { DEFAULT_PREFS, PREFS_KEY } from '../prefs';
+import { initialState, reducer, type AppState, type ChatItem } from '../state';
+import type { ServerMessage } from '../../shared/protocol';
 
 describe('MessageView', () => {
   afterEach(cleanup);
@@ -236,6 +238,10 @@ describe('MessageView · 간결 모드 live text', () => {
     expect(container.querySelector('.markdown:not(.thinking-body)')).toBeNull();
     // Tool bodies stay folded inside the collapsed step group (as before).
     expect((getByTestId('tool-group') as HTMLDetailsElement).open).toBe(false);
+    // …and nothing of the output shows outside that folded group.
+    const outside = container.cloneNode(true) as HTMLElement;
+    outside.querySelector('[data-testid="tool-group"]')!.remove();
+    expect(outside.textContent).not.toContain('SECRET-OUTPUT');
     expect(container.textContent).not.toContain('SECRET-THOUGHT');
     rerender(<MessageView item={turn(`${before}\n\n원인은 오타였어요`, [call('1', before.length)])} />);
     expect(getByTestId('concise-lead').textContent).toBe(before);
@@ -266,5 +272,40 @@ describe('MessageView · 간결 모드 live text', () => {
     expect(container.querySelector('.markdown')?.textContent).toContain(before);
     expect(container.querySelector('.markdown')?.textContent).toContain('원인은');
     expect(container.querySelector('.cursor')).not.toBeNull();
+  });
+
+  it('deck-choices in the live stretch do not shift the fold point (textAt counts the raw text)', () => {
+    const before = '먼저 찾아볼게요.';
+    const text = `${before}\n\n어느 쪽으로 할까요?\n\n\`\`\`deck-choices\n? 고르기\n- 가\n- 나\n\`\`\``;
+    const { container, getByTestId } = render(<MessageView item={turn(text, [call('1', before.length)])} />);
+    expect(getByTestId('concise-lead').textContent).toBe(before);
+    const md = container.querySelectorAll('.markdown');
+    expect(md).toHaveLength(1);
+    expect(md[0]!.textContent).toBe('어느 쪽으로 할까요?');
+    expect(container.textContent).not.toContain('deck-choices');
+  });
+
+  it('reducer to screen: delta → tool_call → delta shows the first stretch as the lead and streams the second', () => {
+    const scope = { turnId: 't1', sessionId: null, cwd: '/w' };
+    const msgs: ServerMessage[] = [
+      { type: 'turn_started', ...scope, account: 'a', model: 'opus', reason: 'r', attempt: 0 },
+      { type: 'delta', ...scope, text: '먼저 테스트부터 ' },
+      { type: 'delta', ...scope, text: '볼게요.' },
+      { type: 'tool_call', ...scope, toolUseId: 'u1', name: 'Bash', input: { command: 'npm test' } },
+      { type: 'tool_result', ...scope, toolUseId: 'u1', content: 'SECRET-OUTPUT', isError: false },
+      { type: 'delta', ...scope, text: '원인은 ' },
+      { type: 'delta', ...scope, text: '오타였어요' },
+    ];
+    let s: AppState = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: '새 세션' });
+    s = reducer(s, { type: 'sent', text: '왜 실패해?' });
+    for (const m of msgs) s = reducer(s, { type: 'server', msg: m });
+    const item = s.panes[0]!.items.findLast((it): it is Extract<ChatItem, { kind: 'assistant' }> => it.kind === 'assistant')!;
+    expect(item.streaming).toBe(true);
+    const { container, getByTestId } = render(<MessageView item={item} />);
+    expect(getByTestId('concise-lead').textContent).toBe('먼저 테스트부터 볼게요.');
+    expect(getByTestId('concise-progress').textContent).toContain('단계 1');
+    const md = container.querySelectorAll('.markdown');
+    expect(md).toHaveLength(1);
+    expect(md[0]!.textContent).toBe('원인은 오타였어요');
   });
 });

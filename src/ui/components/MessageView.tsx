@@ -1,4 +1,4 @@
-import { createContext, isValidElement, memo, useContext, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { createContext, isValidElement, memo, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { splitDeckChoices, type DeckChoices } from '../../shared/choices';
 import ReactMarkdown, { type Components } from 'react-markdown';
@@ -7,7 +7,7 @@ import { HANDOFF_PROMPT } from '../../shared/handoff';
 import { parseUserText, type InjectedNotice } from '../injected';
 import { roleSummary } from '../roles';
 import { usePrefs } from '../usePrefs';
-import { conciseLiveSplit } from '../../shared/concise';
+import { conciseCut, conciseLead } from '../../shared/concise';
 import { codeFileName, useCodeWrap } from '../codeWrap';
 import { FileRootContext, SidePanelContext, filePathIn, inSessionFolder, viewFor } from '../sidePanel';
 import { has } from '../features';
@@ -563,6 +563,14 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
     setMenu(true);
   }, { ms: MSG_PRESS_MS, ignore: PRESS_IGNORE });
   const closeMenu = () => setMenu(false);
+  // 간결 모드, live turn: the raw text before the last tool call (ToolCallItem.textAt counts item.text) folds into a lead
+  // line, memoized so a delta only re-slices; the rest streams. Hooks stay above the early returns.
+  const liveCuts = concise && item.kind === 'assistant' && item.streaming ? item.toolCalls.map((t) => t.textAt) : null;
+  const liveCut = liveCuts && item.kind === 'assistant' ? conciseCut(item.text.length, liveCuts) : 0;
+  const liveHead = liveCuts && item.kind === 'assistant' ? item.text.slice(0, liveCut) : '';
+  const cutKey = liveCuts?.join(',') ?? '';
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- cutKey stands for liveCuts (a new array every render)
+  const liveLead = useMemo(() => (liveCuts ? conciseLead(liveHead, liveCuts) : null), [liveHead, cutKey]);
   // Copy feedback as one toast (a status: read out once). The hover row's ✓ already says it on a desktop; on touch the
   // icon alone is easy to miss, so the row's copy toasts too.
   const feedback = useFileActions();
@@ -623,7 +631,8 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
   const pick = !pickable || item.streaming ? undefined : turn && branchFrom ? (m: ModelChoice) => branchFrom(turn, m) : retry ? regen.retryWith : undefined;
   // deck-choices (GPT, Gemini, Grok): the block becomes option cards; only the last reply's cards can be clicked.
   const { text: shownText, choices } = splitDeckChoices(item.text, item.streaming);
-  const split = concise && item.streaming ? conciseLiveSplit(shownText, item.toolCalls.map((t) => t.textAt)) : null;
+  // deck-choices are cut from the live stretch only (textAt counts the raw text).
+  const split = liveCuts ? { lead: liveLead, live: splitDeckChoices(item.text.slice(liveCut), true).text } : null;
   const reply = last && !item.streaming ? actions.onReply : undefined;
   const hasActions = !item.streaming && (!!item.text || !!retry || !!again || !!pick);
   const regenPick: RegenPick | null = pick && regen ? { models: regen.models, current: regen.current, sticky: !!(turn && branchFrom), onPick: pick } : null;

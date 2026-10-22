@@ -72,23 +72,39 @@ export function conciseLeadLine(text: string | null | undefined, max = 120): str
   return sentence.length > max ? `${sentence.slice(0, max - 1)}…` : sentence;
 }
 
+/** The tool calls' text marks (ToolCallItem.textAt) inside `length`, ascending, deduped (0 / absent dropped). */
+function cutsWithin(length: number, cuts: readonly (number | undefined)[]): number[] {
+  return [...new Set(cuts.filter((c): c is number => typeof c === 'number' && c > 0).map((c) => Math.min(c, length)))].sort((a, b) => a - b);
+}
+
+/** Where the live stretch starts: the text length when the last tool call began (0 = no call yet, all live). */
+export function conciseCut(length: number, cuts: readonly (number | undefined)[]): number {
+  return cutsWithin(length, cuts).at(-1) ?? 0;
+}
+
+/**
+ * The gray lead line for `head` (the text before the last tool call): the latest non-empty stretch between calls — its
+ * first sentence, or (no end mark) its first line. Changes only when a call starts, so callers memoize it on `head`.
+ */
+export function conciseLead(head: string, cuts: readonly (number | undefined)[]): string | null {
+  const at = cutsWithin(head.length, cuts);
+  for (let i = at.length - 1; i >= 0; i--) {
+    const seg = head.slice(at[i - 1] ?? 0, at[i]).trim();
+    if (!seg) continue;
+    const line = seg.split('\n')[0]!.trim();
+    const lead = conciseLeadLine(seg) ?? (!line || /^[#>|`-]/.test(line) ? null : line.length > 120 ? `${line.slice(0, 119)}…` : line);
+    if (lead !== null) return lead;
+  }
+  return null;
+}
+
 /**
  * 간결 모드 while a turn streams: the reply text since the last tool call is shown live (`live`); the text written before
- * it (a "먼저 … 볼게요." between steps) folds into one gray `lead` line — the latest non-empty earlier stretch.
- * `cuts`: the text length when each tool call began (ToolCallItem.textAt). No cut = the whole text is live.
+ * it (a "먼저 … 볼게요." between steps) folds into one gray `lead` line. `cuts`: ToolCallItem.textAt of each call.
  */
 export function conciseLiveSplit(text: string, cuts: readonly (number | undefined)[]): { lead: string | null; live: string } {
-  const at = [...new Set(cuts.filter((c): c is number => typeof c === 'number' && c > 0).map((c) => Math.min(c, text.length)))].sort((a, b) => a - b);
-  const cut = at[at.length - 1] ?? 0;
-  let lead: string | null = null;
-  for (let i = at.length - 1; i >= 0 && lead === null; i--) {
-    const seg = text.slice(at[i - 1] ?? 0, at[i]).trim();
-    if (!seg) continue;
-    // A finished stretch: its first sentence, or (no end mark) its first line.
-    const line = seg.split('\n')[0]!.trim();
-    lead = conciseLeadLine(seg) ?? (!line || /^[#>|`-]/.test(line) ? null : line.length > 120 ? `${line.slice(0, 119)}…` : line);
-  }
-  return { lead, live: text.slice(cut) };
+  const cut = conciseCut(text.length, cuts);
+  return { lead: conciseLead(text.slice(0, cut), cuts), live: text.slice(cut) };
 }
 
 /**
