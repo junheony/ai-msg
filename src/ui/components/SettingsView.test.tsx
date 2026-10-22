@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { AUTO_CONSENT_TEXT, EXPERIMENTAL_NOTICE, EXPERIMENTAL_ROWS, ROTATION_CONSENT, SEG_MAX, SETTINGS_GROUPS, SettingsView } from './SettingsView';
+import { AUTO_CONSENT_TEXT, EXPERIMENTAL_NOTICE, EXPERIMENTAL_ROWS, ROTATION_CONSENT, ROTATION_NOTICE, SEG_MAX, SETTINGS_GROUPS, SettingsView } from './SettingsView';
 import { DEFAULT_PREFS, PREFS_KEY } from '../prefs';
 
 const noop = () => {};
@@ -133,6 +133,17 @@ describe('SettingsView 실험적 기능', () => {
     fireEvent.click(btn('Codex·Gemini 대화 가져오기', '끄기'));
     expect(on).toHaveBeenLastCalledWith({ localImports: false });
     expect(on).toHaveBeenCalledTimes(3);
+  });
+
+  it('two sub-groups, each with its own notice: the local-files one is not shown over 계정 순환', () => {
+    render(<SettingsView build={null} experimental={fresh} onExperimental={noop} sameVendorRotation={false} onSameVendorRotation={noop} claudeAccounts={2} onClose={noop} />);
+    const apps = screen.getByRole('group', { name: '다른 앱 연동' });
+    const rotation = screen.getByRole('group', { name: '계정 순환' });
+    expect(within(apps).getByTestId('experimental-notice').textContent).toContain(EXPERIMENTAL_NOTICE);
+    for (const [, label] of EXPERIMENTAL_ROWS) expect(within(apps).getByRole('group', { name: label })).toBeTruthy();
+    expect(within(rotation).getByTestId('rotation-notice').textContent).toBe(ROTATION_NOTICE);
+    expect(within(rotation).queryByText(new RegExp(EXPERIMENTAL_NOTICE.slice(0, 10)))).toBeNull();
+    expect(within(rotation).getByRole('group', { name: '같은 벤더 계정 자동 순환' })).toBeTruthy();
   });
 });
 

@@ -142,6 +142,21 @@ describe('GrokBotIndex 실험적 기능 switch', () => {
     expect(got.at(-1)).toMatchObject({ percentUsed: 10 });
   });
 
+  it('turned off mid-scan: no blob is opened after that, nothing is listed and no usage is reported', async () => {
+    await write(blobName('roster.last-roster'), roster([row()]));
+    await write(blobName('weekly-usage.cache'), { schemaVersion: 2, value: { kind: 'present', reading: { usage: { percentUsed: 10 }, readAtMs: 1_000 }, expiresAtMs: 5_000 } });
+    let asked = 0;
+    const got: unknown[] = [];
+    const idx = new GrokBotIndex(dir, '/h', () => 3_000, () => asked++ < 1);
+    idx.onUsage = (u) => got.push(u);
+    const opened = vi.spyOn(fs, 'readFile');
+    await idx.refresh();
+    expect(opened).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+    expect(idx.list()).toEqual([]);
+    expect(got).toEqual([null]);
+  });
+
   it('off from the start: a scan touches nothing', async () => {
     await write(blobName('roster.last-roster'), roster([row()]));
     const touched = [vi.spyOn(fs, 'readdir'), vi.spyOn(fs, 'readFile'), vi.spyOn(fs, 'stat'), vi.spyOn(fs, 'lstat')];

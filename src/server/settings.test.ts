@@ -175,6 +175,16 @@ describe('SettingsStore', () => {
     expect(c.get().experimental).toEqual(FRESH.experimental);
   });
 
+  it('실험적 기능 migration that cannot be saved: this run uses the fresh-install switches, other settings untouched', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-set-'));
+    // The settings dir cannot be made (a file is in the way): the write fails.
+    await fs.writeFile(path.join(dir, 'blocker'), '');
+    const s = new SettingsStore(path.join(dir, 'blocker', 'settings.json'), async () => true);
+    await s.load();
+    expect(s.get().experimental).toEqual(FRESH.experimental);
+    expect(s.get().routingPolicy).toBe('balance');
+  });
+
   it('실험적 기능 set: only the given switches change, others and the other settings are kept', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-set-'));
     const file = path.join(dir, 'settings.json');

@@ -528,6 +528,7 @@ export class TurnRunner {
   /** deck's copy and the home profile's copy of a session, when deck runs it on another profile. */
   private async forkPair(sessionId: string): Promise<{ st: ClaudeSessionState; home: Account; deckFile: string; homeDir: string; homeFile: string } | null> {
     const home = this.deps.homeAccount;
+    if (this.deps.desktopMirror?.() === false) return null;
     const st = this.deps.store.get(sessionId);
     if (!home || !st || isOtherEngineState(st) || st.account === home) return null;
     const homeDir = path.join(this.rootOf(home), path.basename(st.projectDir));
@@ -536,7 +537,7 @@ export class TurnRunner {
 
   /**
    * Whether deck's copy and the home copy (Claude Desktop) went their own ways — neither contains the other.
-   * Null: not a deck Claude session run outside the home profile.
+   * Null: not a deck Claude session run outside the home profile, or 실험적 기능 › Claude Desktop is off.
    */
   async forkStatus(sessionId: string): Promise<{ diverged: boolean; deckAccount: Account; homeAccount: Account } | null> {
     const pair = await this.forkPair(sessionId);
@@ -1497,7 +1498,7 @@ export class TurnRunner {
     if (p.sessionId) {
       state = deps.store.get(p.sessionId);
       // A deck Codex thread Codex has since archived (its rollout moved to archived_sessions): view only, like an archived import.
-      if (state && isCodexState(state) && (await deps.index.freshCodexImport(p.sessionId))?.codexArchived) { sink.emit({ type: 'error', turnId: p.turnId, message: CODEX_ARCHIVED_NOTICE }); return; }
+      if (state && isCodexState(state) && (await deps.index.freshCodexImport(p.sessionId, { owned: true }))?.codexArchived) { sink.emit({ type: 'error', turnId: p.turnId, message: CODEX_ARCHIVED_NOTICE }); return; }
       // Checked live: a thread archived / unarchived in Codex or a folder that came back since the last scan is rescanned first.
       // A Grok Bot conversation is never sent from deck (no app API): an explicit refusal, never a new session.
       if (!state && p.sessionId.startsWith(GROKBOT_ID_PREFIX)) { sink.emit({ type: 'error', turnId: p.turnId, message: GROKBOT_SEND_REFUSED }); return; }

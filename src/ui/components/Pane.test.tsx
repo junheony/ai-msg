@@ -42,6 +42,32 @@ describe('Pane (D6)', () => {
     expect(ref2).not.toBe(ref1);
   });
 
+  it('세션 › Desktop에서 열기 only while 실험적 기능 › Claude Desktop is not off', () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)');
+    let proto: object | null = document;
+    let saved: { o: object; d: PropertyDescriptor } | null = null;
+    for (; proto && !saved; proto = Object.getPrototypeOf(proto)) {
+      const d = Object.getOwnPropertyDescriptor(proto, 'ontouchend');
+      if (d) { saved = { o: proto, d }; delete (proto as Record<string, unknown>).ontouchend; }
+    }
+    try {
+      const pane: PaneState = { ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: 'b', title: 't', engine: 'claude', sandbox: null } };
+      const shown = (experimental: AppState['experimental']) => {
+        render(<Pane pane={pane} app={{ pending: [], questions: [], codexAvailable: false, experimental }} active closable={false} dispatch={() => {}} send={() => {}} onClose={() => {}} />);
+        fireEvent.click(screen.getByTestId('session-chip-head'));
+        const has = !!screen.queryByRole('menuitem', { name: 'Desktop에서 열기' });
+        cleanup();
+        return has;
+      };
+      expect(shown({ grokBot: false, desktop: true, localImports: true })).toBe(true);
+      expect(shown(null)).toBe(true);
+      expect(shown({ grokBot: true, desktop: false, localImports: true })).toBe(false);
+    } finally {
+      if (saved) Object.defineProperty(saved.o, 'ontouchend', saved.d);
+      vi.restoreAllMocks();
+    }
+  });
+
   it('shows only the cards that belong to its session', () => {
     const pane: PaneState = { ...newPane('p1'), session: { sessionId: 's1', cwd: '/w', account: 'b', title: 't', engine: 'claude', sandbox: null } };
     const card = (requestId: string, sessionId: string) => ({ turnId: 'x' + requestId, sessionId, cwd: '/w', requestId, toolName: 'Bash', input: {}, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: false, sessionLabel: null });

@@ -216,7 +216,7 @@ const GROK_HELD = {
 
 export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, onStartChatSplit, hidden, newChatCwd, uploadFn, sessionActions, grip, onShift, floating, onFloat, onDock, onArrange, onToggleMax, maximized, collapsed, onToggleCollapse, onLayouts, onAddPane, onMaxPane, paneMaxed, headSlot, onPalette }: {
   pane: PaneState;
-  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'gemini' | 'grok' | 'usage' | 'projects' | 'defaultPermMode' | 'pins' | 'commanders' | 'commanderRefusals' | 'commanderMaxTurns' | 'tasks' | 'taskCap' | 'suggestions'>>;
+  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'gemini' | 'grok' | 'usage' | 'projects' | 'defaultPermMode' | 'pins' | 'commanders' | 'commanderRefusals' | 'commanderMaxTurns' | 'tasks' | 'taskCap' | 'suggestions' | 'experimental'>>;
   active: boolean;
   closable: boolean;
   /** The ⋮⋮ handle in the header: drag it to reorder the pane, pull it off into a card, or drop a card back. Absent = no handle. */
@@ -410,7 +410,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const mod = (keys: string) => modKeys(keys, isMacPlatform());
   const phone = useIsPhone();
   const fileMenu: HeadMenuItem[] = [];
-  const desktopOpen = useOpenInDesktop(s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && s.engine !== 'grok' ? s.sessionId : null, (message) => dispatch({ type: 'show_error', message }));
+  // 실험적 기능 › Claude Desktop off: no row (the server refuses it too).
+  const desktopOpen = useOpenInDesktop(app.experimental?.desktop !== false && s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && s.engine !== 'grok' ? s.sessionId : null, (message) => dispatch({ type: 'show_error', message }));
   if (desktopOpen) fileMenu.push({ label: 'Desktop에서 열기', run: desktopOpen, group: 'session' });
   // 보기: 파일 패널 right after 대화에서 찾기 (spec §3.8 order); 명령 팔레트… closes the group (after 새 세션으로 이어가기)
   // — phone only: its only way to ⌘K. A desktop has ⌘K and the sidebar's search, and its menu must fit the window.

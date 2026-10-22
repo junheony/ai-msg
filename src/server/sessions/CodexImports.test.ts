@@ -243,6 +243,28 @@ describe('SessionIndex codex imports 실험적 기능 switch', () => {
     await index.refresh();
     expect(index.projects().find((p) => p.cwd === work)?.sessions.map((s) => s.sessionId).sort()).toEqual([DESKTOP_ID, CLI_ID]);
   });
+
+  it('turned off: deck-owned Codex sessions keep the last scan (thread name, rollout time, archived in Codex), imports go away', async () => {
+    const { cli } = await writeFixtures(root, work);
+    const arch = path.join(base, 'archived_sessions');
+    await fs.mkdir(arch);
+    await fs.rename(cli, path.join(arch, path.basename(cli)));
+    await fs.writeFile(path.join(base, 'session_index.jsonl'), nameLine(CLI_ID, 'Paper Kite') + '\n');
+    const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
+    let on = true;
+    const index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'p.json'), codexRoot: root, codexArchivedRoot: arch, localImportsEnabled: () => on });
+    await index.refresh();
+    on = false;
+    await index.refresh();
+    const own = { sessionId: CLI_ID, account: 'gpt' as const, engine: 'codex' as const, cwd: work, projectDir: '', file: cli, title: 'List the files', lastModified: 1, sizeBytes: 0 };
+    const sessions = index.projects([own]).flatMap((p) => p.sessions);
+    expect(sessions.find((e) => e.sessionId === CLI_ID)).toMatchObject({ title: 'Paper Kite', archived: true, codexArchived: true });
+    expect(sessions.find((e) => e.sessionId === CLI_ID)!.lastModified).toBeGreaterThan(1);
+    expect(sessions.find((e) => e.sessionId === DESKTOP_ID)).toBeUndefined();
+    expect(index.codexImport(CLI_ID)).toBeNull();
+    expect(await index.freshCodexImport(CLI_ID)).toBeNull();
+    expect(await index.freshCodexImport(CLI_ID, { owned: true })).toMatchObject({ codexArchived: true });
+  });
 });
 
 const nameLine = (id: string, thread_name: unknown) => JSON.stringify({ id, thread_name, updated_at: '2026-10-01T02:00:00.000Z' });

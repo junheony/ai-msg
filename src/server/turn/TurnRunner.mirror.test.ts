@@ -623,4 +623,18 @@ describe('TurnRunner: 실험적 기능 › Claude Desktop off', () => {
     expect(await c.runner.openInDesktop(SID)).toEqual({ ok: true, busy: false });
     expect(await read(fileOf(c, 'a'))).toBe(await read(fileOf(c, 'b')));
   });
+
+  it('a diverged pair: forkStatus is null and resolveFork touches nothing while off', async () => {
+    const c = await setup();
+    let on = false;
+    c.deps.desktopMirror = () => on;
+    await put(c, 'a', line('one') + line('desktop went on'), NOW - 3_600_000);
+    await put(c, 'b', line('one') + line('deck went on'), NOW - 60_000);
+    await onB(c);
+    expect(await c.runner.forkStatus(SID)).toBeNull();
+    expect(await c.runner.resolveFork(SID, 'deck')).toEqual({ ok: false, error: '갈라진 사본이 없습니다' });
+    expect(await read(fileOf(c, 'a'))).toBe(line('one') + line('desktop went on'));
+    on = true;
+    expect(await c.runner.forkStatus(SID)).toMatchObject({ diverged: true });
+  });
 });

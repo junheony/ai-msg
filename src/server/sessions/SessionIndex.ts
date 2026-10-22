@@ -240,7 +240,10 @@ export class SessionIndex {
   private readonly cachedPrefix: PrefixFn = (a, b) => this.prefixCache.isAncestor(a.file, b.file);
 
   private readonly codexIndex: CodexRolloutIndex | null;
-  /** The Codex import list while 실험적 기능 › Codex·Gemini 가져오기 is on (off: never refreshed, nothing listed or found). */
+  /**
+   * The Codex import list while 실험적 기능 › Codex·Gemini 가져오기 is on (off: never refreshed, nothing listed or found).
+   * Deck's own Codex sessions (codexOwned, archived-in-Codex) use `codexIndex` itself: off = its last scan, still read.
+   */
   private get codex(): CodexRolloutIndex | null {
     return this.opts.localImportsEnabled?.() === false ? null : this.codexIndex;
   }
@@ -465,8 +468,10 @@ export class SessionIndex {
   /**
    * The Codex thread as it is now: when the cached entry is stale — its rollout moved (archived / unarchived
    * in Codex) or its folder came / went — the Codex list is rescanned once and `onChange` fires (index push).
+   * `owned`: one of deck's own Codex sessions — with Codex 가져오기 off, the last scan's entry as is (no rescan).
    */
-  async freshCodexImport(threadId: string): Promise<SessionEntry | null> {
+  async freshCodexImport(threadId: string, opts: { owned?: boolean } = {}): Promise<SessionEntry | null> {
+    if (opts.owned && !this.codex) return this.codexIndex?.lookup(threadId) ?? null;
     const codex = this.codex;
     const e = codex?.lookup(threadId) ?? null;
     if (!codex || !e) return e;
@@ -480,10 +485,11 @@ export class SessionIndex {
   /**
    * Deck's own Codex sessions (`extra`: the state store's entries) as Codex has them now: titled with the Codex
    * thread name when there is one (the stored title is the first prompt), and at least as recent as the thread's
-   * rollout file — Codex Desktop / CLI may be running it outside deck. As of the last refresh; others pass through.
+   * rollout file — Codex Desktop / CLI may be running it outside deck. As of the last refresh (also with Codex 가져오기
+   * off: then the last scan before it was turned off); others pass through.
    */
   codexOwned(extra: SessionEntry[]): SessionEntry[] {
-    const codex = this.codex;
+    const codex = this.codexIndex;
     if (!codex) return extra;
     return extra.map((e) => {
       if (e.engine !== 'codex') return e;
@@ -504,7 +510,7 @@ export class SessionIndex {
   projects(extra: SessionEntry[] = [], opts: { all?: boolean; own?: Iterable<string> } = {}): ProjectEntry[] {
     extra = this.codexOwned(extra);
     const all = this.codex?.list() ?? [];
-    const archivedInCodex = new Set(all.filter((e) => e.codexArchived).map((e) => e.sessionId));
+    const archivedInCodex = new Set((this.codexIndex?.list() ?? []).filter((e) => e.codexArchived).map((e) => e.sessionId));
     const own = new Set([...extra.map((e) => e.sessionId), ...(opts.own ?? [])]);
     const mine = archivedInCodex.size ? extra.map((e) => (archivedInCodex.has(e.sessionId) ? { ...e, archived: true, codexArchived: true } : e)) : extra;
     const imports = [...all, ...this.others.flatMap((x) => x.list())].filter((e) => !own.has(e.sessionId));

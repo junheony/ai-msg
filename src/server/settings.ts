@@ -100,8 +100,14 @@ export class SettingsStore {
     const legacy = !decided && (fromOlderDeck || (await this.existingInstall().catch(() => false)));
     const experimental = experimentalFrom(r.experimental, legacy ? LEGACY_EXPERIMENTAL : DEFAULT_EXPERIMENTAL);
     this.current = normalize(mode, isRoutingPolicy(r.routingPolicy) ? r.routingPolicy : DEFAULT_SETTINGS.routingPolicy, r.sameVendorRotation === true, commanderFrom(r), autoRouteFrom(r), isLocale(r.language) ? r.language : null, experimental);
-    // A corrupt file is left for the user to see (the next change through 설정 replaces it, as before).
-    if (!decided && (raw === null || fromOlderDeck)) await this.write(this.current).catch((err: unknown) => console.warn('deck: settings migration not saved', err instanceof Error ? err.message : err));
+    // A corrupt file is left for the user to see (the next change through 설정 replaces it, as before). A migration that
+    // could not be saved is not relied on: this run uses the fresh-install switches (nothing outside deck is read).
+    if (!decided && (raw === null || fromOlderDeck)) {
+      await this.write(this.current).catch((err: unknown) => {
+        console.warn('deck: settings migration not saved', err instanceof Error ? err.message : err);
+        this.current = { ...this.current, experimental: { ...DEFAULT_EXPERIMENTAL } };
+      });
+    }
   }
 
   get(): ServerSettings {

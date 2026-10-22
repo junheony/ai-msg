@@ -24,9 +24,11 @@ const needsConsent = (e: EngineKind) => e === 'gemini' || e === 'grok';
 
 /** Each language's name in that language (the same in every UI language, so a lost reader still finds theirs). */
 export const LANGUAGE_NAMES: Record<Locale, string> = { en: 'English', ko: '한국어' };
-/** 실험적 기능: what the section says before any switch (the owner's wording). */
+/** 실험적 기능 › 다른 앱 연동: what the sub-group says before its switches (the owner's wording). */
 export const EXPERIMENTAL_NOTICE = '공식 기능이 아니며 각 앱의 업데이트로 언제든 멈출 수 있어요. 켜면 해당 앱의 로컬 파일을 읽어요.';
 /** Each 실험적 기능 switch: its row label and one line on what it reads / does (files named, so the user knows what is opened). */
+/** 실험적 기능 › 계정 순환: what the sub-group says before its switch (it reads no other app's files). */
+export const ROTATION_NOTICE = '같은 회사의 여러 Claude 계정을 번갈아 쓰는 기능이에요. 본인이 결제한 본인 계정끼리만 쓰세요.';
 export const EXPERIMENTAL_ROWS: [keyof ExperimentalSettings, string, string][] = [
   ['grokBot', 'Grok Bot 앱 대화·사용량', 'Grok Bot 앱의 대화 목록·대화 내용·주간 사용량 캐시를 읽기만 해요 (~/Library/Application Support/Grok Bot/sand-client-persistence).'],
   ['desktop', 'Claude Desktop 연동', 'Desktop 의 최근 세션 기록(~/Library/Application Support/Claude/claude-code-sessions)을 읽고, 다른 계정에서 돈 세션을 기본 계정 기록에 되써서 Desktop 에서 이어 열 수 있게 해요.'],
@@ -273,20 +275,25 @@ export function SettingsView({ build, onLanguage, reload = () => location.reload
           </section>
           <section {...section('experimental')}>
             {heading('experimental')}
-            <div className="settings-consent" role="note" data-testid="experimental-notice"><p>실험적 · 비공식 — {EXPERIMENTAL_NOTICE}</p></div>
-            {onExperimental && experimental ? (
-              <>
-                {EXPERIMENTAL_ROWS.map(([key, label, what]) => (
-                  <Fragment key={key}>
-                    <Seg<'off' | 'on'> label={label} value={experimental[key] ? 'on' : 'off'} onPick={(v) => { if ((v === 'on') !== experimental[key]) onExperimental({ [key]: v === 'on' }); }} options={[['off', '끄기'], ['on', '켜기']]} />
-                    <Hint short={what} />
-                  </Fragment>
-                ))}
-                <Hint short="바꾸면 다시 시작하지 않아도 바로 적용돼요." />
-              </>
-            ) : <Hint short="서버 연결 후 표시됩니다." />}
+            <div className="settings-subgroup" role="group" aria-labelledby="settings-experimental-apps">
+              <h4 id="settings-experimental-apps">다른 앱 연동</h4>
+              <div className="settings-consent" role="note" data-testid="experimental-notice"><p>실험적 · 비공식 — {EXPERIMENTAL_NOTICE}</p></div>
+              {onExperimental && experimental ? (
+                <>
+                  {EXPERIMENTAL_ROWS.map(([key, label, what]) => (
+                    <Fragment key={key}>
+                      <Seg<'off' | 'on'> label={label} value={experimental[key] ? 'on' : 'off'} onPick={(v) => { if ((v === 'on') !== experimental[key]) onExperimental({ [key]: v === 'on' }); }} options={[['off', '끄기'], ['on', '켜기']]} />
+                      <Hint short={what} />
+                    </Fragment>
+                  ))}
+                  <Hint short="바꾸면 다시 시작하지 않아도 바로 적용돼요." />
+                </>
+              ) : <Hint short="서버 연결 후 표시됩니다." />}
+            </div>
             {onSameVendorRotation && sameVendorRotation !== null && (
-              <>
+              <div className="settings-subgroup" role="group" aria-labelledby="settings-experimental-rotation">
+                <h4 id="settings-experimental-rotation">계정 순환</h4>
+                <div className="settings-consent" role="note" data-testid="rotation-notice"><p>{ROTATION_NOTICE}</p></div>
                 <div className="settings-row">
                   <span id="seg-rotation">같은 벤더 계정 자동 순환</span>
                   <div className="seg" role="group" aria-labelledby="seg-rotation">
@@ -306,7 +313,7 @@ export function SettingsView({ build, onLanguage, reload = () => location.reload
                 {single
                   ? <Hint short="Claude 계정이 1개라 순환할 계정이 없습니다. 계정을 더 등록하면 켤 수 있습니다." />
                   : <Hint short="꺼 두면 세션은 고른 Claude 계정에만 머뭅니다.">꺼짐(기본): 세션은 기본 Claude 계정(또는 세션에서 고른 계정)에만 머물고, 한도에 걸리면 다른 Claude 계정으로 넘기지 않고 리셋 뒤 자동으로 다시 시도합니다. 켜면 위 자동 계정 선택대로 Claude 계정 사이를 옮깁니다. GPT·Gemini 로의 벤더 간 인계는 이 설정과 상관없습니다.</Hint>}
-              </>
+              </div>
             )}
           </section>
         </div>

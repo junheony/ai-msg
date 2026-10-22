@@ -197,18 +197,23 @@ export class GrokBotIndex implements ImportIndex {
   }
 
   private async scan(): Promise<void> {
-    if (!this.enabled()) {
+    // Asked again after every await: turned off mid-scan = no further file is opened, and nothing is left listed.
+    const off = (): boolean => {
+      if (this.enabled()) return false;
       this.entries = []; this.byId = new Map(); this.rows.clear(); this.stamps.clear(); this.transcripts = new Map();
       this.onUsage?.(null);
-      return;
-    }
+      return true;
+    };
+    if (off()) return;
     const blobs = this.dir ? await listBlobs(this.dir) : null;
     if (!blobs) { this.entries = []; this.byId = new Map(); return; }
     for (const f of blobs.rosters) {
+      if (off()) return;
       const st = await fs.stat(f).catch(() => null);
       if (!st) continue;
       const stamp = `${st.mtimeMs}:${st.size}`;
       if (this.stamps.get(f) === stamp) continue;
+      if (off()) return;
       const v = rec(await readBlob(f, 'roster'));
       if (!v || !Array.isArray(v.rows)) continue;
       this.rows.set(f, v.rows);
@@ -224,9 +229,14 @@ export class GrokBotIndex implements ImportIndex {
         if (e && (byId.get(e.sessionId)?.lastModified ?? -1) < e.lastModified) byId.set(e.sessionId, e);
       }
     }
+    if (off()) return;
     this.byId = byId;
     this.entries = [...byId.values()];
-    if (this.onUsage) this.onUsage(await readGrokBotWeeklyUsage(blobs.usage, this.now()).catch(() => null));
+    if (this.onUsage) {
+      const usage = await readGrokBotWeeklyUsage(blobs.usage, this.now()).catch(() => null);
+      if (off()) return;
+      this.onUsage(usage);
+    }
   }
 
   list(): SessionEntry[] {

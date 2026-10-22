@@ -16,7 +16,6 @@ export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const CLIENT_REF_MAX = 64;
 /** Every engine, in 자동 분배 order (settings `autoEngines` / `autoConsent`). */
 export const ENGINE_KINDS: readonly EngineKind[] = ['claude', 'codex', 'gemini', 'grok'];
-/** A Claude account id by shape only (`ACCOUNT_ID_RE`): which ids exist is the server's configuration, checked when the message is handled. */
 /**
  * 실험적 기능 (settings `experimental`): reads of other apps' private local files, each its own switch. `grokBot` = the Grok
  * Bot app's conversations and weekly usage cache; `desktop` = Claude Desktop's session list, the home-profile write-back
@@ -24,6 +23,7 @@ export const ENGINE_KINDS: readonly EngineKind[] = ['claude', 'codex', 'gemini',
  */
 export const ExperimentalSchema = z.object({ grokBot: z.boolean(), desktop: z.boolean(), localImports: z.boolean() });
 export type ExperimentalSettings = z.infer<typeof ExperimentalSchema>;
+/** A Claude account id by shape only (`ACCOUNT_ID_RE`): which ids exist is the server's configuration, checked when the message is handled. */
 const AccountId = z.string().regex(ACCOUNT_ID_RE).refine((id) => !RESERVED_ACCOUNT_IDS.includes(id), { message: '예약된 이름이라 계정 id 로 쓸 수 없습니다' });
 
 export const ClientMessageSchema = z.discriminatedUnion('type', [

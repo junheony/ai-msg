@@ -1468,6 +1468,9 @@ button.hl-row-main:hover { background: var(--hover); }
 .settings-groups { display: flex; flex-direction: column; gap: var(--s5); min-width: 0; }
 .settings-group { display: flex; flex-direction: column; gap: var(--s3); scroll-margin-top: var(--s4); }
 .settings h3 { margin: 0; font-size: calc(var(--fs-label) * var(--font-scale, 1)); line-height: var(--lh-label); font-weight: 600; letter-spacing: .3px; color: var(--muted); }
+/* A group's sub-group (실험적 기능 › 다른 앱 연동 / 계정 순환): each with its own notice. */
+.settings-subgroup { display: flex; flex-direction: column; gap: var(--s3); }
+.settings h4 { margin: var(--s2) 0 0; font-size: calc(var(--fs-label) * var(--font-scale, 1)); line-height: var(--lh-label); font-weight: 600; color: var(--fg-strong); }
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); flex-wrap: wrap; }
 .settings-row > span:first-child { white-space: nowrap; }
 /* A long lock reason wraps instead of running off the sheet. */
