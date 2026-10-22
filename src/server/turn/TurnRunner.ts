@@ -1533,7 +1533,11 @@ export class TurnRunner {
    * is refused (with code draining when restarting — the device sends it again after the restart). Whether any ran.
    */
   private async resendFollowUps(line: Queued[], c: { base: Omit<TurnParams, 'turnId' | 'text'>; sink: TurnSink; cwd: string; sessionId: string; notice: boolean }): Promise<boolean> {
-    const { base, sink, cwd, sessionId } = c;
+    const { sink, cwd } = c;
+    // The line follows one session: once an item moved to another engine (다른 AI 로 이어가기 — its handover turn
+    // `${id}:x…` ran in a new session), the rest go to that session, not each into a new one of its own.
+    let base = c.base;
+    let sessionId = c.sessionId;
     let said = !c.notice;
     let ran = false;
     for (let q = line.shift(); q; q = line.shift()) {
@@ -1541,8 +1545,12 @@ export class TurnRunner {
       if (sink.signal.aborted || sink.draining?.()) { this.refuseFollowUp(q, sink, sessionId, cwd); continue; }
       const id = q.f.turnId;
       let started = false;
+      let movedTo: string | null = null;
+      const engines = new Set<EngineKind>();
       const watched: TurnSink = { ...sink, emit: (m) => {
         sink.emit(m);
+        if (m.type === 'turn_started' && (m.turnId === id || m.turnId.startsWith(`${id}:x`))) engines.add(m.engine ?? 'claude');
+        if ((m.type === 'turn_started' || m.type === 'turn_result') && m.turnId.startsWith(`${id}:x`) && m.sessionId) movedTo = m.sessionId;
         if (m.type !== 'turn_started' || m.turnId !== id || started) return;
         started = true;
         if (!said) { said = true; sink.emit({ type: 'turn_notice', turnId: m.turnId, sessionId: m.sessionId ?? sessionId, cwd, message: RESEND_NOTICE }); }
@@ -1554,6 +1562,8 @@ export class TurnRunner {
       }
       // Refused before its turn_started (attachment gone, session gone): the pane must not wait on it.
       if (!started) this.refuseFollowUp(q, sink, sessionId, cwd);
+      // The engines it left (their limit is reached) stay out of any later handover of the line.
+      if (movedTo) { sessionId = movedTo; base = { ...base, sessionId: movedTo, excludeEngines: [...new Set([...(base.excludeEngines ?? []), ...engines])] }; }
     }
     return ran;
   }
@@ -2447,26 +2457,49 @@ export class TurnRunner {
    * (sink.crossEngine) and this answers the notice plus the new session's run — the caller ends the failed turn first
    * (its errorText carries the notice), then runs it. null = no handover: the old behaviour stands.
    */
-  private async crossOver(p: TurnParams, sink: TurnSink, from: { sessionId: string | null; engine: EngineKind; cwd: string }, attachments: Attachment[], opts?: { text: string; attachmentIds?: string[]; then?: (sessionId: string | null) => Promise<void> }): Promise<{ notice: string; go: () => Promise<void> } | null> {
+  private async crossOver(p: TurnParams, sink: TurnSink, from: { sessionId: string | null; engine: EngineKind; cwd: string }, attachments: Attachment[], opts?: { text: string; attachmentIds?: string[]; then?: (sessionId: string | null, excludeEngines: EngineKind[]) => Promise<void> }): Promise<{ notice: string; go: () => Promise<void> } | null> {
     const { deps } = this;
     const hop = p.crossHop ?? 0;
-    if (!deps.crossEngineFailover?.() || !sink.crossEngine || p.handoff || p.commanderHop !== undefined || p.bgTask || p.fork || sink.signal.aborted || hop >= CROSS_ENGINE_MAX_HOPS) return null;
+    // Shutting down (sink.draining): no new process — the caller's own refusal path stands.
+    if (!deps.crossEngineFailover?.() || !sink.crossEngine || sink.draining?.() || p.handoff || p.commanderHop !== undefined || p.bgTask || p.fork || sink.signal.aborted || hop >= CROSS_ENGINE_MAX_HOPS) return null;
     const text = opts?.text ?? p.text;
     const attachmentIds = opts ? opts.attachmentIds : p.attachments;
     const exclude = [...new Set([...(p.excludeEngines ?? []), from.engine])];
     const base: TurnParams = { turnId: `${p.turnId}:x${hop + 1}`, cwd: from.cwd, sessionId: null, text, engine: 'auto', model: 'auto', excludeEngines: exclude, crossHop: hop + 1, ...(attachmentIds?.length ? { attachments: attachmentIds } : {}), ...(p.lang ? { lang: p.lang } : {}), ...(p.concise ? { concise: true } : {}) };
     const d = await this.decideRoute(base, attachments).catch(() => null);
     if (!d || d.kind === 'no_route' || (d.fit && !d.fit.ok) || exclude.includes(d.engine) || (d.engine === 'codex' && !deps.codex)) return null;
+    // The new engine never runs with more than the old session allowed: its mode / sandbox as a PermMode (a Codex / Gemini
+    // sandbox: read-only = plan, workspace-write = acceptEdits — the narrower reading), then the target's closest mode
+    // that is not wider. Codex writes (and runs commands, approval never) only after 모두 자동 승인; Gemini edits after
+    // acceptEdits or wider; Grok has no plan mode, so plan asks (default).
+    const st = from.sessionId ? deps.store.get(from.sessionId) : undefined;
+    const ofSandbox = (s: CodexSandbox): PermMode => (s === 'workspace-write' ? 'acceptEdits' : 'plan');
+    const level: PermMode = st && (isCodexState(st) || isGeminiState(st)) ? ofSandbox(st.sandbox)
+      : from.engine === 'codex' ? ofSandbox(p.sandbox ?? DEFAULT_SANDBOX)
+      : from.engine === 'gemini' ? ofSandbox(p.sandbox ?? defaultGeminiSandbox(this.defaultMode() === 'bypassPermissions'))
+      : from.sessionId && st ? this.permissionModeOf(from.sessionId)
+      : p.permissionMode ?? (from.sessionId ? this.permissionModeOf(from.sessionId) : this.defaultMode());
+    const scoped: Pick<TurnParams, 'sandbox' | 'permissionMode'> = d.engine === 'codex' ? { sandbox: level === 'bypassPermissions' ? 'workspace-write' : 'read-only' }
+      : d.engine === 'gemini' ? { sandbox: level === 'bypassPermissions' || level === 'acceptEdits' ? 'workspace-write' : 'read-only' }
+      : { permissionMode: d.engine === 'grok' && level === 'plan' ? 'default' : level };
     const notice = sm().turn.crossNotice(ROUTE_ENGINE_LABEL[from.engine], ROUTE_ENGINE_LABEL[d.engine]);
     const got = await sink.crossEngine({ from: from.sessionId, fromTurnId: p.turnId, fromEngine: from.engine, engine: d.engine, model: d.model, cwd: from.cwd, turnId: base.turnId, text, ...(attachmentIds?.length ? { attachments: attachmentIds } : {}), notice }).catch(() => null);
     if (!got) return null;
-    const next: TurnParams = { ...base, carry: sm().turn.crossCarry(ROUTE_ENGINE_LABEL[from.engine], got.excerpt) };
+    const next: TurnParams = { ...base, ...scoped, carry: sm().turn.crossCarry(ROUTE_ENGINE_LABEL[from.engine], got.excerpt) };
     const go = async () => {
       // The new session's id, for the follow-ups that follow it (opts.then).
+      // A further handover of this turn (`${next.turnId}:x…`) moves them on to that session; the engines the chain left
+      // (their limit is reached) stay out of the follow-ups' own handovers.
       let sid: string | null = null;
+      const left = new Set<EngineKind>(exclude);
+      const ours = (turnId: string) => turnId === next.turnId || turnId.startsWith(`${next.turnId}:x`);
       const watched: TurnSink = {
         ...sink,
-        emit: (m) => { if ((m.type === 'turn_started' || m.type === 'turn_result') && m.turnId === next.turnId && m.sessionId) sid = m.sessionId; sink.emit(m); },
+        emit: (m) => {
+          if ((m.type === 'turn_started' || m.type === 'turn_result') && ours(m.turnId) && m.sessionId) sid = m.sessionId;
+          if (m.type === 'turn_started' && m.turnId.startsWith(`${next.turnId}:x`)) left.add(d.engine);
+          sink.emit(m);
+        },
         sessionKnown: (id) => { sid = id; sink.sessionKnown?.(id); },
       };
       try {
@@ -2478,7 +2511,7 @@ export class TurnRunner {
         console.error('deck: cross-engine handover failed', err instanceof Error ? err.message : err);
         sink.emit({ type: 'error', turnId: next.turnId, message: displayError(err instanceof Error ? err.message : String(err), null) ?? ABORTED });
       }
-      await opts?.then?.(sid);
+      await opts?.then?.(sid, [...left]);
     };
     return { notice, go };
   }
@@ -2535,12 +2568,12 @@ export class TurnRunner {
         ? await this.crossOver({ ...p, turnId: need.seg.turnId }, sink, { sessionId, engine: 'claude', cwd }, need.followUp?.attachments ?? [], {
           text: need.followUp ? need.followUp.f.text : sm().turn.crossContinue,
           ...(need.followUp?.f.attachments?.length ? { attachmentIds: need.followUp.f.attachments } : {}),
-          then: async (sid) => {
+          then: async (sid, excludeEngines) => {
             line.unshift(...need.queued);
             if (!sid) { for (const q of line.splice(0)) this.refuseFollowUp(q, sink, sessionId, cwd); return; }
             // A Claude model picked for the old session does not carry over to the other engine.
             for (const q of line) if (q.f.model) q.f = (({ model: _old, ...f }) => f)(q.f);
-            await this.resendFollowUps(line, { base: { cwd, sessionId: sid, ...keptOf(p) }, sink, cwd, sessionId: sid, notice: false });
+            await this.resendFollowUps(line, { base: { cwd, sessionId: sid, ...keptOf(p), excludeEngines }, sink, cwd, sessionId: sid, notice: false });
           },
         })
         : null;
