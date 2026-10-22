@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { GEMINI_ACCOUNTS, GROK_ACCOUNTS, type Account, type GeminiAccount, type GrokAccount, type Seat } from '../../shared/accounts';
 import type { GrokStatus } from '../../shared/protocol';
-import { ClaudeMark, GeminiMark, GrokMark, OpenAIMark } from './EngineMark';
+import { EngineBadge } from './EngineMark';
 import { RefreshIcon } from './icons';
 import { emptyAccountUsage, grokBillingWindow, leftPct, localDay, parseIsoUtc, remainingPct, trusted, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type GrokBotUsage, type GrokUsage, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 
@@ -241,7 +241,7 @@ function grokSeatData(seat: Seat, snap: GrokUsage, now: number, bot?: GrokBotUsa
     </>
   );
   const week = grokBillingWindow(g.billing, now);
-  const mark = <GrokMark className="usage-mark grok" />;
+  const mark = <EngineBadge engine="grok" className="usage-mark" />;
   if (!week || !g.billing) {
     return {
       seat, engine: 'grok', mark, rows: [], status: g.status,
@@ -377,14 +377,14 @@ export function buildSeats(usage: UsageSnapshot, active: readonly { id: Account 
       const kept = cli && u.status === 'stale' && trusted(u, now);
       const dim = cli && u.status === 'stale' && !kept;
       return {
-        seat: a, engine: 'claude', mark: <ClaudeMark className="usage-mark claude" />, rows: claudeRows(u, cli),
+        seat: a, engine: 'claude', mark: <EngineBadge engine="claude" className="usage-mark" />, rows: claudeRows(u, cli),
         status: (kept ? 'kept' : u.status) as SeatData['status'], dim, fetchedAt: u.fetchedAt,
         ...(cli || u.observedBy === 'poll' ? { observed: observedText(u, now) } : {}),
         ...(u.observedBy === 'poll' ? { polled: true } : {}),
       };
     }),
     {
-      seat: 'gpt', engine: 'gpt', mark: <OpenAIMark className="usage-mark gpt" />, rows: gptRows(gpt), status: gpt.status as SeatData['status'],
+      seat: 'gpt', engine: 'gpt', mark: <EngineBadge engine="codex" className="usage-mark" />, rows: gptRows(gpt), status: gpt.status as SeatData['status'],
       credits: creditsText(gpt.credits), fetchedAt: gpt.fetchedAt,
       ...(gpt.status === 'down' ? { hint: cli ? 'GPT 사용량 불명 — 아직 Codex 기록에서 한도 값을 읽지 못했습니다' : 'GPT 사용량 불명 — usage-deck 의 codex 카드가 setup_needed 상태입니다' } : {}),
     },
@@ -393,7 +393,7 @@ export function buildSeats(usage: UsageSnapshot, active: readonly { id: Account 
       const hint = geminiHint(g);
       const rows = geminiRows(g);
       return {
-        seat: a, engine: 'gemini', mark: <GeminiMark className="usage-mark gemini" />, rows, status: g.status as SeatData['status'],
+        seat: a, engine: 'gemini', mark: <EngineBadge engine="gemini" className="usage-mark" />, rows, status: g.status as SeatData['status'],
         hint, fetchedAt: g.fetchedAt, ...(rows.length === 0 ? { reasonLine: hint || '사용량 알 수 없음' } : {}),
         ...(g.fetchedAt ? { observed: `확인 · ${resetStamp(g.fetchedAt)}` } : {}),
       };

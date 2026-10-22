@@ -52,6 +52,8 @@
   --avatar-1: #bc5638; --avatar-2: #667c49; --avatar-3: #407f76; --avatar-4: #3d77b8;
   --avatar-5: #7968c1; --avatar-6: #c14c75; --avatar-7: #8e7125; --avatar-8: #6a7684;
   --avatar-glyph: #ffffff;
+  /* Engine badges: our own colours (not the vendors'), white letters at >= 4.5:1. */
+  --engine-claude: #6553cf; --engine-codex: #237564; --engine-gemini: #2f62a8; --engine-grok: #4a5060; --engine-fg: #ffffff;
   font-family: var(--font);
   font-size: calc(15px * var(--font-scale, 1));
   line-height: 1.55;
@@ -658,15 +660,20 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .sheet.usage-sheet { animation: none; } }
 
 /* Vendor marks share one size; only the colour differs. */
-.usage-mark { width: 14px; height: 14px; flex-shrink: 0; }
-.usage-mark.gpt { color: color-mix(in srgb, var(--fg-strong) 88%, transparent); }
-.usage-mark.gemini { color: #4E8CF5; }
-.usage-mark.grok { color: color-mix(in srgb, var(--fg-strong) 82%, transparent); }
+.usage-mark { font-size: 14px; flex-shrink: 0; }
 /* Engine mark at the start of a session title (sidebar, 최근 대화 cards, ⌘K, pane header): inline inside the truncating
    title, so it never wraps or adds height and the ellipsis only eats the text after it. Same marks as the usage cards. */
 .engine-mark { display: inline-block; width: 1em; height: 1em; margin-right: .4em; vertical-align: -.14em; line-height: 1; text-align: center; flex-shrink: 0; }
-.engine-mark.codex { color: color-mix(in srgb, var(--fg-strong) 88%, transparent); }
-.engine-mark-svg { display: block; width: 100%; height: 100%; }
+.engine-mark-badge { display: grid; }
+/* Engine badges (EngineBadge): our letter badges — C · G · Gm · X — in one shape, white on a palette colour. Sized by
+   font-size (1em square); the letter is CSS (attr), so the badge adds no text to the title around it. */
+.engine-badge { display: inline-grid; place-items: center; width: 1em; height: 1em; border-radius: 28%; background: var(--engine-claude); color: var(--engine-fg); flex-shrink: 0; overflow: hidden; font-family: var(--font); font-style: normal; user-select: none; }
+.engine-badge::before { content: attr(data-letter); font-size: .64em; font-weight: 750; line-height: 1; letter-spacing: -.03em; }
+.engine-badge.wide::before { font-size: .5em; letter-spacing: -.04em; }
+.engine-badge.codex { background: var(--engine-codex); }
+.engine-badge.gemini { background: var(--engine-gemini); }
+.engine-badge.grok { background: var(--engine-grok); }
+.engine-name { color: var(--muted); font-size: calc(var(--fs-meta) * var(--font-scale, 1)); font-weight: 500; white-space: nowrap; }
 /* The sheet's window rows (label · bar · remaining % · reset). */
 .usage-row { display: grid; grid-template-columns: minmax(36px, max-content) minmax(0, 1fr) max-content max-content; column-gap: 0; align-items: center; height: 16px; min-width: 220px; white-space: nowrap; }
 .usage-label { margin-right: 8px; font-size: calc(12.5px * var(--font-scale, 1)); font-weight: 500; color: var(--muted); overflow: hidden; }
@@ -2084,14 +2091,16 @@ button.hl-row-main:hover { background: var(--hover); }
 .session-row { display: flex; align-items: center; gap: var(--s3); flex: 1; min-width: 0; }
 .row-text { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
 .session-title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg); font-size: calc(var(--fs-body) * var(--font-scale, 1)); line-height: 1.3; font-weight: 500; letter-spacing: -.01em; }
-.sidebar .session-title .engine-mark { width: 1em; margin-right: .4em; opacity: .9; }
+.sidebar .session-title .engine-mark { width: 1em; margin-right: .4em; }
 .session-meta { display: flex; align-items: center; gap: 5px; min-width: 0; white-space: nowrap; overflow: hidden; color: var(--faint); font-size: calc(13px * var(--font-scale, 1)); line-height: var(--lh-meta); }
 .meta-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .meta-tag { flex-shrink: 0; color: var(--muted); font-weight: 500; }
 /* Two rows with one title: line 2 leads with the folder (kept whole, the preview gives way). */
 .meta-folder { flex-shrink: 0; max-width: 60%; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-weight: 500; }
 .meta-sep { flex-shrink: 0; }
-.meta-engine { flex-shrink: 0; display: inline-block; width: 12px; height: 12px; color: var(--muted); }
+.meta-engine { flex-shrink: 0; display: inline-grid; width: 12px; height: 12px; }
+/* Line 2 is one quiet colour: the badge in the line's muted grey, its letter cut in the sidebar colour. */
+.meta-engine-badge.engine-badge { font-size: 12px; background: var(--muted); color: var(--sidebar); }
 .meta-engine-svg { display: block; width: 100%; height: 100%; }
 .sidebar li.active .session-title { color: var(--fg-strong); }
 /* On a tinted row (current, hover, shown ⋯, open menu) the faint grey drops under 4.5:1 in the light theme: muted there. */

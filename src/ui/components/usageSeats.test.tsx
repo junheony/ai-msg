@@ -119,7 +119,7 @@ describe('usage seats in the sheet', () => {
     expect(screen.getByTestId('gpt-weekly').title).toContain('60% 남음');
     expect(screen.getByTestId('gpt-weekly').title).not.toContain('사용');
     expect(screen.getByTestId('account-gpt').className).toContain('current');
-    expect(screen.getByTestId('account-gpt').querySelector('svg.usage-mark.gpt')).toBeTruthy();
+    expect(screen.getByTestId('account-gpt').querySelector('.engine-badge.usage-mark.codex')).toBeTruthy();
     expect(screen.getByTestId('gpt-fiveHour').textContent).toContain('—');
     expect(screen.queryByTestId('gpt-credits')).toBeNull();
     cleanup();
@@ -154,7 +154,7 @@ describe('usage seats in the sheet', () => {
     sheet({ ...usage, deckReachable: true }, 'b');
     const bar = screen.getByTestId('a-fiveHour').querySelector('.usage-bar > i') as HTMLElement;
     expect(bar.style.width).toBe('87%');
-    expect(screen.getByTestId('account-a').querySelector('svg.usage-mark.claude.claude-mark')).not.toBeNull();
+    expect(screen.getByTestId('account-a').querySelector('.engine-badge.usage-mark.claude')).not.toBeNull();
     const legend = document.querySelector('.usage-sheet-legend')!;
     expect(legend.textContent).toBe('숫자는 남은 양 · 노랑 20% 이하 남음 · 빨강 5% 이하 남음');
     expect(legend.textContent).not.toContain('사용');
@@ -351,7 +351,7 @@ describe('usage seats · Grok (cooldown expiry, midnight, subscription)', () => 
     sheet(grokUsage({}), null, bin);
     expect(screen.getByTestId('x1-main').textContent).toBe('사용 가능 · 마지막 턴 10분 전');
     expect(screen.getByTestId('x1-today').textContent).toBe('deck 오늘3턴 · 입력 1,200 · 출력 34');
-    expect(screen.getByTestId('account-x1').querySelector('svg.usage-mark.grok')).not.toBeNull();
+    expect(screen.getByTestId('account-x1').querySelector('.engine-badge.usage-mark.grok')).not.toBeNull();
   });
 
   it('a live cooldown says "한도 — HH:MM 이후"', () => {

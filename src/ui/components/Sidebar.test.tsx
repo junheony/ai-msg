@@ -461,7 +461,7 @@ describe('Sidebar engine marks', () => {
     await waitFor(() => expect(screen.getByText('hit h2')).toBeTruthy());
     expect(screen.getByText('hit h1').querySelector('.engine-mark')?.getAttribute('title')).toBe('Claude');
     expect(screen.getByText('hit h2').querySelector('.engine-mark')?.getAttribute('title')).toBe('Codex (GPT)');
-    expect(screen.getByText('hit h3').querySelector('.engine-mark')).toBeNull();
+    expect(screen.getByText('hit h3').querySelector('.engine-mark')?.getAttribute('title')).toBe('Gemini');
   });
 });
 

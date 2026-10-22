@@ -6,7 +6,7 @@ import { groupByDate } from '../dateGroups';
 import { groupBranches, linksOf, type BranchGroup } from '../../shared/branches';
 import { searchTranscripts, type SearchHit } from '../sessionApi';
 import { FolderPicker } from './FolderPicker';
-import { EngineMark, GeminiMark, GrokMark, OpenAIMark, engineOf } from './EngineMark';
+import { EngineBadge, EngineMark, engineOf } from './EngineMark';
 import { usePinReorder } from '../pinOrder';
 import { BlockedDeleteItem, MenuList, deleteBlockedReason, isGrokBotEntry } from './SessionMenu';
 import { openInNewTab } from './ShareMenu';
@@ -671,12 +671,10 @@ const SIDEBAR_HELD = {
 /** A preview as one line (the row truncates it with an ellipsis). */
 const oneLine = (t: string | undefined) => (t ? t.replace(/\s+/g, ' ').trim() : '');
 
-/** Line 2's engine glyph (non-Claude only): 12px, single colour (the line's muted grey), decorative — the tooltip names it. */
+/** Line 2's engine badge (non-Claude only): 12px, single colour (the line's muted grey), decorative — the tooltip names it. */
 function MetaEngine({ engine }: { engine: EngineKind }) {
-  const cls = 'meta-engine-svg';
-  const mark = engine === 'codex' ? <OpenAIMark className={cls} /> : engine === 'grok' ? <GrokMark className={cls} /> : engine === 'gemini' ? <GeminiMark className={cls} /> : null;
-  if (!mark) return null;
-  return <span className={`meta-engine ${engine}`} aria-hidden="true">{mark}</span>;
+  if (engine === 'claude') return null;
+  return <span className={`meta-engine ${engine}`} aria-hidden="true"><EngineBadge engine={engine} className="meta-engine-badge" /></span>;
 }
 
 /** Grok Bot row tags: the app name, reply-awaited / unread / group markers, read-only. */

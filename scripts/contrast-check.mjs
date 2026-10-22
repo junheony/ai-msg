@@ -92,6 +92,10 @@ function check(name, t) {
     ["warn dot / panel", c("warn"), c("panel"), 3],
     // Sidebar row avatars: the session glyph (a 2px line icon, --avatar-glyph) on the project colour — graphics floor 3.
     ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => [`glyph / avatar-${n}`, c("avatar-glyph"), c(`avatar-${n}`), 3]),
+    // Engine badges (C · G · Gm · X): a white letter on the engine colour — text, so the text floor; in a sidebar row's
+    // line 2 the badge is muted with the letter cut in the sidebar colour.
+    ...["claude", "codex", "gemini", "grok"].map((k) => [`badge letter / engine-${k}`, c("engine-fg"), c(`engine-${k}`), 4.5]),
+    ["badge letter / muted (row)", c("sidebar"), c("muted"), 4.5],
     // Sidebar row end: the one status mark (unread / running ring in --accent, 승인 대기 in --warn, background in --muted)
     // on the row at rest, hovered and current (there accent leans 15% toward --fg) — graphics floor 3. The engine glyph and 읽기 전용 tag are muted (above).
     ...["accent", "warn", "muted"].flatMap((k) => [
