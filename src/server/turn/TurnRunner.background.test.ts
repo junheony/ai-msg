@@ -366,6 +366,8 @@ describe('TurnRunner: background work after the turn result', () => {
     f.push(cli.init(SID), cli.result('two', SID));
     await done;
     expect(of(msgs, 'error').filter((m) => m.clientRef).map((m) => [m.turnId, m.clientRef, m.code])).toEqual([['f1', 'r1', undefined]]);
+    // About this session (the pane showing it says it), not app-wide.
+    expect(of(msgs, 'error').find((m) => m.clientRef)).toMatchObject({ sessionId: SID });
     expect(of(msgs, 'turn_result').filter((m) => m.turnId === 'f1')).toEqual([]);
     expect(of(msgs, 'turn_result').at(-1)).toMatchObject({ turnId: 'f2', ok: true });
     // The held turn's effort / concise unless the follow-up asked otherwise.
@@ -489,6 +491,19 @@ describe('TurnRunner: background work after the turn result', () => {
     await waitFor(() => of(msgs, 'turn_result').length === 2, 'follow-up result');
     f.push(cli.bgLevel([]), cli.notifyUser(), cli.result('built', SID));
     await done;
+  });
+
+  it('the cap continuation is asked as the turn was (effort, concise, fast)', async () => {
+    const { f, msgs, sink, runner } = await setup({ bgMaxMs: 20 });
+    const real = runner.run.bind(runner);
+    const asked: { effort?: string; concise?: boolean; fast?: boolean }[] = [];
+    runner.run = async (p, s) => { if (p.turnId === 't1:cap1') asked.push({ effort: p.effort, concise: p.concise, fast: p.fast }); return real(p, s); };
+    const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go', effort: 'high', concise: true, fast: true }, sink);
+    f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'slow analysis' }]), cli.result('launched', SID));
+    await waitFor(() => of(msgs, 'turn_started').length === 2, 'the automatic continuation');
+    f.push(cli.init(SID), cli.result('resumed', SID));
+    await done;
+    expect(asked).toEqual([{ effort: 'high', concise: true, fast: true }]);
   });
 
   it('the reply language is carried to the cap continuation', async () => {
@@ -749,7 +764,7 @@ describe('TurnRunner: background work after the turn result', () => {
       expect(f.state.calls).toBe(1);
     });
 
-    it('with no account left (one hop per other account) the segment ends as failed and a queued follow-up is refused', async () => {
+    it('with no account left (one hop per other account) the segment ends as failed; a queued follow-up is not refused but goes on first, a later send after it', async () => {
       const { f, msgs, sink, runner, deps } = await setup({ usage: await usageCards(), move: okMove });
       const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go', failoverHop: 2 }, sink);
       f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', SID));
@@ -758,14 +773,95 @@ describe('TurnRunner: background work after the turn result', () => {
       await waitFor(() => of(msgs, 'delta').length === 1, 'continuation output');
       expect(runner.followUp(SID, { turnId: 'f2', text: 'next', clientRef: 'r2' })).toEqual({ queuedBehind: '백그라운드 계속' });
       f.push(limited);
+      await waitFor(() => f.state.calls === 2, 'the queued follow-up sent on');
+      // Booked to go on by itself once the limit lifts (BottleneckWatch fires it), the hop count carried over.
+      expect(deps.store.get(SID)?.pendingRetry).toMatchObject({ text: '이어서 진행해 주세요.', hops: 1 });
+      // A send arriving now waits behind it (it never goes in ahead of the message sent first).
+      expect(runner.followUp(SID, { turnId: 'f3', text: 'later', clientRef: 'r3' })).toEqual({ queuedBehind: RESEND_NOTICE });
+      f.push(cli.init(SID), cli.result('two', SID));
+      await waitFor(() => f.state.calls === 3, 'the later send after it');
+      f.push(cli.init(SID), cli.result('three', SID));
       await done;
       expect(readCooldownUntilMs(deps.cooldownDir, 'b', NOW)).toBe(NOW + 3_600_000);
       expect(of(msgs, 'turn_retry')).toEqual([]);
-      expect(of(msgs, 'turn_result').map((m) => [m.turnId, m.ok, m.errorText])).toEqual([['t1', true, null], ['t1:bg1', false, 'B 계정 사용 한도 도달 · 03:50 리셋 · 대안 계정 없음']]);
-      expect(of(msgs, 'error')).toEqual([expect.objectContaining({ turnId: 'f2', clientRef: 'r2' })]);
-      expect(f.state.calls).toBe(1);
-      // Booked to go on by itself once the limit lifts (BottleneckWatch fires it), the hop count carried over.
-      expect(deps.store.get(SID)?.pendingRetry).toMatchObject({ text: '이어서 진행해 주세요.', hops: 1 });
+      expect(of(msgs, 'turn_result').map((m) => [m.turnId, m.ok, m.errorText])).toEqual([['t1', true, null], ['t1:bg1', false, 'B 계정 사용 한도 도달 · 03:50 리셋 · 대안 계정 없음'], ['f2', true, null], ['f3', true, null]]);
+      expect(of(msgs, 'turn_started').map((m) => [m.turnId, m.clientRef])).toEqual([['t1', undefined], ['t1:bg1', undefined], ['f2', 'r2'], ['f3', 'r3']]);
+      expect(of(msgs, 'error')).toEqual([]);
+      expect(f.inputs.slice(-2).map((m) => JSON.stringify(m))).toEqual([expect.stringContaining('next'), expect.stringContaining('later')]);
+    });
+
+    it('the other account refusing the continuation before it starts: the queued follow-up still goes on, before a later send', async () => {
+      const { f, msgs, sink, runner } = await setup({ usage: await usageCards(), move: okMove });
+      const real = runner.run.bind(runner);
+      // The continuation on the other account is refused the way an unresumable session is (no turn_started).
+      runner.run = async (p, s) => {
+        if (p.turnId === 't1:bg1') { s.emit({ type: 'error', turnId: null, message: '이 세션을 열 수 없습니다' }); return; }
+        return real(p, s);
+      };
+      const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
+      f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', SID));
+      await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+      f.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('half'));
+      await waitFor(() => of(msgs, 'delta').length === 1, 'continuation output');
+      runner.followUp(SID, { turnId: 'f2', text: 'next', clientRef: 'r2' });
+      f.push(limited);
+      await waitFor(() => f.state.calls === 2, 'the queued follow-up sent on');
+      expect(runner.followUp(SID, { turnId: 'f3', text: 'later', clientRef: 'r3' })).toEqual({ queuedBehind: RESEND_NOTICE });
+      f.push(cli.init(SID), cli.result('two', SID));
+      await waitFor(() => f.state.calls === 3, 'the later send after it');
+      f.push(cli.init(SID), cli.result('three', SID));
+      await done;
+      expect(of(msgs, 'turn_result').map((m) => [m.turnId, m.ok])).toEqual([['t1', true], ['t1:bg1', false], ['f2', true], ['f3', true]]);
+      expect(of(msgs, 'error').filter((m) => m.clientRef)).toEqual([]);
+      expect(f.inputs.slice(-2).map((m) => JSON.stringify(m))).toEqual([expect.stringContaining('next'), expect.stringContaining('later')]);
+    });
+
+    it('order: the continuation on the other account, then the follow-ups that waited behind it (queued, or sent while the process closed), then a later send', async () => {
+      const { f, msgs, sink, runner } = await setup({ usage: await usageCards(), move: okMove });
+      const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go' }, sink);
+      f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', SID));
+      await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+      f.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('half'));
+      await waitFor(() => of(msgs, 'delta').length === 1, 'continuation output');
+      runner.followUp(SID, { turnId: 'f2', text: 'next', clientRef: 'r2' });
+      f.push(limited);
+      await waitFor(() => of(msgs, 'turn_retry').length === 1, 'the failover');
+      // Sent while the failed process closes / the continuation starts: it waits, never refused as busy.
+      expect(runner.followUp(SID, { turnId: 'f3', text: 'meanwhile', clientRef: 'r3' })).toMatchObject({ queuedBehind: expect.any(String) });
+      await waitFor(() => f.state.calls === 2, 'the continuation on the other account');
+      f.push(cli.init(SID), cli.result('resumed', SID));
+      await waitFor(() => f.state.calls === 3, 'f2');
+      expect(runner.followUp(SID, { turnId: 'f4', text: 'later', clientRef: 'r4' })).toEqual({ queuedBehind: RESEND_NOTICE });
+      f.push(cli.init(SID), cli.result('two', SID));
+      await waitFor(() => f.state.calls === 4, 'f3');
+      f.push(cli.init(SID), cli.result('three', SID));
+      await waitFor(() => f.state.calls === 5, 'f4');
+      f.push(cli.init(SID), cli.result('four', SID));
+      await done;
+      expect(of(msgs, 'error').filter((m) => m.clientRef)).toEqual([]);
+      expect(of(msgs, 'turn_result').map((m) => [m.turnId, m.ok])).toEqual([['t1', true], ['t1:bg1', true], ['f2', true], ['f3', true], ['f4', true]]);
+      expect(f.inputs.slice(-3).map((m) => JSON.stringify(m))).toEqual([expect.stringContaining('next'), expect.stringContaining('meanwhile'), expect.stringContaining('later')]);
+    });
+
+    it('a follow-up sent on carries its own fast setting (and the held turn\'s when it gave none)', async () => {
+      const { f, msgs, sink, runner } = await setup();
+      const real = runner.run.bind(runner);
+      const sent: [string, boolean | undefined][] = [];
+      runner.run = async (p, s) => { if (p.turnId !== 't1') sent.push([p.turnId, p.fast]); return real(p, s); };
+      const done = runner.run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'go', fast: true }, sink);
+      f.push(cli.init(SID), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', SID));
+      await waitFor(() => of(msgs, 'turn_result').length === 1, 'first result');
+      f.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('working'));
+      await waitFor(() => of(msgs, 'delta').length === 1, 'continuation output');
+      runner.followUp(SID, { turnId: 'f1', text: 'first', clientRef: 'r1', fast: false });
+      runner.followUp(SID, { turnId: 'f2', text: 'second', clientRef: 'r2' });
+      f.end();
+      await waitFor(() => f.state.calls === 2, 'first follow-up resumed');
+      f.push(cli.init(SID), cli.result('one', SID));
+      await waitFor(() => f.state.calls === 3, 'second follow-up resumed');
+      f.push(cli.init(SID), cli.result('two', SID));
+      await done;
+      expect(sent).toEqual([['f1', false], ['f2', true]]);
     });
 
     it('an automatic retry that went in as a follow-up says so, and failing on a limit books its text with the next hop', async () => {

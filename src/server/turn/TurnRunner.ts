@@ -1434,10 +1434,10 @@ export class TurnRunner {
             const failure = !ev.ok && !sink.signal.aborted && !fastFailed ? classifyFailure({ ok: false, errorText: ev.errorText, errorKind: ev.errorKind, rateLimitStatus: null }) : null;
             if (s && (failure === 'limit' || failure === 'auth')) {
               writeCooldown(this.deps.cooldownDir, account, this.now() + COOLDOWN_MS[failure]);
-              // No follow-up goes into the closing process: one arriving now waits in the queue and goes on with the rest
-              // (the queue is taken only once the process is closed, so nothing sent meanwhile is left behind).
+              // No follow-up goes into the closing process: one arriving now waits in the queue (still registered, so
+              // `closing` queues it) and goes on with the rest — the queue is taken only once the process is closed, so
+              // nothing sent meanwhile is left behind or refused as busy. The line takes over in `finally`.
               closing = true;
-              this.live.delete(sessionId);
               await a.rest.return?.();
               failover = { failure, errorText: ev.errorText, seg: { turnId: s.turnId, reason: s.reason }, followUp: s.followUp ?? null, tasks: [...tasks], queued: queue.splice(0) };
               break;
@@ -1496,7 +1496,8 @@ export class TurnRunner {
   private refuseFollowUp(q: Queued, sink: TurnSink, sessionId: string, cwd: string): void {
     const message = '세션 프로세스가 끝나 보내지 못했습니다 — 다시 보내 주세요';
     const draining = sink.signal.reason === SHUTDOWN_ABORT || sink.draining?.() ? { code: 'draining' as const } : {};
-    sink.emit({ type: 'error', turnId: q.f.turnId, message, ...draining, ...(q.f.clientRef ? { clientRef: q.f.clientRef } : {}) });
+    // About this session (the panes showing it say it), not an app-wide error.
+    sink.emit({ type: 'error', turnId: q.f.turnId, message, sessionId, ...draining, ...(q.f.clientRef ? { clientRef: q.f.clientRef } : {}) });
     if (q.started) sink.emit({ type: 'turn_result', turnId: q.f.turnId, sessionId, cwd, ok: false, text: '', badge: null, errorText: message });
   }
 
@@ -1563,7 +1564,7 @@ export class TurnRunner {
     }
     sink.emit({ type: 'turn_notice', turnId: p.turnId, sessionId, cwd, message: `백그라운드 작업 ${n}개가 ${need.minutes}분 한도로 끊김: ${need.tasks.join(', ')} — 이어서 진행하도록 자동으로 보냅니다` });
     try {
-      await this.run({ cwd, sessionId, turnId: `${p.turnId}:cap${hop}`, text: '이어서 진행해 주세요.', bgCapHop: hop, ...(p.commanderHop ? { commanderHop: p.commanderHop } : {}), ...(p.lang ? { lang: p.lang } : {}) }, sink);
+      await this.run({ cwd, sessionId, turnId: `${p.turnId}:cap${hop}`, text: '이어서 진행해 주세요.', bgCapHop: hop, ...keptOf(p) }, sink);
     } catch (err) {
       console.error('deck: 한도 뒤 자동 이어가기 실패', err instanceof Error ? err.message : err);
     }
@@ -2399,11 +2400,15 @@ export class TurnRunner {
     const { p, sink, cwd, sessionId, account, model, routerBase, line } = c;
     const why = failureLabel(need.failure);
     const hint = limitResetHint(need.errorText);
-    // The continuation's turn_started went out: the queued follow-ups are in the session's line by then (see below).
     let started = false;
+    // The follow-ups that waited behind the failed segment go first in the session's line — once the continuation starts,
+    // or when it cannot go on at all: then they are not refused but sent on after it like the rest (resendFollowUps), so
+    // a later send never goes in ahead of them.
+    let lined = false;
+    const lineUp = () => { if (!lined) { lined = true; line.unshift(...need.queued); } };
     const fail = (errorText: string) => {
       sink.emit({ type: 'turn_result', turnId: need.seg.turnId, sessionId, cwd, ok: false, text: '', badge: { account, model, reason: need.seg.reason, usage: ZERO_USAGE, modelNote: null }, errorText });
-      for (const q of started ? [] : need.queued) sink.emit({ type: 'error', turnId: q.f.turnId, message: '세션 프로세스가 끝나 보내지 못했습니다 — 다시 보내 주세요', ...(q.f.clientRef ? { clientRef: q.f.clientRef } : {}) });
+      lineUp();
     };
     const noneLeft = `${this.label(account)} 계정 ${why}${hint ? ` · ${hint}` : ''} · 대안 계정 없음${routerBase.sameVendorRotation === false ? `(${NO_ROTATION})` : ''}`;
     // A background continuation is booked as '이어서 진행해 주세요.', a failed follow-up as its own text (not with files).
@@ -2444,7 +2449,7 @@ export class TurnRunner {
       // Once it starts, the follow-ups that waited behind it go first in the session's line: a continuation held open for
       // background work takes them as follow-ups (followThrough empties the line into it), else each is a turn of its own.
       const watched: TurnSink = { ...sink, emit: (m) => {
-        if (m.type === 'turn_started' && m.turnId === need.seg.turnId && !started) { started = true; line.unshift(...need.queued); }
+        if (m.type === 'turn_started' && m.turnId === need.seg.turnId && !started) { started = true; lineUp(); }
         sink.emit(m);
       } };
       if (need.followUp) await this.run(ofFollowUp(need.followUp.f), watched);

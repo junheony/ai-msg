@@ -1061,6 +1061,22 @@ describe('message queue (ux-state)', () => {
       expect(nextQueued(pane(s))?.text).toBe('mine');
     });
 
+    it('a follow-up that waited in line and was refused before it started (no code): back at the head of the queue, paused; said in the pane, not app-wide', () => {
+      let s = play([history(['old'])], openedOn('s1'));
+      s = reducer(s, { type: 'queue_add', text: 'later' });
+      s = reducer(s, { type: 'sent', text: 'mine', attachments: [file], clientRef: 'r1' });
+      s = play([{ type: 'turn_queued', turnId: 'f1', sessionId: 's1', cwd: '/w', clientRef: 'r1', behind: '세션 프로세스가 끝나 새로 이어 보냅니다' }], s);
+      s = play([{ type: 'error', turnId: 'f1', message: '세션 프로세스가 끝나 보내지 못했습니다 — 다시 보내 주세요', clientRef: 'r1', sessionId: 's1' }], s);
+      expect(pane(s).awaitingStart).toBe(false);
+      expect(pane(s).awaitingBehind).toBeNull();
+      expect(pane(s).items.map((it) => it.kind === 'user' && it.text)).toEqual(['old']);
+      expect(pane(s).queue.map((q) => [q.text, q.ref])).toEqual([['mine', 'r1'], ['later', undefined]]);
+      expect(pane(s).queue[0]!.attachments).toMatchObject([{ id: file.id, name: 'x.png', isImage: true }]);
+      expect(pane(s).queuePaused).toBe(true);
+      expect(s.error).toBeNull();
+      expect((pane(s).notices ?? []).map((n) => n.message)).toContain('세션 프로세스가 끝나 보내지 못했습니다 — 다시 보내 주세요');
+    });
+
     it('draining: never deduped against the history (it definitely did not go in) — the same text sent twice goes out twice', () => {
       let s = refusedSend('draining');
       s = play([hello, history(['old', 'mine'])], s);

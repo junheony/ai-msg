@@ -402,6 +402,74 @@ describe('ws: sessions held open for background work', () => {
     b.close();
   });
 
+  it('a follow-up refused before its turn started (it waited in line) goes back to the device that sent it, whatever the code', async () => {
+    const S = '76767676-7676-4767-8767-767676767676';
+    const cwd = await seed(S, 'refusedfu');
+    fake = fakeClaudeCli();
+    const run = runner.run.bind(runner);
+    // The runner cannot start it (attachment gone, stopped from another device…): no turn_started, so resendFollowUps refuses it.
+    const spy = vi.spyOn(runner, 'run').mockImplementation((p, s) => (p.clientRef === 'h1' ? Promise.resolve() : run(p, s)));
+    const a = await client();
+    await a.next('hello');
+    a.send({ type: 'send', sessionId: S, cwd, text: 'go', clientRef: 'h0' });
+    const t = await a.next('turn_started');
+    fake.push(cli.init(S), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', S));
+    await a.next('turn_result', (m) => m.turnId === t.turnId);
+    const b = await client();
+    await b.next('hello');
+    b.send({ type: 'open_session', sessionId: S });
+    await b.next('history');
+    fake.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('working'));
+    await a.next('turn_started', (m) => m.reason === '백그라운드 계속');
+    a.send({ type: 'send', sessionId: S, cwd, text: 'first', clientRef: 'h1' });
+    await new Promise((r) => setTimeout(r, 20));
+    fake.end();
+    const err = await a.next('error', (m) => m.clientRef === 'h1');
+    expect(err).toMatchObject({ sessionId: S, message: '세션 프로세스가 끝나 보내지 못했습니다 — 다시 보내 주세요' });
+    expect(err).not.toHaveProperty('code');
+    await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
+    expect(b.got.some((m) => m.type === 'error' && m.clientRef === 'h1')).toBe(false);
+    spy.mockRestore();
+    a.close();
+    b.close();
+  });
+
+  it('a send asking another fast setting while follow-ups are sent on is held as going in: a resent copy is not queued twice', async () => {
+    const S = '75757575-7575-4757-8757-757575757575';
+    const cwd = await seed(S, 'resendfast');
+    fake = fakeClaudeCli();
+    const a = await client();
+    await a.next('hello');
+    a.send({ type: 'send', sessionId: S, cwd, text: 'go', clientRef: 'k0' });
+    const t = await a.next('turn_started');
+    fake.push(cli.init(S), cli.bgLevel([{ id: 'x', desc: 'build' }]), cli.result('launched', S));
+    await a.next('turn_result', (m) => m.turnId === t.turnId);
+    fake.push(cli.bgLevel([]), cli.notifyUser(), cli.delta('working'));
+    await a.next('turn_started', (m) => m.reason === '백그라운드 계속');
+    a.send({ type: 'send', sessionId: S, cwd, text: 'first', clientRef: 'k1' });
+    await new Promise((r) => setTimeout(r, 20));
+    fake.end();
+    await vi.waitFor(() => expect(fake.state.calls).toBe(2));
+    const b = await client();
+    await b.next('hello');
+    b.send({ type: 'open_session', sessionId: S, accepts: ['turn_queued'] });
+    await b.next('history');
+    b.send({ type: 'send', sessionId: S, cwd, text: 'quick', clientRef: 'k2', fast: true });
+    expect(await b.next('turn_queued')).toMatchObject({ clientRef: 'k2', behind: RESEND_NOTICE });
+    // A stalled socket's copy of the same send: refused as still in flight, not queued a second time.
+    b.send({ type: 'send', sessionId: S, cwd, text: 'quick', clientRef: 'k2', fast: true });
+    expect(await b.next('error', (m) => m.clientRef === 'k2')).toMatchObject({ code: 'in_flight' });
+    fake.push(cli.init(S), cli.result('one', S));
+    await vi.waitFor(() => expect(fake.state.calls).toBe(3));
+    fake.push(cli.init(S), cli.result('two', S));
+    const k2 = await b.next('turn_started', (m) => m.clientRef === 'k2');
+    expect(await b.next('turn_result', (m) => m.turnId === k2.turnId)).toMatchObject({ ok: true, text: 'two' });
+    await vi.waitFor(() => expect(wsApi.activeTurns()).toBe(0));
+    expect(fake.state.calls).toBe(3);
+    a.close();
+    b.close();
+  });
+
   it('a started follow-up refused for a restart (code draining): its ref is taken back and the error goes to the device that sent it, so it holds the message', async () => {
     const S = '78787878-7878-4787-8787-787878787878';
     const cwd = await seed(S, 'drainfu');
