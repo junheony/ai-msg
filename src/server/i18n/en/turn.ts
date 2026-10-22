@@ -22,5 +22,7 @@ export const turn = {
     log: (n: number) => `deck: booked ${n} session(s) cut by the restart to continue automatically`,
     /** deck.log: sessions sent on after the last restart and cut again, skipped this once (ids, space-separated). */
     repeatSkipped: (ids: string) => `deck: not continuing again after the restart (already continued after the last one): ${ids}`,
+    /** deck.log: restart-cut.json (what a forced shutdown was about to cut) could not be written. */
+    cutWriteFailed: (err: string) => `deck: could not record the sessions about to be cut (restart-cut.json) — ${err}`,
   },
 };

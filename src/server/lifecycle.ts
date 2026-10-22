@@ -9,6 +9,8 @@
  * wait — the way to force a restart: what runs is aborted and given settleMs to record its cut; a third signal exits at once.
  */
 
+import { sm } from './i18n';
+
 export type DrainTarget = {
   drain(): void;
   activeTurns(): number;
@@ -35,7 +37,7 @@ const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
 const cut = (o: DrainOptions, log: (msg: string) => void) => {
-  try { o.onCut?.(); } catch (err) { log(`deck: restart-cut snapshot failed — ${errText(err)}`); }
+  try { o.onCut?.(); } catch (err) { log(sm().turn.restartResume.cutWriteFailed(errText(err))); }
 };
 
 /** Drains `target`; resolves 'drained' when no turn is left, 'timeout' when a finite deadline aborted the rest. */
@@ -75,7 +77,8 @@ export type SignalHost = { on(sig: NodeJS.Signals, fn: () => void): unknown };
  * Wires the signals: SIGTERM/SIGUSR2 → drain then `exit`; a repeat or SIGINT → abort now and `exit`.
  * `exit` runs once (it closes sockets/timers and ends the process). `request` starts the same drain without a signal
  * (지금 재시작 in the UI); while already draining it does nothing (unlike a repeated signal). `force` is the repeated
- * signal without a signal (작업 끊고 지금 재시작): while draining it aborts what is left and exits now, returning true;
+ * signal without a signal (작업 끊고 지금 재시작): while draining it aborts what is left and exits once the aborted turns
+ * have ended (settleMs), returning true — pressed again meanwhile it changes nothing;
  * not draining, it does nothing and returns false.
  */
 export function installGracefulShutdown(host: SignalHost, target: DrainTarget, o: DrainOptions & { exit: (reason: string) => void; onDrain?: () => void }): { draining: () => boolean; request: (reason: string) => void; force: (reason: string) => boolean } {
@@ -87,8 +90,10 @@ export function installGracefulShutdown(host: SignalHost, target: DrainTarget, o
   let settling = false;
   // Aborted turns write their traces (events.jsonl 'interrupted', SessionState.interrupted) as they end: they get up to
   // settleMs for it, like the deadline path, before `exit` (which flushes the event log).
-  const now = (sig: string) => {
-    if (settling) { exit(sig); return; }
+  // `fromSignal`: a real signal while settling exits at once (the way out of a hang); the UI's force does not.
+  const now = (sig: string, fromSignal = true) => {
+    if (exited) return;
+    if (settling) { if (fromSignal) exit(sig); return; }
     settling = true;
     log(`deck: ${sig} — 기다리지 않고 종료합니다`);
     target.drain();
@@ -104,6 +109,7 @@ export function installGracefulShutdown(host: SignalHost, target: DrainTarget, o
     })().then(() => exit(sig), () => exit(sig));
   };
   const graceful = (sig: string) => {
+    if (exited) return;
     if (draining || settling) { now(sig); return; }
     draining = true;
     try { o.onDrain?.(); } catch (err) { log(`deck: 종료 준비 기록 실패 — ${errText(err)}`); }
@@ -116,6 +122,6 @@ export function installGracefulShutdown(host: SignalHost, target: DrainTarget, o
   return {
     draining: () => draining,
     request: (reason) => { if (!draining) graceful(reason); },
-    force: (reason) => { if (!draining) return false; graceful(reason); return true; },
+    force: (reason) => { if (!draining) return false; now(reason, false); return true; },
   };
 }

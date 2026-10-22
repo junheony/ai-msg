@@ -15,5 +15,6 @@ export const turn: Widen<typeof en> = {
     notice: '서버 재시작으로 끊긴 작업을 자동으로 이어갑니다',
     log: (n: number) => `deck: 재시작으로 끊긴 세션 ${n}개를 자동으로 이어가도록 예약했습니다`,
     repeatSkipped: (ids: string) => `deck: 지난 재시작 뒤에도 이어간 세션이라 이번엔 자동으로 이어가지 않습니다: ${ids}`,
+    cutWriteFailed: (err: string) => `deck: 끊길 세션 기록(restart-cut.json) 실패 — ${err}`,
   },
 };
