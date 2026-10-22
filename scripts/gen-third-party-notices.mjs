@@ -60,7 +60,9 @@ function uiRoots() {
       const f = join(dir, e.name);
       if (e.isDirectory()) { if (e.name !== 'public') visit(f); continue; }
       if (!/\.(ts|tsx)$/.test(e.name) || /\.test\./.test(e.name)) continue;
-      for (const [, spec] of readFileSync(f, 'utf8').matchAll(/(?:from|import)\s*\(?\s*['"]([^'".\/][^'"]*)['"]/g)) {
+      // Comments dropped first: prose like `"not found" from "too big"` is not an import.
+      const code = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/.*$/gm, '$1');
+      for (const [, spec] of code.matchAll(/(?:from|import)\s*\(?\s*['"]([^'".\/][^'"]*)['"]/g)) {
         names.add(spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0]);
       }
     }
