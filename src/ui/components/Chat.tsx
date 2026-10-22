@@ -184,6 +184,8 @@ export type ChatProps = {
   loading?: boolean;
   /** The socket is up (absent = yes): queue chips say whether a held message waits for a reconnect or a restart. */
   connected?: boolean;
+  /** Claude's guess at the next prompt (prompt_suggestion): ghost text in the empty composer, Tab / 추천 채우기 puts it in. */
+  suggestion?: string | null;
 };
 
 const HANDOFF_COMMANDS: CommandItem[] = [{ name: HANDOFF_COMMAND, description: '새 세션으로 이어가기 (인계 메모를 쓰고 새 세션에 붙여 넣기)', argumentHint: '' }];
@@ -422,6 +424,14 @@ export function Chat(p: ChatProps) {
     setText('');
     scroll.attach();
   };
+  // The prompt suggestion: shown only while the composer is empty and idle (one typed character hides it, deleting it
+  // brings it back); taking it fills the composer and sends nothing.
+  const ghost = !text && !p.busy && !p.readOnly && p.suggestion ? p.suggestion : null;
+  const takeSuggestion = () => {
+    if (!ghost) return;
+    setText(ghost);
+    requestAnimationFrame(() => { const ta = taRef.current; if (ta) { ta.focus(); ta.setSelectionRange(ghost.length, ghost.length); } });
+  };
   const tm = p.titleMenu;
   // ⚡ 빠르게: an existing Claude session's switch (an id-less one has no key yet); on, a ↯ next to the composer chip.
   const fastEligible = !!p.sessionId && !p.isNew && effectiveEngine === 'claude' && !p.readOnly;
@@ -486,6 +496,11 @@ export function Chat(p: ChatProps) {
     // after the commit is a real Enter and sends the full text.
     const ime = e.nativeEvent.isComposing || e.keyCode === 229 || composing.current;
     if (ime) return;
+    if (e.key === 'Tab' && ghost && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
+      e.preventDefault();
+      takeSuggestion();
+      return;
+    }
     if (e.key === 'Tab' && e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && p.onPermMode && permSupported) {
       e.preventDefault();
       p.onPermMode(nextPermMode(permMode, effectiveEngine));
@@ -636,6 +651,11 @@ export function Chat(p: ChatProps) {
         <Composer
           dragover={drag && !p.readOnly}
           popup={suggest.popup}
+          {...(ghost ? { hint: (
+            <button type="button" className="prompt-suggest-take" data-testid="prompt-suggest-take" onMouseDown={(e) => e.preventDefault()} onClick={takeSuggestion} title={`추천 채우기: ${ghost}`}>
+              {!coarse && <kbd>Tab</kbd>}추천 채우기
+            </button>
+          ) } : {})}
           chip={(<>
             <SessionChip
               key={p.sessionId ?? 'new'}
@@ -692,7 +712,7 @@ export function Chat(p: ChatProps) {
             // letter, swaps words with autocorrect and underlines code — prompts are not prose.
             autoCorrect="off" autoCapitalize="off" spellCheck={false}
             disabled={!!p.readOnly}
-            placeholder={p.readOnly ? p.readOnly : queueing ? (steering ? (coarse ? '실행 중 · 보내면 다음 도구 실행 뒤 전달' : '실행 중 · Enter 로 보내면 다음 도구 실행 뒤 전달 · Esc 중단') : coarse ? '실행 중 · 보내면 대기열에 추가' : '실행 중 · Enter 로 대기열에 추가 · Esc 중단') : coarse ? '메시지 입력 · @ 파일 · / 명령' : (sendKey === 'mod-enter' ? '메시지 입력 · ⌘Enter 로 보내기 · Enter 줄바꿈' : '메시지 입력 · Enter 로 보내기 · Shift+Enter 줄바꿈')}
+            placeholder={p.readOnly ? p.readOnly : ghost ? ghost : queueing ? (steering ? (coarse ? '실행 중 · 보내면 다음 도구 실행 뒤 전달' : '실행 중 · Enter 로 보내면 다음 도구 실행 뒤 전달 · Esc 중단') : coarse ? '실행 중 · 보내면 대기열에 추가' : '실행 중 · Enter 로 대기열에 추가 · Esc 중단') : coarse ? '메시지 입력 · @ 파일 · / 명령' : (sendKey === 'mod-enter' ? '메시지 입력 · ⌘Enter 로 보내기 · Enter 줄바꿈' : '메시지 입력 · Enter 로 보내기 · Shift+Enter 줄바꿈')}
             aria-label="메시지"
             rows={1}
             // Not a form field: keeps iOS from showing its AutoFill (password/card/address) bar above the keyboard.

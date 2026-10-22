@@ -243,7 +243,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     // The socket layer is created after the HTTP handler; index changes made over HTTP (F1/F2) or by a fork reach it through this.
     let notifyIndex = () => {};
     let notifyPermissionMode: (sessionId: string, mode: PermMode) => void = () => {};
-    const claude = new ClaudeEngine({ bin: cfg.claudeBin, accounts, ...(claudeScripts ? { scripts: claudeScripts } : {}), bgMaxMs: cfg.bgMaxMs, steer: cfg.steer, onCommands: (sessionId, cwd, list, terminal) => commands.record(sessionId, cwd, list, terminal) });
+    const claude = new ClaudeEngine({ bin: cfg.claudeBin, accounts, ...(claudeScripts ? { scripts: claudeScripts } : {}), bgMaxMs: cfg.bgMaxMs, steer: cfg.steer, promptSuggestions: cfg.promptSuggestions, onCommands: (sessionId, cwd, list, terminal) => commands.record(sessionId, cwd, list, terminal) });
     cleanup.push(() => void claude.close().catch(() => undefined));
     const runner = new TurnRunner({
       engine: claude,

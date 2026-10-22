@@ -105,7 +105,7 @@ describe('reducer', () => {
       { type: 'permission_request', turnId: 't1', sessionId: null, cwd: '/w', requestId: 'r1', toolName: 'Bash', input: { command: 'ls' }, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: true, sessionLabel: '이 세션 동안 `Bash(ls)` 허용' },
     ], s);
     expect(pane(s).items[0]).toEqual({ kind: 'user', text: 'hi', n: 0, at: expect.any(Number) });
-    expect(pane(s).items[1]).toMatchObject({ kind: 'assistant', turnId: 't1', text: 'ok', streaming: true, toolCalls: [{ toolUseId: 'tu1', name: 'Bash', result: null }] });
+    expect(pane(s).items[1]).toMatchObject({ kind: 'assistant', turnId: 't1', text: 'ok', streaming: true, toolCalls: [{ toolUseId: 'tu1', name: 'Bash', result: null, textAt: 2 }] });
     expect(s.pending).toMatchObject([{ turnId: 't1', requestId: 'r1', toolName: 'Bash', input: { command: 'ls' }, cwd: '/w' }]);
     expect(pane(s).activeTurnId).toBe('t1');
     s = play([
@@ -119,6 +119,8 @@ describe('reducer', () => {
     expect(pane(s).items).toHaveLength(2);
     const a = pane(s).items[1];
     expect(a).toMatchObject({ kind: 'assistant', streaming: false, badge: { account: 'c' }, notes: ['재시도 B → C: 한도 도달'], toolCalls: [{ result: 'a.txt' }] });
+    // The retry restarted the text: the old call's text mark (간결 모드 fold point) is gone.
+    expect((a as { toolCalls: { textAt?: number }[] }).toolCalls[0]!.textAt).toBeUndefined();
     expect(pane(s).session).toMatchObject({ sessionId: 's1', account: 'c' });
     expect(pane(s).activeTurnId).toBeNull();
   });
@@ -1954,5 +1956,27 @@ describe('reducer: deck 에서 새 GPT 세션으로 이어가기 (codex_handoff)
   it('a turn that is not a failed one of this pane: nothing happens', () => {
     const before = locked(true);
     expect(reducer(before, { type: 'codex_handoff', paneId: pane(before).id, turnId: 'nope' })).toBe(before);
+  });
+});
+
+describe('reducer: prompt suggestions (volatile, per session)', () => {
+  const sug = (sessionId: string | null, text: string): ServerMessage => ({ type: 'prompt_suggestion', turnId: 't1', sessionId, cwd: '/w', text });
+
+  it('stores the latest suggestion per session; one without a session is dropped', () => {
+    const s = play([sug('s1', '하나'), sug('s2', '둘'), sug('s1', '셋'), sug(null, '없음')]);
+    expect(s.suggestions).toEqual({ s1: '셋', s2: '둘' });
+  });
+
+  it('a new turn on the session clears its suggestion only', () => {
+    const s = play([sug('s1', '하나'), sug('s2', '둘'), { type: 'turn_started', turnId: 't2', sessionId: 's1', cwd: '/w', account: 'c', model: 'opus', reason: '새 턴', attempt: 0 }]);
+    expect(s.suggestions).toEqual({ s2: '둘' });
+  });
+
+  it('switching the pane to another session clears the left one; reopening the same keeps it', () => {
+    const s = play([sug('s1', '하나'), sug('s2', '둘')], openedOn('s1'));
+    const same = reducer(s, { type: 'open', sessionId: 's1', cwd: '/w', title: 't' });
+    expect(same.suggestions).toEqual({ s1: '하나', s2: '둘' });
+    const moved = reducer(s, { type: 'open', sessionId: 's3', cwd: '/w', title: 't' });
+    expect(moved.suggestions).toEqual({ s2: '둘' });
   });
 });

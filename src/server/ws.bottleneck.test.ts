@@ -139,19 +139,40 @@ describe('ws: submitRetry keeps its hop on every path', () => {
     expect(h.calls[1]).toMatchObject({ sessionId: S, text: 'again', retryHop: 2 });
   });
 
-  it('the process is only closing (no follow-up taken): the retry waits for it to close, then runs with the hop', async () => {
+  it('the process is only closing (no follow-up taken): it is ended (it may only wait for its prompt suggestion), then the retry runs with the hop', async () => {
     const S = '75757575-7575-4757-8757-757575757575';
     const h = heldRun();
     vi.spyOn(runner, 'foreignWrites').mockResolvedValue(false);
     vi.spyOn(runner, 'followUp').mockReturnValue(false);
     wsApi.submitRetry({ sessionId: S, cwd: base, text: 'first', hop: 1 });
     await vi.waitFor(() => expect(h.calls).toHaveLength(1));
+    const firstSignal = h.run.mock.calls[0]![1].signal;
     wsApi.submitRetry({ sessionId: S, cwd: base, text: 'again', hop: 2 });
-    await new Promise((r) => setTimeout(r, 50));
-    expect(h.calls).toHaveLength(1);
-    h.release();
     await vi.waitFor(() => expect(h.calls).toHaveLength(2));
+    expect(firstSignal.aborted).toBe(true);
     expect(h.calls[1]).toMatchObject({ text: 'again', retryHop: 2 });
+    h.release();
+  });
+});
+
+describe('ws: 새 세션으로 이어가기 into a process that only waits for its prompt suggestion', () => {
+  it('the held process is ended, then the handoff note runs; no error', async () => {
+    const S = '76767676-7676-4767-8767-767676767676';
+    const h = heldRun();
+    const ws = await connect();
+    const got: ServerMessage[] = [];
+    ws.on('message', (d) => got.push(JSON.parse(String(d)) as ServerMessage));
+    ws.send(JSON.stringify({ type: 'send', sessionId: S, cwd: base, text: 'first' }));
+    await vi.waitFor(() => expect(h.calls).toHaveLength(1));
+    await vi.waitFor(() => expect(got.some((m) => m.type === 'turn_result')).toBe(true));
+    const firstSignal = h.run.mock.calls[0]![1].signal;
+    ws.send(JSON.stringify({ type: 'send', sessionId: S, cwd: base, text: 'x', handoff: true }));
+    await vi.waitFor(() => expect(h.calls).toHaveLength(2));
+    expect(firstSignal.aborted).toBe(true);
+    expect(h.calls[1]).toMatchObject({ sessionId: S, handoff: true });
+    expect(got.filter((m) => m.type === 'error')).toEqual([]);
+    h.release();
+    ws.close();
   });
 });
 

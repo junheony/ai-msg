@@ -211,4 +211,9 @@ describe('config: drain and background limits', () => {
     expect(loadConfig({ PATH: '/nonexistent', DECK_STEER: '1' }, '/h', '/repo').steer).toBe(true);
     expect(loadConfig({ PATH: '/nonexistent', DECK_STEER: '0' }, '/h', '/repo').steer).toBe(false);
   });
+
+  it('prompt suggestions are on unless DECK_PROMPT_SUGGEST=0', () => {
+    expect(loadConfig({ PATH: '/nonexistent' }, '/h', '/repo').promptSuggestions).toBe(true);
+    expect(loadConfig({ PATH: '/nonexistent', DECK_PROMPT_SUGGEST: '0' }, '/h', '/repo').promptSuggestions).toBe(false);
+  });
 });

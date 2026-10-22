@@ -777,6 +777,15 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         return;
       }
     }
+    // A Claude process that already answered and holds no background work may only be waiting for its prompt suggestion:
+    // it is ended and the handoff runs once the session is released.
+    const idle = msg.handoff && msg.sessionId && busy.has(msg.sessionId) ? turns.get(busy.get(msg.sessionId)!) : undefined;
+    if (idle && idle.engine === 'claude' && idle.current === null && !idle.bg && !idle.recycling && idle.afterRelease.length === 0) {
+      idle.recycling = true;
+      idle.afterRelease.push({ ws, msg, ...hop });
+      idle.ac.abort();
+      return;
+    }
     if (msg.handoff && (!msg.sessionId || busy.has(msg.sessionId))) {
       send(ws, { type: 'error', turnId: null, message: msg.sessionId ? '세션이 실행 중이라 지금은 넘길 수 없습니다 — 끝난 뒤 다시 시도하세요' : '새 세션은 넘길 대화가 없습니다', ...ref });
       return;
@@ -863,7 +872,12 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       prompts.delete(followId);
       // The turn already sent its result and the process is only closing (no background work to join):
       // the UI's queue fires on that result, so run the send as soon as the lock is released instead of refusing it.
-      if (base && base.current === null) { base.afterRelease.push({ ws, msg, ...hop }); return; }
+      if (base && base.current === null) {
+        base.afterRelease.push({ ws, msg, ...hop });
+        // It may only be waiting for its prompt suggestion (ClaudeEngine SUGGEST_WAIT_MS): ended now, so the send does not wait.
+        if (base.engine === 'claude' && !base.bg && !base.recycling) { base.recycling = true; base.ac.abort(); }
+        return;
+      }
       send(ws, { type: 'error', turnId: null, message: '이 세션은 이미 실행 중입니다', ...ref });
       return;
     }

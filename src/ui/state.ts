@@ -14,7 +14,7 @@ import { has } from './features';
 import { clampFloat, type FloatRect } from './paneDrag';
 import { paneSize } from './paneResize';
 
-export type ToolCallItem = { toolUseId: string; name: string; input: unknown; result: string | null; isError: boolean };
+export type ToolCallItem = { toolUseId: string; name: string; input: unknown; result: string | null; isError: boolean; /** Live turn: the reply text's length when this call began (간결 모드 folds the text before it). */ textAt?: number };
 
 export type ChatItem =
   | { kind: 'user'; text: string; /** sent attachments (display: name tile, or a thumbnail for images) */ attachments?: SentFile[]; /** 메시지 편집 갈래: the message's ordinal among the session's user messages (TranscriptMessage.n); absent = unknown. */ n?: number; /** When it was sent (ms): the transcript's time, or this device's clock for one sent here; absent = unknown. */ at?: number }
@@ -376,6 +376,8 @@ export type AppState = {
   commanders: Record<string, CommanderView>;
   /** The server's last refusal of a commander_* ask (or of a mode change because one is active), per session, until the user acts again. */
   commanderRefusals: Record<string, RefusalCode>;
+  /** Claude's next-prompt guess per session (prompt_suggestion), until its next turn starts or a pane leaves it. Memory only. */
+  suggestions?: Record<string, string>;
 };
 
 export type RoutePreview = Omit<Extract<ServerMessage, { type: 'route_preview' }>, 'type'>;
@@ -844,7 +846,7 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       return updateTurn(pane, msg.turnId, (it) => ({ ...endThinking(it), text: it.text + msg.text }));
     case 'tool_call':
       if (!belongs(pane, msg)) return pane;
-      return updateTurn(pane, msg.turnId, (it) => ({ ...endThinking(it), toolCalls: [...it.toolCalls, { toolUseId: msg.toolUseId, name: msg.name, input: msg.input, result: null, isError: false }] }));
+      return updateTurn(pane, msg.turnId, (it) => ({ ...endThinking(it), toolCalls: [...it.toolCalls, { toolUseId: msg.toolUseId, name: msg.name, input: msg.input, result: null, isError: false, textAt: it.text.length }] }));
     case 'tool_result': {
       if (!belongs(pane, msg)) return pane;
       // The item holding the call (a steer may have split the turn since).
@@ -883,8 +885,8 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       return { ...pane, queue: pane.queue.map(({ steer, ...q }) => (steer === msg.steerId ? { ...q, ...(msg.code === 'draining' ? { restart: 'hold' as const } : {}) } : { ...q, ...(steer ? { steer } : {}) })) };
     case 'turn_retry':
       if (!belongs(pane, msg)) return pane;
-      // Review M11: the retry streams into a fresh segment; the failed attempt's text is kept apart.
-      return updateTurn(pane, msg.turnId, ({ thinking: _drop, ...it }) => ({ ...it, text: '', attempts: it.text ? [...it.attempts, it.text] : it.attempts, notes: [...it.notes, `재시도 ${seatLabel(accounts, msg.fromAccount)} → ${seatLabel(accounts, msg.toAccount)}: ${msg.reason}`] }));
+      // Review M11: the retry streams into a fresh segment; the failed attempt's text is kept apart (its calls' text marks too).
+      return updateTurn(pane, msg.turnId, ({ thinking: _drop, ...it }) => ({ ...it, text: '', toolCalls: it.toolCalls.map(({ textAt: _at, ...t }) => t), attempts: it.text ? [...it.attempts, it.text] : it.attempts, notes: [...it.notes, `재시도 ${seatLabel(accounts, msg.fromAccount)} → ${seatLabel(accounts, msg.toAccount)}: ${msg.reason}`] }));
     case 'turn_background': {
       if (!belongs(pane, msg)) return pane;
       // One pill per pane (one process per session); [] clears it.
@@ -1143,8 +1145,16 @@ function withCommander(state: AppState, sessionId: string, view: CommanderView |
   return { ...state, commanders: rest };
 }
 
+/** `suggestions` without `sessionId`'s (the same object when it has none). */
+function dropSuggestion(suggestions: AppState['suggestions'], sessionId: string | null | undefined): AppState['suggestions'] {
+  if (!sessionId || !suggestions || !(sessionId in suggestions)) return suggestions;
+  const { [sessionId]: _gone, ...rest } = suggestions;
+  return rest;
+}
+
 function onServer(state: AppState, msg: ServerMessage): AppState {
   switch (msg.type) {
+    case 'prompt_suggestion': return msg.sessionId ? { ...state, suggestions: { ...state.suggestions, [msg.sessionId]: msg.text } } : state;
     case 'hello': {
       const listed = has('accounts') ? accountListOf(msg.accounts) : LEGACY_ACCOUNT_LIST;
       // The same list as before keeps its identity (nothing drawn from it renders again).
@@ -1220,7 +1230,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
         if (canClaim && next.myTurns.includes(msg.turnId)) claimed = true;
         return next;
       });
-      return { ...state, panes };
+      return { ...state, panes, suggestions: dropSuggestion(state.suggestions, msg.sessionId) };
     }
     case 'thinking': case 'delta': case 'tool_call': case 'tool_result': case 'turn_retry': case 'turn_background':
     case 'turn_progress': case 'task_update': case 'task_done': case 'sub_tool_call': case 'sub_tool_result': case 'turn_queued':
@@ -1328,7 +1338,7 @@ export function reducer(state: AppState, action: Action): AppState {
       const same = !!pane && action.sessionId !== null && pane.session?.sessionId === action.sessionId;
       // A route_fit card up: its message goes back to the queue (paused) first, so it is kept (or parked) like any other.
       const fitted = pane?.routeFit ? updatePane(state, pane.id, routeFitBack) : state;
-      const s = { ...(same ? fitted : park(fitted, action.paneId)), recent: remember(state.recent, pane) };
+      const s = { ...(same ? fitted : park(fitted, action.paneId)), recent: remember(state.recent, pane), ...(same ? {} : { suggestions: dropSuggestion(state.suggestions, pane?.session?.sessionId) }) };
       // Shown until the history (asked for again on every open) replaces them.
       const cached = action.sessionId !== null ? s.recent[action.sessionId] : undefined;
       // Messages kept with this session (park; a new session: with its folder) come back, paused — and stay kept.

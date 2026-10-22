@@ -57,7 +57,7 @@ export function conciseFirstStep(prompt: string | null | undefined): string | nu
 }
 
 /**
- * The model's own opening line while it works (concise mode hides the streaming answer): the first sentence of the text
+ * The model's own opening line while it works (concise mode folds the text written before a tool call): the first sentence of the text
  * so far, when it reads like a plan ("먼저 … 볼게요") rather than half an answer. null = nothing worth showing yet.
  */
 export function conciseLeadLine(text: string | null | undefined, max = 120): string | null {
@@ -72,15 +72,50 @@ export function conciseLeadLine(text: string | null | undefined, max = 120): str
   return sentence.length > max ? `${sentence.slice(0, max - 1)}…` : sentence;
 }
 
+/** The tool calls' text marks (ToolCallItem.textAt) inside `length`, ascending, deduped (0 / absent dropped). */
+function cutsWithin(length: number, cuts: readonly (number | undefined)[]): number[] {
+  return [...new Set(cuts.filter((c): c is number => typeof c === 'number' && c > 0).map((c) => Math.min(c, length)))].sort((a, b) => a - b);
+}
+
+/** Where the live stretch starts: the text length when the last tool call began (0 = no call yet, all live). */
+export function conciseCut(length: number, cuts: readonly (number | undefined)[]): number {
+  return cutsWithin(length, cuts).at(-1) ?? 0;
+}
+
+/**
+ * The gray lead line for `head` (the text before the last tool call): the latest non-empty stretch between calls — its
+ * first sentence, or (no end mark) its first line. Changes only when a call starts, so callers memoize it on `head`.
+ */
+export function conciseLead(head: string, cuts: readonly (number | undefined)[]): string | null {
+  const at = cutsWithin(head.length, cuts);
+  for (let i = at.length - 1; i >= 0; i--) {
+    const seg = head.slice(at[i - 1] ?? 0, at[i]).trim();
+    if (!seg) continue;
+    const line = seg.split('\n')[0]!.trim();
+    const lead = conciseLeadLine(seg) ?? (!line || /^[#>|`-]/.test(line) ? null : line.length > 120 ? `${line.slice(0, 119)}…` : line);
+    if (lead !== null) return lead;
+  }
+  return null;
+}
+
+/**
+ * 간결 모드 while a turn streams: the reply text since the last tool call is shown live (`live`); the text written before
+ * it (a "먼저 … 볼게요." between steps) folds into one gray `lead` line. `cuts`: ToolCallItem.textAt of each call.
+ */
+export function conciseLiveSplit(text: string, cuts: readonly (number | undefined)[]): { lead: string | null; live: string } {
+  const cut = conciseCut(text.length, cuts);
+  return { lead: conciseLead(text.slice(0, cut), cuts), live: text.slice(cut) };
+}
+
 /**
  * Appended to the system prompt of turns sent in 간결 모드 (`send.concise`; Claude: `--append-system-prompt`).
  * Never shown in the pane. Kept short: it rides every turn's process.
  */
 export const CONCISE_STYLE_PROMPT = [
-  '[deck 간결 모드] 사용자는 대개 폰으로, 결과만 빠르게 봅니다. 이렇게 답하세요:',
+  '[deck 간결 모드] 사용자는 대개 폰으로 봅니다. 두괄식으로, 하지만 내용은 빠짐없이 답하세요:',
   '- 도구를 쓰는 긴 작업이면 맨 처음에 무엇부터 할지 한 문장만 쓰고 바로 진행하세요(예: "먼저 실패하는 테스트부터 볼게요.").',
-  '- 최종 답은 결과(무엇을 했고 결론이 무엇인지)로 시작하고, 보통 1–2개의 짧은 문단, 쉬운 한국어로. 과정 되풀이·요약 반복·인사말·"도와드릴게요" 같은 군더더기는 쓰지 마세요.',
-  '- 목록·표·제목은 꼭 필요할 때만. 파일·명령은 인라인 코드로.',
+  '- 첫 문장에서 바로 답하세요(결론·결과). 이어서 판단에 필요한 근거·숫자·원인·다음 할 일을 질문의 무게만큼 쓰세요 — 줄이느라 정보를 빼지 마세요. 쉬운 한국어로. 인사말·과정 되풀이·같은 말 반복·"도와드릴게요" 같은 군더더기는 쓰지 마세요.',
+  '- 짧은 문단이 기본. 나열할 게 셋 이상이면 목록으로, 항목 앞에 굵은 짧은 이름표(**이름:** 설명)를 붙여도 좋아요. 표·제목은 꼭 필요할 때만. 파일·명령은 인라인 코드로.',
   '- 사용자가 골라야 할 결정이 있으면 문장으로 묻지 말고 AskUserQuestion 도구로 2–4개의 짧은 선택지를 주세요.',
   '- 되돌리기 어려운 행동(메시지·메일 전송, 삭제, 결제, 배포·push, 실거래 설정 변경)은 실행하지 말고 초안·변경 내용을 보여 준 뒤 확인을 받으세요.',
 ].join('\n');
@@ -106,7 +141,7 @@ export function withConcise<M extends { type: string }>(msg: M, on: boolean): M 
 export type ConciseEventRole =
   | 'surface'      // show as-is (started, result, permission, question)
   | 'milestone'    // collapse into a progress milestone
-  | 'defer'        // hold until the turn ends (streamed answer text)
+  | 'stream'       // show live as it arrives (streamed answer text; text before a tool call folds into a lead line)
   | 'suppress';     // hide body mid-turn (thinking chunks, tool result bodies)
 
 const ROLES: Record<string, ConciseEventRole> = {
@@ -127,7 +162,7 @@ const ROLES: Record<string, ConciseEventRole> = {
   thinking: 'suppress',
   tool_result: 'suppress',
   sub_tool_result: 'suppress',
-  delta: 'defer',
+  delta: 'stream',
 };
 
 export function conciseEventRole(type: string): ConciseEventRole {
@@ -137,7 +172,7 @@ export function conciseEventRole(type: string): ConciseEventRole {
 /** Whether this event type is forwarded into the concise chat pane mid-turn. */
 export function conciseForwardsEvent(type: string): boolean {
   const role = conciseEventRole(type);
-  return role === 'surface' || role === 'milestone';
+  return role === 'surface' || role === 'milestone' || role === 'stream';
 }
 
 /**

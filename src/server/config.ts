@@ -79,6 +79,8 @@ export type DeckConfig = {
   bgMaxMs: number;
   /** Messages typed while a Claude turn runs go into it at the next tool boundary (`DECK_STEER=0` turns it off: queued for after the turn). */
   steer: boolean;
+  /** Claude's next-prompt suggestion after a turn, shown greyed in the input (`DECK_PROMPT_SUGGEST=0` turns it off). */
+  promptSuggestions: boolean;
   /** 개발용(총사령탑 3단계 검증): DECK_DEV_COMMANDER_GATE=1 이면 사용자가 보낸 Claude 턴도 자동 턴 도구 차단으로 돌린다. */
   devCommanderGate: boolean;
   /** Fork backups (`<profile>/session-backups/`) and 삭제 trash (`<profile>/session-trash/`) older than this many days are deleted (`DECK_BACKUP_RETENTION_DAYS`, default 30). */
@@ -255,6 +257,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     supervised: supervisorOf(env) !== null,
     bgMaxMs: limitMinutes(env.DECK_BG_MAX_MIN),
     steer: env.DECK_STEER !== '0',
+    promptSuggestions: env.DECK_PROMPT_SUGGEST !== '0',
     devCommanderGate: env.DECK_DEV_COMMANDER_GATE === '1',
     backupRetentionDays: Number(env.DECK_BACKUP_RETENTION_DAYS) > 0 ? Number(env.DECK_BACKUP_RETENTION_DAYS) : 30,
     vapidFile: path.join(configDir, 'vapid.json'),
