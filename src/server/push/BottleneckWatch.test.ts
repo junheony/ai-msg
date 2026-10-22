@@ -14,7 +14,7 @@ const scope = { turnId: 't1', sessionId: 's1', cwd: '/w/proj' };
 const claude = (over: Partial<ClaudeSessionState> = {}): ClaudeSessionState => ({ sessionId: 's1', cwd: '/w/proj', account: 'a', projectDir: '/p', lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus', ...over });
 
 /** A manual clock: timers fire when `advance` passes their time. */
-async function setup(o: { states?: ClaudeSessionState[]; cooldown?: number | null; quiet?: () => boolean } = {}) {
+async function setup(o: { states?: ClaudeSessionState[]; cooldown?: number | null; quiet?: () => boolean; enabled?: () => boolean } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-bottleneck-'));
   const store = new SessionStateStore(path.join(dir, 'state.json'));
   await store.load();
@@ -33,6 +33,7 @@ async function setup(o: { states?: ClaudeSessionState[]; cooldown?: number | nul
     earliestCooldownMs: () => o.cooldown ?? null,
     retry: (r) => retries.push(r),
     ...(o.quiet ? { quiet: o.quiet } : {}),
+    ...(o.enabled ? { enabled: o.enabled } : {}),
     now: () => now,
     setTimer: (fn, ms) => { const id = ++seq; timers.set(id, { at: now + ms, fn }); return id; },
     clearTimer: (t) => { timers.delete(t as number); },
@@ -48,7 +49,7 @@ async function setup(o: { states?: ClaudeSessionState[]; cooldown?: number | nul
     }
     now = end;
   };
-  return { watch, store, pushes, retries, shown, advance, now: () => now, pending: () => timers.size };
+  return { watch, store, pushes, retries, shown, advance, now: () => now, pending: () => timers.size, waits: () => [...timers.values()].map((t) => t.at - now) };
 }
 
 const perm = (requestId: string, over: Record<string, unknown> = {}) => ({ type: 'permission_request', ...scope, requestId, toolName: 'Bash', input: {}, title: 'Run make', decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: false, sessionLabel: null, ...over } as ServerMessage);
@@ -289,17 +290,80 @@ describe('BottleneckWatch · 사령탑이 맡은 세션', () => {
     expect(c.store.get('s1')).not.toHaveProperty('pendingRetry');
   });
 
-  it('retryDue fires a due booking at once (its timer fired into a busy session); a future one waits', async () => {
+  it('retryDue fires a due booking it has not fired yet; a future one waits', async () => {
+    const c = await setup();
+    await c.store.set(claude({ pendingRetry: { text: 'go', atMs: c.now() - MIN, hops: 1 } }));
+    c.watch.retryDue('s1');
+    expect(c.retries).toHaveLength(1);
+    const d = await setup();
+    await d.store.set(claude({ pendingRetry: { text: 'go', atMs: d.now() + 5 * MIN, hops: 1 } }));
+    d.watch.retryDue('s1');
+    expect(d.retries).toHaveLength(0);
+  });
+
+  it('a fired booking whose turn never started is not fired again at once: booked 5 min later, 3 fires at most, then dropped', async () => {
+    const c = await setup();
+    const atMs = c.now() + 5 * MIN;
+    await c.store.set(claude({ pendingRetry: { text: 'go', atMs, hops: 1 } }));
+    c.watch.rearm(c.store.list());
+    c.advance(5 * MIN);
+    expect(c.retries).toHaveLength(1);
+    // Refused before turn_started (e.g. the folder is gone): the session goes idle at once — no immediate second fire.
+    c.watch.retryDue('s1');
+    c.watch.retryDue('s1');
+    expect(c.retries).toHaveLength(1);
+    expect(c.store.get('s1')?.pendingRetry?.atMs).toBe(c.now() + 5 * MIN);
+    expect(c.shown.at(-1)).toEqual(['s1', c.now() + 5 * MIN]);
+    c.advance(5 * MIN);
+    expect(c.retries).toHaveLength(2);
+    c.watch.retryDue('s1');
+    c.advance(5 * MIN);
+    expect(c.retries).toHaveLength(3);
+    c.watch.retryDue('s1');
+    expect(c.store.get('s1')).not.toHaveProperty('pendingRetry');
+    expect(c.shown.at(-1)).toEqual(['s1', null]);
+    c.advance(60 * MIN);
+    expect(c.retries).toHaveLength(3);
+  });
+
+  it('자동으로 이어가기 turned off after booking: not fired at its time but dropped; cancelAllRetries drops every booking', async () => {
+    let on = true;
+    const c = await setup({ enabled: () => on, states: [claude(), claude({ sessionId: 's2' })] });
+    await c.store.set(claude({ pendingRetry: { text: 'go', atMs: c.now() + 5 * MIN, hops: 1 } }));
+    c.watch.rearm(c.store.list());
+    on = false;
+    c.advance(5 * MIN);
+    expect(c.retries).toEqual([]);
+    expect(c.store.get('s1')).not.toHaveProperty('pendingRetry');
+    expect(c.shown.at(-1)).toEqual(['s1', null]);
+    await c.store.set(claude({ pendingRetry: { text: 'a', atMs: c.now() + 5 * MIN, hops: 1 } }));
+    await c.store.set(claude({ sessionId: 's2', pendingRetry: { text: 'b', atMs: c.now() + 9 * MIN, hops: 1 } }));
+    c.watch.rearm(c.store.list());
+    c.watch.cancelAllRetries();
+    expect(c.store.list().filter((s) => s.pendingRetry)).toEqual([]);
+    expect(c.shown.slice(-2).sort()).toEqual([['s1', null], ['s2', null]]);
+    expect(c.pending()).toBe(0);
+  });
+
+  it('a booking past setTimeout\'s longest delay is armed in steps, not fired at once', async () => {
+    const c = await setup();
+    const DAY = 24 * 60 * MIN;
+    await c.store.set(claude({ pendingRetry: { text: 'go', atMs: c.now() + 30 * DAY, hops: 1 } }));
+    c.watch.rearm(c.store.list());
+    expect(Math.max(...c.waits())).toBeLessThanOrEqual(2 ** 31 - 1);
+    c.advance(29 * DAY);
+    expect(c.retries).toEqual([]);
+    c.advance(DAY);
+    expect(c.retries).toHaveLength(1);
+  });
+
+  it('a booking gone by its time (the conversation was deleted): nothing fired, the line goes', async () => {
     const c = await setup();
     await c.store.set(claude({ pendingRetry: { text: 'go', atMs: c.now() + 5 * MIN, hops: 1 } }));
     c.watch.rearm(c.store.list());
-    c.watch.retryDue('s1');
-    expect(c.retries).toHaveLength(0);
+    await c.store.set(claude());
     c.advance(5 * MIN);
-    expect(c.retries).toHaveLength(1);
-    // Refused (busy): the booking stays; at idle it is due and fires again.
-    c.watch.retryDue('s1');
-    expect(c.retries).toHaveLength(2);
-    expect(c.pending()).toBe(0);
+    expect(c.retries).toEqual([]);
+    expect(c.shown.at(-1)).toEqual(['s1', null]);
   });
 });
