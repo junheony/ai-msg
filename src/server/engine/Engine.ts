@@ -161,7 +161,10 @@ export type QuestionRequest = { toolUseId: string; questions: Question[]; signal
 const MAX_QUESTION_CHARS = 2000;
 const MAX_PREVIEW_CHARS = 4000;
 
-/** AskUserQuestionInput.questions (1–4, each 2–4 options, unique texts ≤ 2000 chars) → Question[]; previews and extras dropped. Null when malformed. */
+/** Cut by code point (never splits a surrogate pair); a cut preview gets a trailing `\n…`, so it may exceed the cap by 2. */
+const cutPreview = (p: string): string => { const cps = Array.from(p); return cps.length > MAX_PREVIEW_CHARS ? `${cps.slice(0, MAX_PREVIEW_CHARS).join('')}\n…` : p; };
+
+/** AskUserQuestionInput.questions (1–4, each 2–4 options, unique texts ≤ 2000 chars) → Question[]; string previews kept (≤4000 chars), extras dropped. Null when malformed. */
 export function parseQuestions(input: unknown): Question[] | null {
   const qs = input && typeof input === 'object' ? (input as { questions?: unknown }).questions : undefined;
   if (!Array.isArray(qs) || qs.length < 1 || qs.length > 4) return null;
@@ -176,7 +179,7 @@ export function parseQuestions(input: unknown): Question[] | null {
       if (!o || typeof o !== 'object' || typeof (o as Record<string, unknown>).label !== 'string') return null;
       const d = (o as Record<string, unknown>).description;
       const p = (o as Record<string, unknown>).preview;
-      options.push({ label: (o as { label: string }).label, description: typeof d === 'string' ? d : '', ...(typeof p === 'string' && p ? { preview: p.slice(0, MAX_PREVIEW_CHARS) } : {}) });
+      options.push({ label: (o as { label: string }).label, description: typeof d === 'string' ? d : '', ...(typeof p === 'string' && p ? { preview: cutPreview(p) } : {}) });
     }
     out.push({ question: r.question, header: typeof r.header === 'string' ? r.header : '', options, multiSelect: r.multiSelect === true });
   }

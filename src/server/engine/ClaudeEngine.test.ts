@@ -375,6 +375,16 @@ describe('AskUserQuestion (D8)', () => {
     expect(parseQuestions('nope')).toBeNull();
   });
 
+  it('parseQuestions cuts long previews by code point with a trailing ellipsis and drops non-string or empty previews', () => {
+    const q = (preview: unknown) => ({ questions: [{ question: 'q', header: 'H', options: [{ label: 'a', preview }, { label: 'b' }] }] });
+    const cut = parseQuestions(q('x'.repeat(5000)))![0]!.options[0]!.preview!;
+    expect(cut).toBe(`${'x'.repeat(4000)}\n…`);
+    const emoji = parseQuestions(q('😀'.repeat(5000)))![0]!.options[0]!.preview!;
+    expect(emoji).toBe(`${'😀'.repeat(4000)}\n…`);
+    expect(parseQuestions(q('y'.repeat(4000)))![0]!.options[0]!.preview).toBe('y'.repeat(4000));
+    for (const bad of [42, { a: 1 }, '']) expect('preview' in parseQuestions(q(bad))![0]!.options[0]!).toBe(false);
+  });
+
   it('parseQuestions rejects duplicate question texts and texts over 2000 chars (answers are keyed by text)', () => {
     const q = (question: string) => ({ question, header: 'H', options: [{ label: 'a' }, { label: 'b' }] });
     expect(parseQuestions({ questions: [q('Same?'), q('Same?')] })).toBeNull();

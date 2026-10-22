@@ -73,14 +73,14 @@ export function QuestionCard({ req, onAnswer }: { req: PendingQuestion; onAnswer
         const freeText = free[q.question] ?? '';
         const textId = `${idBase}-q${qi}`;
         return (
-          <section key={q.question} className={answered ? 'question answered' : 'question'} aria-labelledby={textId}>
+          <section key={q.question} className={answered ? 'question answered' : 'question'}>
             <div className="question-meta">
               {total > 1 && <span className="question-step" aria-hidden="true">{qi + 1}/{total}</span>}
               {q.header && <span className="chip header">{q.header}</span>}
-              {q.multiSelect && <span className="question-multi">{T.multi}</span>}
+              {q.multiSelect && <span className="question-multi" id={`${textId}-multi`}>{T.multi}</span>}
             </div>
             <div className="question-text" id={textId}>{q.question}</div>
-            <div className={q.multiSelect ? 'question-options multi' : 'question-options'} role="group" aria-labelledby={textId}>
+            <div className={q.multiSelect ? 'question-options multi' : 'question-options'} role="group" aria-labelledby={textId} aria-describedby={q.multiSelect ? `${textId}-multi` : undefined}>
               {q.options.map((o) => {
                 const isPicked = (picked[q.question] ?? []).includes(o.label);
                 const { text, recommended } = splitRecommended(o.label);
@@ -97,7 +97,7 @@ export function QuestionCard({ req, onAnswer }: { req: PendingQuestion; onAnswer
                         {o.description && <span className="option-desc muted">{o.description}</span>}
                       </span>
                     </button>
-                    {preview && <pre className="option-preview">{preview}</pre>}
+                    {preview && <pre className="option-preview" tabIndex={0}>{preview}</pre>}
                   </div>
                 );
               })}

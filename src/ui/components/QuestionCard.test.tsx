@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { QuestionCard } from './QuestionCard';
+import { QuestionCard, splitRecommended } from './QuestionCard';
 import type { PendingQuestion } from '../state';
 
 const req: PendingQuestion = {
@@ -155,5 +155,32 @@ describe('QuestionCard (D8)', () => {
     expect(free.closest('label')!.className).not.toContain('picked');
     fireEvent.click(screen.getByText('답변 보내기'));
     expect(onAnswer).toHaveBeenCalledWith('q1', { 'Which features?': 'b' });
+  });
+
+  it('shows an option preview only while that option is picked; whitespace-only previews never show', () => {
+    const withPreview: PendingQuestion = {
+      turnId: 't', sessionId: null, cwd: '/w', requestId: 'q3',
+      questions: [{ question: 'Layout?', header: '', options: [{ label: 'one', description: '', preview: 'PREVIEW-ONE' }, { label: 'two', description: '', preview: 'PREVIEW-TWO' }, { label: 'blank', description: '', preview: '  \n ' }], multiSelect: false }],
+    };
+    const { container } = render(<QuestionCard req={withPreview} onAnswer={vi.fn()} />);
+    const pre = () => container.querySelector('pre.option-preview');
+    expect(pre()).toBeNull();
+    fireEvent.click(screen.getByText('one'));
+    expect(pre()?.textContent).toBe('PREVIEW-ONE');
+    fireEvent.click(screen.getByText('two'));
+    expect(pre()?.textContent).toBe('PREVIEW-TWO');
+    expect(container.querySelectorAll('pre.option-preview')).toHaveLength(1);
+    fireEvent.click(screen.getByText('blank'));
+    expect(pre()).toBeNull();
+  });
+});
+
+describe('splitRecommended', () => {
+  it('pins the current behaviour', () => {
+    expect(splitRecommended('(Recommended)')).toEqual({ text: '(Recommended)', recommended: false });
+    expect(splitRecommended('x (recommended)')).toEqual({ text: 'x', recommended: true });
+    expect(splitRecommended('x(Recommended) ')).toEqual({ text: 'x', recommended: true });
+    expect(splitRecommended('x (Recommended) y')).toEqual({ text: 'x (Recommended) y', recommended: false });
+    expect(splitRecommended('x (추천)')).toEqual({ text: 'x', recommended: true });
   });
 });
