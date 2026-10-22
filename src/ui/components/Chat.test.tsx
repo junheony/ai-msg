@@ -340,6 +340,46 @@ describe('Composer keyboard (Desktop)', () => {
   });
 });
 
+describe('Chat · composer buttons while a turn runs', () => {
+  afterEach(() => { cleanup(); sessionStorage.clear(); });
+  const box = () => document.querySelector('textarea') as HTMLTextAreaElement;
+  const run = (onInterrupt = vi.fn(), onQueue = vi.fn()) => {
+    renderChat([{ kind: 'user', text: 'p' }], true, vi.fn(), { activeTurnId: 't1', onInterrupt, onQueue });
+    return { onInterrupt, onQueue };
+  };
+
+  it('running + empty draft: the main button is stop, no mini stop', () => {
+    const { onInterrupt } = run();
+    const main = document.querySelector('.send') as HTMLButtonElement;
+    expect(main.classList.contains('stop')).toBe(true);
+    expect(document.querySelector('.stop-mini')).toBeNull();
+    fireEvent.click(main);
+    expect(onInterrupt).toHaveBeenCalledTimes(1);
+  });
+
+  it('running + draft: main button sends (queues) and a mini stop interrupts', () => {
+    const { onInterrupt, onQueue } = run();
+    fireEvent.change(box(), { target: { value: 'next' } });
+    expect(document.querySelector('.queue-add')).toBeNull();
+    const mini = document.querySelector('.send.stop.stop-mini') as HTMLButtonElement;
+    expect(mini.title).toBe('중단 (Esc)');
+    const main = [...document.querySelectorAll('.send')].find((b) => !b.classList.contains('stop')) as HTMLButtonElement;
+    expect(main.disabled).toBe(false);
+    fireEvent.click(main);
+    expect(onQueue).toHaveBeenCalledWith('next');
+    expect(onInterrupt).not.toHaveBeenCalled();
+    fireEvent.change(box(), { target: { value: 'again' } });
+    fireEvent.click(document.querySelector('.stop-mini') as HTMLButtonElement);
+    expect(onInterrupt).toHaveBeenCalledTimes(1);
+  });
+
+  it('idle: plain send button, no stop', () => {
+    renderChat([], false);
+    expect(document.querySelector('.send.stop')).toBeNull();
+    expect((document.querySelector('.send') as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
 describe('Chat · handoff prefill vs. an edited draft', () => {
   afterEach(() => { cleanup(); sessionStorage.clear(); });
   const box = () => document.querySelector('textarea') as HTMLTextAreaElement;

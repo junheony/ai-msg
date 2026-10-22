@@ -490,6 +490,11 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .send:disabled { background: var(--track); color: var(--faint); opacity: 1; }
 .send.stop { background: var(--btn-primary-bg); color: var(--btn-primary-fg); }
 .send.stop i { width: 10px; height: 10px; border-radius: 2px; background: currentColor; display: block; }
+/* Mid-turn with a draft the main button is 보내기; 중단 stays reachable as this smaller square beside it (no Esc on phones). */
+.send.stop.stop-mini { width: 28px; height: 28px; margin-left: 0; }
+.send.stop.stop-mini i { width: 8px; height: 8px; }
+@media (pointer: coarse) { .send.stop.stop-mini { width: 34px; height: 34px; } }
+@media (max-width: 720px) { .send.stop.stop-mini { width: 34px; height: 34px; } }
 
 /* Login */
 .login { max-width: 340px; margin: 18vh auto; padding: 0 16px; display: flex; flex-direction: column; gap: 10px; }
@@ -1002,11 +1007,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .queue-item input { flex: 1; min-width: 0; height: 26px; margin: 0 0 0 2px; padding: 0 6px; border: 0; outline: none; border-radius: var(--r-xs); background: var(--bg); color: var(--fg); font: inherit; box-shadow: inset 0 0 0 1px var(--accent); }
 .queue-remove { flex-shrink: 0; display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: var(--r-xs); color: var(--faint); }
 .queue-remove:hover { color: var(--fg); background: var(--hover); }
-/* 대기열에 추가: a round secondary button in the send/stop family (same size), only rendered with a draft mid-turn. */
-.queue-add { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0; color: var(--fg); background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); transition: transform .1s ease, background .15s ease; }
-.queue-add:hover { background: color-mix(in srgb, var(--fg) 12%, transparent); }
-.queue-add:active { transform: scale(.94); }
-@media (max-width: 720px) { .queue-add { width: var(--phone-tap); height: var(--phone-tap); } }
 
 /* Attachment thumbnails */
 .chip.attachment.has-thumb { padding-left: 2px; }
@@ -1902,7 +1902,7 @@ button.hl-row-main:hover { background: var(--hover); }
   .pane-head-end .icon-btn { min-width: 36px; height: 36px; }
   .attach, .icon-btn.dictate { min-height: 36px; }
   .pick { height: 36px; }
-  .send, .queue-add { width: 36px; height: 36px; }
+  .send { width: 36px; height: 36px; }
 }
 
 /* Foldables reporting two side-by-side viewport segments: the sidebar fills the left segment, the panes the right. */
@@ -2022,15 +2022,15 @@ button.hl-row-main:hover { background: var(--hover); }
 .composer-send .icon-btn.dictate { width: 34px; height: 34px; border-radius: 50%; color: var(--fg); background: var(--hover); }
 .composer-send .icon-btn.dictate:hover { background: var(--selected); }
 .composer-send .icon-btn.dictate.on { color: var(--danger); background: var(--danger-soft); }
-.send, .queue-add { width: 34px; height: 34px; margin-left: 0; }
+.send { width: 34px; height: 34px; margin-left: 0; }
 /* Disabled 보내기 is neutral (nothing to send yet); only an enabled one takes the accent. */
 .send:disabled { background: var(--track); color: var(--faint); }
 .attach:focus-visible, .send:focus-visible, .composer-send .icon-btn.dictate:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus); }
 @media (pointer: coarse) {
-  .attach, .send, .queue-add, .composer-send .icon-btn.dictate { width: 40px; height: 40px; }
+  .attach, .send, .composer-send .icon-btn.dictate { width: 40px; height: 40px; }
 }
 @media (max-width: 720px) {
-  .attach, .send, .queue-add, .composer-send .icon-btn.dictate { width: var(--phone-tap); height: var(--phone-tap); }
+  .attach, .send, .composer-send .icon-btn.dictate { width: var(--phone-tap); height: var(--phone-tap); }
   .composer-row { padding: 2px 6px 6px; gap: 4px; }
   .composer-send { gap: 3px; }
 }

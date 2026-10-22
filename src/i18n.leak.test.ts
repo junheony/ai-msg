@@ -110,7 +110,7 @@ const BASELINE: Record<string, number> = {
   'src/ui/components/ActivityButton.tsx': 9,
   'src/ui/components/ActivitySheet.tsx': 67,
   'src/ui/components/AttachmentBar.tsx': 17,
-  'src/ui/components/Chat.tsx': 58,
+  'src/ui/components/Chat.tsx': 53,
   'src/ui/components/CommandPalette.tsx': 13,
   'src/ui/components/CommanderChip.tsx': 40,
   'src/ui/components/CommanderSheet.tsx': 20,

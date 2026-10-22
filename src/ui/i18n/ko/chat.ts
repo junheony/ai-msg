@@ -38,5 +38,12 @@ export const chat: Widen<typeof en> = {
   account: (name: string) => `계정 ${name}`,
   accountNote: { unknown: '설정에 없는 계정', retired: '뺀 계정', pinned: '고정', pin: '고정 계정' },
   images: (n: number) => `이미지 ${n}장`,
+  composer: {
+    stop: '중단',
+    stopEsc: '중단 (Esc)',
+    queueAdd: '대기열에 추가',
+    queueSteerTitle: '대기열에 추가 (Enter) — 실행 중인 턴에 보내 다음 도구 실행 뒤 전달합니다',
+    queueWaitTitle: '대기열에 추가 (Enter) — 지금 턴이 끝나면 보냅니다',
+  },
   autoResume: { at: (time: string) => `${time}에 자동으로 이어가요`, cancel: '취소' },
 };

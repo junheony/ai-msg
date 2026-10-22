@@ -38,5 +38,12 @@ export const chat = {
   accountNote: { unknown: 'not in settings', retired: 'removed account', pinned: 'pinned', pin: 'Pinned account' },
   images: (n: number) => (n === 1 ? '1 image' : `${n} images`),
   /** 한도가 풀리면 자동으로 이어가기: the session's one line (`time` = local H:MM) and its cancel button. */
+  composer: {
+    stop: 'Stop',
+    stopEsc: 'Stop (Esc)',
+    queueAdd: 'Add to queue',
+    queueSteerTitle: 'Add to queue (Enter) — sent to the running turn, delivered after the next tool run',
+    queueWaitTitle: 'Add to queue (Enter) — sent when the current turn ends',
+  },
   autoResume: { at: (time: string) => `Continues automatically at ${time}`, cancel: 'Cancel' },
 };

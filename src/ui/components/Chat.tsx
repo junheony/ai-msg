@@ -310,7 +310,6 @@ const clockOf = (ms: number, now = new Date()): string => {
 
 const WarnIcon = () => <svg className="perm-badge-icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 2.2 14.3 13.3H1.7z" /><path d="M8 6.6v3M8 11.6v.1" /></svg>;
 const TaskIcon = () => <svg className="task-add-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M9 3h4v4M13 3 7.5 8.5" /><path d="M11.5 9.5V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1h2.5" /></svg>;
-const QueueIcon = () => <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 4h8M2.5 8h5M2.5 12h4" /><path d="M12 6.5v6.5M9.75 10.75 12 13l2.25-2.25" /></svg>;
 
 export function Chat(p: ChatProps) {
   const accountNames = useAccounts();
@@ -732,9 +731,7 @@ export function Chat(p: ChatProps) {
           onText={setText}
           extra={<>
             {p.activeTurnId && queueing && hasDraft && (
-              <button type="button" className="queue-add" onClick={submit} title={steering ? '대기열에 추가 (Enter) — 실행 중인 턴에 보내 다음 도구 실행 뒤 전달합니다' : '대기열에 추가 (Enter) — 지금 턴이 끝나면 보냅니다'}>
-                <QueueIcon /><span className="sr-only">대기열에 추가</span>
-              </button>
+              <button type="button" className="send stop stop-mini" onClick={p.onInterrupt} title={ui().chat.composer.stopEsc}><i aria-hidden="true" /><span className="sr-only">{ui().chat.composer.stop}</span></button>
             )}
             {p.onStartTask && hasDraft && p.attachments.length === 0 && parseBgCommand(text) === null && (
               <button type="button" className="task-add" data-testid="task-add" onClick={() => startTask(text)} aria-label="작업으로" title="작업으로 — 새 세션에서 따로 돌리고, 이 대화는 계속 씁니다. 끝나면 알림과 결과 카드가 옵니다 (/bg 로도 시작)">
@@ -742,8 +739,10 @@ export function Chat(p: ChatProps) {
               </button>
             )}
           </>}
-          action={p.activeTurnId
-            ? <button type="button" className="send stop" onClick={p.onInterrupt} title="중단"><i aria-hidden="true" /><span className="sr-only">중단</span></button>
+          action={p.activeTurnId && !(queueing && hasDraft)
+            ? <button type="button" className="send stop" onClick={p.onInterrupt} title={ui().chat.composer.stop}><i aria-hidden="true" /><span className="sr-only">{ui().chat.composer.stop}</span></button>
+            : p.activeTurnId
+            ? <button type="button" className="send" onClick={submit} title={steering ? ui().chat.composer.queueSteerTitle : ui().chat.composer.queueWaitTitle}><span aria-hidden="true">↑</span><span className="sr-only">{ui().chat.composer.queueAdd}</span></button>
             : <button type="button" className="send" onClick={submit} disabled={!canSend} title={coarse ? '보내기' : sendKey === 'mod-enter' ? SEND_TITLE_MOD : SEND_TITLE} aria-keyshortcuts={coarse ? undefined : sendKey === 'mod-enter' ? 'Meta+Enter Control+Enter' : 'Enter'}><span aria-hidden="true">↑</span><span className="sr-only">보내기</span></button>}
         >
           <textarea
