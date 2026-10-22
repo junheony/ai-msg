@@ -33,6 +33,11 @@ export const BG_MAX_MS = Infinity;
 /** setTimeout fires at once for delays it cannot hold (Infinity, or beyond 2^31-1 ms): those mean no cap timer at all. */
 const MAX_TIMER_MS = 2_147_483_647;
 export const BG_GRACE_MS = 60_000;
+/**
+ * With `promptSuggestions`, how long stdin stays open after the last result for the CLI's `prompt_suggestion` (it comes
+ * ~2 s after the result, or not at all); the process is let go as soon as one arrives.
+ */
+export const SUGGEST_WAIT_MS = 5_000;
 
 const HOOK_RELAY = childScript('hookRelay');
 const PERMISSION_MCP = childScript('permissionMcp');
@@ -54,6 +59,10 @@ export type ClaudeEngineOptions = {
   tmpRoot?: string;
   /** The child scripts' run-time copies (S7 `snapshotChildScripts`); default: next to this code. */
   scripts?: { hookRelay: string; permissionMcp: string };
+  /** Ask the CLI for its next-prompt guess (`initialize` with promptSuggestions) and yield it as a `suggestion` event. */
+  promptSuggestions?: boolean;
+  /** Default SUGGEST_WAIT_MS. */
+  suggestWaitMs?: number;
 };
 
 export class ClaudeEngine implements Engine {
@@ -111,10 +120,16 @@ export class ClaudeEngine implements Engine {
     }, { failClosed: !!req.commanderHop });
     let proc: ClaudeProcess | null = null;
     let aborted = false;
-    const onAbort = () => { aborted = true; reg.abortAll(); proc?.interrupt(); };
+    /** The turn is over and stdin is held open only for the CLI's prompt_suggestion (SUGGEST_WAIT_MS). */
+    let suggestWait = false;
+    // Nothing runs while waiting for a suggestion: the input is just closed (no SIGINT for an idle process).
+    /** The turn is over (waiting only for its suggestion, or closing): an abort just closes stdin, no SIGINT. */
+    let over = false;
+    const onAbort = () => { aborted = true; reg.abortAll(); if (over) proc?.stop(); else proc?.interrupt(); };
     req.signal.addEventListener('abort', onAbort, { once: true });
     let capTimer: NodeJS.Timeout | null = null;
     let graceTimer: NodeJS.Timeout | null = null;
+    let suggestTimer: NodeJS.Timeout | null = null;
     try {
       const relay = { node: this.o.node ?? process.execPath, script: this.o.scripts?.hookRelay ?? HOOK_RELAY, socketPath: reg.socketPath, token: reg.token };
       const settingsPath = path.join(procDir, 'settings.json');
@@ -143,6 +158,7 @@ export class ClaudeEngine implements Engine {
       // ---- the loop below is today's runTurn body; only the marked lines differ ----
       let errorKind: string | null = null;
       let sawResult = false;
+      let lastOk = false;
       let lastCtx: ContextUsage | null = null;
       const bg = new BackgroundTracker();
       const meter = new ProgressMeter();
@@ -173,7 +189,7 @@ export class ClaudeEngine implements Engine {
       const toolInputs = new Map<string, unknown>();
       const writeMsg = (m: CliUserMessage): boolean => { if (typeof m.uuid === 'string') this.owned.add(m.uuid); return p.write(m); }; // changed
       const write = async (f: { text: string; attachments: Attachment[] }, steerId: string | null): Promise<boolean> => {
-        if (!p.inputOpen || aborted) return false; // changed
+        if (!p.inputOpen || aborted || suggestWait) return false; // changed
         const uuid = randomUUID();
         unanswered.push(uuid);
         if (steerId !== null) steers.set(uuid, steerId);
@@ -211,12 +227,20 @@ export class ClaudeEngine implements Engine {
         return;
       }
       p.start(); // changed
+      // Before any user message: the CLI reads initialize first (its control_response is ignored like any unknown frame).
+      if (this.o.promptSuggestions) p.write({ type: 'control_request', request_id: randomUUID(), request: { subtype: 'initialize', promptSuggestions: true } });
       writeMsg(firstMsg); // changed
       if (req.signal.aborted) onAbort();
       if (this.o.steer === false || req.noTools) delete live.steer;
       req.onLive?.(live);
       for await (const m of p.messages()) { // changed
         if (ended) break; // changed: what arrives after cap/grace is the dying child's
+        if (m.type === 'prompt_suggestion') {
+          const text = typeof m.suggestion === 'string' ? m.suggestion.trim() : '';
+          if (text && !aborted) yield { kind: 'suggestion', text };
+          if (suggestWait) break;
+          continue;
+        }
         this.owned.note(m); // changed
         await tracker.apply(m); // changed: replaces PostToolUse/PostToolUseFailure
         if (isInjectedNoopResult(m) && unanswered.length > 0) {
@@ -250,6 +274,7 @@ export class ClaudeEngine implements Engine {
           if (ev.kind !== 'result') { yield ev; continue; }
           sawResult = true;
           gotResult = true;
+          lastOk = ev.ok;
           // changed: the interrupted turn's result, however the CLI words it, is a stop.
           if (aborted) { yield { ...ev, ok: false, text: '', errorText: ABORTED_TEXT, stderr: null, terminalReason: 'aborted' }; break; }
           const r = m as unknown as Rec;
@@ -278,13 +303,23 @@ export class ClaudeEngine implements Engine {
         }
         if (!gotResult) continue;
         if (aborted) break; // changed
-        if (unanswered.length === 0 && bg.tasks().length === 0) break;
+        if (unanswered.length === 0 && bg.tasks().length === 0) {
+          // The turn is done; only a successful one gets a suggestion, so only then is stdin held open a moment for it.
+          if (!this.o.promptSuggestions || !lastOk || suggestWait) break;
+          suggestWait = true;
+          over = true;
+          clearGrace();
+          suggestTimer = setTimeout(() => p.stop(), this.o.suggestWaitMs ?? SUGGEST_WAIT_MS);
+          suggestTimer.unref?.();
+          continue;
+        }
         idle = unanswered.length === 0;
         const capMs = this.o.bgMaxMs ?? BG_MAX_MS;
         if (!capTimer && capMs <= MAX_TIMER_MS) { capTimer = setTimeout(() => finish('cap'), capMs); capTimer.unref?.(); }
         armGrace();
       }
       // changed: the SDK threw on a dead process; the child's exit is read instead.
+      over = sawResult;
       p.stop();
       const exit = await p.exited;
       if (!sawResult) yield aborted ? fail(ABORTED_TEXT, 'aborted') : { ...(fail(exitFailureText(exit), null, p.stderrTail || null) as Extract<EngineEvent, { kind: 'result' }>), errorKind };
@@ -297,6 +332,7 @@ export class ClaudeEngine implements Engine {
     } finally {
       if (capTimer) clearTimeout(capTimer);
       if (graceTimer) clearTimeout(graceTimer);
+      if (suggestTimer) clearTimeout(suggestTimer);
       req.signal.removeEventListener('abort', onAbort);
       // A consumer that stopped reading early must not leave the child behind.
       if (proc && proc.exit === null) proc.terminate();

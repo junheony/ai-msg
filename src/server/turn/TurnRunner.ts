@@ -1195,6 +1195,7 @@ export class TurnRunner {
           case 'system': sink.emit({ type: 'turn_system', ...scope(), source: ev.source, label: ev.label, text: redactSecrets(ev.text) }); break;
           case 'task_done': sink.emit({ type: 'task_done', ...scope(), ...taskDoneOf(ev) }); break;
           case 'steer_delivered': this.steerDelivered(p.turnId, ev.id, sink, scope()); break;
+          case 'suggestion': break;
           case 'result': out.result = ev; if (ev.sessionId) out.sessionId = ev.sessionId; break;
         }
       }
@@ -1376,6 +1377,8 @@ export class TurnRunner {
             this.mirrorSoon(sessionId, sink, s?.turnId ?? cur.turnId);
             break;
           }
+          // After an interrupt the guess is stale: the engine drops it too, this covers one already on its way.
+          case 'suggestion': if (!sink.signal.aborted) sink.emit({ type: 'prompt_suggestion', ...scope(), text: ev.text }); break;
           case 'init': case 'compact': case 'continue': break;
         }
         if (failover) break;

@@ -1956,3 +1956,25 @@ describe('reducer: deck 에서 새 GPT 세션으로 이어가기 (codex_handoff)
     expect(reducer(before, { type: 'codex_handoff', paneId: pane(before).id, turnId: 'nope' })).toBe(before);
   });
 });
+
+describe('reducer: prompt suggestions (volatile, per session)', () => {
+  const sug = (sessionId: string | null, text: string): ServerMessage => ({ type: 'prompt_suggestion', turnId: 't1', sessionId, cwd: '/w', text });
+
+  it('stores the latest suggestion per session; one without a session is dropped', () => {
+    const s = play([sug('s1', '하나'), sug('s2', '둘'), sug('s1', '셋'), sug(null, '없음')]);
+    expect(s.suggestions).toEqual({ s1: '셋', s2: '둘' });
+  });
+
+  it('a new turn on the session clears its suggestion only', () => {
+    const s = play([sug('s1', '하나'), sug('s2', '둘'), { type: 'turn_started', turnId: 't2', sessionId: 's1', cwd: '/w', account: 'c', model: 'opus', reason: '새 턴', attempt: 0 }]);
+    expect(s.suggestions).toEqual({ s2: '둘' });
+  });
+
+  it('switching the pane to another session clears the left one; reopening the same keeps it', () => {
+    const s = play([sug('s1', '하나'), sug('s2', '둘')], openedOn('s1'));
+    const same = reducer(s, { type: 'open', sessionId: 's1', cwd: '/w', title: 't' });
+    expect(same.suggestions).toEqual({ s1: '하나', s2: '둘' });
+    const moved = reducer(s, { type: 'open', sessionId: 's3', cwd: '/w', title: 't' });
+    expect(moved.suggestions).toEqual({ s2: '둘' });
+  });
+});

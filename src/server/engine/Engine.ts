@@ -69,6 +69,8 @@ export type EngineEvent =
   | { kind: 'steer_delivered'; id: string }
   /** A hook's message to the model mid-turn (Claude Code injects it as a synthetic user message), e.g. a Stop hook sending it back to work. */
   | { kind: 'system'; source: string; label: string; text: string }
+  /** Claude `prompt_suggestion` (after a result): the CLI's guess at the next prompt, for the composer's ghost text. Never stored. */
+  | { kind: 'suggestion'; text: string }
   | EngineResult;
 
 /** A user message sent into a still-open Claude process (background work pending). */

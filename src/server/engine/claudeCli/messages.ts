@@ -22,10 +22,15 @@ export interface CliResultMessage {
 }
 export interface CliRateLimitEvent { type: 'rate_limit_event'; rate_limit_info: Rec; [k: string]: unknown }
 export interface CliOtherMessage {
-  type: 'keep_alive' | 'tool_progress' | 'tool_use_summary' | 'auth_status' | 'stream_request_start' | 'control_request' | 'control_cancel_request' | 'unknown';
+  type: 'keep_alive' | 'tool_progress' | 'tool_use_summary' | 'auth_status' | 'stream_request_start' | 'control_request' | 'control_cancel_request' | 'control_response' | 'unknown';
   [k: string]: unknown;
 }
-export type CliMessage = CliSystemMessage | CliStreamEvent | CliAssistantMessage | CliUserMessage | CliResultMessage | CliRateLimitEvent | CliOtherMessage;
+/** The CLI's guess at the user's next prompt, written ~2 s after a result once `initialize` asked for `promptSuggestions`. */
+export interface CliPromptSuggestion { type: 'prompt_suggestion'; suggestion?: unknown; uuid?: string; session_id?: string; [k: string]: unknown }
+export type CliMessage = CliSystemMessage | CliStreamEvent | CliAssistantMessage | CliUserMessage | CliResultMessage | CliRateLimitEvent | CliPromptSuggestion | CliOtherMessage;
+
+/** The one control frame deck writes: `initialize` before the first prompt (its control_response is read and ignored). */
+export interface CliControlRequest { type: 'control_request'; request_id: string; request: { subtype: 'initialize'; promptSuggestions?: boolean } }
 
 /** One stdout line → a frame, or null for blank/non-JSON/non-object lines (never throws). */
 export function parseLine(line: string): CliMessage | null {

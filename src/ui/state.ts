@@ -376,6 +376,8 @@ export type AppState = {
   commanders: Record<string, CommanderView>;
   /** The server's last refusal of a commander_* ask (or of a mode change because one is active), per session, until the user acts again. */
   commanderRefusals: Record<string, RefusalCode>;
+  /** Claude's next-prompt guess per session (prompt_suggestion), until its next turn starts or a pane leaves it. Memory only. */
+  suggestions?: Record<string, string>;
 };
 
 export type RoutePreview = Omit<Extract<ServerMessage, { type: 'route_preview' }>, 'type'>;
@@ -1143,8 +1145,16 @@ function withCommander(state: AppState, sessionId: string, view: CommanderView |
   return { ...state, commanders: rest };
 }
 
+/** `suggestions` without `sessionId`'s (the same object when it has none). */
+function dropSuggestion(suggestions: AppState['suggestions'], sessionId: string | null | undefined): AppState['suggestions'] {
+  if (!sessionId || !suggestions || !(sessionId in suggestions)) return suggestions;
+  const { [sessionId]: _gone, ...rest } = suggestions;
+  return rest;
+}
+
 function onServer(state: AppState, msg: ServerMessage): AppState {
   switch (msg.type) {
+    case 'prompt_suggestion': return msg.sessionId ? { ...state, suggestions: { ...state.suggestions, [msg.sessionId]: msg.text } } : state;
     case 'hello': {
       const listed = has('accounts') ? accountListOf(msg.accounts) : LEGACY_ACCOUNT_LIST;
       // The same list as before keeps its identity (nothing drawn from it renders again).
@@ -1220,7 +1230,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
         if (canClaim && next.myTurns.includes(msg.turnId)) claimed = true;
         return next;
       });
-      return { ...state, panes };
+      return { ...state, panes, suggestions: dropSuggestion(state.suggestions, msg.sessionId) };
     }
     case 'thinking': case 'delta': case 'tool_call': case 'tool_result': case 'turn_retry': case 'turn_background':
     case 'turn_progress': case 'task_update': case 'task_done': case 'sub_tool_call': case 'sub_tool_result': case 'turn_queued':
@@ -1328,7 +1338,7 @@ export function reducer(state: AppState, action: Action): AppState {
       const same = !!pane && action.sessionId !== null && pane.session?.sessionId === action.sessionId;
       // A route_fit card up: its message goes back to the queue (paused) first, so it is kept (or parked) like any other.
       const fitted = pane?.routeFit ? updatePane(state, pane.id, routeFitBack) : state;
-      const s = { ...(same ? fitted : park(fitted, action.paneId)), recent: remember(state.recent, pane) };
+      const s = { ...(same ? fitted : park(fitted, action.paneId)), recent: remember(state.recent, pane), ...(same ? {} : { suggestions: dropSuggestion(state.suggestions, pane?.session?.sessionId) }) };
       // Shown until the history (asked for again on every open) replaces them.
       const cached = action.sessionId !== null ? s.recent[action.sessionId] : undefined;
       // Messages kept with this session (park; a new session: with its folder) come back, paused — and stay kept.

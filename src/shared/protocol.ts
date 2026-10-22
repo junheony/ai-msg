@@ -323,6 +323,12 @@ export type ServerMessage =
   | { type: 'turn_queued'; turnId: string; sessionId: string; cwd: string; clientRef: string; behind: string }
   /** A hook sent the model a message mid-turn (e.g. a Stop hook made it keep going): a muted row in the turn. `event`: Stop, PreToolUse… */
   | ({ type: 'turn_system'; source: string; label: string; text: string } & TurnScope)
+  /**
+   * Claude's guess at the user's next prompt, sent a moment after a turn's result (none on many turns): the composer of
+   * the panes showing the session offers it as ghost text (Tab / tap fills it in). Not stored; the session's next
+   * turn_started drops it.
+   */
+  | ({ type: 'prompt_suggestion'; text: string } & TurnScope)
   /** A background task (run_in_background Bash, backgrounded agent) settled during the turn; drives a push, the UI ignores it. */
   | ({ type: 'task_done'; status: 'completed' | 'failed' | 'stopped'; summary: string; taskId?: string; toolUseId?: string | null; usage?: TaskUsage } & TurnScope)
   /** Live state of a task (subagent or background command): started, progress, status change. Latest wins per taskId. */

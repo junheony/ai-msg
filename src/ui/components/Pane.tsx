@@ -210,7 +210,7 @@ export const TOGGLE_SIDE_EVENT = 'deck:toggle-side';
 
 export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, onStartChatSplit, hidden, newChatCwd, uploadFn, sessionActions, grip, onShift, floating, onFloat, onDock, onArrange, onToggleMax, maximized, collapsed, onToggleCollapse, onLayouts, onAddPane, onMaxPane, paneMaxed, headSlot, onPalette }: {
   pane: PaneState;
-  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'gemini' | 'grok' | 'usage' | 'projects' | 'defaultPermMode' | 'pins' | 'commanders' | 'commanderRefusals' | 'commanderMaxTurns' | 'tasks' | 'taskCap'>>;
+  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'gemini' | 'grok' | 'usage' | 'projects' | 'defaultPermMode' | 'pins' | 'commanders' | 'commanderRefusals' | 'commanderMaxTurns' | 'tasks' | 'taskCap' | 'suggestions'>>;
   active: boolean;
   closable: boolean;
   /** The ⋮⋮ handle in the header: drag it to reorder the pane, pull it off into a card, or drop a card back. Absent = no handle. */
@@ -626,6 +626,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           notices={pane.notices?.filter((n) => n.sessionId === null || n.sessionId === s.sessionId)}
           onDismissNotice={(message) => dispatch({ type: 'dismiss_notice', paneId: pane.id, message })}
           routeFit={pane.routeFit ?? null}
+          suggestion={s.sessionId ? app.suggestions?.[s.sessionId] ?? null : null}
           onRouteFit={(how) => {
             const f = pane.routeFit;
             if (!f || fitAnswered.current === f) return;

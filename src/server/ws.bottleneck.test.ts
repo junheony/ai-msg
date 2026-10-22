@@ -139,19 +139,19 @@ describe('ws: submitRetry keeps its hop on every path', () => {
     expect(h.calls[1]).toMatchObject({ sessionId: S, text: 'again', retryHop: 2 });
   });
 
-  it('the process is only closing (no follow-up taken): the retry waits for it to close, then runs with the hop', async () => {
+  it('the process is only closing (no follow-up taken): it is ended (it may only wait for its prompt suggestion), then the retry runs with the hop', async () => {
     const S = '75757575-7575-4757-8757-757575757575';
     const h = heldRun();
     vi.spyOn(runner, 'foreignWrites').mockResolvedValue(false);
     vi.spyOn(runner, 'followUp').mockReturnValue(false);
     wsApi.submitRetry({ sessionId: S, cwd: base, text: 'first', hop: 1 });
     await vi.waitFor(() => expect(h.calls).toHaveLength(1));
+    const firstSignal = h.run.mock.calls[0]![1].signal;
     wsApi.submitRetry({ sessionId: S, cwd: base, text: 'again', hop: 2 });
-    await new Promise((r) => setTimeout(r, 50));
-    expect(h.calls).toHaveLength(1);
-    h.release();
     await vi.waitFor(() => expect(h.calls).toHaveLength(2));
+    expect(firstSignal.aborted).toBe(true);
     expect(h.calls[1]).toMatchObject({ text: 'again', retryHop: 2 });
+    h.release();
   });
 });
 
