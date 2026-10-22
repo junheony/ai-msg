@@ -6,7 +6,7 @@ import { SettingsStore } from './settings';
 import { resolveServerLocale } from './i18n';
 
 /** 자동 분배 defaults: every engine, no external-transfer consent, Grok 4.7 (not Fast). */
-const AUTO = { autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, crossEngineFailover: true, taskSoftCap: 3 };
+const AUTO = { autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, crossEngineFailover: true, autoResume: true, taskSoftCap: 3 };
 /**
  * 실험적 기능 on a fresh install (Grok Bot / Desktop off, Codex·Gemini imports on) and on one from before the switches (all
  * on). A new chat starts on 자동 on both (not migrated).
@@ -143,6 +143,11 @@ describe('SettingsStore', () => {
     expect((await s.set({ grokFast: false })).crossEngineFailover).toBe(false);
     expect(JSON.parse(await fs.readFile(file, 'utf8')).crossEngineFailover).toBe(false);
     expect((await s.set({ crossEngineFailover: true })).crossEngineFailover).toBe(true);
+    // 한도가 풀리면 자동으로 이어가기: on unless the file says false, the same way.
+    expect((await s.set({ autoResume: false })).autoResume).toBe(false);
+    expect((await s.set({ grokFast: false })).autoResume).toBe(false);
+    expect(JSON.parse(await fs.readFile(file, 'utf8')).autoResume).toBe(false);
+    expect((await s.set({ autoResume: true })).autoResume).toBe(true);
     const again = new SettingsStore(file);
     await again.load();
     expect(again.get()).toMatchObject({ autoEngines: ['claude', 'codex'], autoConsent: ['grok'], grokFast: false });

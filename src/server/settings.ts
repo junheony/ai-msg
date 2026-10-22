@@ -11,7 +11,7 @@ import { isLocale, type Locale } from '../shared/locale';
  * An existing `settings.json` always wins over these. 자동 routing spreads load (고르게 분산). 같은 벤더 계정 자동 순환 is
  * off until the user turns it on (and agrees to the own-accounts-only notice); a file without it = off. 자동 분배 may use
  * every engine, but Gemini / Grok only after their external-transfer card (autoConsent, empty by default). 다른 AI 로
- * 이어가기 (crossEngineFailover) is on for everyone; a file without it = on.
+ * 이어가기 (crossEngineFailover) and 한도가 풀리면 자동으로 이어가기 (autoResume) are on for everyone; a file without them = on.
  * 실험적 기능: Grok Bot and Claude Desktop reads are off on a fresh install; Codex / agy import reads stay on (see experimentalFrom).
  * A new chat starts on 자동 (newChatEngine 'auto'), as it already does: only a choice saved in the file changes it.
  */
@@ -24,10 +24,10 @@ export const DEFAULT_EXPERIMENTAL: ExperimentalSettings = { grokBot: false, desk
 /** What an install from before the 실험적 기능 switches gets: everything it already did keeps working. */
 export const LEGACY_EXPERIMENTAL: ExperimentalSettings = { grokBot: true, desktop: true, localImports: true };
 
-export const DEFAULT_SETTINGS: ServerSettings = { autoApprove: false, defaultPermissionMode: 'default', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: [...ENGINE_KINDS], autoConsent: [], grokFast: false, crossEngineFailover: true, newChatEngine: 'auto', taskSoftCap: DEFAULT_TASK_SOFT_CAP, experimental: { ...DEFAULT_EXPERIMENTAL } };
+export const DEFAULT_SETTINGS: ServerSettings = { autoApprove: false, defaultPermissionMode: 'default', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: [...ENGINE_KINDS], autoConsent: [], grokFast: false, crossEngineFailover: true, autoResume: true, newChatEngine: 'auto', taskSoftCap: DEFAULT_TASK_SOFT_CAP, experimental: { ...DEFAULT_EXPERIMENTAL } };
 
 type CommanderSettings = Pick<ServerSettings, 'commanderEnabled' | 'commanderMaxTurns' | 'commanderTokenCap'>;
-type AutoRouteSettings = Pick<ServerSettings, 'autoEngines' | 'autoConsent' | 'grokFast' | 'crossEngineFailover'> & Partial<Pick<DeckSettings, 'taskSoftCap'>>;
+type AutoRouteSettings = Pick<ServerSettings, 'autoEngines' | 'autoConsent' | 'grokFast' | 'crossEngineFailover' | 'autoResume'> & Partial<Pick<DeckSettings, 'taskSoftCap'>>;
 
 /** Both permission fields from one source: `defaultPermissionMode` wins; a lone legacy `autoApprove` maps to bypass / default. */
 function normalize(mode: PermMode, routingPolicy: RoutingPolicy, sameVendorRotation: boolean, commander: CommanderSettings, auto: AutoRouteSettings, language: Locale | null, experimental: ExperimentalSettings, newChatEngine: ServerSettings['newChatEngine']): ServerSettings {
@@ -55,6 +55,8 @@ function autoRouteFrom(r: Record<string, unknown>): AutoRouteSettings {
     grokFast: r.grokFast === true,
     // 다른 AI 로 이어가기: on unless the file says false (a file from before it = on, like a fresh install).
     crossEngineFailover: r.crossEngineFailover !== false,
+    // 한도가 풀리면 자동으로 이어가기: the same (absent = on).
+    autoResume: r.autoResume !== false,
     taskSoftCap: clampTaskCap(r.taskSoftCap),
   };
 }
@@ -130,6 +132,7 @@ export class SettingsStore {
       autoConsent: engineList(patch.autoConsent) ?? this.current.autoConsent,
       grokFast: patch.grokFast ?? this.current.grokFast,
       crossEngineFailover: patch.crossEngineFailover ?? this.current.crossEngineFailover,
+      autoResume: patch.autoResume ?? this.current.autoResume,
       taskSoftCap: patch.taskSoftCap ?? this.current.taskSoftCap,
     }, patch.language === undefined ? (this.current.language ?? null) : isLocale(patch.language) ? patch.language : null, experimentalFrom(patch.experimental, this.current.experimental), this.current.newChatEngine);
     this.current = next;

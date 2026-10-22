@@ -132,6 +132,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     /** 자동 분배: engines 자동 may use, engines whose external-transfer card was accepted, Grok fast model. */
     autoEngines: z.array(z.enum(['claude', 'codex', 'gemini', 'grok'])).max(4).optional(), autoConsent: z.array(z.enum(['claude', 'codex', 'gemini', 'grok'])).max(4).optional(), grokFast: z.boolean().optional(), taskSoftCap: z.number().int().min(1).max(10).optional(),
     /** 한도 → 다른 AI 로 이어가기 (설정 토글). */ crossEngineFailover: z.boolean().optional(),
+    /** 한도가 풀리면 자동으로 이어가기 (설정 토글). */ autoResume: z.boolean().optional(),
     /** The server's language, from a device's explicit pick; null (the device picked Auto) = from the environment again. */ language: z.enum(LOCALES).nullable().optional(),
     /** 실험적 기능 switches; only the ones given change. */
     experimental: ExperimentalSchema.partial().strict().optional() }),
@@ -198,6 +199,11 @@ export type DeckSettings = { autoApprove: boolean; defaultPermissionMode: PermMo
    * session of another engine (autoEngines; Gemini / Grok only with autoConsent). Default on. Absent from older servers.
    */
   crossEngineFailover?: boolean;
+  /**
+   * 한도가 풀리면 자동으로 이어가기: a turn stopped by a limit with nowhere to hand it over is booked to go on by itself
+   * when the limit resets (SessionState.pendingRetry). Default on. Absent from older servers.
+   */
+  autoResume?: boolean;
   /**
    * The engine a new chat starts on (a new pane): 'auto' unless 'claude' was saved in settings.json. A pane's own pick
    * always wins. Absent from older servers.
