@@ -52,6 +52,7 @@ import { ProcessHolders } from './sessions/ProcessHolders';
 import { SessionIndex } from './sessions/SessionIndex';
 import { GeminiConversationIndex } from './sessions/GeminiImports';
 import { GrokBotIndex } from './sessions/GrokBotImports';
+import { gated } from './sessions/ImportIndex';
 import { GrokSessionIndex } from './sessions/GrokImports';
 import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
@@ -167,20 +168,23 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     // Conversations made outside deck (imports design): Grok CLI / agy only when deck can continue them; Grok Bot read-only (macOS).
     await fs.rm(cfg.importTmpDir, { recursive: true, force: true }).catch(() => undefined);
     const grokImports = cfg.grokBin ? new GrokSessionIndex(cfg.grokHome) : null;
-    const geminiImports = cfg.geminiBin ? new GeminiConversationIndex([{ account: 'g1', dir: cfg.geminiStateDir }], cfg.importTmpDir) : null;
-    const grokBotImports = new GrokBotIndex(cfg.grokBotDir, cfg.home);
+    // 실험적 기능 (settings `experimental`), asked on every use: off = those apps' files are never read (or written).
+    const settings = new SettingsStore(cfg.settingsFile, () => fs.stat(cfg.stateFile).then(() => true, () => false));
+    await settings.load();
+    // Server messages: the last explicit pick from a device, else the environment (LANG …).
+    setLocale(resolveServerLocale(settings.get(), process.env));
+    const experimental = () => settings.get().experimental;
+    const geminiImports = cfg.geminiBin ? gated(new GeminiConversationIndex([{ account: 'g1', dir: cfg.geminiStateDir }], cfg.importTmpDir), () => experimental().localImports) : null;
+    const grokBotImports = new GrokBotIndex(cfg.grokBotDir, cfg.home, undefined, () => experimental().grokBot);
     grokBotImports.onUsage = (u) => usage.applyGrokBot(u);
-    const index = new SessionIndex({ grokImports, geminiImports, grokBotImports, holders, roots: cfg.projectsRoots, pinnedFile: cfg.pinnedFile, recentFile: cfg.recentFoldersFile, desktopRoot: cfg.desktopSessionsRoot, codexRoot: cfg.codexSessionsRoot, codexArchivedRoot: cfg.codexArchivedRoot, meta, home: accounts.home });
+    const index = new SessionIndex({ grokImports, geminiImports, grokBotImports, holders, roots: cfg.projectsRoots, pinnedFile: cfg.pinnedFile, recentFile: cfg.recentFoldersFile, desktopRoot: cfg.desktopSessionsRoot, codexRoot: cfg.codexSessionsRoot, codexArchivedRoot: cfg.codexArchivedRoot, meta, home: accounts.home, desktopEnabled: () => experimental().desktop, localImportsEnabled: () => experimental().localImports });
     const store = new SessionStateStore(cfg.stateFile);
     const pins = new PinStore(cfg.pinsFile);
     const memory = new MemoryStore(path.join(cfg.configDir, 'memory.md'));
-    const settings = new SettingsStore(cfg.settingsFile);
     const tasks = new TaskRegistry(path.join(cfg.configDir, 'tasks.json'));
     const pushSubs = new SubscriptionStore(cfg.pushSubscriptionsFile);
     // Codex rollouts (~1000 files) are read after listening; the sidebar is told when they are in.
-    await Promise.all([holders.refresh().then(() => index.refresh({ codexInBackground: true })), store.load(), pins.load(), settings.load(), pushSubs.load(), tasks.load(), memory.load()]);
-    // Server messages: the last explicit pick from a device, else the environment (LANG …).
-    setLocale(resolveServerLocale(settings.get(), process.env));
+    await Promise.all([holders.refresh().then(() => index.refresh({ codexInBackground: true })), store.load(), pins.load(), pushSubs.load(), tasks.load(), memory.load()]);
     const commands = new SlashCommandCache();
     const search = new TranscriptSearch({ sessions: () => index.projects(store.codexEntries(), { all: true }).flatMap((p) => p.sessions) });
     // /api/file never previews deck's own config (token, VAPID key, push subscriptions), even with the cwd at ~.
@@ -282,6 +286,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
       accounts,
       projectsRoots: cfg.projectsRoots,
       homeAccount: accounts.home,
+      desktopMirror: () => experimental().desktop,
       onIndexChanged: () => notifyIndex(),
     });
 

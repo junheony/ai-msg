@@ -26,3 +26,14 @@ export function singleFlight(scan: () => Promise<void>): () => Promise<void> {
   };
   return refresh;
 }
+
+/** `inner` while `on()` (asked on every call): off = never refreshed (nothing read), nothing listed or found. */
+export function gated(inner: ImportIndex, on: () => boolean): ImportIndex {
+  return {
+    refresh: () => (on() ? inner.refresh() : Promise.resolve()),
+    list: () => (on() ? inner.list() : []),
+    lookup: (id) => (on() ? inner.lookup(id) : null),
+    activeAgeMs: (id, nowMs) => (on() ? inner.activeAgeMs(id, nowMs) : Promise.resolve(null)),
+    ...(inner.heldReason ? { heldReason: (id: string, nowMs?: number) => (on() ? inner.heldReason!(id, nowMs) : Promise.resolve(null)) } : {}),
+  };
+}

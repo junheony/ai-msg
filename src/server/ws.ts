@@ -1616,7 +1616,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const store = deps.settings;
           if (!store) { send(ws, { type: 'error', turnId: null, message: '설정을 바꿀 수 없습니다' }); break; }
           // The default only applies to new sessions (and ones with no stored mode) from their next turn: waiting cards stay.
-          void store.set({ ...(msg.autoApprove !== undefined ? { autoApprove: msg.autoApprove } : {}), ...(msg.defaultPermissionMode ? { defaultPermissionMode: msg.defaultPermissionMode } : {}), ...(msg.routingPolicy ? { routingPolicy: msg.routingPolicy } : {}), ...(msg.sameVendorRotation !== undefined ? { sameVendorRotation: msg.sameVendorRotation } : {}), ...(msg.commanderEnabled !== undefined ? { commanderEnabled: msg.commanderEnabled } : {}), ...(msg.autoEngines ? { autoEngines: msg.autoEngines } : {}), ...(msg.autoConsent ? { autoConsent: msg.autoConsent } : {}), ...(msg.grokFast !== undefined ? { grokFast: msg.grokFast } : {}), ...(msg.taskSoftCap !== undefined ? { taskSoftCap: msg.taskSoftCap } : {}), ...(msg.language !== undefined ? { language: msg.language } : {}) })
+          void store.set({ ...(msg.autoApprove !== undefined ? { autoApprove: msg.autoApprove } : {}), ...(msg.defaultPermissionMode ? { defaultPermissionMode: msg.defaultPermissionMode } : {}), ...(msg.routingPolicy ? { routingPolicy: msg.routingPolicy } : {}), ...(msg.sameVendorRotation !== undefined ? { sameVendorRotation: msg.sameVendorRotation } : {}), ...(msg.commanderEnabled !== undefined ? { commanderEnabled: msg.commanderEnabled } : {}), ...(msg.autoEngines ? { autoEngines: msg.autoEngines } : {}), ...(msg.autoConsent ? { autoConsent: msg.autoConsent } : {}), ...(msg.grokFast !== undefined ? { grokFast: msg.grokFast } : {}), ...(msg.taskSoftCap !== undefined ? { taskSoftCap: msg.taskSoftCap } : {}), ...(msg.language !== undefined ? { language: msg.language } : {}), ...(msg.experimental ? { experimental: msg.experimental } : {}) })
             // 총사령탑 켜기·끄기 changes what the server advertises: every device gets the list again.
             .then((settings) => {
               // Off: no commander is left running unseen (devices drop the chip with the feature) or armed for a later on.
@@ -1625,6 +1625,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
               if (msg.taskSoftCap !== undefined) { broadcastTasks(); pumpTasks(); }
               // Server messages follow the last explicit pick from now on.
               if (msg.language !== undefined) setLocale(resolveServerLocale(settings, process.env));
+              // 실험적 기능 apply now: the lists they feed are read again (or emptied) and every device gets them.
+              if (msg.experimental) void deps.index.refresh().then(() => broadcast(indexMsg()), () => undefined);
             })
             .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `설정을 저장하지 못했습니다: ${errMsg(err)}` }));
           break;

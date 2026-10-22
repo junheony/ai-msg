@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -82,5 +82,34 @@ describe('SessionIndex.desktop', () => {
     const plain = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'p.json') });
     await plain.refresh();
     expect(plain.desktop()).toEqual([]);
+  });
+});
+
+describe('SessionIndex.desktop 실험적 기능 switch', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('off: the Desktop store is never read and nothing is listed; on again: listed at the next refresh', async () => {
+    const base = await mkTmp('deck-dsk-off-');
+    const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
+    const projDir = path.join(roots.a, '-Users-x-deck');
+    await fs.mkdir(projDir, { recursive: true });
+    await fs.writeFile(path.join(projDir, `${uuid(1)}.jsonl`), JSON.stringify({ type: 'user', cwd: '/Users/x/deck', sessionId: uuid(1), message: { role: 'user', content: 'hi' } }) + '\n');
+    const desktopRoot = path.join(base, 'claude-code-sessions');
+    await writeMeta(desktopRoot, 1, { title: 'Desktop work', cwd: '/Users/x/deck', lastActivityAt: 1 });
+    let on = true;
+    const idx = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'p.json'), desktopRoot, desktopEnabled: () => on });
+    await idx.refresh();
+    expect(idx.desktop()).toHaveLength(1);
+    on = false;
+    expect(idx.desktop()).toEqual([]);
+    const spies = [vi.spyOn(fs, 'readdir'), vi.spyOn(fs, 'readFile'), vi.spyOn(fs, 'stat'), vi.spyOn(fs, 'lstat'), vi.spyOn(fs, 'open')];
+    await idx.refresh();
+    const touched = spies.flatMap((s) => s.mock.calls.map((c) => String(c[0]))).filter((f) => f.startsWith(desktopRoot));
+    expect(touched).toEqual([]);
+    expect(idx.desktop()).toEqual([]);
+    vi.restoreAllMocks();
+    on = true;
+    await idx.refresh();
+    expect(idx.desktop()).toEqual([expect.objectContaining({ sessionId: uuid(1), title: 'Desktop work' })]);
   });
 });

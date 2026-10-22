@@ -133,3 +133,15 @@ describe('⚡ 빠르게 on send', () => {
     expect(ClientMessageSchema.safeParse({ ...steer, fast: 'yes' }).success).toBe(false);
   });
 });
+
+describe('set_settings experimental', () => {
+  it('takes any subset of the three switches as booleans; anything else is refused', () => {
+    const ok = (experimental: unknown) => ClientMessageSchema.safeParse({ type: 'set_settings', experimental }).success;
+    expect(ok({ grokBot: true })).toBe(true);
+    expect(ok({ grokBot: false, desktop: true, localImports: false })).toBe(true);
+    expect(ok({})).toBe(true);
+    expect(ok({ grokBot: 'yes' })).toBe(false);
+    expect(ok({ rotation: true })).toBe(false);
+    expect(ok(true)).toBe(false);
+  });
+});

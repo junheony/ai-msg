@@ -178,7 +178,8 @@ export async function readGrokBotWeeklyUsage(files: string[], nowMs = Date.now()
 
 /**
  * Grok Bot app conversations (macOS), read-only: the roster blobs as Grok entries with `source: 'grokbot'`.
- * `dir` null or missing = silently none. Only allowlisted blobs are ever opened (see ALLOWED); a roster is re-read
+ * `dir` null or missing = silently none; `enabled` (실험적 기능 › Grok Bot, asked on every use) off = the folder is never
+ * listed or opened, nothing is listed and the usage line goes away. Only allowlisted blobs are ever opened (see ALLOWED); a roster is re-read
  * when its mtime / size changed, and a blob that fails to parse keeps the previous rows. `onUsage` gets the weekly
  * usage cache after each scan (null when absent / expired).
  */
@@ -191,11 +192,16 @@ export class GrokBotIndex implements ImportIndex {
   readonly refresh: () => Promise<void>;
   onUsage: ((u: GrokBotUsage | null) => void) | null = null;
 
-  constructor(private readonly dir: string | null, private readonly home: string, private readonly now: () => number = () => Date.now()) {
+  constructor(private readonly dir: string | null, private readonly home: string, private readonly now: () => number = () => Date.now(), private readonly enabled: () => boolean = () => true) {
     this.refresh = singleFlight(() => this.scan());
   }
 
   private async scan(): Promise<void> {
+    if (!this.enabled()) {
+      this.entries = []; this.byId = new Map(); this.rows.clear(); this.stamps.clear(); this.transcripts = new Map();
+      this.onUsage?.(null);
+      return;
+    }
     const blobs = this.dir ? await listBlobs(this.dir) : null;
     if (!blobs) { this.entries = []; this.byId = new Map(); return; }
     for (const f of blobs.rosters) {
@@ -224,16 +230,16 @@ export class GrokBotIndex implements ImportIndex {
   }
 
   list(): SessionEntry[] {
-    return this.entries;
+    return this.enabled() ? this.entries : [];
   }
 
   lookup(id: string): SessionEntry | null {
-    return this.byId.get(id) ?? null;
+    return this.enabled() ? (this.byId.get(id) ?? null) : null;
   }
 
   /** The conversation's messages (empty when the app has not cached it). */
   async transcript(id: string): Promise<TranscriptMessage[]> {
-    const e = this.byId.get(id);
+    const e = this.lookup(id);
     const file = e ? this.transcripts.get(id.slice(GROKBOT_ID_PREFIX.length)) : undefined;
     return file ? readGrokBotTranscript(file).catch(() => []) : [];
   }

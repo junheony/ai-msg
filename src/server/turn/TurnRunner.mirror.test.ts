@@ -605,3 +605,22 @@ describe('TurnRunner: Claude Desktop metadata on the A copy', () => {
   });
 });
 
+
+describe('TurnRunner: 실험적 기능 › Claude Desktop off', () => {
+  it('no home write-back after a B turn, and openInDesktop is refused without touching A; on again: mirrored as before', async () => {
+    const c = await setup();
+    let on = false;
+    c.deps.desktopMirror = () => on;
+    await put(c, 'a', line('one'), NOW - 3_600_000);
+    await put(c, 'b', line('one') + line('two'), NOW - 60_000);
+    await onB(c);
+    await turn(c, SID);
+    expect(c.eng.calls[0]).toMatchObject({ account: 'b' });
+    expect(await read(fileOf(c, 'a'))).toBe(line('one'));
+    expect(await c.runner.openInDesktop(SID)).toEqual({ ok: false, reason: 'off' });
+    expect(await read(fileOf(c, 'a'))).toBe(line('one'));
+    on = true;
+    expect(await c.runner.openInDesktop(SID)).toEqual({ ok: true, busy: false });
+    expect(await read(fileOf(c, 'a'))).toBe(await read(fileOf(c, 'b')));
+  });
+});

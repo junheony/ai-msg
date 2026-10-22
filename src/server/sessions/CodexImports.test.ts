@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -222,6 +222,26 @@ describe('SessionIndex with codexRoot', () => {
     const sessions = index.projects([own]).find((p) => p.cwd === work)!.sessions;
     // Deck's entry, not the import — at least as recent as the thread's rollout file.
     expect(sessions.filter((s) => s.sessionId === CLI_ID)).toEqual([{ ...own, lastModified: index.codexImport(CLI_ID)!.lastModified }]);
+  });
+});
+
+describe('SessionIndex codex imports 실험적 기능 switch', () => {
+  it('off: no rollout under codexRoot is listed, statted or read; on again: listed at the next refresh', async () => {
+    await writeFixtures(root, work);
+    const roots = { a: path.join(base, 'a'), b: path.join(base, 'b'), c: path.join(base, 'c') };
+    let on = false;
+    const index = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(base, 'p.json'), codexRoot: root, localImportsEnabled: () => on });
+    const spies = [vi.spyOn(fs, 'readdir'), vi.spyOn(fs, 'readFile'), vi.spyOn(fs, 'stat'), vi.spyOn(fs, 'lstat'), vi.spyOn(fs, 'open')];
+    await index.refresh();
+    const touched = spies.flatMap((s) => s.mock.calls.map((c) => String(c[0]))).filter((f) => f.startsWith(root));
+    expect(touched).toEqual([]);
+    for (const s of spies) s.mockRestore();
+    expect(index.projects().find((p) => p.cwd === work)).toBeUndefined();
+    expect(index.codexImport(DESKTOP_ID)).toBeNull();
+    expect(index.importOf(CLI_ID)).toBeNull();
+    on = true;
+    await index.refresh();
+    expect(index.projects().find((p) => p.cwd === work)?.sessions.map((s) => s.sessionId).sort()).toEqual([DESKTOP_ID, CLI_ID]);
   });
 });
 

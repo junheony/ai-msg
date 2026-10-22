@@ -654,25 +654,43 @@ describe('ws', () => {
     const pa = collect(a.ws, (m) => m.type === 'settings');
     const pb = collect(b.ws, (m) => m.type === 'settings');
     a.ws.send(JSON.stringify({ type: 'set_settings', autoApprove: true }));
-    expect((await pa).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: true, defaultPermissionMode: 'bypassPermissions', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, taskSoftCap: 3 } });
-    expect((await pb).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: true, defaultPermissionMode: 'bypassPermissions', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, taskSoftCap: 3 } });
-    expect(JSON.parse(await fs.readFile(path.join(base, 'settings.json'), 'utf8'))).toEqual({ autoApprove: true, defaultPermissionMode: 'bypassPermissions', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, taskSoftCap: 3 });
+    expect((await pa).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: true, defaultPermissionMode: 'bypassPermissions', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, taskSoftCap: 3, experimental: { grokBot: false, desktop: false, localImports: true } } });
+    expect((await pb).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: true, defaultPermissionMode: 'bypassPermissions', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, taskSoftCap: 3, experimental: { grokBot: false, desktop: false, localImports: true } } });
+    expect(JSON.parse(await fs.readFile(path.join(base, 'settings.json'), 'utf8'))).toEqual({ autoApprove: true, defaultPermissionMode: 'bypassPermissions', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, taskSoftCap: 3, experimental: { grokBot: false, desktop: false, localImports: true } });
     const pc = collect(a.ws, (m) => m.type === 'settings');
     a.ws.send(JSON.stringify({ type: 'set_settings', autoApprove: false }));
-    expect((await pc).at(-1)).toMatchObject({ settings: { autoApprove: false, defaultPermissionMode: 'default', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, taskSoftCap: 3 } });
+    expect((await pc).at(-1)).toMatchObject({ settings: { autoApprove: false, defaultPermissionMode: 'default', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, taskSoftCap: 3, experimental: { grokBot: false, desktop: false, localImports: true } } });
     const pd = collect(a.ws, (m) => m.type === 'settings');
     a.ws.send(JSON.stringify({ type: 'set_settings', defaultPermissionMode: 'plan' }));
-    expect((await pd).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'plan', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, taskSoftCap: 3 } });
+    expect((await pd).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'plan', routingPolicy: 'balance', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, taskSoftCap: 3, experimental: { grokBot: false, desktop: false, localImports: true } } });
     const pe = collect(a.ws, (m) => m.type === 'settings');
     a.ws.send(JSON.stringify({ type: 'set_settings', routingPolicy: 'drain' }));
-    expect((await pe).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'plan', routingPolicy: 'drain', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, taskSoftCap: 3 } });
+    expect((await pe).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'plan', routingPolicy: 'drain', sameVendorRotation: false, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, taskSoftCap: 3, experimental: { grokBot: false, desktop: false, localImports: true } } });
     expect(JSON.parse(await fs.readFile(path.join(base, 'settings.json'), 'utf8')).routingPolicy).toBe('drain');
     const pf = collect(b.ws, (m) => m.type === 'settings');
     a.ws.send(JSON.stringify({ type: 'set_settings', sameVendorRotation: true, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000 }));
     // A commanderEnabled patch (총사령탑 토글) sends the feature list again: no 'commander' while it is off.
-    expect((await pf).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'plan', routingPolicy: 'drain', sameVendorRotation: true, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, taskSoftCap: 3 }, features: expect.not.arrayContaining(['commander']) });
+    expect((await pf).at(-1)).toEqual({ type: 'settings', settings: { autoApprove: false, defaultPermissionMode: 'plan', routingPolicy: 'drain', sameVendorRotation: true, commanderEnabled: false, commanderMaxTurns: 20, commanderTokenCap: 2_000_000, autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false, taskSoftCap: 3, experimental: { grokBot: false, desktop: false, localImports: true } }, features: expect.not.arrayContaining(['commander']) });
     expect(JSON.parse(await fs.readFile(path.join(base, 'settings.json'), 'utf8')).sameVendorRotation).toBe(true);
     a.ws.close(); b.ws.close();
+  });
+
+  it('set_settings experimental: one switch changes, every client gets the settings and a fresh index; junk is refused', async () => {
+    const a = await connect({ Origin: origin, Cookie: COOKIE });
+    expect((await collect(a.ws, (m) => m.type === 'hello')).at(-1)).toMatchObject({ settings: { experimental: { grokBot: false, desktop: false, localImports: true } } });
+    const ps = collect(a.ws, (m) => m.type === 'settings');
+    const pi = collect(a.ws, (m) => m.type === 'index');
+    a.ws.send(JSON.stringify({ type: 'set_settings', experimental: { grokBot: true } }));
+    expect((await ps).at(-1)).toMatchObject({ settings: { experimental: { grokBot: true, desktop: false, localImports: true } } });
+    await pi;
+    expect(JSON.parse(await fs.readFile(path.join(base, 'settings.json'), 'utf8')).experimental).toEqual({ grokBot: true, desktop: false, localImports: true });
+    for (const experimental of [{ grokBot: 'yes' }, { other: true }]) {
+      const pe = collect(a.ws, (m) => m.type === 'error');
+      a.ws.send(JSON.stringify({ type: 'set_settings', experimental }));
+      expect((await pe).at(-1)).toMatchObject({ type: 'error' });
+    }
+    expect(settings.get().experimental).toEqual({ grokBot: true, desktop: false, localImports: true });
+    a.ws.close();
   });
 
   it('rejects invalid messages with an error and keeps the socket open', async () => {

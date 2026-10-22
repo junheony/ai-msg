@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { gated } from './ImportIndex';
 import { GEMINI_RUNNING_NOTICE, GeminiConversationIndex, SUMMARIES_DB, geminiRowToEntry, parseGeminiTime, snapshotSqlite, type GeminiRow } from './GeminiImports';
 
 let base: string;
@@ -160,6 +161,31 @@ describe('GeminiConversationIndex', () => {
   it('no db: empty', async () => {
     const idx = new GeminiConversationIndex([{ account: 'g1', dir: path.join(base, 'none') }], tmp, undefined, undefined, () => {});
     await idx.refresh();
+    expect(idx.list()).toEqual([]);
+  });
+});
+
+describe('gated GeminiConversationIndex (실험적 기능 › Codex·Gemini 가져오기)', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('off: the summaries db is never statted or copied, nothing is listed; on: read as before', async () => {
+    makeDb([row()]).close();
+    let on = false;
+    const snapshot = vi.fn(snapshotSqlite);
+    const idx = gated(new GeminiConversationIndex([{ account: 'g1', dir: state }], tmp, undefined, snapshot, () => {}), () => on);
+    const stat = vi.spyOn(fs, 'stat');
+    await idx.refresh();
+    expect(stat.mock.calls.map((c) => String(c[0])).filter((f) => f.startsWith(state))).toEqual([]);
+    expect(snapshot).not.toHaveBeenCalled();
+    expect(idx.list()).toEqual([]);
+    expect(idx.lookup('c1')).toBeNull();
+    expect(await idx.heldReason?.('c1')).toBeNull();
+    expect(await idx.activeAgeMs('c1')).toBeNull();
+    on = true;
+    await idx.refresh();
+    expect(snapshot).toHaveBeenCalledTimes(1);
+    expect(idx.list().map((e) => e.sessionId)).toEqual(['c1']);
+    on = false;
     expect(idx.list()).toEqual([]);
   });
 });

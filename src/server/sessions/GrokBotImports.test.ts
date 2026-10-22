@@ -114,6 +114,44 @@ describe('GrokBotIndex', () => {
   });
 });
 
+describe('GrokBotIndex 실험적 기능 switch', () => {
+  it('off: the folder is never listed, statted or opened; nothing is listed and the usage line goes; on again: as before', async () => {
+    await write(blobName('roster.last-roster'), roster([row()]));
+    await write(blobName(`transcript.replicas.${AGENT}`), { schemaVersion: 1, value: { entries: [{ seq: 1, kind: 'message', content: 'hi' }] } });
+    await write(blobName('weekly-usage.cache'), { schemaVersion: 2, value: { kind: 'present', reading: { usage: { percentUsed: 10 }, readAtMs: 1_000 }, expiresAtMs: 5_000 } });
+    let on = true;
+    const got: unknown[] = [];
+    const idx = new GrokBotIndex(dir, '/h', () => 3_000, () => on);
+    idx.onUsage = (u) => got.push(u);
+    await idx.refresh();
+    expect(idx.list()).toHaveLength(1);
+    on = false;
+    // Switched off: nothing shows at once, before any rescan.
+    expect(idx.list()).toEqual([]);
+    expect(idx.lookup(GROKBOT_ID_PREFIX + AGENT)).toBeNull();
+    const touched = [vi.spyOn(fs, 'readdir'), vi.spyOn(fs, 'readFile'), vi.spyOn(fs, 'stat'), vi.spyOn(fs, 'lstat')];
+    await idx.refresh();
+    expect(await idx.transcript(GROKBOT_ID_PREFIX + AGENT)).toEqual([]);
+    for (const spy of touched) expect(spy).not.toHaveBeenCalled();
+    expect(got.at(-1)).toBeNull();
+    vi.restoreAllMocks();
+    on = true;
+    await idx.refresh();
+    expect(idx.list()).toHaveLength(1);
+    expect(await idx.transcript(GROKBOT_ID_PREFIX + AGENT)).toEqual([expect.objectContaining({ kind: 'user', text: 'hi' })]);
+    expect(got.at(-1)).toMatchObject({ percentUsed: 10 });
+  });
+
+  it('off from the start: a scan touches nothing', async () => {
+    await write(blobName('roster.last-roster'), roster([row()]));
+    const touched = [vi.spyOn(fs, 'readdir'), vi.spyOn(fs, 'readFile'), vi.spyOn(fs, 'stat'), vi.spyOn(fs, 'lstat')];
+    const idx = new GrokBotIndex(dir, '/h', undefined, () => false);
+    await idx.refresh();
+    expect(idx.list()).toEqual([]);
+    for (const spy of touched) expect(spy).not.toHaveBeenCalled();
+  });
+});
+
 describe('readGrokBotWeeklyUsage', () => {
   it('skips absent, expired and unknown-schema caches', async () => {
     const f = path.join(dir, blobName('weekly-usage.cache'));

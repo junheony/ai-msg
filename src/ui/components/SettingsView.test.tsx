@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { AUTO_CONSENT_TEXT, ROTATION_CONSENT, SEG_MAX, SETTINGS_GROUPS, SettingsView } from './SettingsView';
+import { AUTO_CONSENT_TEXT, EXPERIMENTAL_NOTICE, EXPERIMENTAL_ROWS, ROTATION_CONSENT, SEG_MAX, SETTINGS_GROUPS, SettingsView } from './SettingsView';
 import { DEFAULT_PREFS, PREFS_KEY } from '../prefs';
 
 const noop = () => {};
@@ -99,6 +99,40 @@ describe('SettingsView 같은 벤더 계정 자동 순환', () => {
     expect(screen.queryByText(ROTATION_CONSENT)).toBeNull();
     expect(on).not.toHaveBeenCalled();
     expect(screen.getByText(/Claude 계정이 1개라/)).toBeTruthy();
+  });
+});
+
+describe('SettingsView 실험적 기능', () => {
+  afterEach(cleanup);
+  const btn = (label: string, name: string) => Array.from(screen.getByRole('group', { name: label }).querySelectorAll('button')).find((b) => b.textContent === name) as HTMLButtonElement;
+  const fresh = { grokBot: false, desktop: false, localImports: true };
+
+  it('the notice always shows; the toggles wait for the server', () => {
+    render(<SettingsView build={null} experimental={null} onExperimental={noop} onClose={noop} />);
+    expect(screen.getByTestId('experimental-notice').textContent).toContain(EXPERIMENTAL_NOTICE);
+    expect(screen.getByTestId('experimental-notice').textContent).toContain('실험적 · 비공식');
+    for (const [, label] of EXPERIMENTAL_ROWS) expect(screen.queryByRole('group', { name: label })).toBeNull();
+    expect(within(screen.getByRole('region', { name: '실험적 기능' })).getByText('서버 연결 후 표시됩니다.')).toBeTruthy();
+  });
+
+  it('each row shows its state and its one line; picking the other value sends only that key, the current one sends nothing', () => {
+    const on = vi.fn();
+    render(<SettingsView build={null} experimental={fresh} onExperimental={on} onClose={noop} />);
+    for (const [, label, what] of EXPERIMENTAL_ROWS) {
+      expect(screen.getByRole('group', { name: label })).toBeTruthy();
+      expect(screen.getByText(what)).toBeTruthy();
+    }
+    expect(btn('Grok Bot 앱 대화·사용량', '끄기').getAttribute('aria-pressed')).toBe('true');
+    expect(btn('Codex·Gemini 대화 가져오기', '켜기').getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(btn('Grok Bot 앱 대화·사용량', '끄기'));
+    expect(on).not.toHaveBeenCalled();
+    fireEvent.click(btn('Grok Bot 앱 대화·사용량', '켜기'));
+    expect(on).toHaveBeenLastCalledWith({ grokBot: true });
+    fireEvent.click(btn('Claude Desktop 연동', '켜기'));
+    expect(on).toHaveBeenLastCalledWith({ desktop: true });
+    fireEvent.click(btn('Codex·Gemini 대화 가져오기', '끄기'));
+    expect(on).toHaveBeenLastCalledWith({ localImports: false });
+    expect(on).toHaveBeenCalledTimes(3);
   });
 });
 
@@ -216,8 +250,8 @@ describe('SettingsView 4그룹', () => {
   it('화면 · 입력 · 권한·알림 · 계정, in that order, each row in its group; no 정보 section, the build on one line at the end', () => {
     full();
     const dialog = screen.getByRole('dialog', { name: '설정' });
-    expect(within(dialog).getAllByRole('region').map((r) => r.getAttribute('aria-labelledby') && document.getElementById(r.getAttribute('aria-labelledby')!)!.textContent)).toEqual(['화면', '입력', '권한·알림', '계정']);
-    expect(SETTINGS_GROUPS.map(([, n]) => n)).toEqual(['화면', '입력', '권한·알림', '계정']);
+    expect(within(dialog).getAllByRole('region').map((r) => r.getAttribute('aria-labelledby') && document.getElementById(r.getAttribute('aria-labelledby')!)!.textContent)).toEqual(['화면', '입력', '권한·알림', '계정', '실험적 기능']);
+    expect(SETTINGS_GROUPS.map(([, n]) => n)).toEqual(['화면', '입력', '권한·알림', '계정', '실험적 기능']);
     for (const name of ['테마', '채팅 폭', '코드 줄바꿈', '간결 모드']) expect(within(region('화면')).getByRole('group', { name })).toBeTruthy();
     expect(within(region('화면')).getByRole('combobox', { name: '글자 크기' })).toBeTruthy();
     expect(within(region('입력')).getByRole('group', { name: 'Enter 동작' })).toBeTruthy();
@@ -230,14 +264,14 @@ describe('SettingsView 4그룹', () => {
     expect(within(perm).getByRole('button', { name: '알림' })).toBeTruthy();
     const account = region('계정');
     expect(within(account).getByRole('group', { name: '자동 계정 선택' })).toBeTruthy();
-    expect(within(account).getByRole('group', { name: '같은 벤더 계정 자동 순환' })).toBeTruthy();
+    expect(within(region('실험적 기능')).getByRole('group', { name: '같은 벤더 계정 자동 순환' })).toBeTruthy();
     expect(within(account).getByRole('button', { name: '잠금 해제' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: '정보' })).toBeNull();
     // The version is the avatar menu's (deck v…); the last line is the build and the screen only.
     expect(screen.getByTestId('settings-foot').textContent).toMatch(/^빌드 b42 · /);
     expect(screen.getByTestId('settings-foot').textContent).not.toMatch(/deck/);
     // The left list names the same four groups.
-    expect(within(screen.getByRole('navigation', { name: '설정 그룹' })).getAllByRole('button').map((b) => b.textContent)).toEqual(['화면', '입력', '권한·알림', '계정']);
+    expect(within(screen.getByRole('navigation', { name: '설정 그룹' })).getAllByRole('button').map((b) => b.textContent)).toEqual(['화면', '입력', '권한·알림', '계정', '실험적 기능']);
   });
 
   it('a long note is one short line until 자세히; 접기 folds it again', () => {

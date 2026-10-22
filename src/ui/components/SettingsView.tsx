@@ -1,9 +1,9 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { usePrefs } from '../usePrefs';
 import { useCodeWrap } from '../codeWrap';
 import type { ChatWidth, FontSize, Prefs, SendKey, Theme } from '../prefs';
 import { PERM_MODES, PERM_MODE_HINT, PERM_MODE_LABEL, type PermMode } from '../../shared/permission';
-import { ENGINE_KINDS, type RoutingPolicy } from '../../shared/protocol';
+import { ENGINE_KINDS, type ExperimentalSettings, type RoutingPolicy } from '../../shared/protocol';
 import type { EngineKind } from '../../shared/models';
 import { NotifyMenu } from './NotifyMenu';
 import { describeShell } from '../shellFit';
@@ -24,6 +24,14 @@ const needsConsent = (e: EngineKind) => e === 'gemini' || e === 'grok';
 
 /** Each language's name in that language (the same in every UI language, so a lost reader still finds theirs). */
 export const LANGUAGE_NAMES: Record<Locale, string> = { en: 'English', ko: '한국어' };
+/** 실험적 기능: what the section says before any switch (the owner's wording). */
+export const EXPERIMENTAL_NOTICE = '공식 기능이 아니며 각 앱의 업데이트로 언제든 멈출 수 있어요. 켜면 해당 앱의 로컬 파일을 읽어요.';
+/** Each 실험적 기능 switch: its row label and one line on what it reads / does (files named, so the user knows what is opened). */
+export const EXPERIMENTAL_ROWS: [keyof ExperimentalSettings, string, string][] = [
+  ['grokBot', 'Grok Bot 앱 대화·사용량', 'Grok Bot 앱의 대화 목록·대화 내용·주간 사용량 캐시를 읽기만 해요 (~/Library/Application Support/Grok Bot/sand-client-persistence).'],
+  ['desktop', 'Claude Desktop 연동', 'Desktop 의 최근 세션 기록(~/Library/Application Support/Claude/claude-code-sessions)을 읽고, 다른 계정에서 돈 세션을 기본 계정 기록에 되써서 Desktop 에서 이어 열 수 있게 해요.'],
+  ['localImports', 'Codex·Gemini 대화 가져오기', '~/.codex/sessions · ~/.codex/archived_sessions 의 rollout-*.jsonl 과 ~/.gemini/antigravity-cli/conversation_summaries.db(임시 사본으로)를 읽어 deck 밖에서 만든 대화를 목록에 보여 줘요.'],
+];
 
 /** Segmented buttons for up to 3 choices; 4 or more become a select (a row of 4 does not fit a phone's line). */
 export const SEG_MAX = 3;
@@ -63,11 +71,11 @@ function Hint({ short, children }: { short: string; children?: ReactNode }) {
   );
 }
 
-/** 화면 · 입력 · 권한·알림 · 계정: the sheet's four groups, in order (the desktop's left list jumps to each). */
-export const SETTINGS_GROUPS = [['screen', '화면'], ['input', '입력'], ['perm', '권한·알림'], ['account', '계정']] as const;
+/** 화면 · 입력 · 권한·알림 · 계정 · 실험적 기능: the sheet's groups, in order (the desktop's left list jumps to each). */
+export const SETTINGS_GROUPS = [['screen', '화면'], ['input', '입력'], ['perm', '권한·알림'], ['account', '계정'], ['experimental', '실험적 기능']] as const;
 type GroupId = (typeof SETTINGS_GROUPS)[number][0];
 
-export function SettingsView({ build, onLanguage, reload = () => location.reload(), defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, sameVendorRotation = null, onSameVendorRotation, commanderEnabled = null, onCommanderEnabled, autoRoute = null, onAutoRoute, claudeAccounts = 0, grokLocked = null, onGrokUnlock, taskCap = null, onTaskCap, onSetup, onClose }: {
+export function SettingsView({ build, onLanguage, reload = () => location.reload(), defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, sameVendorRotation = null, onSameVendorRotation, experimental = null, onExperimental, commanderEnabled = null, onCommanderEnabled, autoRoute = null, onAutoRoute, claudeAccounts = 0, grokLocked = null, onGrokUnlock, taskCap = null, onTaskCap, onSetup, onClose }: {
   build: string | null;
   /**
    * A language pick: explicit → the server's fallback language (set_settings.language, for turns no device sends);
@@ -85,6 +93,9 @@ export function SettingsView({ build, onLanguage, reload = () => location.reload
   /** 같은 벤더 계정 자동 순환 (server setting; null = not known yet / an older server). Turning it on asks for consent first. */
   sameVendorRotation?: boolean | null;
   onSameVendorRotation?: (on: boolean) => void;
+  /** 실험적 기능 switches (server setting; null = not known yet / an older server). Applied at once by the server. */
+  experimental?: ExperimentalSettings | null;
+  onExperimental?: (patch: Partial<ExperimentalSettings>) => void;
   /** 총사령탑 (server setting; null = not known yet / a server without it). */
   commanderEnabled?: boolean | null;
   onCommanderEnabled?: (on: boolean) => void;
@@ -252,6 +263,28 @@ export function SettingsView({ build, onLanguage, reload = () => location.reload
                 <Hint short="새 세션·오래 쉰 세션·한도 문턱을 넘을 때 적용됩니다.">고르게 분산: 5시간 사용량이 가장 낮은 계정으로 (비슷하면 주간이 낮은 쪽). 리셋 임박 먼저 소진: 주간 한도가 곧 리셋되는 계정부터. 대화 중인 세션은 캐시 때문에 그대로 두고, 새 세션, 오래 쉰 세션, 한도 문턱(5시간 80% · 주간 85%)을 넘어 옮길 때 적용됩니다.</Hint>
               </>
             )}
+            {grokLocked && (
+              <div className="settings-row grok-locked" role="alert">
+                <span className="grok-locked-why">Grok 엔진 잠김 — {grokLocked}</span>
+                {onGrokUnlock && <button type="button" className="btn" onClick={onGrokUnlock}>잠금 해제</button>}
+              </div>
+            )}
+            <Hint short="계정별 5시간·주간 한도는 상단 사용량 띠를 눌러 시트에서 봅니다." />
+          </section>
+          <section {...section('experimental')}>
+            {heading('experimental')}
+            <div className="settings-consent" role="note" data-testid="experimental-notice"><p>실험적 · 비공식 — {EXPERIMENTAL_NOTICE}</p></div>
+            {onExperimental && experimental ? (
+              <>
+                {EXPERIMENTAL_ROWS.map(([key, label, what]) => (
+                  <Fragment key={key}>
+                    <Seg<'off' | 'on'> label={label} value={experimental[key] ? 'on' : 'off'} onPick={(v) => { if ((v === 'on') !== experimental[key]) onExperimental({ [key]: v === 'on' }); }} options={[['off', '끄기'], ['on', '켜기']]} />
+                    <Hint short={what} />
+                  </Fragment>
+                ))}
+                <Hint short="바꾸면 다시 시작하지 않아도 바로 적용돼요." />
+              </>
+            ) : <Hint short="서버 연결 후 표시됩니다." />}
             {onSameVendorRotation && sameVendorRotation !== null && (
               <>
                 <div className="settings-row">
@@ -275,13 +308,6 @@ export function SettingsView({ build, onLanguage, reload = () => location.reload
                   : <Hint short="꺼 두면 세션은 고른 Claude 계정에만 머뭅니다.">꺼짐(기본): 세션은 기본 Claude 계정(또는 세션에서 고른 계정)에만 머물고, 한도에 걸리면 다른 Claude 계정으로 넘기지 않고 리셋 뒤 자동으로 다시 시도합니다. 켜면 위 자동 계정 선택대로 Claude 계정 사이를 옮깁니다. GPT·Gemini 로의 벤더 간 인계는 이 설정과 상관없습니다.</Hint>}
               </>
             )}
-            {grokLocked && (
-              <div className="settings-row grok-locked" role="alert">
-                <span className="grok-locked-why">Grok 엔진 잠김 — {grokLocked}</span>
-                {onGrokUnlock && <button type="button" className="btn" onClick={onGrokUnlock}>잠금 해제</button>}
-              </div>
-            )}
-            <Hint short="계정별 5시간·주간 한도는 상단 사용량 띠를 눌러 시트에서 봅니다." />
           </section>
         </div>
       </div>

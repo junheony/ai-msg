@@ -17,6 +17,13 @@ export const CLIENT_REF_MAX = 64;
 /** Every engine, in 자동 분배 order (settings `autoEngines` / `autoConsent`). */
 export const ENGINE_KINDS: readonly EngineKind[] = ['claude', 'codex', 'gemini', 'grok'];
 /** A Claude account id by shape only (`ACCOUNT_ID_RE`): which ids exist is the server's configuration, checked when the message is handled. */
+/**
+ * 실험적 기능 (settings `experimental`): reads of other apps' private local files, each its own switch. `grokBot` = the Grok
+ * Bot app's conversations and weekly usage cache; `desktop` = Claude Desktop's session list, the home-profile write-back
+ * and "Desktop에서 열기"; `localImports` = Codex rollouts / agy's summaries db listed for import. Partial in set_settings.
+ */
+export const ExperimentalSchema = z.object({ grokBot: z.boolean(), desktop: z.boolean(), localImports: z.boolean() });
+export type ExperimentalSettings = z.infer<typeof ExperimentalSchema>;
 const AccountId = z.string().regex(ACCOUNT_ID_RE).refine((id) => !RESERVED_ACCOUNT_IDS.includes(id), { message: '예약된 이름이라 계정 id 로 쓸 수 없습니다' });
 
 export const ClientMessageSchema = z.discriminatedUnion('type', [
@@ -124,7 +131,9 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('set_settings'), autoApprove: z.boolean().optional(), defaultPermissionMode: z.enum(PERM_MODES).optional(), routingPolicy: z.enum(['balance', 'drain']).optional(), sameVendorRotation: z.boolean().optional(), /** 총사령탑 켜기·끄기 (설정 화면 토글). */ commanderEnabled: z.boolean().optional(),
     /** 자동 분배: engines 자동 may use, engines whose external-transfer card was accepted, Grok fast model. */
     autoEngines: z.array(z.enum(['claude', 'codex', 'gemini', 'grok'])).max(4).optional(), autoConsent: z.array(z.enum(['claude', 'codex', 'gemini', 'grok'])).max(4).optional(), grokFast: z.boolean().optional(), taskSoftCap: z.number().int().min(1).max(10).optional(),
-    /** The server's language, from a device's explicit pick; null (the device picked Auto) = from the environment again. */ language: z.enum(LOCALES).nullable().optional() }),
+    /** The server's language, from a device's explicit pick; null (the device picked Auto) = from the environment again. */ language: z.enum(LOCALES).nullable().optional(),
+    /** 실험적 기능 switches; only the ones given change. */
+    experimental: ExperimentalSchema.partial().strict().optional() }),
   /**
    * 'routePreview' servers: which account the next Claude turn of this session (null with a `cwd` = a new session there)
    * would run on if sent now with `model` (absent = the session's own default; '자동' on a new session has no preview),
@@ -186,7 +195,9 @@ export type DeckSettings = { autoApprove: boolean; defaultPermissionMode: PermMo
   /** 백그라운드 작업 running at once before new ones wait (1–10, default 3). Absent from older servers. */
   taskSoftCap?: number;
   /** Server messages' language: the last explicit pick on any device. Absent / null = from the environment (DECK_LANG, LANG …). */
-  language?: Locale | null };
+  language?: Locale | null;
+  /** 실험적 기능 (ExperimentalSchema): off on a fresh install, on for an install from before them. Absent from older servers. */
+  experimental?: ExperimentalSettings };
 
 /**
  * 자동 account routing: 'balance' (고르게 분산) = the safe account with the lowest 5h usage;

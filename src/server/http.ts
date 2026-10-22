@@ -481,6 +481,7 @@ export function createRequestHandler(deps: HttpDeps) {
           const r = await deps.forks.openInDesktop(id);
           if (r.ok) { json(res, 200, { ok: true, url: `claude://resume?session=${id}`, busy: r.busy }); return; }
           if (r.reason === 'unsupported') { json(res, 400, { error: 'Claude 세션만 Desktop 에서 열 수 있습니다' }); return; }
+          if (r.reason === 'off') { json(res, 403, { error: '설정 › 실험적 기능에서 Claude Desktop 연동을 켜야 열 수 있어요' }); return; }
           if (r.reason === 'diverged') { json(res, 200, { ok: false, reason: 'diverged' }); return; }
           json(res, 500, { error: r.error ?? 'Desktop 사본 갱신 실패' });
           return;

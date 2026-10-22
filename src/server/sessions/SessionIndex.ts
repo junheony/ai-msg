@@ -239,7 +239,14 @@ export class SessionIndex {
   private readonly prefixCache = new AncestorCache();
   private readonly cachedPrefix: PrefixFn = (a, b) => this.prefixCache.isAncestor(a.file, b.file);
 
-  private readonly codex: CodexRolloutIndex | null;
+  private readonly codexIndex: CodexRolloutIndex | null;
+  /** The Codex import list while 실험적 기능 › Codex·Gemini 가져오기 is on (off: never refreshed, nothing listed or found). */
+  private get codex(): CodexRolloutIndex | null {
+    return this.opts.localImportsEnabled?.() === false ? null : this.codexIndex;
+  }
+  private desktopOn(): boolean {
+    return !!this.opts.desktopRoot && this.opts.desktopEnabled?.() !== false;
+  }
 
   /**
    * `desktopRoot`: Claude Desktop's `claude-code-sessions` dir (read-only metadata); absent = no Desktop list.
@@ -249,9 +256,10 @@ export class SessionIndex {
    * `holders`: which Claude sessions a process outside deck holds open (`heldBy`); re-read on every (re)group.
    * `grokHeldBy` does the same for Grok sessions (a terminal `grok` with the id in its arguments).
    * `grokImports` / `geminiImports` / `grokBotImports`: conversations made outside deck (Grok CLI, agy, Grok Bot app), listed like Codex threads.
+   * `desktopEnabled` / `localImportsEnabled`: 실험적 기능 switches, asked on every use (absent = on); off = `desktopRoot` / `codexRoot` are never read.
    */
-  constructor(private readonly opts: { roots: ProjectsRoots; pinnedFile: string; recentFile?: string; desktopRoot?: string; codexRoot?: string; codexArchivedRoot?: string; meta?: SessionMetaView; home?: Account | null; holders?: { heldBy(sessionId: string): SessionHolder | null; grokHeldBy?(sessionId: string): SessionHolder | null }; grokImports?: ImportIndex | null; geminiImports?: ImportIndex | null; grokBotImports?: ImportIndex | null }) {
-    this.codex = opts.codexRoot ? new CodexRolloutIndex(opts.codexRoot, undefined, opts.codexArchivedRoot ?? null) : null;
+  constructor(private readonly opts: { roots: ProjectsRoots; pinnedFile: string; recentFile?: string; desktopRoot?: string; codexRoot?: string; codexArchivedRoot?: string; meta?: SessionMetaView; home?: Account | null; holders?: { heldBy(sessionId: string): SessionHolder | null; grokHeldBy?(sessionId: string): SessionHolder | null }; grokImports?: ImportIndex | null; geminiImports?: ImportIndex | null; grokBotImports?: ImportIndex | null; desktopEnabled?: () => boolean; localImportsEnabled?: () => boolean }) {
+    this.codexIndex = opts.codexRoot ? new CodexRolloutIndex(opts.codexRoot, undefined, opts.codexArchivedRoot ?? null) : null;
     this.others = [opts.grokImports, opts.geminiImports, opts.grokBotImports].filter((x): x is ImportIndex => !!x);
   }
 
@@ -369,12 +377,12 @@ export class SessionIndex {
       if (opts.codexInBackground) void done.then(() => this.onChange?.());
       else await done;
     }
-    this.desktopList = this.opts.desktopRoot ? (await recentDesktopSessions(this.opts.desktopRoot, (id) => this.lookup(id)).catch(() => [])).map((d) => this.decorate(d)) : [];
+    this.desktopList = this.desktopOn() ? (await recentDesktopSessions(this.opts.desktopRoot!, (id) => this.lookup(id)).catch(() => [])).map((d) => this.decorate(d)) : [];
   }
 
   /** The most recently active Claude Desktop sessions deck can open (as of the last refresh). */
   desktop(): DesktopSession[] {
-    return this.desktopList;
+    return this.desktopOn() ? this.desktopList : [];
   }
 
   recent(): string[] {

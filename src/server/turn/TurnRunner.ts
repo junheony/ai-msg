@@ -195,6 +195,8 @@ export type TurnRunnerDeps = {
    * elsewhere the session is mirrored back into it (append-only, prefix-checked). Absent/null = no write-back.
    */
   homeAccount?: Account | null;
+  /** 실험적 기능 › Claude Desktop (read per use); off = no home write-back and no "Desktop에서 열기". Absent = on. */
+  desktopMirror?: () => boolean;
   /** While a session is held open for background work: at most one write-back per this many ms (default 20 s). */
   mirrorThrottleMs?: number;
   move?: typeof moveSession;
@@ -493,7 +495,7 @@ export class TurnRunner {
    */
   private scheduleMirror(sessionId: string, sink: TurnSink, turnId: string): void {
     const home = this.deps.homeAccount;
-    if (!home) return;
+    if (!home || this.deps.desktopMirror?.() === false) return;
     clearTimeout(this.mirrorTimers.get(sessionId));
     this.mirrorTimers.delete(sessionId);
     this.mirrorAt.set(sessionId, Date.now());
@@ -515,7 +517,7 @@ export class TurnRunner {
    * close is scheduled by runClaude regardless.
    */
   private mirrorSoon(sessionId: string, sink: TurnSink, turnId: string): void {
-    if (!this.deps.homeAccount || this.mirrorTimers.has(sessionId)) return;
+    if (!this.deps.homeAccount || this.deps.desktopMirror?.() === false || this.mirrorTimers.has(sessionId)) return;
     const wait = (this.mirrorAt.get(sessionId) ?? -Infinity) + (this.deps.mirrorThrottleMs ?? 20_000) - Date.now();
     if (wait <= 0) { this.scheduleMirror(sessionId, sink, turnId); return; }
     const t = setTimeout(() => this.scheduleMirror(sessionId, sink, turnId), wait);
@@ -548,7 +550,8 @@ export class TurnRunner {
    * "Desktop에서 열기": bring the home profile's copy up to date now (the same write-back as after a turn, awaited)
    * so `claude://resume?session=` finds the current conversation. `busy`: a CLI process of deck's still holds the session.
    */
-  async openInDesktop(sessionId: string): Promise<{ ok: true; busy: boolean } | { ok: false; reason: 'unsupported' | 'diverged' | 'failed'; error?: string }> {
+  async openInDesktop(sessionId: string): Promise<{ ok: true; busy: boolean } | { ok: false; reason: 'unsupported' | 'diverged' | 'failed' | 'off'; error?: string }> {
+    if (this.deps.desktopMirror?.() === false) return { ok: false, reason: 'off' };
     const st = this.deps.store.get(sessionId);
     if (st && (isOtherEngineState(st))) return { ok: false, reason: 'unsupported' };
     const busy = this.active.has(sessionId) || this.live.has(sessionId);
