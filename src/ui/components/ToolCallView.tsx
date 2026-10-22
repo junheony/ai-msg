@@ -44,6 +44,8 @@ function DiffToolCall({ call, live, cwd }: { call: ToolCallItem; live: boolean; 
 
 const isDiffCall = (c: ToolCallItem) => fileDiffsFor(c.name, c.input, c.result) !== null;
 const isAgentCall = (c: ToolCallItem) => c.name === 'Agent' || c.name === 'Task';
+/** File edits (diff cards) and subagent calls (agent cards) stay out in the reply; other calls fold into its meta line. */
+export const isSoloCall = (c: ToolCallItem) => isAgentCall(c) || isDiffCall(c);
 
 /** The file a Read call looked at (a Read of a missing file still offers the panel; it shows the error). */
 function readPath(call: ToolCallItem): string | null {
@@ -88,7 +90,7 @@ export function ToolCallView({ call, live = false, cwd }: { call: ToolCallItem; 
 export function toolSegments(calls: ToolCallItem[]): { solo: boolean; calls: ToolCallItem[] }[] {
   const segments: { solo: boolean; calls: ToolCallItem[] }[] = [];
   for (const c of calls) {
-    const solo = isAgentCall(c) || isDiffCall(c);
+    const solo = isSoloCall(c);
     const last = segments.at(-1);
     if (last && !solo && !last.solo) last.calls.push(c);
     else segments.push({ solo, calls: [c] });

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { MessageView } from './MessageView';
 import { fromTranscript, initialState, reducer, type ChatItem } from '../state';
 
@@ -10,11 +10,16 @@ describe('thinking render', () => {
   afterEach(cleanup);
 
   it('shows a collapsed "N초 동안 생각함" disclosure with the text', () => {
-    const { container, getByText } = render(<MessageView item={{ ...base, thinking: { text: '먼저 확인', redacted: false, startedAt: 0, ms: 8200 } }} />);
-    const d = container.querySelector('details.thinking') as HTMLDetailsElement;
-    expect(d.open).toBe(false);
+    const { getByText, getByTestId } = render(<MessageView item={{ ...base, thinking: { text: '먼저 확인', redacted: false, startedAt: 0, ms: 8200 } }} />);
+    const opener = getByTestId('thinking');
+    expect(opener.getAttribute('aria-expanded')).toBe('false');
     expect(getByText('8초 동안 생각함')).toBeTruthy();
-    expect(d.textContent).toContain('먼저 확인');
+    const panel = document.getElementById(opener.getAttribute('aria-controls')!)!;
+    expect(panel.hidden).toBe(true);
+    expect(panel.textContent).toContain('먼저 확인');
+    fireEvent.click(opener);
+    expect(opener.getAttribute('aria-expanded')).toBe('true');
+    expect(panel.hidden).toBe(false);
   });
 
   it('redacted thinking is plain text with no fold: "N초 동안 생각함", or "생각함" without a time', () => {

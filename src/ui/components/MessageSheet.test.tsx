@@ -242,7 +242,7 @@ describe('message CSS (phone)', () => {
     const rule = css.match(/\n\.tb-detail \{([^}]*)\}/)![1]!;
     expect(rule).toContain('position: static');
     expect(rule).not.toMatch(/bottom:|z-index:/);
-    expect(css).toContain('.turn-badge[open] { flex-basis: 100%; }');
+    expect(css).toContain('.meta-panel[hidden], .tb-detail[hidden] { display: none; }');
     expect(css).toContain('.msg a { -webkit-touch-callout: default; }');
   });
   it('the 다른 모델로 caret and the version ‹ › get a 44px touch area (::after) without growing', () => {
@@ -254,15 +254,17 @@ describe('message CSS (phone)', () => {
 describe('turn meta pill', () => {
   it('model · account in the pill; tokens and reason open from it, Esc closes back to the pill', () => {
     render(<TurnBadge badge={badge} />);
-    const details = screen.getByTestId('turn-badge') as HTMLDetailsElement;
-    const pill = details.querySelector('summary')!;
+    const pill = screen.getByTestId('turn-badge');
+    const detail = screen.getByTestId('turn-badge-detail');
     expect(pill.textContent).toBe('OpusA');
-    expect(details.open).toBe(false);
+    expect(pill.getAttribute('aria-expanded')).toBe('false');
+    expect(detail.hidden).toBe(true);
     fireEvent.click(pill);
-    expect(details.open).toBe(true);
-    expect(details.querySelector('.tb-detail')!.textContent).toContain('입력 1.2k');
+    expect(pill.getAttribute('aria-expanded')).toBe('true');
+    expect(detail.hidden).toBe(false);
+    expect(detail.textContent).toContain('입력 1.2k');
     fireEvent.keyDown(pill, { key: 'Escape' });
-    expect(details.open).toBe(false);
+    expect(detail.hidden).toBe(true);
     expect(document.activeElement).toBe(pill);
   });
 

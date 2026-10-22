@@ -8,6 +8,9 @@ import { codeFileName } from '../codeWrap';
 import { DEFAULT_PREFS, PREFS_KEY } from '../prefs';
 import { initialState, reducer, type AppState, type ChatItem } from '../state';
 import type { ServerMessage } from '../../shared/protocol';
+import { parseUserText } from '../injected';
+/** The panel a meta-line opener (aria-controls) unfolds. */
+const panelOf = (el: Element) => document.getElementById(el.getAttribute('aria-controls')!)!;
 
 describe('MessageView', () => {
   afterEach(cleanup);
@@ -75,6 +78,43 @@ describe('MessageView', () => {
   });
 });
 
+describe('MessageView · image placeholders in a user bubble', () => {
+  afterEach(cleanup);
+  it('hides lines that are only [이미지] / [Image #1]; images without a thumbnail become one count pill', () => {
+    const { container, getByTestId } = render(<MessageView item={{ kind: 'user', text: '이 화면 봐줘\n[이미지]\n[이미지]\n[Image #3]' }} />);
+    expect(container.querySelector('.msg.user pre')?.textContent).toBe('이 화면 봐줘');
+    expect(getByTestId('image-count').textContent).toContain('이미지 3장');
+  });
+  it('with thumbnails only the tiles show; a message of images only has no bubble', () => {
+    const att = { id: '11111111-2222-3333-4444-555555555555', name: 'shot.png', isImage: true };
+    const { container, queryByTestId } = render(<MessageView item={{ kind: 'user', text: '[이미지]', attachments: [att] }} />);
+    expect(container.querySelectorAll('.msg-attachments > *')).toHaveLength(1);
+    expect(queryByTestId('image-count')).toBeNull();
+    expect(container.querySelector('.msg.user pre')).toBeNull();
+  });
+  it('an inline [이미지] inside a sentence is left alone', () => {
+    const { container } = render(<MessageView item={{ kind: 'user', text: '여기 [이미지] 처럼 써' }} />);
+    expect(container.querySelector('.msg.user pre')?.textContent).toBe('여기 [이미지] 처럼 써');
+  });
+});
+
+describe('MessageView · subagents fold on the meta line', () => {
+  afterEach(cleanup);
+  it('"서브에이전트 N · offload M" on the line; the chips show only once it is pressed', () => {
+    const { getByTestId } = render(<MessageView item={{ kind: 'assistant', turnId: 't', text: 'done', toolCalls: [
+      { toolUseId: '1', name: 'Agent', input: { subagent_type: 'explore', model: 'sonnet', description: 'find' }, result: 'ok', isError: false },
+      { toolUseId: '2', name: 'Agent', input: { subagent_type: 'executor', description: 'fix' }, result: 'ok', isError: false },
+      { toolUseId: '3', name: 'Bash', input: { command: 'offload cross "x"' }, result: 'ok', isError: false },
+    ], badge: null, streaming: false, error: null, notes: [], attempts: [] }} />);
+    const roles = getByTestId('roles');
+    expect(roles.textContent).toContain('서브에이전트 2 · offload 1');
+    expect(panelOf(roles).hidden).toBe(true);
+    fireEvent.click(roles);
+    expect(panelOf(roles).hidden).toBe(false);
+    expect(panelOf(roles).querySelectorAll('.chip')).toHaveLength(3);
+  });
+});
+
 describe('MessageView tool lines (Desktop style)', () => {
   afterEach(cleanup);
   const tc = (id: string, name: string, input: unknown, extra = {}) => ({ toolUseId: id, name, input, result: 'out', isError: false, ...extra });
@@ -85,14 +125,17 @@ describe('MessageView tool lines (Desktop style)', () => {
     expect(line.querySelector('summary')?.textContent).toContain('Run tests');
     expect(line.open).toBe(false);
     expect(one.container.querySelector('.tool-group')).toBeNull();
-    expect((one.getByTestId('work-log') as HTMLDetailsElement).open).toBe(false);
+    expect(one.getByTestId('work-log').getAttribute('aria-expanded')).toBe('false');
+    expect(panelOf(one.getByTestId('work-log')).hidden).toBe(true);
     cleanup();
     const many = render(<MessageView item={{ kind: 'assistant', turnId: 't', text: '', toolCalls: [tc('1', 'Bash', { command: 'a' }), tc('2', 'Bash', { command: 'b' }, { isError: true })], badge: null, streaming: false, error: null, notes: [], attempts: [] }} />);
-    const group = many.container.querySelector('[data-testid="work-log"]') as HTMLDetailsElement;
-    expect(group.querySelector('summary')?.textContent).toContain('작업 기록 · 실행된 명령 2개');
-    expect(group.querySelector('summary')?.textContent).toContain('오류 1');
-    expect(group.open).toBe(false);
-    expect(group.querySelectorAll('[data-testid="tool-call"]')).toHaveLength(2);
+    const opener = many.getByTestId('work-log');
+    expect(opener.textContent).toContain('실행된 명령 2개');
+    expect(opener.textContent).toContain('오류 1');
+    expect(opener.getAttribute('aria-expanded')).toBe('false');
+    expect(panelOf(opener).querySelectorAll('[data-testid="tool-call"]')).toHaveLength(2);
+    fireEvent.click(opener);
+    expect(panelOf(opener).hidden).toBe(false);
     expect(many.container.querySelector('.markdown')).toBeNull();
   });
 
@@ -121,6 +164,18 @@ describe('MessageView injected user turns', () => {
     // expanded: the result as markdown plus the verbatim block
     expect(line.querySelector('.sys-detail strong')?.textContent).toBe('done');
     expect(line.querySelector('.sys-raw pre')?.textContent).toBe(notif);
+  });
+
+  it('an absorbed notice row renders nothing; the reply after it shows the notice on its meta line, unfolding to the summary', () => {
+    const gone = render(<MessageView item={{ kind: 'user', text: notif }} absorbed />);
+    expect(gone.container.innerHTML).toBe('');
+    cleanup();
+    const { notices } = parseUserText(notif);
+    const { getByTestId, getByRole } = render(<MessageView item={{ kind: 'assistant', turnId: 't', text: 'ok', toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [] }} notices={notices} />);
+    const item = getByTestId('meta-notice');
+    expect(getByRole('group').contains(item)).toBe(true);
+    expect(item.textContent).toContain('백그라운드 완료');
+    expect(panelOf(item).textContent).toContain('Agent "research" finished');
   });
 
   it('strips system-reminder from a user bubble; a reminder-only turn renders nothing', () => {
@@ -168,7 +223,7 @@ describe('MessageView code blocks and turn footer', () => {
   it('turn badge keeps account, model, all four token counts and the reason', () => {
     const badge = { account: 'b', model: 'opus', reason: '가장 여유', usage: { inputTokens: 1200, outputTokens: 340, cacheReadTokens: 56000, cacheCreationTokens: 0 } } as never;
     const { container } = render(<MessageView item={{ kind: 'assistant', turnId: 't', text: 'ok', toolCalls: [], badge, streaming: false, error: null, notes: [], attempts: [] }} />);
-    const t = container.querySelector('.turn-foot .turn-badge')?.textContent ?? '';
+    const t = container.querySelector('.turn-foot')?.textContent ?? '';
     for (const s of ['B', '입력 1.2k', '출력 340', '캐시 읽기 56.0k', '캐시 쓰기 0', '가장 여유']) expect(t).toContain(s);
   });
 });
@@ -237,13 +292,14 @@ describe('MessageView · 간결 모드 live text', () => {
     const before = '먼저 테스트부터 볼게요.';
     const { container, getByTestId, rerender } = render(<MessageView item={turn(before, [call('1', before.length)], true, { thinking: { text: 'SECRET-THOUGHT', redacted: false, startedAt: 0, ms: 1000 } })} />);
     expect(getByTestId('concise-lead').textContent).toBe(before);
-    expect(getByTestId('work-log').querySelector('summary')?.textContent).toContain('계속 작업 중 · 단계 1');
+    expect(getByTestId('work-log').textContent).toContain('계속 작업 중 · 단계 1');
     expect(container.querySelector('.markdown:not(.thinking-body)')).toBeNull();
     // Tool bodies stay folded inside the collapsed 작업 기록 line (as before).
-    expect((getByTestId('work-log') as HTMLDetailsElement).open).toBe(false);
+    expect(getByTestId('work-log').getAttribute('aria-expanded')).toBe('false');
+    expect(panelOf(getByTestId('work-log')).hidden).toBe(true);
     // …and nothing of the output shows outside that folded line.
     const outside = container.cloneNode(true) as HTMLElement;
-    outside.querySelector('[data-testid="work-log"]')!.remove();
+    outside.querySelector('.work-log-body')!.remove();
     expect(outside.textContent).not.toContain('SECRET-OUTPUT');
     expect(container.textContent).not.toContain('SECRET-THOUGHT');
     rerender(<MessageView item={turn(`${before}\n\n원인은 오타였어요`, [call('1', before.length)])} />);
@@ -306,7 +362,7 @@ describe('MessageView · 간결 모드 live text', () => {
     expect(item.streaming).toBe(true);
     const { container, getByTestId } = render(<MessageView item={item} />);
     expect(getByTestId('concise-lead').textContent).toBe('먼저 테스트부터 볼게요.');
-    expect(getByTestId('work-log').querySelector('summary')?.textContent).toContain('단계 1');
+    expect(getByTestId('work-log').textContent).toContain('단계 1');
     const md = container.querySelectorAll('.markdown');
     expect(md).toHaveLength(1);
     expect(md[0]!.textContent).toBe('원인은 오타였어요');
@@ -318,13 +374,22 @@ describe('MessageView · 대화 본문 다듬기', () => {
   const reply = (extra: object = {}) => ({ kind: 'assistant' as const, turnId: 't', text: 'ok', toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [], ...extra });
   const bash = (id: string) => ({ toolUseId: id, name: 'Bash', input: { command: 'ls' }, result: 'out', isError: false });
 
-  it('thinking and tool calls share one 작업 기록 line with the seconds; expanded it shows both', () => {
-    const { getByTestId, queryByTestId } = render(<MessageView item={reply({ thinking: { text: '먼저 확인', redacted: false, startedAt: 0, ms: 12000 }, toolCalls: [bash('1'), bash('2')] })} />);
-    const log = getByTestId('work-log') as HTMLDetailsElement;
-    expect(log.querySelector('summary')?.textContent).toContain('작업 기록 · 12초 · 실행된 명령 2개');
-    expect(log.querySelector('.thinking-body')?.textContent).toContain('먼저 확인');
-    expect(log.querySelectorAll('[data-testid="tool-call"]')).toHaveLength(2);
-    expect(queryByTestId('thinking')).toBeNull();
+  it('thinking and tool calls sit side by side on the one meta line; each › opens its own panel under it', () => {
+    const { getByTestId, getByRole, queryByTestId } = render(<MessageView item={reply({ thinking: { text: '먼저 확인', redacted: false, startedAt: 0, ms: 12000 }, toolCalls: [bash('1'), bash('2')] })} />);
+    const line = getByRole('group');
+    const think = getByTestId('thinking');
+    const tools = getByTestId('work-log');
+    expect(line.contains(think) && line.contains(tools)).toBe(true);
+    expect(line.textContent).toMatch(/12초 동안 생각함.*·.*실행된 명령 2개/);
+    expect(panelOf(think).textContent).toContain('먼저 확인');
+    expect(panelOf(tools).querySelectorAll('[data-testid="tool-call"]')).toHaveLength(2);
+    fireEvent.click(tools);
+    expect(panelOf(tools).hidden).toBe(false);
+    expect(panelOf(think).hidden).toBe(true);
+    // Esc folds the line back and returns focus to the item that opened last.
+    fireEvent.keyDown(panelOf(tools), { key: 'Escape' });
+    expect(panelOf(tools).hidden).toBe(true);
+    expect(document.activeElement).toBe(tools);
     expect(queryByTestId('tool-group')).toBeNull();
   });
 
@@ -366,14 +431,14 @@ describe('MessageView · quiet status lines (CSS)', () => {
   const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
   // The last rule for a selector is the one the cascade keeps.
   const rule = (sel: string) => [...css.matchAll(new RegExp(`\\n${sel.replace(/[.>]/g, (c) => `\\${c}`)} \\{([^}]*)\\}`, 'g'))].at(-1)![1]!;
-  it('작업 기록, system notices and the model name are plain muted text — no pill background or ring', () => {
-    for (const sel of ['.work-log > summary', '.sys-notice > summary', '.msg-model']) {
-      expect(rule(sel)).not.toMatch(/background|box-shadow|999px|r-full/);
+  it('the meta line, system notices and the model name are plain quiet text — no pill background or ring', () => {
+    for (const sel of ['.meta-item', '.turn-meta .tb-pill', '.sys-notice > summary', '.msg-model']) {
+      expect(rule(sel)).not.toMatch(/background: var|box-shadow: (?!none)|999px|r-full/);
     }
-    expect(rule('.work-log')).toContain('var(--muted)');
+    expect(rule('.turn-meta')).toContain('var(--faint)');
   });
   it('expandable rows are at least 34px tall; prose paragraphs get 16px apart', () => {
-    expect(rule('.work-log > summary')).toContain('min-height: 34px');
+    expect(rule('.meta-item')).toContain('min-height: 28px');
     expect(rule('.sys-notice > summary')).toContain('min-height: 34px');
     expect(rule('.turn-error .sys-raw > summary')).toContain('min-height: 34px');
     expect(rule('.markdown p')).toContain('margin: 0 0 16px');
@@ -386,24 +451,28 @@ describe('MessageView · 작업 기록 keeps cards in the open (full mode)', () 
   const call = (id: string, name: string, input: unknown, result: string | null = 'out') => ({ toolUseId: id, name, input, result, isError: false });
   const reply = (toolCalls: ReturnType<typeof call>[], streaming = false) => ({ kind: 'assistant' as const, turnId: 't', text: '', toolCalls, badge: null, streaming, error: null, notes: [], attempts: [], thinking: { text: '확인', redacted: false, startedAt: 0, ms: 3000 } });
 
-  it('a file edit diff card and a subagent card stay outside the folded 작업 기록 lines, in order', () => {
-    const { container, getAllByTestId } = render(<MessageView item={reply([
+  it('a file edit diff card and a subagent card stay out in the reply, in order; the other calls fold into one meta item', () => {
+    const { container, getAllByTestId, getByTestId } = render(<MessageView item={reply([
       call('1', 'Bash', { command: 'ls' }),
       call('2', 'Edit', { file_path: '/w/a.ts', old_string: 'one', new_string: 'two' }),
       call('3', 'Agent', { description: 'look around', prompt: 'p' }),
       call('4', 'Bash', { command: 'pwd' }),
     ])} />);
-    const logs = getAllByTestId('work-log') as HTMLDetailsElement[];
-    expect(logs).toHaveLength(2);
-    for (const l of logs) { expect(l.open).toBe(false); expect(l.querySelector('[data-testid="diff-card"], [data-testid="agent-card"]')).toBeNull(); }
+    const logs = getAllByTestId('work-log');
+    expect(logs).toHaveLength(1);
+    expect(logs[0]!.getAttribute('aria-expanded')).toBe('false');
+    const panel = panelOf(logs[0]!);
+    expect(panel.querySelectorAll('[data-testid="tool-call"]')).toHaveLength(2);
+    expect(panel.querySelector('[data-testid="diff-card"], [data-testid="agent-card"]')).toBeNull();
     const diff = container.querySelector('[data-testid="diff-card"]')!;
-    expect(diff.closest('.work-log')).toBeNull();
-    expect(container.querySelector('[data-testid="agent-card"]')!.closest('.work-log')).toBeNull();
-    // Seconds and the thinking text belong to the first line only.
-    expect(logs[0]!.querySelector('summary')?.textContent).toContain('작업 기록 · 3초');
-    expect(logs[1]!.querySelector('summary')?.textContent).not.toContain('3초');
-    expect(logs[0]!.querySelector('.thinking-body')).not.toBeNull();
-    expect(logs[1]!.querySelector('.thinking-body')).toBeNull();
+    const agent = container.querySelector('[data-testid="agent-card"]')!;
+    const foot = getByTestId('turn-meta');
+    for (const card of [diff, agent]) expect(foot.contains(card)).toBe(false);
+    expect(diff.compareDocumentPosition(agent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(agent.compareDocumentPosition(foot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The seconds belong to the thinking item, not the tools.
+    expect(getByTestId('thinking').textContent).toContain('3초 동안 생각함');
+    expect(logs[0]!.textContent).not.toContain('3초');
   });
 
   it('only diff cards: the thinking keeps its own line and the card shows', () => {
@@ -415,7 +484,7 @@ describe('MessageView · 작업 기록 keeps cards in the open (full mode)', () 
 
   it('a running command says 실행 중… on its line while live', () => {
     const { getByTestId } = render(<MessageView item={reply([call('1', 'Bash', { command: 'npm test' }, null)], true)} />);
-    expect(getByTestId('work-log').querySelector('summary')?.textContent).toContain('실행 중…');
+    expect(getByTestId('work-log').textContent).toContain('실행 중…');
   });
 });
 
@@ -425,7 +494,7 @@ describe('MessageView · concise progress is announced', () => {
   it('"계속 작업 중 · 단계 N" sits in a polite live region', () => {
     const item = { kind: 'assistant' as const, turnId: 't', text: '', toolCalls: [{ toolUseId: '1', name: 'Bash', input: { command: 'ls' }, result: null, isError: false }], badge: null, streaming: true, error: null, notes: [], attempts: [] };
     const { getByTestId } = render(<MessageView item={item} />);
-    const label = getByTestId('work-log').querySelector('summary .tool-label')!;
+    const label = getByTestId('work-log').querySelector('.tool-label')!;
     expect(label.textContent).toBe('계속 작업 중 · 단계 1');
     expect(label.getAttribute('aria-live')).toBe('polite');
   });
@@ -439,11 +508,8 @@ describe('errorSummary · deck messages first', () => {
 });
 
 describe('styles · phone touch rows', () => {
-  it('the coarse-pointer 44px rule comes after the 720px 34px rule, so phones get 44px', () => {
+  it('meta items keep the line 28px tall; on coarse pointers each grows a --phone-tap touch area', () => {
     const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
-    const narrow = css.indexOf('.work-log > summary { min-height: 34px; }');
-    const coarse = css.search(/@media \(pointer: coarse\) \{ \.work-log > summary[^}]*min-height: 44px/);
-    expect(narrow).toBeGreaterThan(-1);
-    expect(coarse).toBeGreaterThan(narrow);
+    expect(css).toMatch(/@media \(pointer: coarse\) \{ \.meta-item::after \{[^}]*var\(--phone-tap\)/);
   });
 });

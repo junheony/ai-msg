@@ -5,7 +5,6 @@ import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { HANDOFF_PROMPT } from '../../shared/handoff';
 import { parseUserText, type InjectedNotice } from '../injected';
-import { roleSummary } from '../roles';
 import { usePrefs } from '../usePrefs';
 import { conciseCut, conciseLead } from '../../shared/concise';
 import { codeFileName, useCodeWrap } from '../codeWrap';
@@ -16,16 +15,17 @@ import { rawFileUrl } from '../sessionApi';
 import { Sheet, SheetHead } from './Dialogs';
 import { baseName, useFileActions, useFileMenu, useLongPress } from './FileMenu';
 import type { ChatItem, SentFile, ToolCallItem } from '../state';
-import { groupLabel } from '../toolLabel';
-import { MODEL_INFO, modelLabelOf, type ModelChoice } from '../../shared/models';
+import { MODEL_INFO, type ModelChoice } from '../../shared/models';
 import type { ReplyTurn } from '../replyTurn';
 import { usePopoverPlacement } from './usePopoverPlacement';
 import { CopyButton } from './CopyButton';
-import { CopyIcon, EditIcon, RetryIcon } from './icons';
+import { CopyIcon, EditIcon, ImageIcon, RetryIcon } from './icons';
 import { Lightbox, attachmentUrl } from './Lightbox';
-import { RoleBadge } from './RoleBadge';
-import { ToolCalls, toolSegments } from './ToolCallView';
-import { TurnBadge, isAbortError, isFailedTurn, isStoppedTurn } from './TurnBadge';
+import { ToolCalls, isSoloCall } from './ToolCallView';
+import { isAbortError, isFailedTurn, isStoppedTurn } from './TurnBadge';
+import { TurnMeta } from './TurnMeta';
+import { ui } from '../i18n';
+import { stripImagePlaceholders } from '../imagePlaceholder';
 
 /** Plain text of a rendered markdown subtree (code blocks arrive as nested elements). */
 function textOf(node: ReactNode): string {
@@ -188,78 +188,20 @@ export const Markdown = memo(function Markdown({ text, className = 'markdown' }:
   );
 });
 
-/** This view's own wording (작업 기록 fold, error line), kept in one place. */
-const TEXT = {
-  work: { log: '작업 기록', live: '계속 작업 중', step: (n: number) => `단계 ${n}`, running: '실행 중…', errors: (n: number) => `오류 ${n}`, thinking: '생각하는 중…', thought: '생각함', thoughtFor: (s: number) => `${s}초 동안 생각함`, secs: (s: number) => `${s}초`, process: '생각 과정' },
-  error: {
-    raw: '원문 보기',
-    generic: '응답 중 오류가 났어요',
-    rate: '사용 한도에 걸렸어요 — 잠시 뒤 다시 시도해 주세요',
-    overloaded: '서버가 붐벼 응답하지 못했어요 — 잠시 뒤 다시 시도해 주세요',
-    network: '연결이 끊겨 응답을 받지 못했어요',
-    auth: '로그인이 풀렸거나 권한이 없어요',
-    timeout: '응답 시간이 초과됐어요',
-    exited: '엔진이 도중에 종료됐어요',
-  },
+/** This view's own wording (the error line), kept in one place. */
+const ERROR_TEXT = {
+  raw: '원문 보기',
+  generic: '응답 중 오류가 났어요',
+  rate: '사용 한도에 걸렸어요 — 잠시 뒤 다시 시도해 주세요',
+  overloaded: '서버가 붐벼 응답하지 못했어요 — 잠시 뒤 다시 시도해 주세요',
+  network: '연결이 끊겨 응답을 받지 못했어요',
+  auth: '로그인이 풀렸거나 권한이 없어요',
+  timeout: '응답 시간이 초과됐어요',
+  exited: '엔진이 도중에 종료됐어요',
 };
-const WORK_TEXT = TEXT.work;
-const ERROR_TEXT = TEXT.error;
 
-/**
- * A turn's thinking and plain tool calls as a quiet gray line ("작업 기록 · 12초 · 실행된 명령 7개 ›") that unfolds to the
- * thinking text and one line per call. File-edit diff cards and subagent cards stay out in the open, in order, between
- * such lines. Thinking alone keeps its own label ("N초 동안 생각함"); thinking with nothing readable (empty or encrypted)
- * is plain text, no fold. Concise: everything folds into one line; live, the thinking text stays hidden and the line says
- * "계속 작업 중 · 단계 N".
- */
-function WorkLog({ t, calls, streaming, concise, cwd }: { t: Extract<ChatItem, { kind: 'assistant' }>['thinking']; calls: ToolCallItem[]; streaming: boolean; concise: boolean; cwd?: string }) {
-  const secs = !t || t.ms === null ? null : Math.max(1, Math.round(t.ms / 1000));
-  const conciseLive = concise && streaming;
-  const body = t && !conciseLive ? t.text.trim() : '';
-  const segments = concise ? (calls.length ? [{ solo: false, calls }] : []) : toolSegments(calls);
-  const firstFold = segments.findIndex((s) => !s.solo);
-  let thinking: ReactNode = null;
-  if (t && firstFold < 0) {
-    const label = t.ms === null && streaming ? WORK_TEXT.thinking : secs !== null ? WORK_TEXT.thoughtFor(secs) : body ? WORK_TEXT.process : WORK_TEXT.thought;
-    thinking = !body
-      ? <div className={`thinking-line${conciseLive ? ' concise' : ''}`} data-testid="thinking">{label}</div>
-      : (
-        <details className="work-log thinking" data-testid="thinking">
-          <summary><span className="tool-label">{label}</span><span className="tool-caret" aria-hidden="true">›</span></summary>
-          <Markdown text={body} className="markdown thinking-body" />
-        </details>
-      );
-  }
-  return (
-    <>
-      {thinking}
-      {segments.map((seg, i) => {
-        const key = seg.calls[0]!.toolUseId;
-        if (seg.solo) return <ToolCalls key={key} calls={seg.calls} live={streaming} cwd={cwd} />;
-        const first = i === firstFold;
-        const running = streaming && seg.calls.some((c) => c.result === null);
-        const errors = seg.calls.filter((c) => c.isError).length;
-        const label = conciseLive
-          ? `${WORK_TEXT.live} · ${WORK_TEXT.step(calls.length)}`
-          : [WORK_TEXT.log, first && secs !== null ? WORK_TEXT.secs(secs) : null, groupLabel(seg.calls)].filter(Boolean).join(' · ');
-        return (
-          <details key={key} className={`work-log${running ? ' running' : ''}`} data-testid="work-log">
-            <summary>
-              <span className="tool-label" {...(conciseLive ? { 'aria-live': 'polite' as const } : {})}>{label}</span>
-              {running && <span className="tool-state">{WORK_TEXT.running}</span>}
-              {errors > 0 && <span className="tool-state error">{WORK_TEXT.errors(errors)}</span>}
-              <span className="tool-caret" aria-hidden="true">›</span>
-            </summary>
-            <div className="work-log-body">
-              {first && body && <Markdown text={body} className="markdown thinking-body" />}
-              <ToolCalls calls={seg.calls} live={streaming} cwd={cwd} flat />
-            </div>
-          </details>
-        );
-      })}
-    </>
-  );
-}
+/** MessageView's memoized Markdown for TurnMeta's panels (thinking text, a task's result). */
+const renderMarkdown = (text: string, className: string) => <Markdown text={text} className={className} />;
 
 /** A failed turn's error as one line a person can read; the raw text unfolds below it when it says more. */
 export function errorSummary(raw: string): string {
@@ -367,11 +309,15 @@ function FileTile({ name, image }: { name: string; image: boolean }) {
   );
 }
 
-/** Sent attachments: images as thumbnails (GET /api/attachments/:id), other files as small tiles. */
-function AttachmentTiles({ files }: { files: SentFile[] }) {
+/**
+ * Sent attachments: images as thumbnails (GET /api/attachments/:id), other files as small tiles; `missing` = images the
+ * text stood in for ("[이미지]") with no thumbnail here, as one small "이미지 N장" pill.
+ */
+function AttachmentTiles({ files, missing = 0 }: { files: SentFile[]; missing?: number }) {
   return (
     <div className="msg-attachments">
       {files.map((f, i) => (f.isImage ? <ImageThumb key={f.id || i} file={f} /> : <FileTile key={f.id || i} name={f.name} image={IMAGE_EXT.test(extOf(f.name))} />))}
+      {missing > 0 && <span className="chip attach-count" data-testid="image-count"><ImageIcon className="attach-count-glyph" />{ui().chat.images(missing)}</span>}
     </div>
   );
 }
@@ -597,6 +543,8 @@ function MessageSheet({ excerpt, copy, select, edit, retry, again, pick, version
   );
 }
 
+const NO_NOTICES: InjectedNotice[] = [];
+
 /** A long user message: folded past this many lines or characters, showing about COLLAPSED_LINES (CSS) until 더 보기. */
 const FOLD_LINES = 12;
 const FOLD_CHARS = 1200;
@@ -655,7 +603,12 @@ function ChoiceCards({ choices, onPick }: { choices: DeckChoices; onPick: ((text
  * markdown of) the whole transcript. Items are immutable (the reducer replaces what changes), so identity is enough.
  * `last`: the conversation's last message (its actions stay visible and it offers 재시도).
  */
-export const MessageView = memo(function MessageView({ item, cwd, last = false, turnEnd = true }: { item: ChatItem; /** Session folder: diff card paths are shown relative to it. */ cwd?: string; last?: boolean; /** The last reply block of its turn: only it names the model. */ turnEnd?: boolean }) {
+export const MessageView = memo(function MessageView({ item, cwd, last = false, turnEnd = true, absorbed = false, notices = NO_NOTICES, repeatModel = false }: {
+  item: ChatItem; /** Session folder: diff card paths are shown relative to it. */ cwd?: string; last?: boolean; /** The last reply block of its turn: only it names the model. */ turnEnd?: boolean;
+  /** A user row of background-task notices only, shown in the next reply's meta line instead (turnMeta). */ absorbed?: boolean;
+  /** Those notices, on the reply that shows them. */ notices?: InjectedNotice[];
+  /** The reply before named the same model: the meta line leaves the name out. */ repeatModel?: boolean;
+}) {
   const actions = useContext(MessageActionsContext);
   const regen = useContext(RegenerateContext);
   const [prefs] = usePrefs();
@@ -687,9 +640,13 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
   const feedback = useFileActions();
   const copied = actions.coarse ? (ok: boolean) => feedback.toast(ok ? '복사했어요' : '복사하지 못했어요', ok ? 'info' : 'error') : undefined;
   if (item.kind === 'user') {
+    if (absorbed) return null;
     if (item.text === HANDOFF_PROMPT) return <div className="msg user handoff-req" title={HANDOFF_PROMPT}><pre>인계 메모 요청 (새 세션으로 이어가기)</pre></div>;
     const { text, notices } = parseUserText(item.text);
     const files = item.attachments ?? [];
+    // "[이미지]" lines are the transcript's stand-ins for images: thumbnails (or one count pill) show them instead.
+    const { text: shown, images } = stripImagePlaceholders(text);
+    const missing = Math.max(0, images - files.filter((f) => f.isImage).length);
     const system = notices.length > 0 && <div className="msg system">{notices.map((n, i) => <SystemNotice key={i} n={n} />)}</div>;
     if (!text && !files.length) return system || null;
     // 메시지 편집 갈래 when the session can fork here; else the composer gets the text (the tooltip says why).
@@ -710,8 +667,8 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
       <>
         {system}
         <div ref={msgRef} className="msg user" {...(text ? press : {})}>
-          {files.length > 0 && <AttachmentTiles files={files} />}
-          {text && <UserText text={text} />}
+          {(files.length > 0 || missing > 0) && <AttachmentTiles files={files} missing={missing} />}
+          {shown && <UserText text={shown} />}
           {/* The versions sit right under the bubble, beside its (hover / touch-hidden) action row. */}
           {(text || versions) && (
             <div className="msg-user-foot">
@@ -753,11 +710,10 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
       {/* Concise: mid-turn notes stay (milestones); full-mode attempts always show. */}
       {item.notes.map((n, i) => <div key={i} className={`note${concise ? ' concise-note' : ''}`}>{n}</div>)}
       {(!concise || !item.streaming) && item.attempts.map((t, i) => <Markdown key={i} text={t} className="markdown failed-attempt muted" />)}
-      {(item.toolCalls.length > 0 || (item.thinking && !(concise && item.streaming && !item.thinking.text && !item.thinking.redacted))) && (
-        <WorkLog t={item.thinking} calls={item.toolCalls} streaming={item.streaming} concise={concise} cwd={cwd} />
-      )}
+      {/* File edits and subagents stay out in the reply, in order; thinking and the other calls fold into the meta line. */}
+      {!concise && item.toolCalls.filter(isSoloCall).map((c) => <ToolCalls key={c.toolUseId} calls={[c]} live={item.streaming} cwd={cwd} />)}
       {/* Concise, mid-turn: text before the last tool call folds into a gray lead line; the text since streams live below it.
-          With tool calls the progress ("계속 작업 중 · 단계 N") is the 작업 기록 line above, so this shows the lead only. */}
+          With tool calls the progress ("계속 작업 중 · 단계 N") is the meta line's tools item, so this shows the lead only. */}
       {split && (!split.live || item.toolCalls.length > 0) && (split.lead || item.toolCalls.length === 0) && (
         <div className="concise-progress" data-testid="concise-progress" aria-live="polite">
           {split.lead && <div className="concise-lead" data-testid="concise-lead">{split.lead}</div>}
@@ -768,21 +724,18 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
       {choices && !item.streaming && <ChoiceCards choices={choices} onPick={reply} />}
       {item.streaming && (!split || !!split.live) && <span className="cursor">▍</span>}
       {item.error && !(!item.streaming && isAbortError(item.error, !!item.interrupted)) && <TurnError error={item.error} />}
-      {(item.badge || (item.model && turnEnd) || item.toolCalls.length > 0 || hasActions) && (
-        <div className="turn-foot">
-          {item.badge && <TurnBadge badge={item.badge} {...(item.model ? { model: item.model } : {})} stopped={stopped} failed={stopped && isFailedTurn({ error: item.error, interrupted: !!item.interrupted })} cacheNote={item.cacheNote ?? null} ctx={last ? (item.ctx ?? null) : null} />}
-          {!item.badge && item.model && turnEnd && <span className="msg-model" data-testid="msg-model" title={item.model}>{modelLabelOf(item.model)}</span>}
-          {hasActions && (
-            <div className="msg-actions" data-testid="turn-actions">
-              {item.text && <CopyButton icon text={shownText || item.text} label="응답 복사" {...(copied ? { onDone: copied } : {})} />}
-              {retry && <button type="button" className="msg-act" aria-label="재시도" title="재시도" onClick={retry}><RetryIcon /></button>}
-              {again && <button type="button" className="msg-act" aria-label="다시 생성" title="다시 생성 — 이 답장부터 새 갈래로" onClick={again}><RetryIcon /></button>}
-              {regenPick && <RegenModelMenu models={regenPick.models} current={regenPick.current} sticky={regenPick.sticky} onPick={regenPick.onPick} />}
-            </div>
-          )}
-          <RoleBadge roles={roleSummary(item.toolCalls)} />
-        </div>
-      )}
+      <TurnMeta
+        item={item} turnEnd={turnEnd} repeatModel={repeatModel} notices={notices} last={last} concise={concise} cwd={cwd} markdown={renderMarkdown}
+        stopped={stopped} failed={stopped && isFailedTurn({ error: item.error, interrupted: !!item.interrupted })} hold={hasActions}
+        actions={hasActions && (
+          <div className="msg-actions" data-testid="turn-actions">
+            {item.text && <CopyButton icon text={shownText || item.text} label="응답 복사" {...(copied ? { onDone: copied } : {})} />}
+            {retry && <button type="button" className="msg-act" aria-label="재시도" title="재시도" onClick={retry}><RetryIcon /></button>}
+            {again && <button type="button" className="msg-act" aria-label="다시 생성" title="다시 생성 — 이 답장부터 새 갈래로" onClick={again}><RetryIcon /></button>}
+            {regenPick && <RegenModelMenu models={regenPick.models} current={regenPick.current} sticky={regenPick.sticky} onPick={regenPick.onPick} />}
+          </div>
+        )}
+      />
     </div>
     {menu && hasActions && (
       <MessageSheet

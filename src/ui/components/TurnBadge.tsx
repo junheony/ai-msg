@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { FAST_FELL_BACK_NOTE, FAST_NOTE, modelLabelOf } from '../../shared/models';
 import type { TurnBadge as Badge } from '../../shared/protocol';
 import { useAccounts } from '../accounts';
@@ -40,71 +40,77 @@ export function isFailedTurn(t: { error?: string | null; interrupted?: boolean }
   return !!t.error && !isAbortError(t.error, t.interrupted);
 }
 
+type BadgeProps = { badge: Badge; /** The turn's own model (turn_result / transcript); shown before the badge's. */ model?: string; stopped?: boolean; /** stopped by an error, not an interrupt */ failed?: boolean; /** "캐시 새로 씀 · <reason>" when the turn rewrote the prompt cache. */ cacheNote?: string | null; /** The last reply's context: its cache expiry shows as the dot. */ ctx?: ContextInfo | null; /** The reply before named the same model: the pill leaves the name to screen readers (account and states stay). */ repeat?: boolean };
+
 /**
- * Turn meta as one small pill at the end of the reply: model · account (pin), and "중단됨" / "실패" for a turn that never
+ * Turn meta as the first item of the reply's meta line: model · account (pin), and "중단됨" / "실패" for a turn that never
  * really ran. A dot marks a cache note — this turn rewrote the prompt cache (`cacheNote`), or, on the last reply, the
- * cache has gone cold since (`ctx`: the line that used to sit above the composer). Pressing the pill opens the rest:
- * token counts, the routing reason, the model note and those cache lines. Esc or a press outside closes it.
+ * cache has gone cold since (`ctx`: the line that used to sit above the composer). Pressing the pill opens the rest under
+ * the line (TurnMeta places `detail`): token counts, the routing reason, the model note and those cache lines.
  */
-export function TurnBadge({ badge, model, stopped = false, failed = false, cacheNote = null, ctx = null }: { badge: Badge; /** The turn's own model (turn_result / transcript); shown before the badge's. */ model?: string; stopped?: boolean; /** stopped by an error, not an interrupt */ failed?: boolean; /** "캐시 새로 씀 · <reason>" when the turn rewrote the prompt cache. */ cacheNote?: string | null; /** The last reply's context: its cache expiry shows as the dot. */ ctx?: ContextInfo | null }) {
-  const u = badge.usage;
+export function useTurnBadge(props: BadgeProps | null, open: boolean, onToggle: () => void, panelId: string): { pill: ReactNode; detail: ReactNode } {
   const names = useAccounts();
-  const label = names.label(badge.account);
-  const look = names.look(badge.account);
-  const ref = useRef<HTMLDetailsElement>(null);
-  const [open, setOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const at = ctx?.at ?? null;
+  const at = props?.ctx?.at ?? null;
   useEffect(() => {
     if (at === null) return;
     setNow(Date.now());
     const t = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(t);
   }, [at]);
-  useEffect(() => {
-    if (!open) return;
-    const outside = (e: PointerEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) ref.current.open = false; };
-    document.addEventListener('pointerdown', outside);
-    return () => document.removeEventListener('pointerdown', outside);
-  }, [open]);
+  if (!props) return { pill: null, detail: null };
+  const { badge, model, stopped = false, failed = false, cacheNote = null, repeat = false } = props;
+  const u = badge.usage;
+  const label = names.label(badge.account);
+  const look = names.look(badge.account);
   const cold = isCacheCold(at, now) ? COLD_HINT : null;
   // ⚡ Only a turn that really ran fast carries ↯ (a standard turn of a session with the switch on shows none).
   const fast = badge.modelNote?.startsWith(FAST_NOTE) ? 'on' : badge.modelNote === FAST_FELL_BACK_NOTE ? 'fell' : null;
   const status = stopped ? (failed ? '실패' : '중단됨') : null;
   const tokens = `입력 ${k(u.inputTokens)} · 출력 ${k(u.outputTokens)} · 캐시 읽기 ${k(u.cacheReadTokens)} · 캐시 쓰기 ${k(u.cacheCreationTokens)}`;
-  const onKeyDown = (e: KeyboardEvent<HTMLDetailsElement>) => {
-    if (e.key !== 'Escape' || !ref.current?.open) return;
+  const modelName = modelLabelOf(model ?? badge.model);
+  const pill = (
+    <button type="button" className={`turn-badge tb-pill${stopped ? ' stopped' : ''}`} data-testid="turn-badge" aria-expanded={open} aria-controls={panelId} title={repeat ? modelName : undefined} onClick={onToggle}>
+      <span className={repeat ? 'tb-model sr-only' : 'tb-model'}>{modelName}</span>
+      <span className={`acct ${look.kind === 'other' ? `acct-${badge.account}` : `acct-${look.kind}`}`} {...(look.slot !== null ? { 'data-acct-idx': look.slot } : {})} title={`계정 ${label}${look.kind === 'unknown' ? ' · 설정에 없는 계정' : look.kind === 'retired' ? ' · 뺀 계정' : ''}${badge.pinned ? ' · 고정' : ''}`}><span className="acct-name">{label}</span></span>
+      {fast && <span className={`tb-fast${fast === 'fell' ? ' fell' : ''}`} data-testid="badge-fast" title={badge.modelNote!}><span aria-hidden="true">{fast === 'on' ? '↯' : '↯→표준'}</span><span className="sr-only">{badge.modelNote}</span></span>}
+      {badge.pinned && <span className="tb-pin" data-testid="badge-pin"><PinIcon title="고정 계정" /></span>}
+      {status && <span className="tb-stopped" title={tokens}>{status}</span>}
+      {(cacheNote || cold) && <span className="tb-dot" data-testid="badge-dot"><span className="sr-only">캐시 알림</span></span>}
+    </button>
+  );
+  const detail = (
+    <div id={panelId} className="tb-detail" data-testid="turn-badge-detail" hidden={!open}>
+      {!stopped && (
+        <span className="tb-tokens">
+          <span>입력 <b>{k(u.inputTokens)}</b></span>
+          <span>출력 <b>{k(u.outputTokens)}</b></span>
+          <span>캐시 읽기 <b>{k(u.cacheReadTokens)}</b></span>
+          {cacheNote
+            ? <span className="tb-cold" title={cacheNote}>캐시 쓰기 <b>{k(u.cacheCreationTokens)}</b></span>
+            : <span>캐시 쓰기 <b>{k(u.cacheCreationTokens)}</b></span>}
+        </span>
+      )}
+      <span className="reason">{badge.reason}</span>
+      {badge.modelNote && <span className="note">{badge.modelNote}</span>}
+      {cacheNote && <span className="tb-cache">{cacheNote}</span>}
+      {cold && <span className="tb-cache" data-testid="badge-cold">{cold}</span>}
+    </div>
+  );
+  return { pill, detail };
+}
+
+/** The pill on its own, its detail right under it (outside a reply's meta line). */
+export function TurnBadge(props: BadgeProps) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  const { pill, detail } = useTurnBadge(props, open, () => setOpen((o) => !o), id);
+  const onKeyDown = (e: KeyboardEvent<HTMLSpanElement>) => {
+    if (e.key !== 'Escape' || !open) return;
     e.preventDefault();
     e.stopPropagation();
-    ref.current.open = false;
-    ref.current.querySelector('summary')?.focus();
+    setOpen(false);
+    e.currentTarget.querySelector<HTMLElement>('.tb-pill')?.focus();
   };
-  return (
-    <details ref={ref} className={`turn-badge${stopped ? ' stopped' : ''}`} data-testid="turn-badge" onToggle={(e) => setOpen(e.currentTarget.open)} onKeyDown={onKeyDown}>
-      <summary className="tb-pill">
-        <span className="tb-model">{modelLabelOf(model ?? badge.model)}</span>
-        <span className={`acct ${look.kind === 'other' ? `acct-${badge.account}` : `acct-${look.kind}`}`} {...(look.slot !== null ? { 'data-acct-idx': look.slot } : {})} title={`계정 ${label}${look.kind === 'unknown' ? ' · 설정에 없는 계정' : look.kind === 'retired' ? ' · 뺀 계정' : ''}${badge.pinned ? ' · 고정' : ''}`}><span className="acct-name">{label}</span></span>
-        {fast && <span className={`tb-fast${fast === 'fell' ? ' fell' : ''}`} data-testid="badge-fast" title={badge.modelNote!}><span aria-hidden="true">{fast === 'on' ? '↯' : '↯→표준'}</span><span className="sr-only">{badge.modelNote}</span></span>}
-        {badge.pinned && <span className="tb-pin" data-testid="badge-pin"><PinIcon title="고정 계정" /></span>}
-        {status && <span className="tb-stopped" title={tokens}>{status}</span>}
-        {(cacheNote || cold) && <span className="tb-dot" data-testid="badge-dot"><span className="sr-only">캐시 알림</span></span>}
-      </summary>
-      <div className="tb-detail">
-        {!stopped && (
-          <span className="tb-tokens">
-            <span>입력 <b>{k(u.inputTokens)}</b></span>
-            <span>출력 <b>{k(u.outputTokens)}</b></span>
-            <span>캐시 읽기 <b>{k(u.cacheReadTokens)}</b></span>
-            {cacheNote
-              ? <span className="tb-cold" title={cacheNote}>캐시 쓰기 <b>{k(u.cacheCreationTokens)}</b></span>
-              : <span>캐시 쓰기 <b>{k(u.cacheCreationTokens)}</b></span>}
-          </span>
-        )}
-        <span className="reason">{badge.reason}</span>
-        {badge.modelNote && <span className="note">{badge.modelNote}</span>}
-        {cacheNote && <span className="tb-cache">{cacheNote}</span>}
-        {cold && <span className="tb-cache" data-testid="badge-cold">{cold}</span>}
-      </div>
-    </details>
-  );
+  return <span className="turn-badge-solo" onKeyDown={onKeyDown}>{pill}{detail}</span>;
 }

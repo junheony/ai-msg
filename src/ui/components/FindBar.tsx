@@ -29,6 +29,8 @@ export function markHits(root: ParentNode, query: string): { marks: HTMLElement[
       // Inside a closed disclosure (thinking, tool details): not on screen, so not a place to jump to.
       const d = parent.closest('details');
       if (d && !d.open && !parent.closest('summary')) continue;
+      // A closed meta-line panel (hidden until its › is pressed): same.
+      if (parent.closest('[hidden]')) continue;
       texts.push(t);
     }
     for (const node of texts) {

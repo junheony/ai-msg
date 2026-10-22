@@ -12,6 +12,7 @@ import { has } from '../features';
 import { latestTodos } from '../todos';
 import { useStickToBottom } from '../stickToBottom';
 import { mergeToolRuns } from '../toolRuns';
+import { turnMetaProps } from '../turnMeta';
 import { ATTACHMENT_ONLY_TEXT, filesFrom, replaceAttachment, uploadFile, usePasteUploads, type UploadFn } from '../upload';
 import { AgentContext, BackgroundPill, StatusRow, type AgentCtx } from './Activity';
 import { useAccounts } from '../accounts';
@@ -350,6 +351,8 @@ export function Chat(p: ChatProps) {
     }
     return ends;
   }, [shown]);
+  // Background notices fold into the next reply's meta line; a model named just before is not named again.
+  const meta = useMemo(() => turnMetaProps(shown, turnEnds), [shown, turnEnds]);
   const todos = useMemo(() => latestTodos(p.items), [p.items]);
 
   // Review M12: a failed last turn can be re-sent as-is.
@@ -633,7 +636,7 @@ export function Chat(p: ChatProps) {
                 return (
                   <Fragment key={keys[i]}>
                     {at != null && <div className="msg-time" data-testid="msg-time"><time dateTime={new Date(at).toISOString()}>{timeLabel(at)}</time></div>}
-                    <MessageView item={it} cwd={p.cwd} last={i === shown.length - 1} turnEnd={turnEnds[i]} />
+                    <MessageView item={it} cwd={p.cwd} last={i === shown.length - 1} turnEnd={turnEnds[i]} {...meta[i]} />
                   </Fragment>
                 );
               })}

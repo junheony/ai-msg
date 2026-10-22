@@ -56,7 +56,8 @@ describe('TurnBadge stopped rendering', () => {
     expect(b.classList.contains('stopped')).toBe(true);
     expect(b.querySelector('.tb-stopped')?.textContent).toBe('중단됨');
     expect(b.textContent).not.toContain('입력 0');
-    for (const s of ['B', '가장 여유']) expect(b.textContent).toContain(s);
+    expect(b.textContent).toContain('B');
+    expect(container.querySelector('.tb-detail')?.textContent).toContain('가장 여유');
     expect(b.querySelector('.tb-stopped')?.getAttribute('title')).toContain('입력 0');
   });
 
