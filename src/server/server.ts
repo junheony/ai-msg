@@ -281,6 +281,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
       sameVendorRotation: () => settings.get().sameVendorRotation,
       autoRoute: () => { const c = settings.get(); return { autoEngines: c.autoEngines, autoConsent: c.autoConsent, grokFast: c.grokFast }; },
       crossEngineFailover: () => settings.get().crossEngineFailover,
+      autoResume: () => settings.get().autoResume,
       devCommanderGate: cfg.devCommanderGate,
       routeLog: (line) => console.log(line),
       onPermissionMode: (sessionId, mode) => notifyPermissionMode(sessionId, mode),
