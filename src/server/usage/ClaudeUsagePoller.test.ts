@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CLAUDE_USAGE_ARGS, ClaudeUsagePoller, parseClaudeReset, parseClaudeUsage, parseClaudeUsageText } from './ClaudeUsagePoller';
+import { loadConfig } from '../config';
+import { CLAUDE_USAGE_ARGS, ClaudeUsagePoller, claudePollBin, parseClaudeReset, parseClaudeUsage, parseClaudeUsageText } from './ClaudeUsagePoller';
 import { UsageService, type FetchLike } from './UsageService';
 import type { ChildLike, SpawnFn } from '../engine/CodexEngine';
 import { testRegistry } from '../../shared/accounts.testkit';
@@ -319,5 +320,16 @@ describe('ClaudeUsagePoller', () => {
     const b = usageOf(usage.snapshot(), 'b');
     expect(b).toMatchObject({ fiveHour: { usedPct: 5 }, weekly: { usedPct: 91 } });
     expect(b).not.toHaveProperty('observedBy');
+  });
+});
+
+describe('claudePollBin', () => {
+  it('no usage mode is asked: a poller unless DECK_CLAUDE_USAGE_POLL=0 or claude is missing', () => {
+    const bin = { ok: true as const, bin: '/x/claude' };
+    expect(claudePollBin({ claudeUsagePoll: true, claudeBin: bin })).toBe('/x/claude');
+    expect(claudePollBin({ claudeUsagePoll: false, claudeBin: bin })).toBeNull();
+    expect(claudePollBin({ claudeUsagePoll: true, claudeBin: { ok: false } })).toBeNull();
+    expect(loadConfig({ PATH: '/nonexistent', DECK_USAGE_SOURCE: 'usage-deck', DECK_CLAUDE_USAGE_POLL: '0' }, '/h', '/repo')).toMatchObject({ usageMode: 'usage-deck', claudeUsagePoll: false });
+    expect(loadConfig({ PATH: '/nonexistent', DECK_USAGE_SOURCE: 'usage-deck' }, '/h', '/repo')).toMatchObject({ usageMode: 'usage-deck', claudeUsagePoll: true });
   });
 });

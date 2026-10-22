@@ -113,6 +113,11 @@ export function parseClaudeUsage(stdout: string, nowMs: number): TurnWindows | n
   return parseClaudeUsageText(stdout, nowMs);
 }
 
+/** The binary the usage poller runs in either usage mode (`DECK_CLAUDE_USAGE_POLL=0` or no usable claude: null → no poller). */
+export function claudePollBin(cfg: { claudeUsagePoll: boolean; claudeBin: { ok: true; bin: string } | { ok: false } }): string | null {
+  return cfg.claudeUsagePoll && cfg.claudeBin.ok ? cfg.claudeBin.bin : null;
+}
+
 type RunResult = { ok: true; stdout: string } | { ok: false; error: string };
 /** A spawned child that also says when its output pipes closed (node's ChildProcess does). */
 type UsageChild = ReturnType<SpawnFn> & { once(event: 'close', cb: (code: number | null) => void): unknown };
