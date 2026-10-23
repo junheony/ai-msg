@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { CARD_PENDING_RESET_MS, PermissionCard } from './PermissionCard';
+import { CARD_PENDING_RESET_MS, PermissionCard, dangerSpans } from './PermissionCard';
 import type { PendingPermission } from '../state';
 
 const bashReq: PendingPermission = { turnId: 't', sessionId: 's1', cwd: '/w', requestId: 'r1', toolName: 'Bash', input: { command: 'ls' }, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: true, sessionLabel: '이 세션 동안 `Bash(ls)` 허용' };
@@ -15,8 +15,9 @@ describe('PermissionCard', () => {
     const { rerender } = render(<PermissionCard req={rmReq} onDecide={onDecide} />);
     expect(screen.getByText('Bash')).toBeTruthy();
     expect(screen.getByText(/rm -rf build/)).toBeTruthy();
-    expect(screen.getByTestId('permission-scope').textContent).toContain('/w/proj');
-    expect(screen.getByTestId('permission-scope').textContent).toContain('s1');
+    // The folder name only (full path in the tooltip); no session id.
+    expect(screen.getByTestId('permission-scope').textContent).toBe('proj');
+    expect(screen.getByTestId('permission-scope').getAttribute('title')).toBe('/w/proj');
     // A tap locks the card until the request changes, so each decision gets its own request id.
     fireEvent.click(screen.getByText('허용 1회'));
     rerender(<PermissionCard req={{ ...rmReq, requestId: 'r2' }} onDecide={onDecide} />);
@@ -36,7 +37,7 @@ describe('PermissionCard', () => {
     expect(document.activeElement?.textContent).toBe('거부');
   });
 
-  it('keeps a long session rule out of the button: short label, full rule in the tooltip and a wrapping line below', () => {
+  it('keeps a long session rule out of the button: short label, the rule only in its tooltip', () => {
     const long = `git -C /Users/alice/Documents/작업/acme-worktree log --oneline --decorate --graph --all -n 200 ${'x'.repeat(300)}`;
     const label = `이 세션 동안 \`Bash(${long})\` 허용`;
     render(<PermissionCard req={{ turnId: 't', sessionId: 's1', cwd: '/w', requestId: 'r3', toolName: 'Bash', input: { command: long }, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: true, sessionLabel: label }} onDecide={() => {}} />);
@@ -44,8 +45,7 @@ describe('PermissionCard', () => {
     expect(btn.textContent).toBe('이 세션 동안 허용');
     expect(btn.getAttribute('title')).toBe(label);
     expect(btn.className).toContain('session-allow');
-    const rule = screen.getByTestId('session-rule');
-    expect(rule.querySelector('code')?.textContent).toBe(`\`Bash(${long})\``);
+    expect(screen.queryByTestId('session-rule')).toBeNull();
     // All three decisions share one actions row (wraps + right-aligns via CSS).
     const actions = btn.parentElement!;
     expect(actions.className).toBe('permission-actions');
@@ -85,5 +85,43 @@ describe('PermissionCard', () => {
     rerender(<PermissionCard req={{ ...bashReq, requestId: 'r9' }} onDecide={() => {}} />);
     expect(screen.queryByRole('status')).toBeNull();
     expect((screen.getByText('허용 1회') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('Bash: the description line and `$ command` instead of JSON; risky words underlined; raw JSON under 자세히', () => {
+    const cmd = 'npm run db:migrate -- --env=staging && rm -rf ./tmp/cache';
+    render(<PermissionCard req={{ ...bashReq, input: { command: cmd, description: '스테이징 DB 마이그레이션 후 캐시 정리' } }} onDecide={() => {}} />);
+    expect(screen.getByText('스테이징 DB 마이그레이션 후 캐시 정리')).toBeTruthy();
+    const pre = screen.getByTestId('permission-cmd');
+    expect(pre.textContent).toBe(`$ ${cmd}`);
+    expect(screen.getAllByTestId('danger-token').map((e) => e.textContent)).toEqual(['rm -rf']);
+    const raw = screen.getByText('자세히').closest('details')!;
+    expect(raw.open).toBe(false);
+    expect(raw.querySelector('pre')!.textContent).toContain('"command"');
+    expect(pre.textContent).not.toContain('"command"');
+  });
+
+  it('other tools: key · value rows instead of JSON', () => {
+    render(<PermissionCard req={{ ...bashReq, toolName: 'WebFetch', input: { url: 'https://example.com', prompt: 'summarize', skip: null } }} onDecide={() => {}} />);
+    const kv = screen.getByTestId('permission-kv');
+    expect([...kv.querySelectorAll('dt')].map((d) => d.textContent)).toEqual(['url', 'prompt']);
+    expect([...kv.querySelectorAll('dd')].map((d) => d.textContent)).toEqual(['https://example.com', 'summarize']);
+    expect(screen.queryByTestId('permission-cmd')).toBeNull();
+  });
+
+  it('the allow button is the accent primary; the buttons share one row', () => {
+    render(<PermissionCard req={bashReq} onDecide={() => {}} />);
+    expect(screen.getByText('허용 1회').className).toBe('btn primary');
+  });
+});
+
+describe('dangerSpans', () => {
+  it('marks a small list of risky shell words and keeps the rest as is', () => {
+    const marked = (c: string) => dangerSpans(c).filter((s) => s.danger).map((s) => s.text);
+    expect(marked('sudo rm -rf / && git push --force origin main')).toEqual(['sudo', 'rm -rf', 'git push', '--force']);
+    expect(marked('git reset --hard HEAD~1; git clean -fd; rm -r build')).toEqual(['git reset --hard', 'git clean -fd', 'rm -r']);
+    expect(marked('ls -la && npm test && git status')).toEqual([]);
+    expect(marked('npm run x --force-color')).toEqual([]);
+    const c = 'echo hi; sudo ls';
+    expect(dangerSpans(c).map((s) => s.text).join('')).toBe(c);
   });
 });

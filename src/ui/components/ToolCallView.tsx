@@ -8,6 +8,7 @@ import { TodoList } from './TodoPanel';
 import { DiffList } from './DiffView';
 import { AgentCard } from './Activity';
 import { CopyButton } from './CopyButton';
+import { QuestionSummary, askedOf } from './QuestionSummary';
 
 function pretty(v: unknown, max = 4000): string {
   const s = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
@@ -45,7 +46,9 @@ function DiffToolCall({ call, live, cwd }: { call: ToolCallItem; live: boolean; 
 const isDiffCall = (c: ToolCallItem) => fileDiffsFor(c.name, c.input, c.result) !== null;
 export const isAgentCall = (c: ToolCallItem) => c.name === 'Agent' || c.name === 'Task';
 /** File edits (diff cards) and subagent calls (agent cards) stay out in the reply; other calls fold into its meta line. */
-export const isSoloCall = (c: ToolCallItem) => isAgentCall(c) || isDiffCall(c);
+export const isSoloCall = (c: ToolCallItem) => isAgentCall(c) || isDiffCall(c) || isQuestionCall(c);
+/** An answered (or refused) AskUserQuestion: shown in the reply as its `question → answer` summary, in 간결 모드 too. */
+export const isQuestionCall = (c: ToolCallItem) => c.name === 'AskUserQuestion' && c.result !== null && askedOf(c.input).length > 0;
 
 /** The file a Read call looked at (a Read of a missing file still offers the panel; it shows the error). */
 function readPath(call: ToolCallItem): string | null {
@@ -108,6 +111,7 @@ export function ToolCalls({ calls, live = false, cwd, flat = false }: { calls: T
   const segments = toolSegments(calls);
   if (segments.length > 1) return <>{segments.map((s) => <ToolCalls key={s.calls[0]!.toolUseId} calls={s.calls} live={live} cwd={cwd} />)}</>;
   if (isAgentCall(calls[0]!)) return <AgentCard call={calls[0]!} live={live} />;
+  if (isQuestionCall(calls[0]!)) return <QuestionSummary call={calls[0]!} />;
   if (segments[0]!.solo) return <ToolCallView call={calls[0]!} live={live} cwd={cwd} />;
   if (calls.length === 1) return <ToolCallView call={calls[0]!} live={live} cwd={cwd} />;
   const running = live && calls.some((c) => c.result === null);

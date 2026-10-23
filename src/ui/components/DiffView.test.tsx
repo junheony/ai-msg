@@ -73,6 +73,6 @@ describe('diff cards', () => {
     // The diff is what is being approved: open, not a closed header line.
     expect(card.tagName).toBe('DIV');
     expect(card.querySelectorAll('.diff-line').length).toBe(2);
-    expect(screen.getByText('원본 입력 보기')).toBeTruthy();
+    expect(screen.getByText('자세히')).toBeTruthy();
   });
 });

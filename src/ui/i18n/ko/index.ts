@@ -1,5 +1,6 @@
 import type { Widen } from '../../../shared/locale';
 import type { en } from '../en';
+import { cards } from './cards';
 import { chat } from './chat';
 import { common } from './common';
 import { login } from './login';
@@ -7,4 +8,4 @@ import { settings } from './settings';
 import { sessionIcon } from './sessionIcon';
 import { setup } from './setup';
 
-export const ko: Widen<typeof en> = { common, chat, setup, login, settings, sessionIcon };
+export const ko: Widen<typeof en> = { common, chat, setup, login, settings, sessionIcon, cards };

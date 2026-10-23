@@ -1,0 +1,27 @@
+<!doctype html><html><head><meta charset="utf-8">
+<!-- 승인 카드 fixture for scripts/render-check.sh (PermissionCard.tsx): Bash (설명 + $ 명령, 위험 단어 밑줄), Edit (diff), 그 밖 도구 (키 · 값).
+     Markup generated from the components (React render, then state set by clicks), so keep it in step with them.
+     Taller than the default window: RENDER_HEIGHT=1800. -->
+<link rel="stylesheet" href="../../src/ui/styles.css">
+<style>
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); }
+  .fx-case { max-width: 760px; margin: 0 auto 28px; display: flex; flex-direction: column; gap: 6px; }
+  /* Headless Chrome's window is at least 500px wide: at phone widths, lay the page out at 390px. */
+  @media (max-width: 720px) { body { width: 390px; box-sizing: border-box; } }
+  .fx-name { font-size: 12px; color: var(--muted); }
+</style>
+</head><body>
+<section class="fx-case"><div class="fx-name">Bash</div><div class="permission-card" role="group" aria-label="권한 요청 Bash"><div class="permission-head"><span class="dot" aria-hidden="true"></span>권한 요청 <strong>Bash</strong></div><div class="permission-scope muted" data-testid="permission-scope" title="/private/tmp/deckaudit/homeA/work/aspan-web">aspan-web</div><div class="permission-desc">스테이징 DB 마이그레이션 후 캐시 정리</div><pre class="permission-cmd" data-testid="permission-cmd" tabindex="0"><code><span class="permission-prompt" aria-hidden="true">$ </span>npm run db:migrate -- --env=staging &amp;&amp; <span class="danger-token" data-testid="danger-token">rm -rf</span> ./tmp/cache &amp;&amp; <span class="danger-token" data-testid="danger-token">git push</span> <span class="danger-token" data-testid="danger-token">--force</span> origin staging</code></pre><details class="permission-raw"><summary>자세히</summary><pre>{
+  "command": "npm run db:migrate -- --env=staging &amp;&amp; rm -rf ./tmp/cache &amp;&amp; git push --force origin staging",
+  "description": "스테이징 DB 마이그레이션 후 캐시 정리"
+}</pre></details><div class="permission-actions"><button type="button" class="btn deny">거부</button><button type="button" class="btn ghost session-allow" title="이 세션 동안 `Bash(npm run db:migrate -- --env=staging &amp;&amp; rm -rf ./tmp/cache)` 허용">이 세션 동안 허용</button><button type="button" class="btn primary">허용 1회</button></div></div></section>
+<section class="fx-case"><div class="fx-name">Edit</div><div class="permission-card" role="group" aria-label="권한 요청 Edit"><div class="permission-head"><span class="dot" aria-hidden="true"></span>권한 요청 <strong>Edit</strong></div><div class="permission-scope muted" data-testid="permission-scope" title="/private/tmp/deckaudit/homeA/work/aspan-web">aspan-web</div><div class="diff-list"><div class="diff-card" data-testid="diff-card"><div class="diff-head" title="/private/tmp/deckaudit/homeA/work/aspan-web/src/pay.ts"><span class="diff-path">src/pay.ts</span><span class="grow"></span><span class="diff-count add">+2</span><span class="diff-count del">−2</span></div><div class="diff-body" role="table" aria-label="src/pay.ts 변경 내용"><div class="diff-line del" role="row"><span class="diff-sign" aria-hidden="true">−</span><span class="diff-text">const fee = 0;</span></div><div class="diff-line del" role="row"><span class="diff-sign" aria-hidden="true">−</span><span class="diff-text">return total;</span></div><div class="diff-line add" role="row"><span class="diff-sign" aria-hidden="true">+</span><span class="diff-text">const fee = Math.round(total * 0.03);</span></div><div class="diff-line add" role="row"><span class="diff-sign" aria-hidden="true">+</span><span class="diff-text">return total + fee;</span></div></div></div></div><details class="permission-raw"><summary>자세히</summary><pre>{
+  "file_path": "/private/tmp/deckaudit/homeA/work/aspan-web/src/pay.ts",
+  "old_string": "const fee = 0;\nreturn total;",
+  "new_string": "const fee = Math.round(total * 0.03);\nreturn total + fee;"
+}</pre></details><div class="permission-actions"><button type="button" class="btn deny">거부</button><button type="button" class="btn primary">허용 1회</button></div></div></section>
+<section class="fx-case"><div class="fx-name">WebFetch</div><div class="permission-card" role="group" aria-label="권한 요청 WebFetch"><div class="permission-head"><span class="dot" aria-hidden="true"></span>권한 요청 <strong>WebFetch</strong></div><div class="permission-scope muted" data-testid="permission-scope" title="/private/tmp/deckaudit/homeA/work/aspan-web">aspan-web</div><dl class="permission-kv" data-testid="permission-kv"><div class="permission-kv-row"><dt>url</dt><dd>https://docs.stripe.com/billing/subscriptions</dd></div><div class="permission-kv-row"><dt>prompt</dt><dd>구독 취소 시 환불 규칙 요약</dd></div></dl><details class="permission-raw"><summary>자세히</summary><pre>{
+  "url": "https://docs.stripe.com/billing/subscriptions",
+  "prompt": "구독 취소 시 환불 규칙 요약"
+}</pre></details><div class="permission-actions"><button type="button" class="btn deny">거부</button><button type="button" class="btn primary">허용 1회</button></div></div></section>
+</body></html>

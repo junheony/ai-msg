@@ -221,8 +221,7 @@ describe('Chat', () => {
   it('renders question cards and forwards answers', () => {
     const onAnswer = vi.fn();
     renderChat([], false, vi.fn(), { onAnswer, questions: [{ turnId: 't', sessionId: 's', cwd: '/w', requestId: 'q1', questions: [{ question: 'Which?', header: '', options: [{ label: 'a', description: '' }, { label: 'b', description: '' }], multiSelect: false }] }] });
-    fireEvent.click(screen.getByText('b'));
-    fireEvent.click(screen.getByText('답변 보내기'));
+    fireEvent.click(screen.getByText('b')); // one single-select question: the tap sends
     expect(onAnswer).toHaveBeenCalledWith('q1', { 'Which?': 'b' });
   });
 });

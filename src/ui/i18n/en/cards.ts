@@ -1,0 +1,45 @@
+// The cards that wait on the person: AskUserQuestion (question), tool permission and plan approval, and the answered-question summary.
+
+export const cards = {
+  question: {
+    cardLabel: 'Question',
+    title: 'Claude is waiting for your choice',
+    step: (n: number, total: number) => `${n}/${total}`,
+    prev: 'Previous question',
+    next: 'Next question',
+    multi: 'Pick any',
+    recommended: 'Recommended',
+    other: 'Other',
+    otherPlaceholder: 'Type your answer',
+    otherLabel: (header: string) => `${header} — your own answer`,
+    left: (n: number) => `${n} left`,
+    submit: 'Send answers',
+    send: 'Send',
+    sending: 'Sending…',
+    reopen: (q: string) => `Change the answer to: ${q}`,
+  },
+  summary: {
+    label: 'Your answers',
+    none: 'Not answered',
+  },
+  permission: {
+    label: (tool: string) => `Permission request ${tool}`,
+    head: 'Permission request',
+    reason: (r: string) => `Reason: ${r}`,
+    path: (p: string) => `Path: ${p}`,
+    details: 'Details',
+    deny: 'Deny',
+    allowSession: 'Allow for this session',
+    allowOnce: 'Allow once',
+    sending: 'Sending…',
+  },
+  plan: {
+    label: 'Plan approval',
+    empty: 'The plan is empty.',
+    keepPlanning: 'Keep planning',
+    manual: 'Approve · ask each step',
+    manualTitle: 'Go ahead, asking before each tool call',
+    auto: 'Approve · auto-approve edits',
+    autoTitle: 'Go ahead, allowing file edits without asking',
+  },
+};

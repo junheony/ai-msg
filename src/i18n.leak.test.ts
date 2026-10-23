@@ -136,8 +136,6 @@ const BASELINE: Record<string, number> = {
   'src/ui/components/NotifyMenu.tsx': 15,
   'src/ui/components/OpenInDesktop.tsx': 3,
   'src/ui/components/Pane.tsx': 51,
-  'src/ui/components/PermissionCard.tsx': 22,
-  'src/ui/components/QuestionCard.tsx': 13,
   'src/ui/components/QueueChips.tsx': 25,
   'src/ui/components/SessionChip.tsx': 46,
   'src/ui/components/SessionChipHead.tsx': 3,

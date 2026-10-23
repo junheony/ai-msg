@@ -3,6 +3,7 @@ import type { PermissionDecision } from '../../shared/turn-types';
 import { fileDiffsFor } from '../diff';
 import type { PendingPermission } from '../state';
 import { DiffList } from './DiffView';
+import { ui } from '../i18n';
 import { Markdown } from './MessageView';
 
 /**
@@ -27,13 +28,61 @@ export function usePending<T>(requestId: string) {
   return [pending, setPending] as const;
 }
 
-const SENDING_NOTE = <span className="muted sending-note" role="status">보내는 중…</span>;
+/** The folder's own name; the full path stays in the tooltip (cards show it only inside the activity sheet, CSS). */
+export const folderName = (path: string) => path.replace(/\/+$/, '').split('/').pop() || path;
 
-/** "이 세션 동안 `Bash(…)` 허용" → "`Bash(…)`": what the session grant covers, shown under the buttons. */
-function sessionRule(label: string | null): string | null {
-  if (!label) return null;
-  const m = /^이 세션 동안 (.+) 허용$/s.exec(label);
-  return m ? m[1]! : label;
+const sendingNote = () => <span className="muted sending-note" role="status">{ui().cards.permission.sending}</span>;
+
+/**
+ * Words in a shell command worth a second look before allowing it: underlined in --danger. A small list on purpose —
+ * a hint, not a verdict (the person still reads the whole command).
+ */
+const DANGER = /\brm\s+-[a-z]*[rf][a-z]*\b|\bsudo\b|(?<![\w-])--force(?:-with-lease)?(?![\w-])|\bgit\s+push\b|\bgit\s+reset\s+--hard\b|\bgit\s+clean\s+-[a-z]*f[a-z]*\b|\bchmod\s+-R\b|\bmkfs\b|\bdd\s+if=/gi;
+
+/** A command split into plain and dangerous stretches (see DANGER), in order. */
+export function dangerSpans(cmd: string): { text: string; danger: boolean }[] {
+  const out: { text: string; danger: boolean }[] = [];
+  let at = 0;
+  for (const m of cmd.matchAll(DANGER)) {
+    if (m.index! > at) out.push({ text: cmd.slice(at, m.index), danger: false });
+    out.push({ text: m[0], danger: true });
+    at = m.index! + m[0].length;
+  }
+  if (at < cmd.length) out.push({ text: cmd.slice(at), danger: false });
+  return out;
+}
+
+const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
+const clip = (s: string, max: number) => (s.length > max ? s.slice(0, max) + '…' : s);
+
+/** What the tool would do, readable: Bash as its description and `$ command`; any other tool as key · value rows. */
+function InputView({ toolName, input }: { toolName: string; input: unknown }) {
+  const obj = input && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : null;
+  const command = obj ? str(obj.command) : null;
+  if (toolName === 'Bash' && command) {
+    const description = str(obj!.description);
+    return (
+      <>
+        {description && <div className="permission-desc">{description}</div>}
+        <pre className="permission-cmd" data-testid="permission-cmd" tabIndex={0}><code><span className="permission-prompt" aria-hidden="true">$ </span>
+          {dangerSpans(command).map((s, i) => (s.danger ? <span key={i} className="danger-token" data-testid="danger-token">{s.text}</span> : s.text))}
+        </code></pre>
+      </>
+    );
+  }
+  if (!obj) return input === null || input === undefined ? null : <pre className="permission-cmd">{clip(String(typeof input === 'string' ? input : JSON.stringify(input)), 2000)}</pre>;
+  const rows = Object.entries(obj).filter(([, v]) => v !== null && v !== undefined && v !== '');
+  if (rows.length === 0) return null;
+  return (
+    <dl className="permission-kv" data-testid="permission-kv">
+      {rows.map(([k, v]) => (
+        <div key={k} className="permission-kv-row">
+          <dt>{k}</dt>
+          <dd>{clip(typeof v === 'string' ? v : JSON.stringify(v), 300)}</dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
 /**
@@ -41,20 +90,21 @@ function sessionRule(label: string | null): string | null {
  * 'once' = approve and keep asking, 'deny' = keep planning (the server maps these, TurnRunner/ClaudeEngine).
  */
 function PlanCard({ req, onDecide }: { req: PendingPermission; onDecide: (requestId: string, decision: PermissionDecision) => void }) {
+  const T = ui().cards.plan;
   const raw = req.input && typeof req.input === 'object' ? (req.input as { plan?: unknown }).plan : undefined;
   const plan = typeof raw === 'string' ? raw : '';
   const [pending, setPending] = usePending<PermissionDecision>(req.requestId);
   const decide = (d: PermissionDecision) => { setPending(d); onDecide(req.requestId, d); };
   return (
-    <div className="permission-card plan-card" role="group" aria-label="계획 승인" data-testid="plan-card">
-      <div className="permission-head"><span className="dot" aria-hidden="true" />계획 승인</div>
-      <div className="permission-scope muted" title={req.cwd}>{req.sessionId ? `세션 ${req.sessionId.slice(0, 8)}` : '새 세션'} · {req.cwd}</div>
-      <div className="plan-body">{plan ? <Markdown text={plan} /> : <span className="muted">계획 내용이 없습니다.</span>}</div>
+    <div className="permission-card plan-card" role="group" aria-label={T.label} data-testid="plan-card">
+      <div className="permission-head"><span className="dot" aria-hidden="true" />{T.label}</div>
+      <div className="permission-scope muted" title={req.cwd}>{folderName(req.cwd)}</div>
+      <div className="plan-body">{plan ? <Markdown text={plan} /> : <span className="muted">{T.empty}</span>}</div>
       <div className={pending ? 'permission-actions sending' : 'permission-actions'}>
-        <button type="button" className="btn deny" disabled={!!pending} onClick={() => decide('deny')}>계속 계획</button>
-        <button type="button" className="btn ghost" disabled={!!pending} title="진행하되 도구 호출마다 묻습니다" onClick={() => decide('once')}>승인하고 진행 · 수동 승인</button>
-        <button type="button" className="btn primary" disabled={!!pending} title="진행하며 파일 편집은 묻지 않고 허용합니다" onClick={() => decide('session')}>승인하고 진행 · 편집 자동 승인</button>
-        {pending && SENDING_NOTE}
+        <button type="button" className="btn deny" disabled={!!pending} onClick={() => decide('deny')}>{T.keepPlanning}</button>
+        <button type="button" className="btn ghost" disabled={!!pending} title={T.manualTitle} onClick={() => decide('once')}>{T.manual}</button>
+        <button type="button" className="btn primary" disabled={!!pending} title={T.autoTitle} onClick={() => decide('session')}>{T.auto}</button>
+        {pending && sendingNote()}
       </div>
     </div>
   );
@@ -66,41 +116,35 @@ export function PermissionCard({ req, onDecide }: { req: PendingPermission; onDe
 }
 
 function ToolPermissionCard({ req, onDecide }: { req: PendingPermission; onDecide: (requestId: string, decision: PermissionDecision) => void }) {
+  const T = ui().cards.permission;
   const [pending, setPending] = usePending<PermissionDecision>(req.requestId);
   const decide = (d: PermissionDecision) => { setPending(d); onDecide(req.requestId, d); };
-  const input = JSON.stringify(req.input, null, 2);
+  const input = JSON.stringify(req.input, null, 2) ?? '';
   // Edit / Write / … asks show the change they would make, like the tool call card will.
   const diffs = fileDiffsFor(req.toolName, req.input, null);
-  const rule = req.allowSession ? sessionRule(req.sessionLabel) : null;
   return (
-    <div className="permission-card" role="group" aria-label={`권한 요청 ${req.toolName}`}>
-      <div className="permission-head"><span className="dot" aria-hidden="true" />권한 요청 <strong>{req.toolName}</strong></div>
-      {/* Review I3: prompts from every session reach every tab — say which one this is. */}
-      <div className="permission-scope muted" data-testid="permission-scope" title={req.cwd}>
-        {req.sessionId ? `세션 ${req.sessionId.slice(0, 8)}` : '새 세션'} · {req.cwd}
-      </div>
+    <div className="permission-card" role="group" aria-label={T.label(req.toolName)}>
+      <div className="permission-head"><span className="dot" aria-hidden="true" />{T.head} <strong>{req.toolName}</strong></div>
+      {/* Review I3: prompts from every session reach every tab — the activity sheet says which one (CSS shows this there only). */}
+      <div className="permission-scope muted" data-testid="permission-scope" title={req.cwd}>{folderName(req.cwd)}</div>
       {req.title && <div className="permission-title">{req.title}</div>}
-      {req.decisionReason && <div className="permission-reason muted">이유: {req.decisionReason}</div>}
-      {req.blockedPath && <div className="permission-path muted">경로: {req.blockedPath}</div>}
-      {diffs ? (
-        <>
-          <DiffList diffs={diffs} cwd={req.cwd} />
-          <details className="permission-raw">
-            <summary>원본 입력 보기</summary>
-            <pre>{input.length > 2000 ? input.slice(0, 2000) + '\n…' : input}</pre>
-          </details>
-        </>
-      ) : <pre>{input.length > 2000 ? input.slice(0, 2000) + '\n…' : input}</pre>}
+      {req.decisionReason && <div className="permission-reason muted">{T.reason(req.decisionReason)}</div>}
+      {req.blockedPath && <div className="permission-path muted">{T.path(req.blockedPath)}</div>}
+      {diffs ? <DiffList diffs={diffs} cwd={req.cwd} /> : <InputView toolName={req.toolName} input={req.input} />}
+      {input && input !== '{}' && input !== 'null' && (
+        <details className="permission-raw">
+          <summary>{T.details}</summary>
+          <pre>{input.length > 2000 ? input.slice(0, 2000) + '\n…' : input}</pre>
+        </details>
+      )}
       <div className={pending ? 'permission-actions sending' : 'permission-actions'}>
         {/* defaultToNo: the card opens on 거부 so a stray Enter cannot approve. */}
-        <button type="button" className="btn deny" autoFocus={req.defaultToNo} disabled={!!pending} onClick={() => decide('deny')}>거부</button>
-        {/* Review I4: only when an SDK suggestion can be kept for the session; the label says what. */}
-        {/* A long rule (e.g. a whole Bash command) must not widen the card: short label here, the rule below. */}
-        {req.allowSession && <button type="button" className="btn ghost session-allow" title={req.sessionLabel ?? undefined} disabled={!!pending} onClick={() => decide('session')}>이 세션 동안 허용</button>}
-        <button type="button" className="btn primary" disabled={!!pending} onClick={() => decide('once')}>허용 1회</button>
-        {pending && SENDING_NOTE}
+        <button type="button" className="btn deny" autoFocus={req.defaultToNo} disabled={!!pending} onClick={() => decide('deny')}>{T.deny}</button>
+        {/* Review I4: only when an SDK suggestion can be kept for the session; the rule it keeps is the tooltip, not a line. */}
+        {req.allowSession && <button type="button" className="btn ghost session-allow" title={req.sessionLabel ?? undefined} disabled={!!pending} onClick={() => decide('session')}>{T.allowSession}</button>}
+        <button type="button" className="btn primary" disabled={!!pending} onClick={() => decide('once')}>{T.allowOnce}</button>
+        {pending && sendingNote()}
       </div>
-      {rule && <div className="permission-session-rule muted" data-testid="session-rule">이 세션 동안 허용: <code>{rule}</code></div>}
     </div>
   );
 }

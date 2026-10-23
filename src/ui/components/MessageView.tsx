@@ -21,7 +21,7 @@ import { usePopoverPlacement } from './usePopoverPlacement';
 import { CopyButton } from './CopyButton';
 import { CopyIcon, EditIcon, ImageIcon, RetryIcon } from './icons';
 import { Lightbox, attachmentUrl } from './Lightbox';
-import { ToolCalls, isAgentCall, isSoloCall } from './ToolCallView';
+import { ToolCalls, isAgentCall, isQuestionCall, isSoloCall } from './ToolCallView';
 import { isAbortError, isFailedTurn, isStoppedTurn } from './TurnBadge';
 import { TurnMeta } from './TurnMeta';
 import { ui } from '../i18n';
@@ -723,10 +723,11 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
       {/* Concise: mid-turn notes stay (milestones); full-mode attempts always show. */}
       {item.notes.map((n, i) => <div key={i} className={`note${concise ? ' concise-note' : ''}`}>{n}</div>)}
       {(!concise || !item.streaming) && item.attempts.map((t, i) => <Markdown key={i} text={t} className="markdown failed-attempt muted" />)}
-      {/* File edits and subagents stay out in the reply, in order; thinking and the other calls fold into the meta line. */}
+      {/* File edits and subagents stay out in the reply, in order; thinking and the other calls fold into the meta line.
+          Answered questions stay out as their summary, in 간결 모드 too. */}
       {/* Subagent runs always sit in a wrapper (only its class follows the count), so a second Agent call joining doesn't
           remount the first card and fold its open panel. Other solo calls (file edits) stay direct children of .msg. */}
-      {!concise && soloRuns(item.toolCalls).map((run) => (isAgentCall(run[0]!)
+      {soloRuns(concise ? item.toolCalls.filter(isQuestionCall) : item.toolCalls).map((run) => (isAgentCall(run[0]!)
         ? <div key={run[0]!.toolUseId} className={run.length > 1 ? 'agent-group' : 'agent-run'} {...(run.length > 1 ? { 'data-testid': 'agent-group' } : {})}>
             {run.map((c) => <ToolCalls key={c.toolUseId} calls={[c]} live={item.streaming} cwd={cwd} />)}
           </div>
