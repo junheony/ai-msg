@@ -1159,6 +1159,7 @@ describe('previewLine (S-1)', () => {
   it('strips __bold__ only at word edges', () => {
     expect(previewLine('__굵게__ 와 __init__.py')).toBe('굵게 와 __init__.py');
     expect(previewLine('call __init__ now')).toBe('call init now');
+    expect(previewLine('__init__.py and __x__ y')).toBe('__init__.py and x y');
     expect(previewLine('a__b__c')).toBe('a__b__c');
   });
   it('is empty when nothing is left', () => {

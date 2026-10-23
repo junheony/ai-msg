@@ -706,7 +706,7 @@ export function previewLine(preview: string | undefined, title = ''): string {
     .join(' ')
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/\*\*(.+?)\*\*/g, '$1')
-    .replace(/(^|\s)__(.+?)__(?=\s|$)/g, '$1$2')
+    .replace(/(^|\s)__(\S(?:[^_]|_(?!_))*?)__(?=\s|$)/g, '$1$2')
     .replace(/\*\*|`+/g, '')
     .replace(/(^|\s)\*(\S[^*]*?)\*(?=\s|$|[.,!?])/g, '$1$2')
     .replace(/\s+/g, ' ')
