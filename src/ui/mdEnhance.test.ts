@@ -62,7 +62,7 @@ describe('mdEnhance: math delimiters', () => {
   });
 
   it('escaped brackets mid-line and \\( … \\) with spaces inside stay text', () => {
-    for (const md of ['논문 결과\\[1\\]와 \\[2\\]', '체크 \\[x\\] 완료', '\\[x\\] 완료', '앞 \\[\na\n\\]', '\\[\na\n\\] 뒤', '정규식에서 \\(와 \\)는 괄호', '\\( x \\)']) {
+    for (const md of ['논문 결과\\[1\\]와 \\[2\\]', '체크 \\[x\\] 완료', '\\[x\\] 완료', '앞 \\[\na\n\\]', '\\[\na\n\\] 뒤', '정규식에서 \\(와 \\)는 괄호', '\\( x \\)', '결과 **\\[1\\]** 와 끝', '체크 *\\[x\\]* 완료', 'see [\\[1\\]](https://x.test) now']) {
       expect(hasMath(md), md).toBe(false);
     }
     expect(hasMath('  \\[ a+b \\]  ')).toBe(true);

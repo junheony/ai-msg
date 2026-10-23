@@ -72,12 +72,18 @@ function splitTex(text: MdNode, source: string, first: boolean, lastChild: boole
   return out;
 }
 
-function walkTex(node: MdNode, source: string): void {
+/** Inline wrappers: their first / last child starts / ends the line only if the wrapper itself does. */
+const PHRASING = new Set(['emphasis', 'strong', 'delete', 'link', 'linkReference']);
+
+function walkTex(node: MdNode, source: string, first = true, lastChild = true): void {
   if (!node.children) return;
   const n = node.children.length;
+  const inherit = PHRASING.has(node.type);
   node.children = node.children.flatMap((child, k) => {
-    if (child.type === 'text') return splitTex(child, source, k === 0, k === n - 1);
-    walkTex(child, source);
+    const f = k === 0 && (!inherit || first);
+    const l = k === n - 1 && (!inherit || lastChild);
+    if (child.type === 'text') return splitTex(child, source, f, l);
+    walkTex(child, source, f, l);
     return [child];
   });
 }
