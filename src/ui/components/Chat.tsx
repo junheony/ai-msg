@@ -14,7 +14,7 @@ import { useStickToBottom } from '../stickToBottom';
 import { mergeToolRuns } from '../toolRuns';
 import { turnMetaProps } from '../turnMeta';
 import { ATTACHMENT_ONLY_TEXT, filesFrom, replaceAttachment, uploadFile, usePasteUploads, type UploadFn } from '../upload';
-import { AgentContext, BackgroundPill, StatusRow, type AgentCtx } from './Activity';
+import { AgentContext, BackgroundPill, StatusRow, turnPauses, type AgentCtx } from './Activity';
 import { useAccounts } from '../accounts';
 import { conciseFirstStep } from '../../shared/concise';
 import { parseBgCommand, type TaskInfo } from '../../shared/tasks';
@@ -338,6 +338,12 @@ export function Chat(p: ChatProps) {
   // A question / approval card waits for the user: the status line, the composer and the stop button say so (Q2).
   const waitingFor = p.questions.length > 0 ? 'question' as const : p.pending.length > 0 ? 'permission' as const : null;
   // Q1: a newly shown card taller than the view opens at its head, not at its bottom (scroll.revealTop decides).
+  // The turn ended: drop its set-aside wait time (StatusRow keeps it across remounts while the turn runs).
+  const runStart = useRef<number | null>(null);
+  useEffect(() => {
+    if (p.busy && p.runStartedAt != null) runStart.current = p.runStartedAt;
+    else if (!p.busy && runStart.current !== null) { turnPauses.delete(runStart.current); runStart.current = null; }
+  }, [p.busy, p.runStartedAt]);
   const seenCards = useRef(new Set<string>());
   const revealTop = scroll.revealTop;
   useLayoutEffect(() => {

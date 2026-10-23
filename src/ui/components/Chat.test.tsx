@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { turnPauses } from './Activity';
 import { Chat, composerPlaceholder, messageKeys, modelChoices } from './Chat';
 import { GROK_MODELS } from '../../shared/models';
 import { THREAD_LOCKED_MESSAGE } from '../../shared/handoff';
@@ -679,6 +680,15 @@ describe('waiting for the user (Q2) and the crowded composer (C-1)', () => {
     expect(screen.getByTestId('task-add')).toBeTruthy();
     fireEvent.click(screen.getByLabelText('첨부'));
     expect(screen.queryByTestId('attach-extra-task')).toBeNull();
+  });
+
+  it('a finished turn drops its set-aside wait time', () => {
+    const at = Date.now() - 1_000;
+    const base = chatProps([{ kind: 'user', text: 'p' }]);
+    const view = render(<Chat {...base} busy activeTurnId="t1" runStartedAt={at} questions={[question]} />);
+    expect(turnPauses.has(at)).toBe(true);
+    view.rerender(<Chat {...base} runStartedAt={at} />);
+    expect(turnPauses.has(at)).toBe(false);
   });
 
   it('cards sit in a data-await-card wrapper (the scroll reveal finds them by request id)', () => {

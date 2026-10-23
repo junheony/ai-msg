@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { AgentInfo, ToolCallItem } from '../state';
-import { AgentContext, BackgroundPill, StatusRow, agentStatus, clock, tokens, toolVerb } from './Activity';
+import { AgentContext, BackgroundPill, StatusRow, turnPauses, agentStatus, clock, tokens, toolVerb } from './Activity';
 import { DEFAULT_PREFS, PREFS_KEY } from '../prefs';
 import { ToolCalls } from './ToolCallView';
 
@@ -115,6 +115,28 @@ describe('StatusRow', () => {
       expect(screen.getByTestId('turn-status').textContent).toContain('0:05');
       act(() => { vi.advanceTimersByTime(2_000); });
       expect(screen.getByTestId('turn-status').textContent).toContain('0:07');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('the set-aside wait survives a remount (session switch) and is dropped for the next turn; the store is capped', () => {
+    cleanup();
+    vi.useFakeTimers();
+    try {
+      const t1 = Date.now() - 5_000;
+      let view = render(<StatusRow startedAt={t1} started progress={null} live={null} waiting="question" />);
+      act(() => { vi.advanceTimersByTime(30_000); });
+      view.unmount();
+      view = render(<StatusRow startedAt={t1} started progress={null} live={null} waiting={null} />);
+      expect(screen.getByTestId('turn-status').textContent).toContain('0:05');
+      const t2 = Date.now();
+      view.rerender(<StatusRow startedAt={t2} started progress={null} live={null} waiting={null} />);
+      expect(turnPauses.has(t1)).toBe(false);
+      expect(turnPauses.has(t2)).toBe(true);
+      view.unmount();
+      for (let i = 0; i < 100; i++) render(<StatusRow startedAt={1_000 + i} started progress={null} live={null} />).unmount();
+      expect(turnPauses.size).toBeLessThanOrEqual(64);
     } finally {
       vi.useRealTimers();
     }

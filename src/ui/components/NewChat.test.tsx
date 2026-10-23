@@ -116,6 +116,39 @@ describe('NewChat', () => {
     await waitFor(() => expect(onStart).toHaveBeenCalledWith('/Users/me', 'me', '시작해 줘, 천천히', [], { engine: 'claude', sandbox: 'workspace-write' }));
   });
 
+  it('first run: text cleared while the home folder is looked up → nothing starts, the screen stays', async () => {
+    const onStart = vi.fn();
+    let answer: (r: Response) => void = () => {};
+    const fetchFn = vi.fn(() => new Promise<Response>((r) => { answer = r; })) as unknown as typeof fetch;
+    render(<NewChat projects={[]} loaded onStart={onStart} fetchFn={fetchFn} />);
+    const box = screen.getByLabelText('첫 메시지');
+    fireEvent.change(box, { target: { value: '시작해' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    fireEvent.change(box, { target: { value: '  ' } });
+    answer(new Response(JSON.stringify({ path: '/Users/me', dirs: [] }), { status: 200 }));
+    await waitFor(() => expect((box as HTMLTextAreaElement).closest('form')?.querySelector('.send')?.hasAttribute('disabled')).toBe(true));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(onStart).not.toHaveBeenCalled();
+    expect(screen.getByTestId('newchat-first')).toBeTruthy();
+  });
+
+  it('first run: a pick still uploading when the home folder answers → no start (it would be left out)', async () => {
+    const onStart = vi.fn();
+    let answer: (r: Response) => void = () => {};
+    const fetchFn = vi.fn(() => new Promise<Response>((r) => { answer = r; })) as unknown as typeof fetch;
+    const uploadFn = vi.fn(() => new Promise<never>(() => {}));
+    render(<NewChat projects={[]} loaded onStart={onStart} fetchFn={fetchFn} uploadFn={uploadFn} />);
+    const box = screen.getByLabelText('첫 메시지');
+    fireEvent.change(box, { target: { value: '시작해' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    fireEvent.change(screen.getByTestId('attachment-input'), { target: { files: [new File(['x'], 'a.txt', { type: 'text/plain' })] } });
+    await waitFor(() => expect(uploadFn).toHaveBeenCalled());
+    answer(new Response(JSON.stringify({ path: '/Users/me', dirs: [] }), { status: 200 }));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(onStart).not.toHaveBeenCalled();
+    expect((box as HTMLTextAreaElement).value).toBe('시작해');
+  });
+
   it('picked and pasted attachments ride the first message', async () => {
     const onStart = vi.fn();
     const uploadFn = vi.fn(async (f: File) => ({ id: `id-${f.name}`, name: f.name, size: f.size, isImage: f.type.startsWith('image/') }));

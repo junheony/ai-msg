@@ -77,6 +77,19 @@ const IDLE_VERBS = ['생각 중…', '작업 중…', '살펴보는 중…', '�
  * Desktop-style live line above the composer while a turn runs: spinner, what it is doing now, m:ss,
  * output tokens, tool count and a stop button. Owns the 1s timer so nothing else re-renders per tick.
  */
+/** A running turn's time spent waiting on the user, by its start time (Map order = oldest first; capped). */
+export const turnPauses = new Map<number, { total: number; since: number | null }>();
+const TURN_PAUSES_MAX = 64;
+function pauseOf(startedAt: number): { total: number; since: number | null } {
+  let p = turnPauses.get(startedAt);
+  if (!p) {
+    p = { total: 0, since: null };
+    turnPauses.set(startedAt, p);
+    while (turnPauses.size > TURN_PAUSES_MAX) turnPauses.delete(turnPauses.keys().next().value!);
+  }
+  return p;
+}
+
 export function StatusRow({ startedAt, started, queuedBehind = null, progress, live, onInterrupt, onCancel, routeAck = null, waiting = null }: {
   startedAt: number | null;
   /** turn_started arrived (false = 시작하는 중…). */
@@ -97,12 +110,14 @@ export function StatusRow({ startedAt, started, queuedBehind = null, progress, l
   const [prefs] = usePrefs();
   const concise = prefs.conciseMode;
   // The clock counts the turn's working time: time spent waiting on a card is set aside, so a resume carries on
-  // from where it stopped instead of jumping ahead by the wait.
-  const paused = useRef({ start: startedAt, total: 0, since: null as number | null });
-  if (paused.current.start !== startedAt) paused.current = { start: startedAt, total: 0, since: null };
-  if (waiting && paused.current.since === null) paused.current.since = Date.now();
-  if (!waiting && paused.current.since !== null) { paused.current.total += Date.now() - paused.current.since; paused.current.since = null; }
-  const ms = startedAt === null ? 0 : (paused.current.since ?? Math.max(now, Date.now())) - startedAt - paused.current.total;
+  // from where it stopped instead of jumping ahead by the wait. Kept per turn outside the component (a session
+  // switch remounts the row); the previous turn's entry goes when this row moves to a new one.
+  const prevStart = useRef(startedAt);
+  if (prevStart.current !== startedAt) { if (prevStart.current !== null) turnPauses.delete(prevStart.current); prevStart.current = startedAt; }
+  const pause = startedAt === null ? null : pauseOf(startedAt);
+  if (pause && waiting && pause.since === null) pause.since = Date.now();
+  if (pause && !waiting && pause.since !== null) { pause.total += Date.now() - pause.since; pause.since = null; }
+  const ms = startedAt === null || !pause ? 0 : (pause.since ?? Math.max(now, Date.now())) - startedAt - pause.total;
   const running = live ? live.toolCalls.findLast((c) => c.result === null) : undefined;
   const tool = running ? toolVerb(running) : null;
   const tools = live ? live.toolCalls.length : 0;

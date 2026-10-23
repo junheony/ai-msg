@@ -126,6 +126,8 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit
   textNow.current = text;
   const attachmentsNow = useRef(attachments);
   attachmentsNow.current = attachments;
+  const uploadingNow = useRef(uploading);
+  uploadingNow.current = uploading;
   const [picking, setPicking] = useState(false);
   const [homeBusy, setHomeBusy] = useState(false);
   const [homeError, setHomeError] = useState<string | null>(null);
@@ -153,8 +155,11 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit
     try {
       const res = await fetchFn(`/api/dirs?path=${encodeURIComponent('~')}`, { credentials: 'same-origin' });
       const home = res.ok ? ((await res.json()) as { path?: string }).path : undefined;
-      if (home) begin(home, baseName(home), split);
-      else setHomeError(ui().chat.newChat.homeFailed);
+      // While it was looked up the text may have been cleared (nothing to send: stay), or a pick may still be
+      // uploading (it would be left out: stay; the user sends again once it is done).
+      const drafted = textNow.current.trim().length > 0 || attachmentsNow.current.length > 0;
+      if (!home) setHomeError(ui().chat.newChat.homeFailed);
+      else if (drafted && uploadingNow.current === 0) begin(home, baseName(home), split);
     } catch {
       setHomeError(ui().chat.newChat.homeFailed);
     } finally {
