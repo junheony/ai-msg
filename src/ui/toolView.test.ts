@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalTool, inputView, outputView, tailOf } from './toolView';
+import { canonicalTool, commandOf, inputView, outputView, tailOf } from './toolView';
 
 const cwd = '/work/proj';
 
@@ -18,21 +18,53 @@ describe('inputView', () => {
     expect(inputView('Grep', { pattern: 'x', path: '/work/proj' }, cwd)).toMatchObject({ path: '.' });
   });
 
+  it('turns only path keys relative, and nothing when the folder is the disk root', () => {
+    expect(inputView('Grep', { pattern: '/work/proj', glob: '/work/proj/*.ts' }, cwd)).toEqual({
+      kind: 'fields', path: null, fields: [{ key: 'pattern', value: '/work/proj' }, { key: 'glob', value: '/work/proj/*.ts' }],
+    });
+    expect(inputView('Bash', { command: 'ls', workdir: '/work/proj/src' }, cwd)).toMatchObject({ fields: [{ key: 'workdir', value: 'src' }] });
+    expect(inputView('Read', { file_path: '/etc/hosts' }, '/')).toMatchObject({ path: '/etc/hosts' });
+  });
+
   it('keeps nested values as compact JSON and a string input as is', () => {
     expect(inputView('mcp__x__y', { a: { b: 1 } }, cwd)).toEqual({ kind: 'fields', path: null, fields: [{ key: 'a', value: '{"b":1}' }] });
     expect(inputView('apply_patch', '*** Begin Patch', cwd)).toEqual({ kind: 'raw', text: '*** Begin Patch' });
   });
 });
 
+describe('commandOf', () => {
+  it('quotes argv words the shell would read differently, so a pasted copy runs the same thing', () => {
+    expect(commandOf({ command: ['echo', 'a;rm'] })).toBe("echo 'a;rm'");
+    expect(commandOf({ command: ['grep', '-e', 'a b$HOME'] })).toBe("grep -e 'a b$HOME'");
+    expect(commandOf({ command: ['printf', ''] })).toBe("printf ''");
+    expect(commandOf({ command: ['echo', 'a\nb'] })).toBe("echo 'a\nb'");
+    expect(commandOf({ command: ['echo', "it's"] })).toBe("echo 'it'\\''s'");
+    expect(commandOf({ command: ['git', 'log', '--format=%h', 'src/a.ts'] })).toBe('git log --format=%h src/a.ts');
+  });
+  it('gives a `bash -lc` script back unchanged', () => {
+    expect(commandOf({ command: ['bash', '-lc', "echo 'x' | wc -l"] })).toBe("echo 'x' | wc -l");
+    expect(commandOf({ command: ['/bin/zsh', '-c', 'a && b'] })).toBe('a && b');
+  });
+});
+
 describe('outputView', () => {
   it('reads Claude and Grok exit codes out of the text', () => {
-    expect(outputView('Exit code 2\nboom')).toEqual({ text: 'boom', exitCode: 2, serverCut: null });
-    expect(outputView('hi\nexit: 0\n')).toEqual({ text: 'hi', exitCode: 0, serverCut: null });
-    expect(outputView('plain')).toEqual({ text: 'plain', exitCode: null, serverCut: null });
+    expect(outputView('Exit code 2\nboom', 'Bash', true)).toEqual({ text: 'boom', exitCode: 2, serverCut: null });
+    expect(outputView('hi\nexit: 0\n', 'grok:run_terminal_command', false)).toEqual({ text: 'hi', exitCode: 0, serverCut: null });
+    expect(outputView('plain', 'Bash', false)).toEqual({ text: 'plain', exitCode: null, serverCut: null });
+  });
+
+  it('does not read an exit code out of output that only looks like one', () => {
+    // A successful Bash printing "Exit code 1" first (cat of a log), a Read of such a file, a non-shell Grok tool.
+    expect(outputView('Exit code 1\nok', 'Bash', false)).toEqual({ text: 'Exit code 1\nok', exitCode: null, serverCut: null });
+    expect(outputView('Exit code 1\nok', 'Read', true)).toMatchObject({ exitCode: null });
+    expect(outputView('log\nexit: 1', 'Bash', false)).toMatchObject({ text: 'log\nexit: 1', exitCode: null });
+    expect(outputView('log\nexit: 1', 'grok:read_file', false)).toMatchObject({ exitCode: null });
+    expect(outputView('log\nexit: 1', 'shell', true)).toMatchObject({ exitCode: null });
   });
 
   it("takes the server's cut marker off and says what was kept", () => {
-    expect(outputView('abcd\n…[잘림: 원래 9000자]')).toEqual({ text: 'abcd', exitCode: null, serverCut: { shown: 4, total: 9000 } });
+    expect(outputView('abcd\n…[잘림: 원래 9000자]', 'Read', false)).toEqual({ text: 'abcd', exitCode: null, serverCut: { shown: 4, total: 9000 } });
   });
 });
 
@@ -43,10 +75,11 @@ describe('tailOf', () => {
     expect(t.hiddenLines).toBe(28);
     expect(t.text.split('\n')).toHaveLength(12);
     expect(t.text.endsWith('l40')).toBe(true);
+    expect(t.lineCount).toBe(40);
   });
   it('shows a text barely over the limit whole, and bounds one huge line by characters', () => {
     expect(tailOf(text.split('\n').slice(0, 14).join('\n'), 12, 3000).hiddenLines).toBe(0);
-    expect(tailOf('x'.repeat(5000), 12, 3000)).toEqual({ text: 'x'.repeat(3000), hiddenLines: 0, hiddenChars: 2000 });
+    expect(tailOf('x'.repeat(5000), 12, 3000)).toEqual({ text: 'x'.repeat(3000), hiddenLines: 0, hiddenChars: 2000, lineCount: 1 });
   });
 });
 

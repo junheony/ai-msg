@@ -26,21 +26,33 @@ const ALIAS: Record<string, string> = {
 export const canonicalTool = (name: string): string => ALIAS[name] ?? name;
 /** Keys naming the file a call works on (Claude file_path / notebook_path, Grok path, Gemini absolute_path, others target_file). */
 const PATH_KEYS = ['file_path', 'notebook_path', 'absolute_path', 'target_file', 'path'];
+/** Keys whose value is a path, shown relative to the session folder; any other string (a Grep pattern…) stays as given. */
+const REL_KEYS = new Set([...PATH_KEYS, 'workdir', 'cwd', 'dir_path', 'directory']);
 /** Shown elsewhere (the row's label, the diff card) or engine-internal: left out of the key: value lines. */
 const HIDDEN = new Set(['description', 'variant', 'old_string', 'new_string', 'content', 'edits', 'new_source']);
 const VALUE_MAX = 400;
 
-const rel = (p: string, cwd?: string | null) => (cwd && p.replace(/\/$/, '') === cwd.replace(/\/$/, '') ? '.' : relPath(p, cwd));
+function rel(p: string, cwd?: string | null): string {
+  const root = cwd?.replace(/\/+$/, '');
+  if (!root) return p; // no folder, or `/`: every path would turn relative to the disk root
+  return p.replace(/\/+$/, '') === root ? '.' : relPath(p, root);
+}
 const clip = (s: string, n = VALUE_MAX) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
-/** `["bash", "-lc", "ls"]` → `ls`; other argv arrays joined with spaces. */
+/** One argv item as a POSIX shell word: as is when only safe characters, else single-quoted (`'` → `'\''`, empty → `''`). */
+const shellWord = (x: string) => (/^[\w@%+=:,./-]+$/.test(x) ? x : `'${x.replace(/'/g, `'\\''`)}'`);
+
+/**
+ * The command line a shell call runs (what its 명령 copy button copies, so pasting it must run the same thing):
+ * `["bash", "-lc", script]` → the script itself; other argv arrays as shell-quoted words.
+ */
 export function commandOf(i: Rec): string | null {
   const c = i.command ?? i.cmd;
   if (typeof c === 'string') return c;
   if (Array.isArray(c) && c.every((x) => typeof x === 'string')) {
     const a = c as string[];
     if (a.length === 3 && /(^|\/)(ba|z)?sh$/.test(a[0]!) && (a[1] === '-lc' || a[1] === '-c')) return a[2]!;
-    return a.map((x) => (/\s/.test(x) ? JSON.stringify(x) : x)).join(' ');
+    return a.map(shellWord).join(' ');
   }
   return null;
 }
@@ -49,7 +61,7 @@ function fieldsOf(i: Rec, skip: Set<string>, cwd?: string | null): Field[] {
   const out: Field[] = [];
   for (const [key, v] of Object.entries(i)) {
     if (skip.has(key) || HIDDEN.has(key) || v === undefined || v === null || v === false || v === '') continue;
-    const value = typeof v === 'string' ? rel(v, cwd) : typeof v === 'number' || typeof v === 'boolean' ? String(v) : JSON.stringify(v);
+    const value = typeof v === 'string' ? (REL_KEYS.has(key) ? rel(v, cwd) : v) : typeof v === 'number' || typeof v === 'boolean' ? String(v) : JSON.stringify(v);
     out.push({ key, value: clip(value) });
   }
   return out;
@@ -66,25 +78,27 @@ export function inputView(name: string, input: unknown, cwd?: string | null): In
 
 /** The server's cut marker (sessions/transcript.ts, engine/codexRollout.ts): the head was kept, `total` chars originally. */
 const SERVER_CUT = /\n…\[잘림: 원래 (\d+)자\]$/;
-/** Claude's Bash on a non-zero exit starts its result with this line. */
+/** Claude's Bash on a non-zero exit starts its (error) result with this line. */
 const CLAUDE_EXIT = /^Exit code (-?\d+)(?:\n|$)/;
-/** Grok's terminal output ends with it. */
+/** Grok's terminal tool output ends with it. */
 const GROK_EXIT = /(?:^|\n)exit: (-?\d+)\s*$/;
 
 export type OutputView = { text: string; exitCode: number | null; serverCut: { shown: number; total: number } | null };
 
-export function outputView(result: string): OutputView {
+/**
+ * A result as shown: the server's cut marker taken off (and reported), and the exit-code line of a shell tool that
+ * writes one — Claude's Bash only on an error result, Grok's shell tools only — so other output is never misread.
+ */
+export function outputView(result: string, name: string, isError: boolean): OutputView {
   let text = result;
   let serverCut: OutputView['serverCut'] = null;
   const cut = SERVER_CUT.exec(text);
   if (cut) { text = text.slice(0, cut.index); serverCut = { shown: text.length, total: Number(cut[1]) }; }
   let exitCode: number | null = null;
-  const c = CLAUDE_EXIT.exec(text);
+  const c = name === 'Bash' && isError ? CLAUDE_EXIT.exec(text) : null;
+  const g = name.startsWith('grok:') && canonicalTool(name) === 'Bash' ? GROK_EXIT.exec(text) : null;
   if (c) { exitCode = Number(c[1]); text = text.slice(c[0].length); }
-  else {
-    const g = GROK_EXIT.exec(text);
-    if (g) { exitCode = Number(g[1]); text = text.slice(0, g.index); }
-  }
+  else if (g) { exitCode = Number(g[1]); text = text.slice(0, g.index); }
   return { text: text.replace(/\n+$/, ''), exitCode, serverCut };
 }
 
@@ -98,11 +112,12 @@ export const FULL_CHARS = 200_000;
  * The end of `text`: the last `lines` lines, at most `chars` characters. `hiddenLines` / `hiddenChars` say what was left
  * out in front (hiddenChars only when the cut fell inside a line). A text a little over `lines` is shown whole.
  */
-export function tailOf(text: string, lines: number, chars: number): { text: string; hiddenLines: number; hiddenChars: number } {
+export function tailOf(text: string, lines: number, chars: number): { text: string; hiddenLines: number; hiddenChars: number; lineCount: number } {
   const all = text.split('\n');
+  const lineCount = all.length;
   let shown = text;
   let hiddenLines = 0;
-  if (all.length > lines + 3) { hiddenLines = all.length - lines; shown = all.slice(-lines).join('\n'); }
-  if (shown.length > chars) return { text: shown.slice(-chars), hiddenLines: 0, hiddenChars: text.length - chars };
-  return { text: shown, hiddenLines, hiddenChars: 0 };
+  if (lineCount > lines + 3) { hiddenLines = lineCount - lines; shown = all.slice(-lines).join('\n'); }
+  if (shown.length > chars) return { text: shown.slice(-chars), hiddenLines: 0, hiddenChars: text.length - chars, lineCount };
+  return { text: shown, hiddenLines, hiddenChars: 0, lineCount };
 }

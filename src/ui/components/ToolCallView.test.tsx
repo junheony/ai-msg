@@ -43,6 +43,31 @@ describe('opened tool call', () => {
   });
 });
 
+describe('other engines and big inputs', () => {
+  it("borders a Grok shell call that exited non-zero even when the engine didn't flag it", () => {
+    const { container } = render(<ToolCallView call={{ toolUseId: 'g', name: 'grok:run_terminal_command', input: { command: 'false' }, result: 'nope\nexit: 2', isError: false }} />);
+    expect(container.querySelector('.tool-call.error')).not.toBeNull();
+    expect(container.querySelector('.tool-chip.error')!.textContent).toBe('종료 코드 2');
+  });
+
+  it('shows a Grok file write as a diff card', () => {
+    const { container } = render(<ToolCallView call={{ toolUseId: 'h', name: 'grok:write', input: { file_path: '/work/proj/a.txt', content: 'hi\n' }, result: 'ok', isError: false }} cwd={cwd} />);
+    expect(container.querySelector('.diff-call .diff-card')).not.toBeNull();
+  });
+
+  it('builds the raw JSON only once opened, cut at a bound', () => {
+    const big = 'y'.repeat(300_000);
+    const { container } = render(<ToolCallView call={{ toolUseId: 'i', name: 'mcp__x__y', input: { q: 'a', blob: big }, result: 'x', isError: false }} />);
+    const raw = container.querySelector<HTMLDetailsElement>('.tool-raw')!;
+    expect(raw.querySelector('pre')).toBeNull();
+    raw.open = true;
+    fireEvent(raw, new Event('toggle'));
+    const pre = raw.querySelector('pre')!;
+    expect(pre.textContent!.length).toBeLessThan(big.length);
+    expect(pre.textContent!.endsWith('…')).toBe(true);
+  });
+});
+
 describe('diff wrap', () => {
   it('줄바꿈 wraps long diff lines, shared with code blocks', () => {
     const diff = { path: '/work/proj/a.ts', lines: [{ kind: 'add' as const, text: 'x'.repeat(300), oldNo: null, newNo: 1 }], added: 1, removed: 0, isNew: false, isDeleted: false, note: null };

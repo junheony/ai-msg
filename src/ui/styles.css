@@ -1177,7 +1177,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .diff-body.wrap .diff-line { min-width: 0; white-space: pre-wrap; }
 .diff-body.wrap .diff-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .diff-card.folded:not([open]) .diff-wrap-toggle { display: none; }
-.tool-btn { flex-shrink: 0; height: 24px; padding: 0 var(--s2); border-radius: var(--r-sm); font-size: var(--fs-meta); color: var(--muted); white-space: nowrap; }
+.tool-btn { flex-shrink: 0; height: calc(var(--icon-btn) - var(--s2)); padding: 0 var(--s2); border-radius: var(--r-sm); font-size: var(--fs-meta); color: var(--muted); white-space: nowrap; }
 .tool-btn:hover { background: var(--hover); color: var(--fg); }
 .tool-btn[aria-pressed="true"] { color: var(--fg); background: var(--hover); }
 .tool-btn:focus-visible { outline: none; box-shadow: var(--focus); }
@@ -1195,7 +1195,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .tool-prompt { color: var(--muted); user-select: none; }
 .tool-path { padding: var(--s2) var(--s3) 0; font-family: var(--mono); font-size: var(--fs-mono); color: var(--fg); overflow-wrap: anywhere; }
 .tool-path:last-child { padding-bottom: var(--s2); }
-.tool-fields { margin: 0; padding: var(--s1) var(--s3) var(--s2); display: grid; grid-template-columns: max-content minmax(0, 1fr); column-gap: var(--s3); row-gap: 2px; font-size: var(--fs-meta); }
+.tool-fields { margin: 0; padding: var(--s1) var(--s3) var(--s2); display: grid; grid-template-columns: max-content minmax(0, 1fr); column-gap: var(--s3); row-gap: calc(var(--s1) / 2); font-size: var(--fs-meta); }
 .tool-fields > div { display: contents; }
 .tool-fields dt { color: var(--muted); font-family: var(--mono); }
 .tool-fields dd { margin: 0; color: var(--fg); font-family: var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
