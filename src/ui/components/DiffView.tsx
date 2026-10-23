@@ -1,6 +1,8 @@
 import { useContext, useState, type MouseEvent } from 'react';
 import { SidePanelContext } from '../sidePanel';
+import { useCodeWrap } from '../codeWrap';
 import { relPath, type FileDiff } from '../diff';
+import { ui } from '../i18n';
 
 /** Lines shown before "더 보기". */
 export const DIFF_FOLD_AT = 30;
@@ -16,6 +18,8 @@ export function DiffCard({ diff, cwd, state, folded = false }: { diff: FileDiff;
   const hidden = diff.lines.length - shown.length;
   const numbered = diff.lines.some((l) => l.oldNo !== null || l.newNo !== null);
   const openSide = useContext(SidePanelContext);
+  // The device-wide 줄바꿈 switch code blocks use: long lines wrap instead of scrolling sideways.
+  const [wrap, setWrap] = useCodeWrap();
   // In a summary the button's click would also toggle the card: the panel opens, the card stays as it was.
   const toPanel = (e: MouseEvent) => { e.preventDefault(); e.stopPropagation(); openSide?.({ kind: 'file', path: diff.path, diffs: [diff] }); };
   const head = (
@@ -29,6 +33,9 @@ export function DiffCard({ diff, cwd, state, folded = false }: { diff: FileDiff;
       <span className="grow" />
       {diff.added > 0 && <span className="diff-count add">+{diff.added}</span>}
       {diff.removed > 0 && <span className="diff-count del">−{diff.removed}</span>}
+      {diff.lines.length > 0 && (
+        <button type="button" className="tool-btn diff-wrap-toggle" aria-pressed={wrap} title={ui().tool.wrapTitle} onClick={(e) => { e.preventDefault(); e.stopPropagation(); setWrap(!wrap); }}>{ui().tool.wrap}</button>
+      )}
       {folded && <span className="tool-caret" aria-hidden="true">›</span>}
     </>
   );
@@ -36,7 +43,7 @@ export function DiffCard({ diff, cwd, state, folded = false }: { diff: FileDiff;
     <>
       {diff.note && diff.lines.length === 0 && <div className="diff-note muted">{diff.note}</div>}
       {shown.length > 0 && (
-        <div className="diff-body" role="table" aria-label={`${relPath(diff.path, cwd)} 변경 내용`}>
+        <div className={`diff-body${wrap ? ' wrap' : ''}`} role="table" aria-label={`${relPath(diff.path, cwd)} 변경 내용`}>
           {shown.map((l, i) => l.kind === 'sep'
             ? <div key={i} className="diff-line sep" role="row"><span className="diff-sep-text">{l.text || '⋯'}</span></div>
             : (

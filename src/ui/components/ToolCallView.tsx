@@ -1,30 +1,120 @@
-import { useContext } from 'react';
+import { useContext, useState, type ReactNode } from 'react';
 import { fileDiffsFor, relPath } from '../diff';
+import { formatNumber, ui } from '../i18n';
 import { SidePanelContext } from '../sidePanel';
 import type { ToolCallItem } from '../state';
 import { groupLabel, toolLabel } from '../toolLabel';
 import { applyTodoCall, todoCounts } from '../todos';
+import { FULL_CHARS, TAIL_CHARS, TAIL_LINES, inputView, outputView, tailOf } from '../toolView';
 import { TodoList } from './TodoPanel';
 import { DiffList } from './DiffView';
 import { AgentCard } from './Activity';
 import { CopyButton } from './CopyButton';
 import { QuestionSummary, askedOf } from './QuestionSummary';
 
-function pretty(v: unknown, max = 4000): string {
-  const s = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
-  return s.length > max ? s.slice(0, max) + '\n…' : s;
-}
+const json = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v, null, 2));
 
 /** What a tool card's copy button copies: the shell command itself when there is one, else the full (uncut) value. */
 function copyable(v: unknown): string {
   if (v && typeof v === 'object' && typeof (v as { command?: unknown }).command === 'string') return (v as { command: string }).command;
-  return typeof v === 'string' ? v : JSON.stringify(v, null, 2);
+  return json(v);
 }
 
 function stateOf(call: ToolCallItem, live: boolean): { cls: string; text: string } {
-  if (call.isError) return { cls: 'error', text: '오류' };
-  if (call.result === null && live) return { cls: 'running', text: '실행 중…' };
+  if (call.isError) return { cls: 'error', text: ui().tool.error };
+  if (call.result === null && live) return { cls: 'running', text: ui().tool.running };
   return { cls: '', text: '' };
+}
+
+/** The exit code a failed call's output names (Claude "Exit code N", Grok "exit: N"); null when none or it succeeded. */
+function failedExit(call: ToolCallItem): number | null {
+  if (call.result === null) return null;
+  const code = outputView(call.result).exitCode;
+  return code !== null && (call.isError || code !== 0) ? code : null;
+}
+
+const ExitChip = ({ code }: { code: number }) => <span className="tool-chip error">{ui().tool.exitCode(code)}</span>;
+
+/** One part of an opened call (input / output): a header line with its label, chips and copy button, then the body. */
+function Section({ label, extra, copy, copyLabel, className, children }: { label: string; extra?: ReactNode; copy: () => string; copyLabel: string; className?: string; children: ReactNode }) {
+  return (
+    <div className={`tool-sec${className ? ` ${className}` : ''}`}>
+      <div className="tool-sec-head">
+        <span className="tool-sec-label">{label}</span>
+        {extra}
+        <span className="grow" />
+        <CopyButton icon text={copy} label={copyLabel} className="tool-copy" />
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** The call's input as people read it: `$ command`, the file relative to the session folder, short key: value lines; raw JSON folded. */
+function ToolInput({ call, cwd }: { call: ToolCallItem; cwd?: string | null }) {
+  const T = ui().tool;
+  const v = inputView(call.name, call.input, cwd);
+  const raw = v.kind !== 'raw' && (
+    <details className="tool-raw">
+      <summary>{T.raw}</summary>
+      <pre>{json(call.input)}</pre>
+    </details>
+  );
+  const fields = v.kind !== 'raw' && v.fields.length > 0 && (
+    <dl className="tool-fields">
+      {v.fields.map((f) => <div key={f.key}><dt>{f.key}</dt><dd>{f.value}</dd></div>)}
+    </dl>
+  );
+  if (v.kind === 'command') {
+    return (
+      <Section label={T.command} copy={() => v.command} copyLabel={T.copyCommand}>
+        <pre className="tool-input tool-cmd"><span className="tool-prompt" aria-hidden="true">$ </span>{v.command}</pre>
+        {fields}
+        {raw}
+      </Section>
+    );
+  }
+  if (v.kind === 'fields' && !v.path && v.fields.length === 0) return null;
+  return (
+    <Section label={T.input} copy={() => copyable(call.input)} copyLabel={T.copyInput}>
+      {v.kind === 'raw' ? <pre className="tool-input">{v.text.length > FULL_CHARS ? `${v.text.slice(0, FULL_CHARS)}\n…` : v.text}</pre> : (
+        <>
+          {v.path && <div className="tool-path">{v.path}</div>}
+          {fields}
+          {raw}
+        </>
+      )}
+    </Section>
+  );
+}
+
+/**
+ * The call's output: its last TAIL_LINES lines with "전체 보기", saying what was left out (here, or by the server's cut);
+ * a failed call's exit code as a chip.
+ */
+function ToolOutput({ call }: { call: ToolCallItem & { result: string } }) {
+  const T = ui().tool;
+  const [full, setFull] = useState(false);
+  const o = outputView(call.result);
+  const exit = failedExit(call);
+  const short = tailOf(o.text, TAIL_LINES, TAIL_CHARS);
+  const cuttable = short.hiddenLines > 0 || short.hiddenChars > 0;
+  const shown = full ? tailOf(o.text, Number.POSITIVE_INFINITY, FULL_CHARS) : short;
+  if (!o.text && exit === null && !o.serverCut && !call.isError) return null;
+  return (
+    <Section label={T.output} extra={exit !== null && <ExitChip code={exit} />} copy={() => call.result} copyLabel={T.copyOutput} className="out">
+      {(shown.hiddenLines > 0 || shown.hiddenChars > 0) && (
+        <div className="tool-note">{shown.hiddenLines > 0 ? T.hiddenLines(shown.hiddenLines) : T.hiddenChars(formatNumber(shown.hiddenChars))}</div>
+      )}
+      <pre className={`tool-output${full ? ' full' : ''}`}>{shown.text || <span className="tool-empty">{T.noOutput}</span>}</pre>
+      {o.serverCut && <div className="tool-note cut">{T.serverCut(formatNumber(o.serverCut.shown), formatNumber(o.serverCut.total))}</div>}
+      {cuttable && (
+        <button type="button" className="tool-btn tool-more" aria-expanded={full} onClick={() => setFull(!full)}>
+          {full ? T.showTail(TAIL_LINES) : T.showAll(o.text.split('\n').length)}
+        </button>
+      )}
+    </Section>
+  );
 }
 
 /**
@@ -38,7 +128,7 @@ function DiffToolCall({ call, live, cwd }: { call: ToolCallItem; live: boolean; 
   return (
     <div className={`tool-call diff-call ${st.cls}`} data-testid="tool-call">
       <DiffList diffs={diffs} cwd={cwd} folded {...(st.text ? { state: st.text } : {})} />
-      {call.isError && call.result && <pre className="tool-output">{pretty(call.result)}</pre>}
+      {call.isError && call.result && <div className="tool-detail"><ToolOutput call={{ ...call, result: call.result }} /></div>}
     </div>
   );
 }
@@ -64,12 +154,13 @@ export function ToolCallView({ call, live = false, cwd }: { call: ToolCallItem; 
   // ux-state: a TodoWrite shows its checklist, not raw JSON.
   const todos = call.name === 'TodoWrite' ? applyTodoCall(null, call) : null;
   const file = readPath(call);
+  const exit = failedExit(call);
   return (
     <details className={`tool-call ${st.cls}`} data-testid="tool-call">
       <summary title={call.name}>
         <span className="tool-label">{toolLabel(call)}</span>
         {todos && todos.length > 0 && <span className="tool-state todo-count">{todoCounts(todos).done}/{todos.length}</span>}
-        {st.text && <span className="tool-state">{st.text}</span>}
+        {exit !== null ? <ExitChip code={exit} /> : st.text && <span className="tool-state">{st.text}</span>}
         {open && file && (
           <button type="button" className="file-link tool-open" title={`${file} — 사이드 패널에서 열기`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); open({ kind: 'file', path: file }); }}>
             {relPath(file, cwd)}
@@ -81,8 +172,8 @@ export function ToolCallView({ call, live = false, cwd }: { call: ToolCallItem; 
         <div className="tool-detail todo-detail"><TodoList todos={todos} /></div>
       ) : (
         <div className="tool-detail">
-          <div className="tool-pre"><pre className="tool-input">{pretty(call.input)}</pre><CopyButton icon text={() => copyable(call.input)} label={typeof (call.input as { command?: unknown } | null)?.command === 'string' ? '명령 복사' : '입력 복사'} /></div>
-          {call.result !== null && <div className="tool-pre out"><pre className="tool-output">{pretty(call.result)}</pre><CopyButton icon text={() => copyable(call.result)} label="출력 복사" /></div>}
+          <ToolInput call={call} cwd={cwd} />
+          {call.result !== null && <ToolOutput call={{ ...call, result: call.result }} />}
         </div>
       )}
     </details>
@@ -120,8 +211,8 @@ export function ToolCalls({ calls, live = false, cwd, flat = false }: { calls: T
     <details className={`tool-group ${running ? 'running' : ''}`} data-testid="tool-group">
       <summary>
         <span className="tool-label">{groupLabel(calls)}</span>
-        {running && <span className="tool-state">실행 중…</span>}
-        {errors > 0 && <span className="tool-state error">오류 {errors}</span>}
+        {running && <span className="tool-state">{ui().tool.running}</span>}
+        {errors > 0 && <span className="tool-state error">{ui().chat.meta.errors(errors)}</span>}
         <span className="tool-caret" aria-hidden="true">›</span>
       </summary>
       <div className="tool-group-list">

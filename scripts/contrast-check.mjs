@@ -71,6 +71,13 @@ function check(name, t) {
     ["fg / panel+hover (seg)", c("fg"), over("hover", c("panel")), 4.5],
     ["muted / panel+hover", c("muted"), over("hover", c("panel")), 4.5],
     ["danger / panel", c("danger"), c("panel"), 4.5],
+    // Tool calls (R2-B, on --code-bg): a failed call's exit-code chip (--bg on a --danger fill), its danger edge and the
+    // server-cut note's --warn bar (graphics floor 3), notes and key names in --muted; the section header on --bg-raised.
+    ["bg / danger (exit chip)", bg, c("danger"), 4.5],
+    ["danger edge / code-bg", c("danger"), c("code-bg"), 3],
+    ["warn bar / code-bg (cut note)", c("warn"), c("code-bg"), 3],
+    ["muted / code-bg (tool notes)", c("muted"), c("code-bg"), 4.5],
+    ["muted / bg-raised (tool head)", c("muted"), c("bg-raised"), 4.5],
     // Usage strip (top bar / phone line): segments on --bg, the session's segment (and the line under the bar, hovered /
     // its sheet open) on --panel; the "→" of the next turn
     // is a glyph (graphics floor 3).

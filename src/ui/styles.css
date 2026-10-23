@@ -915,7 +915,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .tool-state.error, .tool-call.error > summary, .tool-call.error .tool-state { color: var(--danger); }
 .tool-call.running .tool-state, .tool-group.running .tool-state { color: var(--accent); }
 .tool-group-list { margin: 6px 0 2px 16px; padding-left: 12px; border-left: 1px solid var(--line-strong); display: flex; flex-direction: column; gap: 2px; }
-.tool-detail { margin: 6px 0 8px; border-radius: 10px; background: var(--code-bg); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; }
+.tool-detail { margin: var(--s1) 0 var(--s2); border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--code-bg); box-shadow: none; overflow: hidden; }
 .tool-input, .tool-output { padding: 10px 12px; max-height: 260px; overflow: auto; color: var(--fg); }
 .tool-output { border-top: 1px solid var(--line); color: var(--muted); }
 
@@ -1145,8 +1145,8 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .msg.assistant > .tool-call.diff-call { align-self: stretch; }
 .tool-call.diff-call { display: flex; flex-direction: column; gap: 6px; margin: 2px 0; }
 .diff-list { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.diff-card { border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--code-bg); overflow: hidden; min-width: 0; }
-.diff-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: var(--fs-meta); border-bottom: 1px solid var(--line); color: var(--fg); background: var(--bg-raised); }
+.diff-card { border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--code-bg); overflow: hidden; min-width: 0; }
+.diff-head, .tool-sec-head { display: flex; align-items: center; gap: var(--s2); min-height: var(--icon-btn); padding: 0 var(--s2) 0 var(--s3); font-size: var(--fs-meta); border-bottom: 1px solid var(--line); color: var(--fg); background: var(--bg-raised); }
 .diff-head .grow { flex: 1; }
 /* A turn's edit: the header is the whole card until opened. */
 .diff-card.folded > summary.diff-head { list-style: none; cursor: pointer; user-select: none; }
@@ -1160,7 +1160,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .diff-count.add { color: var(--diff-add-fg); }
 .diff-count.del { color: var(--diff-del-fg); }
 .diff-note { padding: 6px 10px; font-size: var(--fs-meta); }
-.diff-body { overflow-x: auto; font-family: var(--mono); font-size: var(--fs-meta); line-height: 1.5; padding: 2px 0; }
+.diff-body { overflow-x: auto; font-family: var(--mono); font-size: var(--fs-mono); line-height: 1.5; padding: var(--s1) 0; }
 .diff-line { display: flex; min-width: max-content; white-space: pre; color: var(--fg); }
 .diff-line.add { background: var(--diff-add-bg); }
 .diff-line.del { background: var(--diff-del-bg); }
@@ -1172,6 +1172,52 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .diff-text { padding-right: 12px; }
 .diff-more { margin: 2px 0 4px 8px; font-size: var(--fs-meta); }
 .permission-card .diff-list { margin: 6px 0; max-height: 360px; overflow: auto; }
+/* R2-B: diff 줄바꿈 (the code blocks' device-wide switch) and an opened tool call laid out like a diff card. */
+.diff-body.wrap { overflow-x: hidden; }
+.diff-body.wrap .diff-line { min-width: 0; white-space: pre-wrap; }
+.diff-body.wrap .diff-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.diff-card.folded:not([open]) .diff-wrap-toggle { display: none; }
+.tool-btn { flex-shrink: 0; height: 24px; padding: 0 var(--s2); border-radius: var(--r-sm); font-size: var(--fs-meta); color: var(--muted); white-space: nowrap; }
+.tool-btn:hover { background: var(--hover); color: var(--fg); }
+.tool-btn[aria-pressed="true"] { color: var(--fg); background: var(--hover); }
+.tool-btn:focus-visible { outline: none; box-shadow: var(--focus); }
+.tool-sec + .tool-sec { border-top: 1px solid var(--line); }
+.tool-sec-label { color: var(--muted); }
+.tool-sec-head .grow { flex: 1; }
+.tool-sec-head .msg-act { min-width: var(--icon-btn); height: var(--icon-btn); flex-shrink: 0; }
+.tool-sec-head .msg-act-said { display: none; }
+.tool-chip { flex-shrink: 0; padding: 0 var(--s2); border-radius: var(--r-full); font-size: var(--fs-meta); line-height: 1.6; white-space: nowrap; }
+.tool-chip.error { color: var(--bg); background: var(--danger); font-weight: 600; }
+.tool-sec .tool-input, .tool-sec .tool-output { padding: var(--s2) var(--s3); max-height: none; }
+.tool-sec .tool-output { border-top: 0; }
+.tool-sec .tool-output.full { max-height: 70vh; }
+.tool-cmd { color: var(--fg); }
+.tool-prompt { color: var(--muted); user-select: none; }
+.tool-path { padding: var(--s2) var(--s3) 0; font-family: var(--mono); font-size: var(--fs-mono); color: var(--fg); overflow-wrap: anywhere; }
+.tool-path:last-child { padding-bottom: var(--s2); }
+.tool-fields { margin: 0; padding: var(--s1) var(--s3) var(--s2); display: grid; grid-template-columns: max-content minmax(0, 1fr); column-gap: var(--s3); row-gap: 2px; font-size: var(--fs-meta); }
+.tool-fields > div { display: contents; }
+.tool-fields dt { color: var(--muted); font-family: var(--mono); }
+.tool-fields dd { margin: 0; color: var(--fg); font-family: var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-raw { padding: 0 var(--s3) var(--s2); font-size: var(--fs-meta); }
+.tool-raw > summary { width: fit-content; cursor: pointer; color: var(--muted); border-radius: var(--r-sm); }
+.tool-raw > summary:hover { color: var(--fg); }
+.tool-raw > summary:focus-visible { outline: none; box-shadow: var(--focus); }
+.tool-raw > pre { margin-top: var(--s1); max-height: 260px; overflow: auto; color: var(--muted); }
+.tool-note { padding: var(--s1) var(--s3) 0; font-size: var(--fs-meta); color: var(--muted); }
+.tool-note.cut { margin: 0 var(--s3) var(--s2); padding: 0 0 0 var(--s2); border-left: 3px solid var(--warn); }
+.tool-empty { color: var(--muted); font-family: inherit; }
+.tool-more { margin: 0 0 var(--s2) var(--s2); }
+/* A failed call: danger edge on its row and its opened box. */
+.tool-call.error > .tool-detail { border-color: var(--danger); }
+.msg.assistant > .tool-call.error > summary { box-shadow: inset 0 0 0 1px var(--danger); }
+.tool-call.error > summary .tool-chip { margin-left: var(--s1); }
+@media (max-width: 720px) {
+  .diff-head, .tool-sec-head { min-height: var(--tap); }
+  .tool-sec-head .msg-act, .tool-btn { min-width: var(--tap); min-height: var(--tap); }
+  .tool-more { margin: 0 0 var(--s1) var(--s1); }
+  .tool-raw > summary { line-height: var(--tap); }
+}
 .permission-raw { font-size: var(--fs-meta); color: var(--muted); margin-bottom: 6px; }
 .permission-raw > summary { cursor: pointer; }
 /* sessions: rename / archive / 대화 내용 검색 */
@@ -1527,17 +1573,12 @@ button.hl-row-main:hover { background: var(--hover); }
 .inline-edit-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .msg-versions { display: flex; justify-content: flex-end; align-items: center; gap: 2px; color: var(--muted); font-size: var(--fs-meta); font-variant-numeric: tabular-nums; }
 .msg-versions .msg-act:disabled { opacity: .35; cursor: default; }
-.tool-pre { position: relative; }
-.tool-pre .msg-act { position: absolute; top: 4px; right: 4px; background: var(--code-bg); opacity: 0; }
-.tool-pre:hover .msg-act, .tool-pre .msg-act:focus-visible, .tool-pre .msg-act.ok { opacity: 1; }
-.tool-pre .msg-act-said { display: none; }
 @media (hover: none) {
   .msg:not(.last) .msg-actions:not(:focus-within) { position: absolute; width: 1px; height: 1px; margin: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .msg:not(.last) .msg-actions:focus-within { opacity: 1; }
   .msg { -webkit-touch-callout: none; }
   /* Links keep the phone's own preview / copy-link menu. */
   .msg a { -webkit-touch-callout: default; }
-  .tool-pre .msg-act { opacity: .8; }
   .tb-pill { position: relative; }
   .tb-pill::after { content: ""; position: absolute; inset: -10px -2px; }
 }

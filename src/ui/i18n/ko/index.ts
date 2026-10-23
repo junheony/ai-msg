@@ -7,5 +7,6 @@ import { login } from './login';
 import { settings } from './settings';
 import { sessionIcon } from './sessionIcon';
 import { setup } from './setup';
+import { tool } from './tool';
 
-export const ko: Widen<typeof en> = { common, chat, setup, login, settings, sessionIcon, cards };
+export const ko: Widen<typeof en> = { common, chat, setup, login, settings, sessionIcon, cards, tool };

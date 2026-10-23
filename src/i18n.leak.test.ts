@@ -148,7 +148,7 @@ const BASELINE: Record<string, number> = {
   'src/ui/components/TaskCards.tsx': 11,
   'src/ui/components/Toasts.tsx': 1,
   'src/ui/components/TodoPanel.tsx': 4,
-  'src/ui/components/ToolCallView.tsx': 8,
+  'src/ui/components/ToolCallView.tsx': 1,
   'src/ui/components/TurnBadge.tsx': 14,
   'src/ui/components/UsageSheet.tsx': 13,
   'src/ui/components/UsageStrip.tsx': 20,

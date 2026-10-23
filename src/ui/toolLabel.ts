@@ -1,4 +1,5 @@
 import type { ToolCallItem } from './state';
+import { canonicalTool, commandOf } from './toolView';
 
 const base = (p: string) => p.split('/').filter(Boolean).pop() ?? p;
 const clip = (s: string, n = 64) => {
@@ -10,9 +11,9 @@ const str = (o: Record<string, unknown>, k: string) => (typeof o[k] === 'string'
 /** One muted line per tool call, Desktop style: a verb plus the thing it touched. */
 export function toolLabel(call: ToolCallItem): string {
   const i = call.input && typeof call.input === 'object' ? (call.input as Record<string, unknown>) : {};
-  const file = str(i, 'file_path') ?? str(i, 'path') ?? str(i, 'notebook_path');
-  switch (call.name) {
-    case 'Bash': return str(i, 'description') ? clip(str(i, 'description')!) : `명령 실행 ${clip(str(i, 'command') ?? '', 48)}`.trim();
+  const file = str(i, 'file_path') ?? str(i, 'path') ?? str(i, 'notebook_path') ?? str(i, 'absolute_path');
+  switch (canonicalTool(call.name)) {
+    case 'Bash': return str(i, 'description') ? clip(str(i, 'description')!) : `명령 실행 ${clip(commandOf(i) ?? '', 48)}`.trim();
     case 'Read': return file ? `${base(file)} 읽음` : '파일 읽음';
     case 'Edit': case 'MultiEdit': return file ? `${base(file)} 수정함` : '파일 수정함';
     case 'Write': return file ? `${base(file)} 작성함` : '파일 작성함';
@@ -30,9 +31,10 @@ export function toolLabel(call: ToolCallItem): string {
 
 /** Label for a run of consecutive calls (Desktop: "실행된 명령 5개"). */
 export function groupLabel(calls: ToolCallItem[]): string {
-  if (calls.every((c) => c.name === 'Bash')) return `실행된 명령 ${calls.length}개`;
-  if (calls.every((c) => c.name === 'Read')) return `읽은 파일 ${calls.length}개`;
-  if (calls.every((c) => c.name === 'Edit' || c.name === 'MultiEdit' || c.name === 'Write')) return `수정한 파일 ${calls.length}개`;
-  if (calls.every((c) => c.name === 'Grep' || c.name === 'Glob')) return `검색 ${calls.length}회`;
+  const n = (c: ToolCallItem) => canonicalTool(c.name);
+  if (calls.every((c) => n(c) === 'Bash')) return `실행된 명령 ${calls.length}개`;
+  if (calls.every((c) => n(c) === 'Read')) return `읽은 파일 ${calls.length}개`;
+  if (calls.every((c) => n(c) === 'Edit' || n(c) === 'MultiEdit' || n(c) === 'Write')) return `수정한 파일 ${calls.length}개`;
+  if (calls.every((c) => n(c) === 'Grep' || n(c) === 'Glob')) return `검색 ${calls.length}회`;
   return `도구 호출 ${calls.length}개`;
 }
