@@ -10,8 +10,8 @@ export type SendKey = 'enter' | 'mod-enter';
 export type Prefs = { theme: Theme; fontSize: FontSize; chatWidth: ChatWidth; sendKey: SendKey; /** 간결 모드: results-first chat (default on). */ conciseMode: boolean; /** The sidebar's 고정됨 section folded (default open). */ pinnedFolded: boolean;
   /** UI language, read once at boot (src/ui/i18n). Absent = 'auto' (the browser's languages). */ lang?: LangPref };
 
-/** 작게 = the pre-settings size; the default (보통) is already larger. */
-export const FONT_SCALE: Record<FontSize, number> = { small: 1, normal: 1.1, large: 1.2, xlarge: 1.35 };
+/** 보통 = 1: the type tokens (--fs-* in styles.css) are designed at this size; the others step around it. */
+export const FONT_SCALE: Record<FontSize, number> = { small: 0.92, normal: 1, large: 1.1, xlarge: 1.25 };
 export const DEFAULT_PREFS: Prefs = { theme: 'system', fontSize: 'normal', chatWidth: 'narrow', sendKey: 'enter', conciseMode: true, pinnedFolded: false };
 
 const ALLOWED: { [K in keyof Prefs]-?: readonly NonNullable<Prefs[K]>[] } = {

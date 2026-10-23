@@ -21,9 +21,12 @@ const fakeRoot = () => {
 };
 
 describe('prefs', () => {
-  it('defaults to a font size at least as large as before', () => {
+  it('defaults to the design size (scale 1), with the other sizes stepping around it', () => {
     expect(DEFAULT_PREFS.theme).toBe('system');
-    expect(FONT_SCALE[DEFAULT_PREFS.fontSize]).toBeGreaterThanOrEqual(1);
+    expect(FONT_SCALE[DEFAULT_PREFS.fontSize]).toBe(1);
+    expect(FONT_SCALE.small).toBeLessThan(1);
+    expect(FONT_SCALE.large).toBeGreaterThan(1);
+    expect(FONT_SCALE.xlarge).toBeGreaterThan(FONT_SCALE.large);
   });
 
   it('round-trips through storage and tolerates junk', () => {
