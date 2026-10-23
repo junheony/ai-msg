@@ -4,6 +4,7 @@ import type { SearchHit } from '../sessionApi';
 import type { EngineKind } from '../../shared/models';
 import { EngineMark } from './EngineMark';
 import { isMacPlatform } from '../shortcuts';
+import { ui } from '../i18n';
 
 export type PaletteSession = { sessionId: string; title: string; cwd: string; project: string; lastModified: number; engine?: EngineKind };
 export type PaletteAction = { id: string; label: string; hint?: string; run: () => void };
@@ -41,6 +42,7 @@ export function CommandPalette({ sessions, actions, onOpenSession, onOpenSession
   const [sel, setSel] = useState(0);
   const [hits, setHits] = useState<{ q: string; hits: SearchHit[] } | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const q = query.trim();
 
   useEffect(() => {
@@ -83,16 +85,19 @@ export function CommandPalette({ sessions, actions, onOpenSession, onOpenSession
     if (e.key === 'Enter') { e.preventDefault(); run(items[cur], e); }
   };
 
+  const t = ui().panels.palette;
+  const searching = !!q && !!searchFn && !!onOpenHit && q.length >= HIT_MIN_CHARS && hits?.q !== q;
+  const newChat = actions.find((a) => a.id === 'new-chat');
   let lastKind: Item['kind'] | null = null;
   const heading = (k: Item['kind']) => (k === 'action' ? '명령' : k === 'session' ? (q ? '세션' : '최근 세션') : '대화 내용');
   return (
     <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="palette" role="dialog" aria-modal="true" aria-label="명령 팔레트">
-        <input className="palette-input" autoFocus value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={onKey}
+        <input ref={inputRef} className="palette-input" autoFocus value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={onKey}
           placeholder="세션 검색 또는 명령…" aria-label="세션 검색 또는 명령" role="combobox" aria-expanded="true" aria-controls="palette-list"
           aria-activedescendant={items[cur] ? `palette-${cur}` : undefined} />
         <ul className="palette-list" id="palette-list" role="listbox" ref={listRef}>
-          {items.length === 0 && <li className="palette-empty muted">{q && searchFn && onOpenHit && q.length >= HIT_MIN_CHARS && hits?.q !== q ? '찾는 중…' : '맞는 항목이 없습니다'}</li>}
+          {items.length === 0 && <li className="palette-empty muted" role="presentation">{searching ? t.searching : t.empty}</li>}
           {items.map((it, i) => {
             const head = it.kind !== lastKind ? <li className="palette-head" role="presentation" key={`head-${it.kind}`}>{heading(it.kind)}</li> : null;
             lastKind = it.kind;
@@ -112,6 +117,13 @@ export function CommandPalette({ sessions, actions, onOpenSession, onOpenSession
             ];
           })}
         </ul>
+        {/* No results: clear the search, or start a new chat (what a search that found nothing often meant to do). */}
+        {items.length === 0 && q && !searching && (
+          <div className="palette-empty-actions" data-testid="palette-empty-actions">
+            <button type="button" className="btn ghost" onClick={() => { setQuery(''); inputRef.current?.focus(); }}>{t.clear}</button>
+            {newChat && <button type="button" className="btn primary" onClick={() => { onClose(); newChat.run(); }}>{t.newChat}</button>}
+          </div>
+        )}
         <div className="palette-foot muted">↑↓ 이동 · Enter 열기{onOpenSessionSplit ? ` · ${mac ? '⌘' : 'Ctrl+'}Enter 새 분할` : ''}{onOpenSessionFloat ? ' · ⇧Enter 카드로' : ''} · Esc 닫기</div>
       </div>
     </div>

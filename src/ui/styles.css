@@ -499,7 +499,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .attach:hover { background: var(--hover); color: var(--fg); }
 .chip.attachment { flex-shrink: 0; max-width: 180px; height: 22px; color: var(--fg); }
 /* off-scale 11px: × glyph (not text) */
-.chip-remove { color: var(--faint); font-size: calc(11px * var(--font-scale, 1)); padding: 0 1px; }
+.chip-remove { color: var(--faint); font-size: var(--fs-meta); padding: 0 1px; }
 .chip-remove:hover { color: var(--fg); }
 /* Picker: the label span is what shows (it ellipsizes); the native select lies transparent on top for the menu and a11y. */
 .pick { position: relative; display: inline-flex; align-items: center; min-width: 0; max-width: 150px; height: 28px; padding: 0 20px 0 8px; border-radius: var(--r-xs); color: var(--muted); font-size: var(--fs-label); white-space: nowrap; }
@@ -1032,7 +1032,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 
 /* === ux-state === */
 /* Todo panel (above the composer) */
-.todo-panel { margin: 0 0 6px; border-radius: var(--radius); background: var(--bg-raised); box-shadow: inset 0 0 0 1px var(--line); font-size: var(--fs-label); overflow: hidden; }
+.todo-panel { margin-bottom: var(--s2); border-radius: var(--radius); background: var(--bg-raised); box-shadow: inset 0 0 0 1px var(--line); font-size: var(--fs-label); overflow: hidden; }
 .todo-head { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 0 10px; border: 0; background: transparent; color: var(--muted); font: inherit; text-align: left; cursor: pointer; }
 .todo-head:hover { color: var(--fg); }
 .todo-title { font-weight: 600; color: var(--fg); }
@@ -1071,18 +1071,33 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .queue-remove:hover { color: var(--fg); background: var(--hover); }
 
 /* Attachment thumbnails */
-.chip.attachment.has-thumb { padding-left: 2px; }
-.attach-preview { width: 18px; height: 18px; object-fit: cover; border-radius: 3px; margin-right: 2px; }
+/* Composer: an image chip leads with a thumbnail big enough to recognise (56px). */
+.chip.attachment.has-thumb { height: auto; gap: var(--s2); padding: var(--s1) var(--s2) var(--s1) var(--s1); border-radius: var(--r-md); max-width: 240px; }
+.attach-preview { flex-shrink: 0; width: 56px; height: 56px; object-fit: cover; border-radius: var(--r-sm); box-shadow: inset 0 0 0 1px var(--line); }
+.chip.attachment.has-thumb .attach-edit-label { gap: var(--s2); }
 .attach-thumb { display: inline-block; padding: 0; border: 0; border-radius: var(--r-sm); overflow: hidden; background: var(--hover); box-shadow: inset 0 0 0 1px var(--line); cursor: zoom-in; line-height: 0; }
-.attach-thumb img { display: block; max-width: 160px; max-height: 120px; object-fit: cover; }
+/* Sent images: one keeps its shape (width-capped), several form a right-aligned grid of square tiles (3 across at most). */
+.attach-images { --thumb: 96px; display: flex; justify-content: flex-end; flex: 1 0 100%; }
+.attach-images.grid { display: grid; grid-template-columns: repeat(auto-fit, var(--thumb)); justify-content: end; gap: var(--s1); max-width: calc(var(--thumb) * 3 + var(--s1) * 2); margin-left: auto; }
+.attach-thumb { max-width: 100%; }
+.attach-thumb img { display: block; max-width: 240px; max-height: 240px; object-fit: contain; }
+.attach-images.grid .attach-thumb img { width: var(--thumb); height: var(--thumb); max-width: none; max-height: none; object-fit: cover; }
 .lightbox { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(0, 0, 0, .82); cursor: zoom-out; }
-.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--r-xs); box-shadow: var(--shadow); }
+.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--r-xs); box-shadow: var(--shadow); cursor: default; }
 .lightbox-close { position: absolute; top: 12px; right: 12px; width: 36px; height: 36px; border: 0; border-radius: 50%; background: rgba(255, 255, 255, .12); color: #fff; font-size: var(--fs-body); cursor: pointer; }
+.lightbox-nav { position: absolute; top: 50%; transform: translateY(-50%); width: var(--tap); height: var(--tap); border: 0; border-radius: var(--r-full); background: rgba(255, 255, 255, .12); color: #fff; font-size: var(--fs-h); line-height: 1; cursor: pointer; }
+.lightbox-nav:hover, .lightbox-close:hover { background: rgba(255, 255, 255, .22); }
+.lightbox-nav.prev { left: var(--s3); }
+.lightbox-nav.next { right: var(--s3); }
+.lightbox-count { position: absolute; bottom: var(--s4); left: 50%; transform: translateX(-50%); padding: 2px var(--s2); border-radius: var(--r-full); background: rgba(0, 0, 0, .6); color: #fff; font-size: var(--fs-meta); font-variant-numeric: tabular-nums; }
 :where(:root[data-phone]) {
   .todo-head, .queue-item, .queue-text { min-height: var(--phone-tap); }
   .queue-remove, .queue-clear, .queue-resume { min-height: 36px; min-width: 36px; }
-  .attach-thumb img { max-width: 120px; max-height: 96px; }
+  .attach-images { --thumb: 88px; }
+  .attach-thumb img { max-width: 200px; max-height: 200px; }
   .lightbox { padding: 8px; }
+  .lightbox-nav.prev { left: var(--s1); }
+  .lightbox-nav.next { right: var(--s1); }
 }
 
 /* Attachment image editor (ImageEditor): full screen, theme colors; the crop box dims the rest with its shadow. */
@@ -1093,13 +1108,12 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .attach-edit-label > .muted { flex-shrink: 0; margin-left: 4px; } /* flex drops the space after the name */
 .attach-edit-cue { flex-shrink: 0; margin-left: 6px; padding: 0 6px; border-radius: 999px; color: var(--accent); background: var(--accent-soft); font-size: var(--fs-meta); line-height: 18px; }
 .chip.attachment.editable { max-width: 240px; }
-/* Fingers: a chip as tall as the other composer controls, a thumbnail big enough to recognise. */
+/* Fingers: every attachment chip at least a tap tall, its ✕ a full tap target. */
 @media (pointer: coarse) {
-  .chip.attachment.editable { height: 34px; }
-  .chip.attachment.editable .attach-preview { width: 28px; height: 28px; border-radius: 4px; }
+  .chip.attachment { height: auto; min-height: var(--tap); padding-right: 0; }
+  .chip.attachment .chip-remove { align-self: stretch; display: inline-grid; place-items: center; min-width: var(--tap); min-height: var(--tap); padding: 0; }
   .chip.attachment.editable .attach-edit { align-self: stretch; }
   .chip.attachment.editable .attach-edit-cue { line-height: 22px; padding: 0 8px; }
-  .chip.attachment.editable .chip-remove { align-self: stretch; min-width: 28px; }
 }
 .img-editor { position: fixed; inset: 0; z-index: 110; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); outline: none; overscroll-behavior: contain; touch-action: none;
   padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
@@ -1811,7 +1825,8 @@ button.hl-row-main:hover { background: var(--hover); }
 .sidebar-wrap.hidden.peek { visibility: visible; transform: none; box-shadow: 6px 0 18px rgba(0, 0, 0, .18); transition: transform .18s cubic-bezier(.2, .8, .2, 1), visibility 0s; }
 .sidebar-hotzone { position: absolute; top: 0; left: 0; bottom: 0; width: 3px; z-index: 19; }
 .palette-hint, .shortcut-list kbd { font-family: var(--mono); font-size: var(--fs-meta); padding: 1px 5px; border-radius: 4px; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong); background: transparent; }
-.modal-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-start; justify-content: center; padding: 12vh 16px 16px; background: rgba(0, 0, 0, .35); }
+.shortcut-list kbd { display: inline-block; min-width: 1.8em; text-align: center; color: var(--fg); background: var(--bg-raised); box-shadow: inset 0 0 0 1px var(--line-strong), inset 0 -1px 0 var(--line-strong); }
+.modal-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-start; justify-content: center; padding: 12vh 16px 16px; background: rgba(0, 0, 0, .55); }
 .palette, .modal { width: 100%; max-width: 600px; display: flex; flex-direction: column; border-radius: 12px; background: var(--panel); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); overflow: hidden; }
 .palette { max-height: 70vh; }
 .palette-input { height: 48px; padding: 0 16px; border: 0; border-bottom: 1px solid var(--line); background: transparent; font-size: var(--fs-body); }
@@ -1825,6 +1840,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .palette-snippet { flex: 2; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-meta); color: var(--muted); }
 .palette-snippet mark { background: var(--accent-soft); color: var(--fg); border-radius: 2px; }
 .palette-empty { padding: 14px 10px; }
+.palette-empty-actions { display: flex; flex-wrap: wrap; gap: var(--s2); padding: 0 var(--s4) var(--s3); }
 .palette-foot { padding: 6px 14px; border-top: 1px solid var(--line); font-size: var(--fs-meta); }
 .modal { max-width: 440px; padding: 18px 20px; gap: 10px; }
 .modal h2 { margin: 0; font-size: var(--fs-body); color: var(--fg-strong); }
@@ -1833,8 +1849,16 @@ button.hl-row-main:hover { background: var(--hover); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
 .shortcut-list { margin: 0; display: flex; flex-direction: column; gap: 6px; }
 .shortcut-row { display: flex; align-items: center; gap: 12px; font-size: var(--fs-label); }
-.shortcut-row dt { width: 96px; flex-shrink: 0; }
+.shortcut-row dt { width: 132px; flex-shrink: 0; }
 .shortcut-row dd { margin: 0; color: var(--fg); }
+.modal.shortcut-help { max-width: 560px; max-height: calc(100vh - 12vh - var(--s4)); }
+.shortcut-groups { display: flex; flex-direction: column; gap: var(--s4); min-height: 0; overflow-y: auto; margin: 0 calc(-1 * var(--s1)); padding: var(--s1); border-radius: var(--r-sm); }
+.shortcut-groups:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus); }
+.shortcut-group-title { margin: 0 0 var(--s2); font-size: var(--fs-meta); font-weight: 600; color: var(--muted); }
+/* Touch screens: no keyboard hints (the palette's foot and key labels). */
+@media (pointer: coarse) {
+  .palette-foot, .palette-hint { display: none; }
+}
 .toast { position: fixed; z-index: 55; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 32px); padding: 8px 8px 8px 14px; border-radius: 10px; background: var(--panel); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); font-size: var(--fs-label); }
 .toast > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .toast .text-btn { color: var(--accent); font-weight: 600; }

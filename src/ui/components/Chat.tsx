@@ -334,7 +334,9 @@ export function Chat(p: ChatProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   useAutoGrow(taRef, text, bodyRef);
   const content = useMemo(() => ({}), [p.items, p.pending, p.questions]);
-  const scroll = useStickToBottom(bodyRef, content, p.sessionId);
+  // New messages (not a reply growing while it streams) are what the jump pill counts.
+  const messageCount = useMemo(() => p.items.filter((it) => it.kind === 'user' || it.kind === 'assistant').length + p.pending.length + p.questions.length, [p.items, p.pending, p.questions]);
+  const scroll = useStickToBottom(bodyRef, content, p.sessionId, messageCount);
   // A question / approval card waits for the user: the status line, the composer and the stop button say so (Q2).
   const waitingFor = p.questions.length > 0 ? 'question' as const : p.pending.length > 0 ? 'permission' as const : null;
   // Q1: a newly shown card taller than the view opens at its head, not at its bottom (scroll.revealTop decides).
@@ -430,6 +432,8 @@ export function Chat(p: ChatProps) {
   const canBranch = !!p.onBranch;
   const canReply = !p.busy && !p.readOnly;
   const canRetry = !p.busy && !p.readOnly && retryPrompt === null && retryable !== null && last?.kind === 'assistant';
+  // 'historyImages': a Claude session's transcript images load from the server (thumbnails instead of the count pill).
+  const historySession = has('historyImages') && p.sessionId && (p.sessionEngine ?? 'claude') === 'claude' ? p.sessionId : null;
   const msgActions = useMemo<MessageActions>(() => ({
     onEdit: (t) => {
       setText(t);
@@ -441,7 +445,8 @@ export function Chat(p: ChatProps) {
     ...(p.versions ? { versions: p.versions } : {}),
     coarse,
     ...(canReply ? { onReply: (t: string) => { onSendTextRef.current(t); scroll.attach(); } } : {}),
-  }), [canRetry, retryable, scroll.attach, canBranch, p.editNote, p.versions, coarse, canReply]);
+    ...(historySession ? { historyImage: (n: number, k: number) => `/api/sessions/${encodeURIComponent(historySession)}/images/${n}/${k}` } : {}),
+  }), [canRetry, retryable, scroll.attach, canBranch, p.editNote, p.versions, coarse, canReply, historySession]);
   // 다시 생성 / 다른 모델로 (Pane's context): the new turn is followed from the bottom, as after a send.
   const paneRegen = useContext(RegenerateContext);
   const regen = useMemo<Regenerate | null>(() => {
@@ -692,8 +697,8 @@ export function Chat(p: ChatProps) {
       </div>
       {scroll.detached && (
         <div className="jump-anchor">
-          <button type="button" className={`jump-bottom ${scroll.unread ? 'unread' : ''}`} onClick={scroll.attach} title="맨 아래로" data-testid="jump-bottom">
-            <span aria-hidden="true">↓</span>{scroll.unread ? ' 새 메시지' : <span className="sr-only">맨 아래로</span>}
+          <button type="button" className={`jump-bottom ${scroll.unread > 0 ? 'unread' : ''}`} onClick={scroll.attach} data-testid="jump-bottom">
+            <span aria-hidden="true">↓</span> {scroll.unread > 0 ? ui().chat.jump.unread(scroll.unread) : ui().chat.jump.bottom}
           </button>
         </div>
       )}

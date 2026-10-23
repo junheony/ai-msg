@@ -708,6 +708,38 @@ function promptText(r: Rec, seen: SeenPrompts): string | null {
   return t && seen.first(typeof r.uuid === 'string' ? r.uuid : null) ? t : null;
 }
 
+/** An image block of a user message, decoded (base64 source only). */
+export type TranscriptImage = { mediaType: string; data: Buffer };
+
+/**
+ * 'historyImages': the `k`-th image block of user message `n` (counted as `promptText` / the branch point counts `n`),
+ * or null. Only base64 sources of the given media types; streamed (sessions reach hundreds of MB).
+ */
+export async function readUserImage(file: string, n: number, k: number, types: ReadonlySet<string>): Promise<TranscriptImage | null> {
+  const seen = new SeenPrompts();
+  let count = 0;
+  let content: unknown = undefined;
+  const rl = readline.createInterface({ input: createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
+  try {
+    for await (const line of rl) {
+      const r = parseLine(line);
+      if (!r || promptText(r, seen) === null) continue;
+      if (count++ === n) {
+        content = queuedPrompt(r)?.content ?? message(r)?.content;
+        break;
+      }
+    }
+  } finally {
+    rl.close();
+  }
+  if (!Array.isArray(content)) return null;
+  const block = content.filter((b) => b && typeof b === 'object' && (b as Rec).type === 'image')[k] as Rec | undefined;
+  const src = block?.source as Rec | undefined;
+  if (!src || src.type !== 'base64' || typeof src.media_type !== 'string' || typeof src.data !== 'string' || !types.has(src.media_type)) return null;
+  const data = Buffer.from(src.data, 'base64');
+  return data.length ? { mediaType: src.media_type, data } : null;
+}
+
 const squash = (t: string) => t.replace(/\s+/g, ' ').trim();
 
 /**

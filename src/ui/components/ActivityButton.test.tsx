@@ -29,15 +29,15 @@ afterEach(() => { cleanup(); vi.useRealTimers(); });
 describe('labels', () => {
   it('idleLabel: nothing running, with the last work end time when known', () => {
     expect(idleLabel(null)).toBe('지금 실행 중인 작업이 없어요');
-    expect(idleLabel(new Date(2026, 9, 13, 14, 2).getTime())).toBe('지금 실행 중인 작업이 없어요 · 14:02 까지 작업');
+    expect(idleLabel(new Date(2026, 9, 13, 14, 2).getTime())).toBe('지금 실행 중인 작업이 없어요 · 마지막 작업은 14:02에 끝났어요');
   });
 
   it('uptimeLabel: 방금 시작 / 분 / 시간 / 일', () => {
-    expect(uptimeLabel(30_000)).toBe('서버 · 방금 시작');
-    expect(uptimeLabel(-5)).toBe('서버 · 방금 시작');
-    expect(uptimeLabel(5 * M)).toBe('서버 · 5분째');
-    expect(uptimeLabel(3 * 60 * M + 59 * M)).toBe('서버 · 3시간째');
-    expect(uptimeLabel(50 * 60 * M)).toBe('서버 · 2일째');
+    expect(uptimeLabel(30_000)).toBe('서버가 방금 켜졌어요');
+    expect(uptimeLabel(-5)).toBe('서버가 방금 켜졌어요');
+    expect(uptimeLabel(5 * M)).toBe('서버가 켜진 지 5분 됐어요');
+    expect(uptimeLabel(3 * 60 * M + 59 * M)).toBe('서버가 켜진 지 3시간 됐어요');
+    expect(uptimeLabel(50 * 60 * M)).toBe('서버가 켜진 지 2일 됐어요');
   });
 
   it('restartConfirmText: turns plus background tasks, or 바로 when idle', () => {
@@ -339,9 +339,9 @@ describe('활동 시트 · 포커스', () => {
     vi.useFakeTimers();
     vi.setSystemTime(10 * M);
     render(<ActivitySheet {...sheetProps({ now: undefined, server: { startedAt: 7 * M, restartedAt: null, draining: false, update: null, onDismissRestart: () => {} } })} />);
-    expect(screen.getByTestId('server-uptime').textContent).toBe('서버 · 3분째');
+    expect(screen.getByTestId('server-uptime').textContent).toBe('서버가 켜진 지 3분 됐어요');
     act(() => { vi.advanceTimersByTime(M); });
-    expect(screen.getByTestId('server-uptime').textContent).toBe('서버 · 4분째');
+    expect(screen.getByTestId('server-uptime').textContent).toBe('서버가 켜진 지 4분 됐어요');
   });
 
   it('하이라이트 from the sheet: the dot is its opener, so closing it returns focus to the dot', () => {

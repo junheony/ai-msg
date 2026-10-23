@@ -275,8 +275,9 @@ export type SessionActivity = { sessionId: string; cwd: string; turnId: string; 
  *   /api/setup/refresh|profiles|done answer (설치 점검).
  * - sessionIcons: hello/index carry `sessionIcons` (session id → chosen icon); POST /api/session-icon sets or clears one.
  * - heartbeat: a socket that sent `heartbeat` gets `heartbeat` every HEARTBEAT_MS; the UI drops a socket silent for HEARTBEAT_TIMEOUT_MS.
+ * - historyImages: GET /api/sessions/<id>/images/<n>/<k> serves image k of user message n in a Claude transcript.
  */
-export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate', 'commander', 'grok', 'tasks', 'setup', 'sessionIcons', 'heartbeat'] as const;
+export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate', 'commander', 'grok', 'tasks', 'setup', 'sessionIcons', 'heartbeat', 'historyImages'] as const;
 export type Feature = (typeof FEATURES)[number];
 export type DrainReason = 'restart' | 'stop';
 

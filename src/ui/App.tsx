@@ -1266,6 +1266,8 @@ export function App() {
     else if (id === 'toggle-side') window.dispatchEvent(new CustomEvent(TOGGLE_SIDE_EVENT, { detail: active.id }));
   };
   const mod = MAC ? '⌘' : 'Ctrl+';
+  // A phone or a touch-only screen has no keyboard to use the cheat sheet with: its entry points are left out.
+  const keyboardless = phone || (typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches && !window.matchMedia('(any-pointer: fine)').matches);
   const actions: PaletteAction[] = [
     { id: 'new-chat', label: '새 대화', hint: `${mod}N`, run: () => newChat() },
     { id: 'new-pane', label: '새 분할', hint: `${mod}⇧O`, run: addPane },
@@ -1274,7 +1276,7 @@ export function App() {
     ...(has('highlights') ? [{ id: 'highlights', label: '하이라이트 보기', run: () => setHighlightsOpen(true) }] : []),
     { id: 'theme', label: '테마 전환', run: () => window.dispatchEvent(new CustomEvent('deck:cycle-theme')) },
     { id: 'sidebar', label: phone ? '사이드바 열기' : sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기', hint: `${mod}\\`, run: toggleSidebar },
-    { id: 'help', label: '단축키 보기', hint: `${mod}/`, run: () => setHelpOpen(true) },
+    ...(keyboardless ? [] : [{ id: 'help', label: '단축키 보기', hint: `${mod}/`, run: () => setHelpOpen(true) }]),
     { id: 'layouts', label: '카드 배치 저장/불러오기', run: () => setLayouts({ list: listLayouts(), error: null }) },
     ...(fastSession ? [{ id: 'fast', label: fastOn ? '빠르게 끄기 (Opus fast · 이 세션)' : '빠르게 켜기 (Opus fast · 이 세션)', run: () => requestFast(fastSession, !isFast(fastSession)) }] : []),
   ];
@@ -1483,7 +1485,7 @@ export function App() {
               { label: '설정', hint: `${mod},`, run: () => setSettingsOpen(true) },
               { label: '사용량 기록', run: () => setUsageOpen('history') },
               { label: `테마: ${THEME_LABEL[prefs.theme]}`, run: () => window.dispatchEvent(new CustomEvent('deck:cycle-theme')) },
-              { label: '단축키', hint: `${mod}/`, run: () => setHelpOpen(true) },
+              ...(keyboardless ? [] : [{ label: '단축키', hint: `${mod}/`, run: () => setHelpOpen(true) }]),
               { label: '새로고침', run: () => location.reload() },
             ]}
             onOpenFolder={(cwd) => openIn(active.id, null, cwd, `${cwd.split('/').filter(Boolean).pop() ?? cwd} · 새 세션`)}

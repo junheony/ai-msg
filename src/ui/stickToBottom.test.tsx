@@ -79,23 +79,34 @@ describe('Chat scroll lock', () => {
     expect(screen.queryByTestId('jump-bottom')).toBeNull();
   });
 
-  it('scrolling up stops the follow; new content does not move the view and shows 새 메시지; the button re-attaches', () => {
+  it('scrolling up stops the follow; new content does not move the view; 새 메시지 N counts only new messages; the button re-attaches', () => {
     const { view, body, box } = setup([user('q'), answer('a', true)]);
     fireEvent.wheel(body, { deltaY: -40 });
     box.top = 560; // within the threshold, still detached: the user asked to move up
     fireEvent.scroll(body);
-    expect(screen.getByTestId('jump-bottom').textContent).not.toContain('새 메시지');
+    expect(screen.getByTestId('jump-bottom').textContent).toBe('↓ 맨 아래로');
     box.height = 1400;
     view.rerender(<Chat {...props([user('q'), answer('a much more', true)])} />);
     expect(box.top).toBe(560);
+    // The reply being read grew: nothing new arrived.
+    expect(screen.getByTestId('jump-bottom').textContent).toBe('↓ 맨 아래로');
+    box.height = 1450;
+    view.rerender(<Chat {...props([user('q'), answer('a much more'), user('next'), answer('b', true)])} />);
+    expect(box.top).toBe(560);
     const jump = screen.getByTestId('jump-bottom');
-    expect(jump.textContent).toContain('새 메시지');
+    expect(jump.textContent).toBe('↓ 새 메시지 2');
+    expect(jump.className).toContain('unread');
     fireEvent.click(jump);
-    expect(box.top).toBe(1000);
+    expect(box.top).toBe(1050);
     expect(screen.queryByTestId('jump-bottom')).toBeNull();
     box.height = 1500;
-    view.rerender(<Chat {...props([user('q'), answer('a much more!', true)])} />);
+    view.rerender(<Chat {...props([user('q'), answer('a much more'), user('next'), answer('b more', true)])} />);
     expect(box.top).toBe(1100);
+    // Scrolled up again: counting starts over.
+    fireEvent.wheel(body, { deltaY: -40 });
+    box.top = 700;
+    fireEvent.scroll(body);
+    expect(screen.getByTestId('jump-bottom').textContent).toBe('↓ 맨 아래로');
   });
 
   it('a scrollbar drag (no wheel) up detaches; scrolling back to the bottom re-attaches', () => {

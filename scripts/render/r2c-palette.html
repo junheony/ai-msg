@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8">
+<!-- R2-C fixture for scripts/render-check.sh (명령 팔레트 · 결과 없음). Markup is the components' rendered output (jsdom);
+     image sources are inline SVG stand-ins. RENDER_HEIGHT=900. -->
+<link rel="stylesheet" href="../../src/ui/styles.css">
+<style>
+  body { margin: 0; background: var(--bg); }
+  .fx-pane { height: 860px; display: flex; flex-direction: column; }
+  .fx-pane .pane, .fx-pane .chat { height: 100%; }
+  .sheet { animation: none !important; }
+  @media (max-width: 720px) { .fx-pane { width: 390px; } }
+</style>
+</head><body>
+<div class="fx-pane"></div><div class="modal-backdrop"><div class="palette" role="dialog" aria-modal="true" aria-label="명령 팔레트"><input class="palette-input" placeholder="세션 검색 또는 명령…" aria-label="세션 검색 또는 명령" role="combobox" aria-expanded="true" aria-controls="palette-list" value="없는검색어"><ul class="palette-list" id="palette-list" role="listbox"><li class="palette-empty muted" role="presentation">맞는 항목이 없습니다</li></ul><div class="palette-empty-actions" data-testid="palette-empty-actions"><button type="button" class="btn ghost">검색어 지우기</button><button type="button" class="btn primary">새 대화 시작</button></div><div class="palette-foot muted">↑↓ 이동 · Enter 열기 · Esc 닫기</div></div></div>
+</body></html>

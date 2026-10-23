@@ -1480,12 +1480,12 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     await boot();
     let sheet = openSheet();
     expect(within(sheet).getByText('지금 실행 중인 작업이 없어요')).toBeTruthy();
-    fireEvent.click(within(sheet).getByRole('button', { name: '새 대화' }));
+    fireEvent.click(within(sheet).getByRole('button', { name: '새 대화 시작' }));
     expect(screen.queryByRole('dialog', { name: '활동' })).toBeNull();
     activity([act1('s1', true, 0)]);
     activity([]);
     sheet = openSheet();
-    expect(within(sheet).getByText(/^지금 실행 중인 작업이 없어요 · \d\d:\d\d 까지 작업$/)).toBeTruthy();
+    expect(within(sheet).getByText(/^지금 실행 중인 작업이 없어요 · 마지막 작업은 \d\d:\d\d에 끝났어요$/)).toBeTruthy();
   });
 
   it('하이라이트: the sheet row and the palette action show only when the server has the feature; 설정 never has a row', async () => {
@@ -1549,7 +1549,7 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     expect(screen.queryByTestId('act-server')).toBeNull();
     activity([], { serverStartedAt: Date.now() - 3 * 3_600_000 - 60_000 });
     const up = screen.getByTestId('server-uptime');
-    expect(up.textContent).toBe('서버 · 3시간째');
+    expect(up.textContent).toBe('서버가 켜진 지 3시간 됐어요');
     expect(up.title).toMatch(/^서버 시작 \d+\/\d+ \d\d:\d\d$/);
     activity([act1('s1', true, 0)], { serverStartedAt: Date.now() - 3 * 3_600_000, draining: true });
     expect(screen.queryByTestId('server-uptime')).toBeNull();
@@ -1566,7 +1566,7 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     expect(screen.getByText(/^재시작됨 \d\d:\d\d$/)).toBeTruthy();
     fireEvent.click(within(screen.getByTestId('act-server')).getByRole('button', { name: '닫기' }));
     expect(screen.queryByText(/^재시작됨/)).toBeNull();
-    expect(screen.getByTestId('server-uptime').textContent).toBe('서버 · 1분째');
+    expect(screen.getByTestId('server-uptime').textContent).toBe('서버가 켜진 지 1분 됐어요');
   });
 
   it('draining: 재시작 대기 중 · 작업 N개 기다림, or 재시작 중… when nothing is left', async () => {

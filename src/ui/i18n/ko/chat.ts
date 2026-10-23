@@ -38,6 +38,10 @@ export const chat: Widen<typeof en> = {
   account: (name: string) => `계정 ${name}`,
   accountNote: { unknown: '설정에 없는 계정', retired: '뺀 계정', pinned: '고정', pin: '고정 계정' },
   images: (n: number) => `이미지 ${n}장`,
+  lightbox: { close: '닫기', prev: '이전 이미지', next: '다음 이미지', count: (i: number, n: number) => `${i} / ${n}` },
+  viewImage: (name: string) => `${name} 크게 보기`,
+  image: (i: number) => `이미지 ${i}`,
+  jump: { bottom: '맨 아래로', unread: (n: number) => `새 메시지 ${n}` },
   composer: {
     stop: '중단',
     stopEsc: '중단 (Esc)',

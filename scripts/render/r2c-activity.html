@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8">
+<!-- R2-C fixture for scripts/render-check.sh (활동 시트 · 빈 상태와 서버 가동 시간). Markup is the components' rendered output (jsdom);
+     image sources are inline SVG stand-ins. RENDER_HEIGHT=900. -->
+<link rel="stylesheet" href="../../src/ui/styles.css">
+<style>
+  body { margin: 0; background: var(--bg); }
+  .fx-pane { height: 860px; display: flex; flex-direction: column; }
+  .fx-pane .pane, .fx-pane .chat { height: 100%; }
+  .sheet { animation: none !important; }
+  @media (max-width: 720px) { .fx-pane { width: 390px; } }
+</style>
+</head><body>
+<div class="sheet-backdrop"><div class="sheet activity-sheet" role="dialog" aria-modal="true" aria-label="활동"><div class="act-inner"><header class="sheet-head"><h2 class="sheet-title">활동</h2><button type="button" class="icon-btn sheet-btn sheet-close" aria-label="닫기" title="닫기 (Esc)">✕</button></header><p class="act-banner warn" data-testid="act-notify-blocked">알림이 꺼져 있어요 — 알림은 HTTPS 주소에서만 됩니다. https://&lt;맥 이름&gt;.ts.net 으로 여세요.</p><div class="act-empty"><p class="act-hint">지금 실행 중인 작업이 없어요 · 마지막 작업은 01:44에 끝났어요</p><button type="button" class="btn primary" data-testid="act-new-chat">새 대화 시작</button></div><section class="act-sec" data-testid="act-server" aria-label="서버"><h3 class="act-sec-title">서버</h3><div class="act-line" data-testid="server-uptime" title="서버 시작 10/24 02:04">서버가 켜진 지 10분 됐어요</div></section><div class="act-line act-notify"><span>이 기기 알림 설정</span><div class="notify"><button type="button" class="text-btn notify-btn" aria-expanded="false" aria-haspopup="dialog" title="알림 설정">알림</button></div></div></div></div></div>
+</body></html>

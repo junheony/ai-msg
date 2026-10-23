@@ -37,6 +37,13 @@ export const chat = {
   account: (name: string) => `Account ${name}`,
   accountNote: { unknown: 'not in settings', retired: 'removed account', pinned: 'pinned', pin: 'Pinned account' },
   images: (n: number) => (n === 1 ? '1 image' : `${n} images`),
+  /** Full-size image viewer (사진 크게 보기); `count` = position in a gallery. */
+  lightbox: { close: 'Close', prev: 'Previous image', next: 'Next image', count: (i: number, n: number) => `${i} / ${n}` },
+  /** A sent / transcript image's thumbnail button (`name` = file name, or `image(i)` for a transcript image). */
+  viewImage: (name: string) => `View ${name} larger`,
+  image: (i: number) => `Image ${i}`,
+  /** The pill over a transcript scrolled up: back to the end, or how many messages came in meanwhile. */
+  jump: { bottom: 'Jump to bottom', unread: (n: number) => (n === 1 ? '1 new message' : `${n} new messages`) },
   /** 한도가 풀리면 자동으로 이어가기: the session's one line (`time` = local H:MM) and its cancel button. */
   composer: {
     stop: 'Stop',

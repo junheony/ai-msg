@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { PREVIEW_CHARS, findBranchPoint, hookMessage, lastReplyOf, parseHead, parseTranscript, readHead, readTailPreview, readTranscript, textOfContent } from './transcript';
+import { PREVIEW_CHARS, findBranchPoint, hookMessage, lastReplyOf, parseHead, parseTranscript, readHead, readTailPreview, readTranscript, readUserImage, textOfContent } from './transcript';
 
 const L = (o: unknown) => JSON.stringify(o);
 const CWD = '/Users/alice/Documents/작업/sample-project';
@@ -360,5 +360,32 @@ describe('list preview — the last reply', () => {
     expect(await readTailPreview(f)).toBeNull();
     await fs.appendFile(f, said('fresh reply') + '\n');
     expect(await readTailPreview(f)).toBe('fresh reply');
+  });
+});
+
+describe('readUserImage (historyImages)', () => {
+  it('numbers user messages as the transcript does (steers once, tool results and meta skipped)', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-ui-'));
+    const file = path.join(dir, 's.jsonl');
+    const img = (data: string) => ({ type: 'image', source: { type: 'base64', media_type: 'image/png', data } });
+    const a = Buffer.from('first').toString('base64');
+    const b = Buffer.from('second').toString('base64');
+    await fs.writeFile(file, [
+      L({ type: 'user', uuid: 'u0', message: { role: 'user', content: 'hi' } }),
+      L({ type: 'user', uuid: 'm', isMeta: true, message: { role: 'user', content: [img(a)] } }),
+      L({ type: 'user', uuid: 't', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x', content: 'ok' }] } }),
+      L({ type: 'attachment', attachment: { type: 'queued_command', prompt: [{ type: 'text', text: 'steer' }, img(a)], source_uuid: 'q1' } }),
+      L({ type: 'user', uuid: 'q1', message: { role: 'user', content: [{ type: 'text', text: 'steer' }, img(a)] } }),
+      L({ type: 'user', uuid: 'u2', message: { role: 'user', content: [img(a), img(b)] } }),
+    ].join('\n') + '\n');
+    const msgs = (await readTranscript(file)).flatMap((m) => (m.kind === 'user' ? [m.n] : []));
+    expect(msgs).toEqual([0, 1, 2]);
+    const types = new Set(['image/png']);
+    expect((await readUserImage(file, 1, 0, types))?.data.toString()).toBe('first');
+    expect((await readUserImage(file, 2, 1, types))?.data.toString()).toBe('second');
+    expect(await readUserImage(file, 2, 2, types)).toBeNull();
+    expect(await readUserImage(file, 0, 0, types)).toBeNull();
+    expect(await readUserImage(file, 2, 0, new Set(['image/gif']))).toBeNull();
+    await fs.rm(dir, { recursive: true, force: true });
   });
 });

@@ -25,6 +25,8 @@ let changed = 0;
 const ID2 = '22222222-2222-4222-8222-222222222222';
 const ID3 = '33333333-3333-4333-8333-333333333333';
 const ID4 = '44444444-4444-4444-8444-444444444444';
+const ID5 = '55555555-5555-4555-8555-555555555555';
+const PNG64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 const openCalls: string[] = [];
 const forkCalls: [string, string][] = [];
 
@@ -37,6 +39,12 @@ beforeAll(async () => {
   const root = path.join(dir, 'b');
   await fs.mkdir(path.join(root, '-w-p'), { recursive: true });
   await fs.writeFile(path.join(root, '-w-p', `${ID1}.jsonl`), JSON.stringify({ type: 'user', cwd: '/w/p', message: { role: 'user', content: 'how do I rotate the token' } }) + '\n');
+  const img = (data: string, media = 'image/png') => ({ type: 'image', source: { type: 'base64', media_type: media, data } });
+  await fs.writeFile(path.join(root, '-w-p', `${ID5}.jsonl`), [
+    { type: 'user', uuid: 'u0', cwd: '/w/p', message: { role: 'user', content: 'first, no image' } },
+    { type: 'user', uuid: 'u1', cwd: '/w/p', message: { role: 'user', content: [{ type: 'text', text: 'look' }, img(PNG64), img('PHN2Zz48L3N2Zz4=', 'image/svg+xml'), img('bm90IGFuIGltYWdl')] } },
+  ].map((r) => JSON.stringify(r)).join('\n') + '\n');
+  await fs.utimes(path.join(root, '-w-p', `${ID5}.jsonl`), 1e9, 1e9); // older: the other tests look at the newest session
   const meta = new SessionMetaStore(path.join(dir, 'session-meta.json'));
   index = new SessionIndex({ roots: rootsOf({ a: path.join(dir, 'a'), b: root, c: path.join(dir, 'c') }), pinnedFile: path.join(dir, 'p.json'), meta });
   await index.refresh();
@@ -155,5 +163,22 @@ describe('session endpoints', () => {
     expect((await post(url('..%2Fx'), {})).status).toBe(400);
     expect((await post(url('not-a-uuid'), {})).status).toBe(400);
     expect(openCalls).toEqual([ID1, ID2, ID3, ID4]);
+  });
+
+  it('/api/sessions/:id/images/:n/:k (historyImages): the image bytes, sniffed type; 404 otherwise; auth', async () => {
+    const get = (p: string, headers: Record<string, string> = cookie) => fetch(`${base}${p}`, { headers });
+    const ok = await get(`/api/sessions/${ID5}/images/1/0`);
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get('content-type')).toBe('image/png');
+    expect(ok.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(Buffer.from(await ok.arrayBuffer()).equals(Buffer.from(PNG64, 'base64'))).toBe(true);
+    expect((await get(`/api/sessions/${ID5}/images/1/0`, {})).status).toBe(401);
+    // svg (not an allowed type), bytes that are not an image, no such image / message, no image in message 0.
+    for (const p of ['1/1', '1/2', '1/3', '2/0', '0/0']) expect((await get(`/api/sessions/${ID5}/images/${p}`)).status).toBe(404);
+    // unknown session, bad ids, path tricks.
+    expect((await get(`/api/sessions/${ID3}/images/0/0`)).status).toBe(404);
+    expect((await get('/api/sessions/not-a-uuid/images/0/0')).status).toBe(404);
+    expect((await get(`/api/sessions/..%2F${ID5}/images/1/0`)).status).toBe(404);
+    expect((await get(`/api/sessions/${ID5}/images/-1/0`)).status).toBe(404);
   });
 });

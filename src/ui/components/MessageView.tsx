@@ -342,21 +342,6 @@ function extOf(name: string): string {
 }
 const IMAGE_EXT = /^(PNG|JPE?G|GIF|WEBP|HEIC|BMP|SVG|AVIF)$/;
 
-/** One sent image: a thumbnail from the server (falls back to a tile once the upload is purged); click = lightbox. */
-function ImageThumb({ file }: { file: SentFile }) {
-  const [broken, setBroken] = useState(false);
-  const [open, setOpen] = useState(false);
-  if (broken) return <FileTile name={file.name} image />;
-  return (
-    <>
-      <button type="button" className="attach-thumb" title={file.name} aria-label={`${file.name} 크게 보기`} onClick={() => setOpen(true)}>
-        <img src={attachmentUrl(file.id)} alt={file.name} loading="lazy" onError={() => setBroken(true)} />
-      </button>
-      {open && <Lightbox src={attachmentUrl(file.id)} alt={file.name} onClose={() => setOpen(false)} />}
-    </>
-  );
-}
-
 function FileTile({ name, image }: { name: string; image: boolean }) {
   const ext = extOf(name);
   return (
@@ -368,14 +353,33 @@ function FileTile({ name, image }: { name: string; image: boolean }) {
 }
 
 /**
- * Sent attachments: images as thumbnails (GET /api/attachments/:id), other files as small tiles; `missing` = images the
- * text stood in for ("[이미지]") with no thumbnail here, as one small "이미지 N장" pill.
+ * Sent attachments: images as thumbnails (GET /api/attachments/:id; one keeps its shape, several form a grid; click =
+ * the lightbox, stepping through all of them), other files as small tiles. `missing` = images the text stood in for
+ * ("[이미지]") with no upload here: thumbnails from the transcript when `history` gives their URLs ('historyImages'),
+ * else — and for any that fail to load — one small "이미지 N장" pill. A purged upload falls back to its name tile.
  */
-function AttachmentTiles({ files, missing = 0 }: { files: SentFile[]; missing?: number }) {
+function AttachmentTiles({ files, missing = 0, history }: { files: SentFile[]; missing?: number; history?: (k: number) => string }) {
+  const t = ui().chat;
+  const [broken, setBroken] = useState<ReadonlySet<string>>(() => new Set());
+  const [open, setOpen] = useState<number | null>(null);
+  const uploads = files.filter((f) => f.isImage).map((f) => ({ src: attachmentUrl(f.id), alt: f.name }));
+  const fromTranscript = history ? Array.from({ length: missing }, (_, k) => ({ src: history(k), alt: t.image(k + 1) })) : [];
+  const shown = [...uploads, ...fromTranscript].filter((im) => !broken.has(im.src));
+  const pill = history ? fromTranscript.filter((im) => broken.has(im.src)).length : missing;
   return (
     <div className="msg-attachments">
-      {files.map((f, i) => (f.isImage ? <ImageThumb key={f.id || i} file={f} /> : <FileTile key={f.id || i} name={f.name} image={IMAGE_EXT.test(extOf(f.name))} />))}
-      {missing > 0 && <span className="chip attach-count" data-testid="image-count"><ImageIcon className="attach-count-glyph" />{ui().chat.images(missing)}</span>}
+      {shown.length > 0 && (
+        <div className={`attach-images${shown.length > 1 ? ' grid' : ''}`}>
+          {shown.map((im, i) => (
+            <button key={im.src} type="button" className="attach-thumb" title={im.alt} aria-label={t.viewImage(im.alt)} onClick={() => setOpen(i)}>
+              <img src={im.src} alt={im.alt} loading="lazy" onError={() => setBroken((b) => new Set(b).add(im.src))} />
+            </button>
+          ))}
+        </div>
+      )}
+      {files.map((f, i) => (!f.isImage ? <FileTile key={f.id || i} name={f.name} image={IMAGE_EXT.test(extOf(f.name))} /> : broken.has(attachmentUrl(f.id)) ? <FileTile key={f.id || i} name={f.name} image /> : null))}
+      {pill > 0 && <span className="chip attach-count" data-testid="image-count"><ImageIcon className="attach-count-glyph" />{t.images(pill)}</span>}
+      {open !== null && shown[open] && <Lightbox items={shown} start={open} onClose={() => setOpen(null)} />}
     </div>
   );
 }
@@ -397,6 +401,8 @@ export type MessageActions = {
   coarse?: boolean;
   /** deck-choices option card clicked: send its text as the user's reply. Absent = cannot send now (busy, read-only). */
   onReply?: (text: string) => void;
+  /** 'historyImages': URL of image `k` of user message `n` in this session's transcript; absent = count pill only. */
+  historyImage?: (n: number, k: number) => string;
 };
 export const MessageActionsContext = createContext<MessageActions>({});
 type Versions = { index: number; count: number; go: (i: number) => void };
@@ -720,6 +726,9 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
     // "[이미지]" lines are the transcript's stand-ins for images: thumbnails (or one count pill) show them instead.
     const { text: shown, images } = stripImagePlaceholders(text);
     const missing = Math.max(0, images - files.filter((f) => f.isImage).length);
+    // Transcript images only for a message with no uploads of its own (theirs would not line up with the uploads').
+    const historyImage = actions.historyImage;
+    const history = historyImage && item.n !== undefined && missing === images ? (k: number) => historyImage(item.n!, k) : undefined;
     const system = notices.length > 0 && <div className="msg system">{notices.map((n, i) => <SystemNotice key={i} n={n} />)}</div>;
     if (!text && !files.length) return system || null;
     // 메시지 편집 갈래 when the session can fork here; else the composer gets the text (the tooltip says why).
@@ -740,7 +749,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
       <>
         {system}
         <div ref={msgRef} className="msg user" {...(text ? press : {})}>
-          {(files.length > 0 || missing > 0) && <AttachmentTiles files={files} missing={missing} />}
+          {(files.length > 0 || missing > 0) && <AttachmentTiles files={files} missing={missing} history={history} />}
           {shown && <UserText text={shown} />}
           {/* The versions sit right under the bubble, beside its (hover / touch-hidden) action row. */}
           {(text || versions) && (

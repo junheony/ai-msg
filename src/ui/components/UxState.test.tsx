@@ -6,7 +6,10 @@ import type { ClientMessage, ServerMessage } from '../../shared/protocol';
 import { newPane, nextQueued, reducer, initialState, type AppState, type ChatItem } from '../state';
 import { AttachmentBar } from './AttachmentBar';
 import { Chat, type ChatProps } from './Chat';
-import { MessageView } from './MessageView';
+import { MessageActionsContext, MessageView } from './MessageView';
+import { CommandPalette } from './CommandPalette';
+import { ShortcutHelp } from './Dialogs';
+import { setFeatures } from '../features';
 import { Pane, STEER_ANSWER_MS, useQueueRunner } from './Pane';
 
 Element.prototype.scrollIntoView = () => {};
@@ -351,6 +354,52 @@ describe('attachment previews (ux-state)', () => {
     expect(container.querySelector('.attach-tile.image')?.textContent).toContain('shot.png');
   });
 
+  it('historyImages: "[이미지]" without an upload shows transcript thumbnails in a grid; ← → step the lightbox; a broken one becomes the count pill', () => {
+    const url = (n: number, k: number) => `/api/sessions/s/images/${n}/${k}`;
+    const { container } = render(
+      <MessageActionsContext.Provider value={{ historyImage: url }}>
+        <MessageView item={{ kind: 'user', text: '[이미지]\n[이미지]\n[이미지]\n비교', n: 4 }} />
+      </MessageActionsContext.Provider>,
+    );
+    const imgs = Array.from(container.querySelectorAll('.attach-images.grid img')) as HTMLImageElement[];
+    expect(imgs.map((i) => i.getAttribute('src'))).toEqual([url(4, 0), url(4, 1), url(4, 2)]);
+    expect(screen.queryByTestId('image-count')).toBeNull();
+    fireEvent.click(screen.getByLabelText('이미지 2 크게 보기'));
+    const box = screen.getByTestId('lightbox');
+    expect(box.querySelector('img')?.getAttribute('src')).toBe(url(4, 1));
+    expect(screen.getByTestId('lightbox-count').textContent).toBe('2 / 3');
+    fireEvent.keyDown(window, { key: 'ArrowRight' });
+    expect(box.querySelector('img')?.getAttribute('src')).toBe(url(4, 2));
+    fireEvent.keyDown(window, { key: 'ArrowRight' });
+    expect(box.querySelector('img')?.getAttribute('src')).toBe(url(4, 0));
+    fireEvent.click(screen.getByLabelText('이전 이미지'));
+    expect(box.querySelector('img')?.getAttribute('src')).toBe(url(4, 2));
+    fireEvent.click(box.querySelector('img')!);
+    expect(screen.getByTestId('lightbox')).toBeTruthy();
+    fireEvent.click(box);
+    expect(screen.queryByTestId('lightbox')).toBeNull();
+    fireEvent.error(imgs[0]!);
+    expect(container.querySelectorAll('.attach-images img')).toHaveLength(2);
+    expect(screen.getByTestId('image-count').textContent).toContain('1');
+  });
+
+  it('Chat: historyImages + a claude session → transcript image URLs; no feature → pill', () => {
+    const sid = '11111111-1111-4111-8111-111111111111';
+    setFeatures(['historyImages']);
+    const { container, unmount } = render(base({ busy: false, activeTurnId: null, sessionId: sid, items: [{ kind: 'user', text: '[이미지]\nhi', n: 3 }] }));
+    expect(container.querySelector('.attach-images img')?.getAttribute('src')).toBe(`/api/sessions/${sid}/images/3/0`);
+    unmount();
+    setFeatures(undefined);
+    const again = render(base({ busy: false, activeTurnId: null, sessionId: sid, items: [{ kind: 'user', text: '[이미지]\nhi', n: 3 }] }));
+    expect(again.container.querySelector('.attach-images')).toBeNull();
+  });
+
+  it('without historyImages (or with uploads on the message) "[이미지]" stays a count pill', () => {
+    const { container } = render(<MessageView item={{ kind: 'user', text: '[이미지]\nhi', n: 0 }} />);
+    expect(container.querySelector('.attach-images')).toBeNull();
+    expect(screen.getByTestId('image-count')).toBeTruthy();
+  });
+
   it('composer chips show the local preview (object URL) for images', () => {
     const { container } = render(<AttachmentBar attachments={[{ id: 'a', name: 'x.png', size: 10, isImage: true, previewUrl: 'blob:http://x/1' }, { id: 'b', name: 'y.md', size: 10, isImage: false }]} uploading={0} error={null} onFiles={() => {}} onRemove={() => {}} />);
     expect(container.querySelector('img.attach-preview')?.getAttribute('src')).toBe('blob:http://x/1');
@@ -358,4 +407,28 @@ describe('attachment previews (ux-state)', () => {
   });
 });
 
+describe('palette / shortcut help (ux-state)', () => {
+  afterEach(cleanup);
 
+  it('palette with no match offers 검색어 지우기 and 새 대화 시작', () => {
+    const run = vi.fn();
+    const onClose = vi.fn();
+    render(<CommandPalette sessions={[]} actions={[{ id: 'new-chat', label: '새 대화', hint: '⌘N', run }]} onOpenSession={() => {}} onClose={onClose} />);
+    const input = screen.getByLabelText('세션 검색 또는 명령') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'zzzz없음' } });
+    expect(screen.getByText('맞는 항목이 없습니다')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '검색어 지우기' }));
+    expect(input.value).toBe('');
+    expect(screen.queryByTestId('palette-empty-actions')).toBeNull();
+    fireEvent.change(input, { target: { value: 'zzzz없음' } });
+    fireEvent.click(screen.getByRole('button', { name: '새 대화 시작' }));
+    expect(onClose).toHaveBeenCalled();
+    expect(run).toHaveBeenCalled();
+  });
+
+  it('shortcut help is grouped (이동 / 작성 / 패널·카드)', () => {
+    const { container } = render(<ShortcutHelp mac safari={false} onClose={() => {}} />);
+    const titles = Array.from(container.querySelectorAll('.shortcut-group-title')).map((h) => h.textContent);
+    expect(titles).toEqual(expect.arrayContaining(['이동', '작성', '패널·카드']));
+  });
+});

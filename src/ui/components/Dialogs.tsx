@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from 'react';
-import { digitMod, isSafariBrowser, shortcutList } from '../shortcuts';
+import { digitMod, isSafariBrowser, shortcutList, type ShortcutId } from '../shortcuts';
+import { ui } from '../i18n';
 import { POPUP } from '../composerFocus';
 
 function useEscape(onClose: () => void) {
@@ -81,28 +82,47 @@ export function SheetHead({ title, onClose, autoFocus = true, closeRef, excerpt 
   );
 }
 
-/** ⌘/ cheat sheet. */
+/** Which group of the cheat sheet a global shortcut sits in. */
+const HELP_GROUP: Record<ShortcutId, 'move' | 'compose' | 'panes'> = {
+  palette: 'move', 'prev-session': 'move', 'next-session': 'move', 'toggle-sidebar': 'move', settings: 'move', help: 'move',
+  'new-chat': 'compose',
+  'new-pane': 'panes', 'prev-pane': 'panes', 'next-pane': 'panes', 'close-pane': 'panes', 'move-pane-left': 'panes', 'move-pane-right': 'panes', 'max-pane': 'panes', 'toggle-side': 'panes', 'arrange-cards': 'panes',
+};
+
+/** ⌘/ cheat sheet, grouped (이동 · 작성 · 패널·카드). The list scrolls with the keyboard too (focusable, with a ring). */
 export function ShortcutHelp({ mac, safari = isSafariBrowser(), onClose }: { mac: boolean; safari?: boolean; onClose: () => void }) {
   useEscape(onClose);
+  const t = ui().panels.help;
   // Number keys on a Mac take ⌘ and ⌃ both; the one that works in this browser first (Safari keeps ⌘1 … ⌘9 for its menus).
   const digits = (alt: string) => (mac ? `${digitMod(mac, safari)}${alt}1–9 · ${safari ? '⌘' : '⌃'}${alt}1–9` : `Ctrl+${alt ? 'Alt+' : ''}1–9`);
+  const row = (key: string, keys: string, label: string) => <div key={key} className="shortcut-row"><dt><kbd>{keys}</kbd></dt><dd>{label}</dd></div>;
+  const list = shortcutList(mac);
+  const of = (g: 'move' | 'compose' | 'panes') => list.filter((s) => HELP_GROUP[s.id] === g).map((s) => row(s.id, s.keys, s.label));
+  const groups: { id: 'move' | 'compose' | 'panes'; rows: ReactNode[] }[] = [
+    { id: 'move', rows: [...of('move'),
+      row('pins', digits(''), 'N번째 고정 세션 열기'),
+      row('pin-order', `${mac ? '⌥' : 'Alt+'}↑/↓`, '고정 항목 순서 이동 (고정됨 줄의 버튼에서)'),
+      row('esc', 'Esc', '창 닫기')] },
+    { id: 'compose', rows: [...of('compose'),
+      row('send', `${mac ? '⌘' : 'Ctrl+'}Enter`, '메시지 보내기 · 새 대화 화면에서는 새 분할 패널로 시작 (보내기 키가 Enter 일 때)'),
+      row('perm', '⇧Tab', '권한 모드 바꾸기 (입력창에서)'),
+      row('focus', '⇧Esc', '입력창으로 포커스')] },
+    { id: 'panes', rows: [...of('panes'),
+      row('panes', digits('⌥'), 'N번째 분할 패널로 이동 (왼쪽부터)'),
+      row('palette-open', `${mac ? '⌘' : 'Ctrl+'}Enter · ⇧Enter`, '명령 팔레트의 세션: 새 분할 패널로 · 떠 있는 카드로 열기')] },
+  ];
   return (
     <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal shortcut-help" role="dialog" aria-modal="true" aria-label="단축키">
-        <header className="modal-head"><h2>단축키</h2><button type="button" className="icon-btn" aria-label="닫기" onClick={onClose} autoFocus>✕</button></header>
-        <dl className="shortcut-list">
-          {shortcutList(mac).map((s) => (
-            <div key={s.id} className="shortcut-row"><dt><kbd>{s.keys}</kbd></dt><dd>{s.label}</dd></div>
+      <div className="modal shortcut-help" role="dialog" aria-modal="true" aria-label={t.title} onKeyDown={trapTab}>
+        <header className="modal-head"><h2>{t.title}</h2><button type="button" className="icon-btn" aria-label={t.close} onClick={onClose} autoFocus>✕</button></header>
+        <div className="shortcut-groups" tabIndex={0} role="group" aria-label={t.title}>
+          {groups.map((g) => (
+            <section key={g.id} className="shortcut-group" aria-labelledby={`shortcut-group-${g.id}`}>
+              <h3 id={`shortcut-group-${g.id}`} className="shortcut-group-title">{t[g.id]}</h3>
+              <dl className="shortcut-list">{g.rows}</dl>
+            </section>
           ))}
-          <div className="shortcut-row"><dt><kbd>{digits('⌥')}</kbd></dt><dd>N번째 분할 패널로 이동 (왼쪽부터)</dd></div>
-          <div className="shortcut-row"><dt><kbd>{digits('')}</kbd></dt><dd>N번째 고정 세션 열기</dd></div>
-          <div className="shortcut-row"><dt><kbd>{mac ? '⌘' : 'Ctrl+'}Enter</kbd></dt><dd>메시지 보내기 · 새 대화 화면에서는 새 분할 패널로 시작 (보내기 키가 Enter 일 때)</dd></div>
-          <div className="shortcut-row"><dt><kbd>{mac ? '⌘' : 'Ctrl+'}Enter · ⇧Enter</kbd></dt><dd>명령 팔레트의 세션: 새 분할 패널로 · 떠 있는 카드로 열기</dd></div>
-          <div className="shortcut-row"><dt><kbd>⇧Tab</kbd></dt><dd>권한 모드 바꾸기 (입력창에서)</dd></div>
-          <div className="shortcut-row"><dt><kbd>{mac ? '⌥' : 'Alt+'}↑/↓</kbd></dt><dd>고정 항목 순서 이동 (고정됨 줄의 버튼에서)</dd></div>
-          <div className="shortcut-row"><dt><kbd>⇧Esc</kbd></dt><dd>입력창으로 포커스</dd></div>
-          <div className="shortcut-row"><dt><kbd>Esc</kbd></dt><dd>창 닫기</dd></div>
-        </dl>
+        </div>
       </div>
     </div>
   );

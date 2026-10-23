@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { pipeline } from 'node:stream';
 import type { SessionEntry } from '../shared/session-types';
-import { AttachmentTooLarge, IMAGE_TYPES, MAX_ATTACHMENT_BYTES, isAttachmentId, type AttachmentStore } from './attachments/AttachmentStore';
+import { AttachmentTooLarge, IMAGE_TYPES, MAX_ATTACHMENT_BYTES, isAttachmentId, sniffImage, type AttachmentStore } from './attachments/AttachmentStore';
+import { readUserImage } from './sessions/transcript';
 import { DirError, listDirs, resolveUnderHome } from './dirs';
 import { isAllowedHost, isAllowedOrigin, isAuthed, loginCookieHeader, logoutCookieHeader, tokenMatches } from './auth';
 import type { SlashCommandCache } from './engine/slashCommands';
@@ -508,6 +509,25 @@ export function createRequestHandler(deps: HttpDeps) {
           if (r.reason === 'off') { json(res, 403, { error: '설정 › 실험적 기능에서 Claude Desktop 연동을 켜야 열 수 있어요' }); return; }
           if (r.reason === 'diverged') { json(res, 200, { ok: false, reason: 'diverged' }); return; }
           json(res, 500, { error: r.error ?? 'Desktop 사본 갱신 실패' });
+          return;
+        }
+        // historyImages: image `k` of user message `n` in a Claude transcript. The file comes from the index only (never the
+        // request), the type from the magic bytes; anything else is a 404 (the UI falls back to the count pill).
+        const imageMatch = /^\/api\/sessions\/([^/]+)\/images\/(\d{1,6})\/(\d{1,3})$/.exec(url.pathname);
+        if (imageMatch && (req.method === 'GET' || req.method === 'HEAD')) {
+          const id = imageMatch[1]!;
+          const e = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ? deps.index.lookup(id) : null;
+          const img = e && (e.engine ?? 'claude') === 'claude' ? await readUserImage(e.file, Number(imageMatch[2]), Number(imageMatch[3]), IMAGE_TYPES).catch(() => null) : null;
+          const type = img ? sniffImage(img.data) : null;
+          if (!img || !type) { json(res, 404, { error: 'not found' }); return; }
+          res.writeHead(200, {
+            'content-type': type,
+            'content-length': String(img.data.length),
+            'cache-control': 'private, max-age=604800, immutable',
+            'content-disposition': 'inline',
+            'x-content-type-options': 'nosniff',
+          });
+          res.end(req.method === 'HEAD' ? undefined : img.data);
           return;
         }
         if (url.pathname === '/api/usage/history' && req.method === 'GET') {

@@ -9,6 +9,7 @@ import { BLOCKER_TEXT, NotifyMenu } from './NotifyMenu';
 import { PermissionCard } from './PermissionCard';
 import { QuestionCard } from './QuestionCard';
 import { useClock } from './usageSeats';
+import { ui } from '../i18n';
 
 /** A row that opens its session: a session id, else (a new chat's card) the turn the card belongs to. */
 export type WorkRow = { key: string; sessionId: string | null; turnId: string | null; title: string; cwd: string; status: string; waiting: boolean };
@@ -18,13 +19,14 @@ export type ServerUpdateInfo = { changedFiles: number; supervised: boolean };
 
 const hhmm = (ms: number): string => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 
-/** 서버 · 3시간째: how long the server process has been up (분 / 시간 / 일). */
+/** 서버가 켜진 지 3시간 됐어요: how long the server process has been up (분 / 시간 / 일). */
 export function uptimeLabel(ms: number): string {
+  const t = ui().panels.activity;
   const min = Math.floor(Math.max(0, ms) / 60_000);
-  if (min < 1) return '서버 · 방금 시작';
-  if (min < 60) return `서버 · ${min}분째`;
+  if (min < 1) return t.upJust;
+  if (min < 60) return t.upMin(min);
   const h = Math.floor(min / 60);
-  return h < 24 ? `서버 · ${h}시간째` : `서버 · ${Math.floor(h / 24)}일째`;
+  return h < 24 ? t.upHour(h) : t.upDay(Math.floor(h / 24));
 }
 
 /** What a drain waits for: running turns plus background tasks. */
@@ -43,7 +45,8 @@ export const FORCE_RESTART_WARNING = '진행 중인 턴과 백그라운드 작�
 
 /** The empty sheet's line: nothing runs, with when the last work ended if this tab saw it end (a reload forgets it). */
 export function idleLabel(lastWorkAt: number | null): string {
-  return lastWorkAt === null ? '지금 실행 중인 작업이 없어요' : `지금 실행 중인 작업이 없어요 · ${hhmm(lastWorkAt)} 까지 작업`;
+  const t = ui().panels.activity;
+  return lastWorkAt === null ? t.idle : t.idleSince(hhmm(lastWorkAt));
 }
 
 /** A sheet row that can go away under the user's hand (a card answered, a turn stopped, a task cancelled). */
@@ -90,7 +93,7 @@ function ServerSection({ startedAt, restartedAt, draining, update, activity, tit
   return (
     <Section title="서버" testId="act-server">
       {startedAt !== null && !draining && (
-        <div className="act-line" data-testid="server-uptime" title={`서버 시작 ${new Date(startedAt).getMonth() + 1}/${new Date(startedAt).getDate()} ${hhmm(startedAt)}`}>{uptimeLabel(now - startedAt)}</div>
+        <div className="act-line" data-testid="server-uptime" title={ui().panels.activity.startedAt(`${new Date(startedAt).getMonth() + 1}/${new Date(startedAt).getDate()} ${hhmm(startedAt)}`)}>{uptimeLabel(now - startedAt)}</div>
       )}
       {restartedAt !== null && !draining && (
         <div className="act-line">
@@ -290,7 +293,7 @@ export function ActivitySheet(p: ActivitySheetProps) {
         {empty && (
           <div className="act-empty">
             <p className="act-hint">{idleLabel(p.lastWorkAt)}</p>
-            {p.onNewChat && <button type="button" className="btn ghost" onClick={() => { p.onClose(); p.onNewChat!(); }}>새 대화</button>}
+            {p.onNewChat && <button type="button" className="btn primary" data-testid="act-new-chat" onClick={() => { p.onClose(); p.onNewChat!(); }}>{ui().panels.activity.newChat}</button>}
           </div>
         )}
         {p.highlights !== undefined && p.onOpenHighlights && (

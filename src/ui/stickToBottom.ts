@@ -38,25 +38,31 @@ const nativeAnchoring = () => typeof CSS !== 'undefined' && typeof CSS.supports 
 
 /**
  * Stick-to-bottom for a scroll container whose direct children are the transcript.
- * State lives in refs; React state changes only on detach/attach and on the first unseen content (the jump button).
- * `resetKey` changing (session switch) re-attaches; `contentKey` changing (new items) follows or marks unread.
+ * State lives in refs; React state changes only on detach/attach.
+ * `resetKey` changing (session switch) re-attaches; `contentKey` changing (new items) follows when attached.
+ * `count` = messages so far: `unread` is how many arrived since the view detached (0 = only scrolled away — growth of a
+ * message already there, e.g. a streaming reply, is not new).
  */
-export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey: unknown, resetKey: unknown) {
+export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey: unknown, resetKey: unknown, count = 0) {
   const stick = useRef(true);
   const lastTop = useRef(0);
-  /** scrollHeight at the last scroll event (nextStick) and at the last resize (unread detection). */
+  /** scrollHeight at the last scroll event (nextStick). */
   const scrollHeight = useRef(0);
-  const lastHeight = useRef(0);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   // Manual anchoring (browsers without overflow-anchor, i.e. Safari): the first child crossing the viewport top.
   const anchor = useRef<{ el: Element; offset: number } | null>(null);
   const [detached, setDetached] = useState(false);
-  const [unread, setUnread] = useState(false);
-  const shown = useRef({ detached: false, unread: false });
+  /** `count` when the view last detached. */
+  const [base, setBase] = useState(0);
+  const counted = useRef(count);
+  counted.current = count;
+  const shown = useRef(false);
 
-  const publish = useCallback((d: boolean, u: boolean) => {
-    if (shown.current.detached !== d) { shown.current.detached = d; setDetached(d); }
-    if (shown.current.unread !== u) { shown.current.unread = u; setUnread(u); }
+  const publish = useCallback((d: boolean) => {
+    if (shown.current === d) return;
+    shown.current = d;
+    setDetached(d);
+    if (d) setBase(counted.current);
   }, []);
 
   const recordAnchor = useCallback((el: HTMLElement) => {
@@ -81,8 +87,6 @@ export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey:
   const onResize = useCallback(() => {
     const el = ref.current;
     if (!el) return;
-    const grew = el.scrollHeight > lastHeight.current;
-    lastHeight.current = el.scrollHeight;
     if (stick.current) { toBottom(el); return; }
     const a = anchor.current;
     if (a && a.el.isConnected && !nativeAnchoring()) {
@@ -90,22 +94,21 @@ export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey:
       if (Math.abs(delta) > 0.5) { el.scrollTop += delta; lastTop.current = el.scrollTop; }
     }
     recordAnchor(el);
-    if (grew) publish(true, true);
-  }, [ref, toBottom, recordAnchor, publish]);
+  }, [ref, toBottom, recordAnchor]);
 
   const detach = useCallback(() => {
     const el = ref.current;
     if (!el || el.scrollTop <= 0 || !stick.current) return;
     stick.current = false;
-    publish(true, shown.current.unread);
+    publish(true);
   }, [ref, publish]);
 
   /** Jump to the bottom and follow again (jump button, send, session switch). */
   const attach = useCallback(() => {
     stick.current = true;
     const el = ref.current;
-    if (el) { toBottom(el); lastHeight.current = el.scrollHeight; }
-    publish(false, false);
+    if (el) toBottom(el);
+    publish(false);
   }, [ref, toBottom, publish]);
 
   /**
@@ -119,9 +122,8 @@ export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey:
     stick.current = false;
     el.scrollTop = Math.max(0, el.scrollTop + target.getBoundingClientRect().top - el.getBoundingClientRect().top - gap);
     lastTop.current = el.scrollTop;
-    lastHeight.current = el.scrollHeight;
     recordAnchor(el);
-    publish(true, false);
+    publish(true);
   }, [ref, recordAnchor, publish]);
 
   useEffect(() => {
@@ -132,8 +134,8 @@ export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey:
       stick.current = nextStick(stick.current, { top: lastTop.current, height: scrollHeight.current }, s);
       lastTop.current = s.top;
       scrollHeight.current = s.height;
-      if (stick.current) publish(false, false);
-      else { publish(true, shown.current.unread); recordAnchor(el); }
+      if (stick.current) publish(false);
+      else { publish(true); recordAnchor(el); }
     };
     // Upward intent detaches at once, before the scroll lands (a follow in the same frame would undo it).
     const onWheel = (e: WheelEvent) => { if (e.deltaY < 0) detach(); };
@@ -189,5 +191,5 @@ export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey:
     if (wasSession) attach();
   }, [resetKey, attach]);
 
-  return { detached, unread, attach, revealTop };
+  return { detached, unread: detached ? Math.max(0, count - base) : 0, attach, revealTop };
 }
