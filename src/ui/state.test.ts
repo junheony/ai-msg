@@ -1164,6 +1164,29 @@ describe('message queue (ux-state)', () => {
       expect(pane(r).queue.every((q) => !q.maybeLost)).toBe(true);
     });
 
+    it('maybeLost is cleared when the user sends it (지금 전송, 이어서 보내기) and settled by a history\'s acceptedRefs', () => {
+      const lost = () => {
+        let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'new' });
+        s = reducer(s, { type: 'sent', text: 'first', clientRef: 'r1' });
+        return reducer(s, { type: 'connected', value: false, at: 1 });
+      };
+      let s = lost();
+      const id = pane(s).queue[0]!.id;
+      s = reducer(s, { type: 'queue_send_now', paneId: pane(s).id, id });
+      expect(pane(s).queue[0]!.maybeLost).toBeUndefined();
+      s = lost();
+      s = reducer(s, { type: 'queue_resume', paneId: pane(s).id });
+      expect(pane(s).queue[0]!.maybeLost).toBeUndefined();
+      // a history listing what it accepted: with the ref it went in (dropped); without it, it did not (an ordinary item)
+      const withLost = (): AppState => {
+        const o = play([history(['old'])], openedOn('s1'));
+        return { ...o, panes: o.panes.map((p) => ({ ...p, queue: [{ id: 'm1', text: 'first', attachments: [], maybeLost: true, ref: 'r1' }], queuePaused: true })) };
+      };
+      const settle = (refs: string[]) => reducer(withLost(), { type: 'server', msg: { type: 'history', sessionId: 's1', cwd: '/w', account: null, runningTurnId: null, messages: [], acceptedRefs: refs } as never });
+      expect(pane(settle(['r1'])).queue).toEqual([]);
+      expect(pane(settle(['other'])).queue.map((q) => [q.text, q.maybeLost])).toEqual([['first', undefined]]);
+    });
+
     // M1: a released item goes out alone; the rest of a paused queue (a lost steer) stays paused.
     it('a released item does not unpause the queue: a lost steer behind it is not sent', () => {
       let s = running();

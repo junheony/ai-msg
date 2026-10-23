@@ -205,7 +205,7 @@ describe('createSocket', () => {
       const { sock, w } = opened({ heartbeat: () => true });
       deliver(w, hello);
       expect(sock.send({ type: 'open_session', sessionId: 's1', cwd: '/w' } as never)).toBe(true);
-      vi.advanceTimersByTime(90_000); // no beat gets past the big frame
+      vi.advanceTimersByTime(80_000); // no beat gets past the big frame
       expect(FakeWS.instances).toHaveLength(1);
       deliver(w, { type: 'history', sessionId: 's1', cwd: '/w', account: null, runningTurnId: null, messages: [] });
       vi.advanceTimersByTime(24_000);
@@ -248,12 +248,59 @@ describe('createSocket', () => {
       const next = FakeWS.instances[1]!;
       next.readyState = FakeWS.OPEN;
       next.onopen?.();
-      vi.advanceTimersByTime(120_000); // a slow start: no hello yet, no second drop
+      vi.advanceTimersByTime(14_000); // a slow start: no hello yet, the heartbeat watch does not drop it
       expect(FakeWS.instances).toHaveLength(2);
       deliver(next, hello);
       expect(next.sent.map((d) => JSON.parse(d))).toEqual([{ type: 'heartbeat' }]);
       vi.advanceTimersByTime(25_000);
       expect(FakeWS.instances).toHaveLength(3);
+    });
+
+    it('M2: a catchup answers an open_session too — the deadline is back to normal (not 100 s for the rest of the socket)', () => {
+      const { sock, w } = opened({ heartbeat: () => true });
+      deliver(w, hello);
+      sock.send({ type: 'open_session', sessionId: 's1', cwd: '/w', after: { epoch: 't1', seq: 3 } } as never);
+      deliver(w, { type: 'catchup', sessionId: 's1' });
+      vi.advanceTimersByTime(25_000);
+      expect(FakeWS.instances).toHaveLength(2);
+    });
+
+    it('M2: a session that cannot be opened (its error: turnId null, no clientRef) answers it too; another session\'s answer does not', () => {
+      const { sock, w } = opened({ heartbeat: () => true });
+      deliver(w, hello);
+      sock.send({ type: 'open_session', sessionId: 's1', cwd: '/w' } as never);
+      sock.send({ type: 'open_session', sessionId: 's2', cwd: '/w' } as never);
+      deliver(w, { type: 'error', turnId: null, sessionId: 's1', message: 'gone', code: 'not_found' });
+      vi.advanceTimersByTime(30_000); // s2 still on its way: the longer deadline
+      expect(FakeWS.instances).toHaveLength(1);
+      deliver(w, { type: 'error', turnId: null, sessionId: 's2', message: 'gone', code: 'not_found' });
+      vi.advanceTimersByTime(25_000);
+      expect(FakeWS.instances).toHaveLength(2);
+    });
+
+    it('M2: a socket that opened but sends no hello is dropped after 15 s (watched clients); an unwatched one waits', () => {
+      const { sock, w } = opened({ heartbeat: () => true });
+      vi.advanceTimersByTime(14_000);
+      expect(FakeWS.instances).toHaveLength(1);
+      vi.advanceTimersByTime(1_000);
+      expect(FakeWS.instances).toHaveLength(2);
+      expect(w.onmessage).toBeNull();
+      // its hello in time: no drop
+      const next = FakeWS.instances[1]!;
+      next.readyState = FakeWS.OPEN;
+      next.onopen?.();
+      vi.advanceTimersByTime(10_000);
+      deliver(next, hello);
+      vi.advanceTimersByTime(10_000);
+      expect(FakeWS.instances).toHaveLength(2);
+      sock.close();
+      FakeWS.instances = [];
+      createSocket(() => {}, () => {});
+      const plain = FakeWS.instances[0]!;
+      plain.readyState = FakeWS.OPEN;
+      plain.onopen?.();
+      vi.advanceTimersByTime(60_000);
+      expect(FakeWS.instances).toHaveLength(1);
     });
 
     it('no watch before hello, and none after the socket closed or close()', async () => {

@@ -16,9 +16,14 @@ export const common = {
   /** A queued message that did not go out while offline (QueueChips). */
   unsent: 'Not sent',
   unsentHint: 'The connection dropped before this went out — it is sent once connected (or tap Resend)',
-  /** …and one that may already have gone in (its answer was lost): checked once connected, never offered to resend. */
+  /** …and one that may already have gone in (its answer was lost) that the history can tell: checked once connected, never offered to resend. */
   checking: 'Checking',
-  checkingHint: 'It may already have gone in — checked against the conversation once connected, so it is not sent twice',
+  checkingHint: 'It may already have gone in — checked against the conversation once connected, and sent only if it did not',
+  /** …one that no history can tell (a new session): the user decides, connected or not. */
+  maybeGone: 'May have been sent',
+  maybeGoneHint: 'It may already have gone in — once connected, check the conversation and send it yourself',
+  /** The offline button when the queue holds such a message: it only connects, the queue stays paused. */
+  reconnect: 'Reconnect',
   resend: 'Resend',
   /** Error codes put into words (errorText.ts); the raw text folds underneath. */
   errorRaw: 'Original message',

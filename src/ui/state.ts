@@ -94,7 +94,7 @@ export type QueueItem = {
   at?: number;
   /** Came back from a parked bucket: parked again (not dropped) if the pane leaves the session once more. */
   kept?: true;
-  /** Lost with its socket where no history can tell (a new session, no ordinal, a branch): it may have gone in. Offline it reads 확인 중, never 안 보냄. */
+  /** Lost with its socket where no history can tell (a new session, no ordinal, a branch): it may have gone in — reads 보냈을 수도 있음, never 안 보냄. Cleared when the user sends it (지금 전송, 이어서 보내기) or a history's acceptedRefs settle it. */
   maybeLost?: true;
 };
 
@@ -688,12 +688,13 @@ function withAgent(pane: PaneState, id: string, fn: (a: AgentInfo) => AgentInfo)
 function settleQueue(pane: PaneState, msg: SessionFacts, items: ChatItem[]): Pick<PaneState, 'queue'> & Partial<Pick<PaneState, 'queueSendNow' | 'queuePaused'>> {
   const accepted = msg.acceptedRefs ? new Set(msg.acceptedRefs) : null;
   const went = (q: QueueItem) => accepted
-    ? (q.maybeSent !== undefined && !!q.ref && accepted.has(q.ref)) || (!!q.lostSteer && accepted.has(q.lostSteer))
+    ? ((q.maybeSent !== undefined || !!q.maybeLost) && !!q.ref && accepted.has(q.ref)) || (!!q.lostSteer && accepted.has(q.lostSteer))
     : q.maybeSent !== undefined && items.some((it) => it.kind === 'user' && it.n !== undefined && it.n >= q.maybeSent! && sameUserText(it, q.text));
   for (const q of pane.queue) if (went(q)) console.warn('deck: queued message already went in — not sent again:', q.text);
   const doubt = inDoubt(msg, Date.now());
   const doubted = pane.queue.some((q) => !went(q) && doubt(q));
-  const kept = pane.queue.filter((q) => !went(q)).map(({ maybeSent: _m, ...q }) => (doubt({ ...q, maybeSent: _m }) ? unhold([q])[0]! : q));
+  // maybeLost: the server's list of what it accepted in this session does not have it — it did not go in here.
+  const kept = pane.queue.filter((q) => !went(q)).map(({ maybeSent: _m, maybeLost, ...q }) => ({ ...(doubt({ ...q, maybeSent: _m }) ? unhold([q])[0]! : q), ...(maybeLost && !(accepted && q.ref) ? { maybeLost } : {}) }));
   const sent = kept.some((q) => q.id === pane.queueSendNow) ? {} : { queueSendNow: null };
   return { ...sent, ...(doubted ? { queuePaused: true } : {}), queue: release(kept, (q) => q.restart === 'hello' || q.restart === 'hold') };
 }
@@ -1678,12 +1679,12 @@ export function reducer(state: AppState, action: Action): AppState {
       const item = p.queue.find((q) => q.id === action.id);
       if (!item) return p;
       // A message held for the server's restart goes now if the user says so.
-      const { restart: _held, maybeSent: _m, ...head } = item;
+      const { restart: _held, maybeSent: _m, maybeLost: _l, ...head } = item;
       return { ...p, queue: [head, ...p.queue.filter((q) => q !== item)], queueSendNow: item.id };
     });
     case 'queue_pause': return updatePane(state, action.paneId, (p) => ({ ...p, queuePaused: true }));
     // 이어서 보내기: messages still waiting for a reconnect / history go as ordinary ones (the user says so).
-    case 'queue_resume': return updatePane(state, action.paneId, (p) => ({ ...p, queuePaused: false, queue: p.queue.map((q) => (q.restart === 'hold' || q.restart === 'hello' ? unhold([q])[0]! : q)) }));
+    case 'queue_resume': return updatePane(state, action.paneId, (p) => ({ ...p, queuePaused: false, queue: p.queue.map(({ maybeLost: _l, ...q }) => (q.restart === 'hold' || q.restart === 'hello' ? unhold([q])[0]! : q)) }));
     case 'steer_lost': return updatePane(state, action.paneId, (p) => {
       if (action.unsent) return { ...p, queue: p.queue.map(({ steer, ...q }) => (steer === action.steerId ? q : { ...q, ...(steer ? { steer } : {}) })) };
       return unsteer(p, (id) => id === action.steerId);
