@@ -55,7 +55,6 @@ function Section({ label, extra, copy, copyLabel, className, children }: { label
   );
 }
 
-/** The call's input as people read it: `$ command`, the file relative to the session folder, short key: value lines; raw JSON folded. */
 /** The raw input JSON, folded: built only while open, and cut at FULL_CHARS (a Write's whole file can be in it). */
 function RawInput({ input }: { input: unknown }) {
   const [open, setOpen] = useState(false);
@@ -67,6 +66,7 @@ function RawInput({ input }: { input: unknown }) {
   );
 }
 
+/** The call's input as people read it: `$ command`, the file relative to the session folder, short key: value lines; raw JSON folded. */
 function ToolInput({ call, cwd }: { call: ToolCallItem; cwd?: string | null }) {
   const T = ui().tool;
   const v = inputView(call.name, call.input, cwd);
