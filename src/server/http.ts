@@ -519,12 +519,14 @@ export function createRequestHandler(deps: HttpDeps) {
           const id = imageMatch[1]!;
           const e = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ? deps.index.lookup(id) : null;
           const claude = e && (e.engine ?? 'claude') === 'claude' ? e : null;
-          // Not immutable: the same URL can change (a fork resolve rewrites the transcript). The tag follows the file's state.
+          // Not immutable: the same URL can change (a fork resolve rewrites the transcript). The tag follows the file's state:
+          // a stat answers a revalidation; a full answer is tagged with the state its bytes were read from.
+          const tagOf = (st: { ino: number; size: number; mtimeMs: number }) => `W/"${createHash('sha1').update(`${st.ino}:${st.size}:${st.mtimeMs}:${imageMatch[2]}:${imageMatch[3]}`).digest('hex').slice(0, 20)}"`;
+          const cacheHeaders = { 'cache-control': 'private, no-cache', 'cross-origin-resource-policy': 'same-origin' };
           const st = claude ? await fs.promises.stat(claude.file).catch(() => null) : null;
-          const etag = st ? `W/"${createHash('sha1').update(`${st.ino}:${st.size}:${st.mtimeMs}:${imageMatch[2]}:${imageMatch[3]}`).digest('hex').slice(0, 20)}"` : null;
-          const cacheHeaders = { 'cache-control': 'private, no-cache', 'cross-origin-resource-policy': 'same-origin', ...(etag ? { etag } : {}) };
-          if (etag && req.headers['if-none-match']?.split(',').some((t) => t.trim() === etag)) {
-            res.writeHead(304, cacheHeaders);
+          const now = st ? tagOf(st) : null;
+          if (now && req.headers['if-none-match']?.split(',').some((t) => t.trim() === now)) {
+            res.writeHead(304, { ...cacheHeaders, etag: now });
             res.end();
             return;
           }
@@ -535,6 +537,7 @@ export function createRequestHandler(deps: HttpDeps) {
             'content-type': type,
             'content-length': String(img.data.length),
             ...cacheHeaders,
+            etag: tagOf(img.file),
             'content-disposition': 'inline',
             'x-content-type-options': 'nosniff',
           });

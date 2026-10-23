@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { PREVIEW_CHARS, findBranchPoint, hookMessage, lastReplyOf, parseHead, parseTranscript, readHead, readTailPreview, readTranscript, readUserImage, imageIndexSize, textOfContent } from './transcript';
+import { PREVIEW_CHARS, findBranchPoint, hookMessage, lastReplyOf, parseHead, parseTranscript, readHead, readTailPreview, readTranscript, readUserImage, imageIndexState, textOfContent } from './transcript';
 
 const L = (o: unknown) => JSON.stringify(o);
 const CWD = '/Users/alice/Documents/작업/sample-project';
@@ -389,35 +389,79 @@ describe('readUserImage (historyImages)', () => {
     await fs.rm(dir, { recursive: true, force: true });
   });
 
-  it('keeps where messages start per file state: later images read from there, a rewrite starts over', async () => {
+  it('keeps where messages start per path: later images read from there, a grown file reads on, a shorter or rewritten one starts over', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-ui-'));
     const file = path.join(dir, 's.jsonl');
     const img = (t: string) => ({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: Buffer.from(t).toString('base64') } });
     const said = (t: string) => L({ type: 'assistant', message: { id: t, role: 'assistant', content: [{ type: 'text', text: t }] } });
-    const rows = (tag: string) => [
-      L({ type: 'user', uuid: 'u0', message: { role: 'user', content: [img(`${tag}0`)] } }),
-      said('a'.repeat(3000)),
-      L({ type: 'user', uuid: 'u1', message: { role: 'user', content: [{ type: 'text', text: 'x' }, img(`${tag}1`)] } }),
-      said('b'),
-      L({ type: 'user', uuid: 'u2', message: { role: 'user', content: [img(`${tag}2`)] } }),
-    ].join('\n');
+    const ask = (uuid: string, t: string) => L({ type: 'user', uuid, message: { role: 'user', content: [{ type: 'text', text: 'x' }, img(t)] } });
+    const rows = (tag: string) => [ask('u0', `${tag}0`), said('a'.repeat(3000)), ask('u1', `${tag}1`), said('b'), ask('u2', `${tag}2`)].join('\n');
     await fs.writeFile(file, rows('A') + '\n');
     const types = new Set(['image/png']);
-    const st = await fs.stat(file);
-    expect(imageIndexSize(file, st)).toBeNull();
+    const at = async (n: number) => (await readUserImage(file, n, 0, types))?.data.toString() ?? null;
+    expect(imageIndexState(file)).toBeNull();
     // Together (a page's thumbnails): one scan at a time, same answers.
     const got = await Promise.all([1, 0, 2, 1].map((n) => readUserImage(file, n, 0, types)));
     expect(got.map((g) => g?.data.toString())).toEqual(['A1', 'A0', 'A2', 'A1']);
-    expect(imageIndexSize(file, st)).toBe(3);
-    expect((await readUserImage(file, 0, 0, types))?.data.toString()).toBe('A0');
-    expect(await readUserImage(file, 3, 0, types)).toBeNull();
-    // Same length, new content (a fork resolve rewrites the copy): a new key, not the old offsets.
+    expect(imageIndexState(file)?.messages).toBe(3);
+    expect(await at(0)).toBe('A0');
+    // The image carries the file state it was read from (the HTTP tag is made from it).
+    const st = await fs.stat(file);
+    expect((await readUserImage(file, 0, 0, types))?.file).toEqual({ ino: st.ino, size: st.size, mtimeMs: st.mtimeMs });
+    expect(await at(3)).toBeNull();
+    const scanned = imageIndexState(file)!;
+    expect(scanned.pos).toBe(st.size);
+    // Appended (a running session): the index is kept and the scan reads on from where it stopped.
+    await fs.appendFile(file, said('c') + '\n' + ask('u3', 'A3'));
+    expect(await at(3)).toBe('A3'); // the last line, its newline not written yet
+    expect(imageIndexState(file)).toMatchObject({ messages: 3, pos: scanned.pos + said('c').length + 1 }); // read on, the unfinished line not passed
+    await fs.appendFile(file, '\n' + ask('u4', 'A4') + '\n');
+    expect(await at(4)).toBe('A4');
+    expect(imageIndexState(file)?.messages).toBe(5);
+    expect(await at(3)).toBe('A3');
+    // Shorter: starts over.
+    await fs.writeFile(file, ask('v0', 'S0') + '\n');
+    expect(await at(0)).toBe('S0');
+    expect(await at(1)).toBeNull();
+    expect(imageIndexState(file)?.messages).toBe(1);
+    // Same length, new content (a fork resolve rewrites the copy): starts over, not the old offsets.
     await fs.writeFile(file, rows('B') + '\n');
-    await fs.utimes(file, st.atime, new Date(st.mtimeMs + 5000));
-    expect((await readUserImage(file, 2, 0, types))?.data.toString()).toBe('B2');
-    // The last line without its newline still counts.
-    await fs.writeFile(file, rows('C'));
-    expect((await readUserImage(file, 2, 0, types))?.data.toString()).toBe('C2');
+    expect(await at(2)).toBe('B2');
+    const b = await fs.stat(file);
+    await fs.writeFile(file, rows('C') + '\n');
+    await fs.utimes(file, b.atime, new Date(b.mtimeMs + 5000));
+    expect(await at(2)).toBe('C2');
+    // Grown, but what was read before changed: starts over too.
+    await fs.writeFile(file, rows('D') + '\n' + ask('u3', 'D3') + '\n');
+    expect(await at(1)).toBe('D1');
+    expect(await at(3)).toBe('D3');
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('never parses tool results (most of a session by size); a mixed text + tool_result record was never a message', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-ui-'));
+    const file = path.join(dir, 's.jsonl');
+    const img = (t: string) => ({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: Buffer.from(t).toString('base64') } });
+    await fs.writeFile(file, [
+      L({ type: 'user', uuid: 'u0', message: { role: 'user', content: [{ type: 'text', text: 'see "tool_result" here' }, img('first')] } }),
+      L({ type: 'user', uuid: 't1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x', content: [img('tool')] }] } }),
+      L({ type: 'user', uuid: 't2', message: { role: 'user', content: [{ type: 'text', text: 'and' }, img('mixed'), { type: 'tool_result', tool_use_id: 'y', content: 'ok' }] } }),
+      L({ type: 'attachment', attachment: { type: 'queued_command', prompt: [{ type: 'text', text: 'steer about tool_result' }, img('steer')] } }),
+      L({ type: 'user', uuid: 'u2', message: { role: 'user', content: [{ type: 'text', text: 'last' }, img('last')] } }),
+    ].join('\n') + '\n');
+    const msgs = (await readTranscript(file)).flatMap((m) => (m.kind === 'user' ? [m.n] : []));
+    expect(msgs).toEqual([0, 1, 2]);
+    const types = new Set(['image/png']);
+    const parse = vi.spyOn(JSON, 'parse');
+    try {
+      expect((await readUserImage(file, 0, 0, types))?.data.toString()).toBe('first');
+      expect((await readUserImage(file, 1, 0, types))?.data.toString()).toBe('steer');
+      expect((await readUserImage(file, 2, 0, types))?.data.toString()).toBe('last');
+      // One parse per message: the two tool_result records were skipped unparsed.
+      expect(parse).toHaveBeenCalledTimes(3);
+    } finally {
+      parse.mockRestore();
+    }
     await fs.rm(dir, { recursive: true, force: true });
   });
 });
