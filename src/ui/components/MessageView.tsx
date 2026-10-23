@@ -372,7 +372,7 @@ function AttachmentTiles({ files, missing = 0, history }: { files: SentFile[]; m
         <div className={`attach-images${shown.length > 1 ? ' grid' : ''}`}>
           {shown.map((im, i) => (
             <button key={im.src} type="button" className="attach-thumb" title={im.alt} aria-label={t.viewImage(im.alt)} onClick={() => setOpen(i)}>
-              <img src={im.src} alt={im.alt} loading="lazy" onError={() => setBroken((b) => new Set(b).add(im.src))} />
+              <img src={im.src} alt={im.alt} loading="lazy" decoding="async" onError={() => setBroken((b) => new Set(b).add(im.src))} />
             </button>
           ))}
         </div>

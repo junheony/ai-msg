@@ -172,6 +172,24 @@ describe('session endpoints', () => {
     expect(ok.headers.get('content-type')).toBe('image/png');
     expect(ok.headers.get('x-content-type-options')).toBe('nosniff');
     expect(Buffer.from(await ok.arrayBuffer()).equals(Buffer.from(PNG64, 'base64'))).toBe(true);
+    expect(ok.headers.get('cross-origin-resource-policy')).toBe('same-origin');
+    // Revalidated, not immutable: the tag follows the transcript file (a fork resolve can rewrite it under the same URL).
+    expect(ok.headers.get('cache-control')).toBe('private, no-cache');
+    const etag = ok.headers.get('etag')!;
+    expect(etag).toMatch(/^W\/"[0-9a-f]+"$/);
+    const again = await get(`/api/sessions/${ID5}/images/1/0`, { ...cookie, 'if-none-match': `W/"x", ${etag}` });
+    expect(again.status).toBe(304);
+    expect(again.headers.get('etag')).toBe(etag);
+    expect((await again.arrayBuffer()).byteLength).toBe(0);
+    expect((await get(`/api/sessions/${ID5}/images/1/0`, { ...cookie, 'if-none-match': 'W/"stale"' })).status).toBe(200);
+    expect((await get(`/api/sessions/${ID5}/images/1/0`, { 'if-none-match': etag })).status).toBe(401);
+    const file = index.lookup(ID5)!.file;
+    const st = await fs.stat(file);
+    await fs.utimes(file, st.atime, new Date(st.mtimeMs + 1000));
+    const changedFile = await get(`/api/sessions/${ID5}/images/1/0`, { ...cookie, 'if-none-match': etag });
+    expect(changedFile.status).toBe(200);
+    expect(changedFile.headers.get('etag')).not.toBe(etag);
+    await fs.utimes(file, st.atime, st.mtime);
     expect((await get(`/api/sessions/${ID5}/images/1/0`, {})).status).toBe(401);
     // svg (not an allowed type), bytes that are not an image, no such image / message, no image in message 0.
     for (const p of ['1/1', '1/2', '1/3', '2/0', '0/0']) expect((await get(`/api/sessions/${ID5}/images/${p}`)).status).toBe(404);

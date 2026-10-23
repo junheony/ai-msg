@@ -1084,7 +1084,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .attach-images.grid .attach-thumb img { width: var(--thumb); height: var(--thumb); max-width: none; max-height: none; object-fit: cover; }
 .lightbox { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(0, 0, 0, .82); cursor: zoom-out; }
 .lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--r-xs); box-shadow: var(--shadow); cursor: default; }
-.lightbox-close { position: absolute; top: 12px; right: 12px; width: 36px; height: 36px; border: 0; border-radius: 50%; background: rgba(255, 255, 255, .12); color: #fff; font-size: var(--fs-body); cursor: pointer; }
+.lightbox-close { position: absolute; top: 12px; right: 12px; width: var(--tap); height: var(--tap); border: 0; border-radius: 50%; background: rgba(255, 255, 255, .12); color: #fff; font-size: var(--fs-body); cursor: pointer; }
 .lightbox-nav { position: absolute; top: 50%; transform: translateY(-50%); width: var(--tap); height: var(--tap); border: 0; border-radius: var(--r-full); background: rgba(255, 255, 255, .12); color: #fff; font-size: var(--fs-h); line-height: 1; cursor: pointer; }
 .lightbox-nav:hover, .lightbox-close:hover { background: rgba(255, 255, 255, .22); }
 .lightbox-nav.prev { left: var(--s3); }
@@ -1855,8 +1855,9 @@ button.hl-row-main:hover { background: var(--hover); }
 .shortcut-groups { display: flex; flex-direction: column; gap: var(--s4); min-height: 0; overflow-y: auto; margin: 0 calc(-1 * var(--s1)); padding: var(--s1); border-radius: var(--r-sm); }
 .shortcut-groups:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus); }
 .shortcut-group-title { margin: 0 0 var(--s2); font-size: var(--fs-meta); font-weight: 600; color: var(--muted); }
-/* Touch screens: no keyboard hints (the palette's foot and key labels). */
-@media (pointer: coarse) {
+/* No keyboard: no keyboard hints (the palette's foot and key labels). Same test as App's `keyboardless` (a phone, or a
+   touch-only screen — a tablet with a keyboard or trackpad attached keeps them). */
+@media (max-width: 720px), (pointer: coarse) and (not (any-pointer: fine)) {
   .palette-foot, .palette-hint { display: none; }
 }
 .toast { position: fixed; z-index: 55; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 32px); padding: 8px 8px 8px 14px; border-radius: 10px; background: var(--panel); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); font-size: var(--fs-label); }

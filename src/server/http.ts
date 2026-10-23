@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import type http from 'node:http';
 import os from 'node:os';
@@ -517,13 +518,23 @@ export function createRequestHandler(deps: HttpDeps) {
         if (imageMatch && (req.method === 'GET' || req.method === 'HEAD')) {
           const id = imageMatch[1]!;
           const e = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ? deps.index.lookup(id) : null;
-          const img = e && (e.engine ?? 'claude') === 'claude' ? await readUserImage(e.file, Number(imageMatch[2]), Number(imageMatch[3]), IMAGE_TYPES).catch(() => null) : null;
+          const claude = e && (e.engine ?? 'claude') === 'claude' ? e : null;
+          // Not immutable: the same URL can change (a fork resolve rewrites the transcript). The tag follows the file's state.
+          const st = claude ? await fs.promises.stat(claude.file).catch(() => null) : null;
+          const etag = st ? `W/"${createHash('sha1').update(`${st.ino}:${st.size}:${st.mtimeMs}:${imageMatch[2]}:${imageMatch[3]}`).digest('hex').slice(0, 20)}"` : null;
+          const cacheHeaders = { 'cache-control': 'private, no-cache', 'cross-origin-resource-policy': 'same-origin', ...(etag ? { etag } : {}) };
+          if (etag && req.headers['if-none-match']?.split(',').some((t) => t.trim() === etag)) {
+            res.writeHead(304, cacheHeaders);
+            res.end();
+            return;
+          }
+          const img = claude && st ? await readUserImage(claude.file, Number(imageMatch[2]), Number(imageMatch[3]), IMAGE_TYPES).catch(() => null) : null;
           const type = img ? sniffImage(img.data) : null;
           if (!img || !type) { json(res, 404, { error: 'not found' }); return; }
           res.writeHead(200, {
             'content-type': type,
             'content-length': String(img.data.length),
-            'cache-control': 'private, max-age=604800, immutable',
+            ...cacheHeaders,
             'content-disposition': 'inline',
             'x-content-type-options': 'nosniff',
           });

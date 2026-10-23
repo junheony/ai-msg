@@ -334,9 +334,12 @@ export function Chat(p: ChatProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   useAutoGrow(taRef, text, bodyRef);
   const content = useMemo(() => ({}), [p.items, p.pending, p.questions]);
-  // New messages (not a reply growing while it streams) are what the jump pill counts.
-  const messageCount = useMemo(() => p.items.filter((it) => it.kind === 'user' || it.kind === 'assistant').length + p.pending.length + p.questions.length, [p.items, p.pending, p.questions]);
-  const scroll = useStickToBottom(bodyRef, content, p.sessionId, messageCount);
+  const shown = useMemo(() => mergeToolRuns(p.items), [p.items]);
+  const keys = useMemo(() => messageKeys(shown), [shown]);
+  // The jump pill counts user / assistant turns after the one last on screen when the view detached (by key: a card
+  // going away or a catchup rebuild does not skew it; a reply growing while it streams is not new).
+  const turnKeys = useMemo(() => keys.filter((_, i) => shown[i]!.kind === 'user' || shown[i]!.kind === 'assistant'), [keys, shown]);
+  const scroll = useStickToBottom(bodyRef, content, p.sessionId, turnKeys);
   // A question / approval card waits for the user: the status line, the composer and the stop button say so (Q2).
   const waitingFor = p.questions.length > 0 ? 'question' as const : p.pending.length > 0 ? 'permission' as const : null;
   // Q1: a newly shown card taller than the view opens at its head, not at its bottom (scroll.revealTop decides).
@@ -366,8 +369,6 @@ export function Chat(p: ChatProps) {
   const composing = useRef(false);
   // A session switch mid-composition may never deliver its compositionend here: start the next session clean.
   useEffect(() => { composing.current = false; }, [p.sessionId]);
-  const shown = useMemo(() => mergeToolRuns(p.items), [p.items]);
-  const keys = useMemo(() => messageKeys(shown), [shown]);
   const dividers = useMemo(() => timeDividers(shown), [shown]);
   // A reply block ends its turn when no other reply follows before the next user message (system rows are skipped).
   const turnEnds = useMemo(() => {

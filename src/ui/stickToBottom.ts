@@ -40,10 +40,11 @@ const nativeAnchoring = () => typeof CSS !== 'undefined' && typeof CSS.supports 
  * Stick-to-bottom for a scroll container whose direct children are the transcript.
  * State lives in refs; React state changes only on detach/attach.
  * `resetKey` changing (session switch) re-attaches; `contentKey` changing (new items) follows when attached.
- * `count` = messages so far: `unread` is how many arrived since the view detached (0 = only scrolled away — growth of a
- * message already there, e.g. a streaming reply, is not new).
+ * `turns` = stable keys of the messages so far: `unread` is how many follow the one that was last when the view detached
+ * (0 = only scrolled away — growth of a message already there, e.g. a streaming reply, is not new — or that message is
+ * gone, e.g. the list was rebuilt: the count is unknown, so none is shown).
  */
-export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey: unknown, resetKey: unknown, count = 0) {
+export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey: unknown, resetKey: unknown, turns: readonly string[] = []) {
   const stick = useRef(true);
   const lastTop = useRef(0);
   /** scrollHeight at the last scroll event (nextStick). */
@@ -52,17 +53,17 @@ export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey:
   // Manual anchoring (browsers without overflow-anchor, i.e. Safari): the first child crossing the viewport top.
   const anchor = useRef<{ el: Element; offset: number } | null>(null);
   const [detached, setDetached] = useState(false);
-  /** `count` when the view last detached. */
-  const [base, setBase] = useState(0);
-  const counted = useRef(count);
-  counted.current = count;
+  /** The last turn's key when the view last detached (null: there was none). */
+  const [mark, setMark] = useState<string | null>(null);
+  const latest = useRef(turns);
+  latest.current = turns;
   const shown = useRef(false);
 
   const publish = useCallback((d: boolean) => {
     if (shown.current === d) return;
     shown.current = d;
     setDetached(d);
-    if (d) setBase(counted.current);
+    if (d) setMark(latest.current[latest.current.length - 1] ?? null);
   }, []);
 
   const recordAnchor = useCallback((el: HTMLElement) => {
@@ -191,5 +192,7 @@ export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey:
     if (wasSession) attach();
   }, [resetKey, attach]);
 
-  return { detached, unread: detached ? Math.max(0, count - base) : 0, attach, revealTop };
+  const at = mark === null ? -1 : turns.lastIndexOf(mark);
+  const unread = !detached || (mark !== null && at < 0) ? 0 : turns.length - 1 - at;
+  return { detached, unread, attach, revealTop };
 }

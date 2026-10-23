@@ -712,25 +712,95 @@ function promptText(r: Rec, seen: SeenPrompts): string | null {
 export type TranscriptImage = { mediaType: string; data: Buffer };
 
 /**
+ * Where user messages start in one transcript (`readUserImage`): `offsets[n]` = the byte where user message `n`'s line
+ * starts; `pos`/`seen` = how far the scan got and the steer ids seen up to there (a later `n` reads on from `pos`).
+ * Keyed by (file, ino, size, mtime): an append or a rewrite (fork resolve) makes a new key.
+ */
+type ImageIndex = { offsets: number[]; pos: number; seen: SeenPrompts; done: boolean; lock: Promise<unknown> };
+const IMAGE_INDEX_FILES = 16;
+const imageIndexes = new Map<string, ImageIndex>();
+const IMAGE_CHUNK = 1 << 20;
+
+/** The line starting at byte `at` (without its `\n`). */
+async function lineAt(fh: fs.FileHandle, at: number, size: number): Promise<Buffer> {
+  const parts: Buffer[] = [];
+  for (let pos = at; pos < size; ) {
+    const buf = Buffer.allocUnsafe(Math.min(IMAGE_CHUNK, size - pos));
+    const { bytesRead } = await fh.read(buf, 0, buf.length, pos);
+    if (!bytesRead) break;
+    const nl = buf.subarray(0, bytesRead).indexOf(10);
+    parts.push(buf.subarray(0, nl >= 0 ? nl : bytesRead));
+    if (nl >= 0) break;
+    pos += bytesRead;
+  }
+  return Buffer.concat(parts);
+}
+
+/** Reads on from `idx.pos`, recording user message starts, until message `n` (its record) or the end (null). */
+async function scanTo(fh: fs.FileHandle, idx: ImageIndex, n: number, size: number): Promise<Rec | null> {
+  const check = (line: Buffer, start: number): Rec | null => {
+    // Only a user record or a queued_command attachment can be a user message (`promptText`); the rest (most of a
+    // session's bytes: assistant turns, tool output) is not parsed.
+    if (!line.includes('"user"') && !line.includes('queued_command')) return null;
+    const r = parseLine(line.toString('utf8'));
+    if (!r || promptText(r, idx.seen) === null) return null;
+    idx.offsets.push(start);
+    return idx.offsets.length - 1 === n ? r : null;
+  };
+  const buf = Buffer.allocUnsafe(IMAGE_CHUNK);
+  const carry: Buffer[] = [];
+  let lineStart = idx.pos;
+  for (let pos = idx.pos; pos < size; ) {
+    const { bytesRead } = await fh.read(buf, 0, Math.min(buf.length, size - pos), pos);
+    if (!bytesRead) break;
+    const chunk = buf.subarray(0, bytesRead);
+    let s = 0;
+    for (let nl = chunk.indexOf(10); nl >= 0; nl = chunk.indexOf(10, s)) {
+      carry.push(chunk.subarray(s, nl));
+      const line = carry.length === 1 ? carry[0]! : Buffer.concat(carry);
+      carry.length = 0;
+      const r = check(line, lineStart);
+      lineStart = idx.pos = pos + nl + 1;
+      s = nl + 1;
+      if (r) return r;
+    }
+    if (s < bytesRead) carry.push(Buffer.from(chunk.subarray(s))); // `buf` is reused: keep a copy
+    pos += bytesRead;
+  }
+  // The last line without its `\n` (readline reads it too).
+  const r = carry.length ? check(Buffer.concat(carry), lineStart) : null;
+  idx.pos = size;
+  idx.done = true;
+  return r;
+}
+
+/**
  * 'historyImages': the `k`-th image block of user message `n` (counted as `promptText` / the branch point counts `n`),
- * or null. Only base64 sources of the given media types; streamed (sessions reach hundreds of MB).
+ * or null. Only base64 sources of the given media types. Sessions reach hundreds of MB: only candidate lines are parsed,
+ * and where each message starts is kept (`ImageIndex`), so a session's next thumbnails read one line each.
  */
 export async function readUserImage(file: string, n: number, k: number, types: ReadonlySet<string>): Promise<TranscriptImage | null> {
-  const seen = new SeenPrompts();
-  let count = 0;
+  const fh = await fs.open(file, 'r');
   let content: unknown = undefined;
-  const rl = readline.createInterface({ input: createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
   try {
-    for await (const line of rl) {
-      const r = parseLine(line);
-      if (!r || promptText(r, seen) === null) continue;
-      if (count++ === n) {
-        content = queuedPrompt(r)?.content ?? message(r)?.content;
-        break;
-      }
-    }
+    const st = await fh.stat();
+    const key = `${path.resolve(file)}\0${st.ino}\0${st.size}\0${st.mtimeMs}`;
+    let idx = imageIndexes.get(key);
+    if (idx) imageIndexes.delete(key);
+    else idx = { offsets: [], pos: 0, seen: new SeenPrompts(), done: false, lock: Promise.resolve() };
+    imageIndexes.set(key, idx); // most recent last
+    while (imageIndexes.size > IMAGE_INDEX_FILES) imageIndexes.delete(imageIndexes.keys().next().value!);
+    const index = idx;
+    // One scan at a time per index (a page asks for its thumbnails together).
+    const run = index.lock.catch(() => {}).then(async () => {
+      if (n < index.offsets.length) return parseLine((await lineAt(fh, index.offsets[n]!, st.size)).toString('utf8'));
+      return index.done ? null : scanTo(fh, index, n, st.size);
+    });
+    index.lock = run;
+    const r = await run;
+    if (r) content = queuedPrompt(r)?.content ?? message(r)?.content;
   } finally {
-    rl.close();
+    await fh.close();
   }
   if (!Array.isArray(content)) return null;
   const block = content.filter((b) => b && typeof b === 'object' && (b as Rec).type === 'image')[k] as Rec | undefined;
@@ -738,6 +808,11 @@ export async function readUserImage(file: string, n: number, k: number, types: R
   if (!src || src.type !== 'base64' || typeof src.media_type !== 'string' || typeof src.data !== 'string' || !types.has(src.media_type)) return null;
   const data = Buffer.from(src.data, 'base64');
   return data.length ? { mediaType: src.media_type, data } : null;
+}
+
+/** Test hook: how many lines `readUserImage` has indexed for a file state (null = not cached). */
+export function imageIndexSize(file: string, st: { ino: number; size: number; mtimeMs: number }): number | null {
+  return imageIndexes.get(`${path.resolve(file)}\0${st.ino}\0${st.size}\0${st.mtimeMs}`)?.offsets.length ?? null;
 }
 
 const squash = (t: string) => t.replace(/\s+/g, ' ').trim();

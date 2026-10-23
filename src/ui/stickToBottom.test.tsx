@@ -109,6 +109,29 @@ describe('Chat scroll lock', () => {
     expect(screen.getByTestId('jump-bottom').textContent).toBe('↓ 맨 아래로');
   });
 
+  it('the pill counts turns after the last one on screen at detach: a card going away does not skew it; a rebuild drops the number', () => {
+    const permission = { turnId: 't', sessionId: 's', cwd: '/w', requestId: 'p1', toolName: 'Bash', input: { command: 'ls' }, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: false, sessionLabel: null };
+    const u = (text: string, n: number): ChatItem => ({ kind: 'user', text, n });
+    const items = [u('q', 4), answer('a')];
+    const view = render(<Chat {...props(items, { pending: [permission] })} />);
+    const body = view.container.querySelector('.chat-body') as HTMLElement;
+    const box = fakeBox(body, { height: 1000, client: 400, top: 0 });
+    view.rerender(<Chat {...props([...items], { pending: [permission] })} />);
+    fireEvent.wheel(body, { deltaY: -40 });
+    box.top = 300;
+    fireEvent.scroll(body);
+    expect(screen.getByTestId('jump-bottom').textContent).toBe('↓ 맨 아래로');
+    // The approval card is answered and one reply follows: one new message (not 0 for the card that left).
+    view.rerender(<Chat {...props([...items, answer('b')])} />);
+    expect(screen.getByTestId('jump-bottom').textContent).toBe('↓ 새 메시지 1');
+    view.rerender(<Chat {...props([...items, answer('b'), u('next', 5), answer('c', true)])} />);
+    expect(screen.getByTestId('jump-bottom').textContent).toBe('↓ 새 메시지 3');
+    // Catchup rebuilt the list: the remembered message is gone, so no number.
+    view.rerender(<Chat {...props([u('q', 0), answer('a'), u('next', 1), answer('c')])} />);
+    expect(screen.getByTestId('jump-bottom').textContent).toBe('↓ 맨 아래로');
+    expect(screen.getByTestId('jump-bottom').className).not.toContain('unread');
+  });
+
   it('a scrollbar drag (no wheel) up detaches; scrolling back to the bottom re-attaches', () => {
     const { view, body, box } = setup([user('q'), answer('a', true)]);
     box.top = 300;
