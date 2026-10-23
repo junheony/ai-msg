@@ -202,8 +202,9 @@ svg.spark { transform-box: fill-box; transform-origin: center; }
 .topbar { display: flex; align-items: center; gap: 14px; height: 64px; padding: 0 12px 0 14px; border-bottom: 1px solid var(--line); background: var(--sidebar); flex-shrink: 0; }
 .topbar-end { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
 /* Under the header once the server has been silent for a while: since when, and a retry (the header dot is text-less on a phone). */
-.conn-down { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px 12px; padding: 7px 12px; flex-shrink: 0; font-size: var(--fs-label); color: var(--fg); background: color-mix(in srgb, var(--warn) 16%, var(--panel)); border-bottom: 1px solid var(--line); }
-.conn-down .text-btn { color: var(--fg); font-weight: 600; background: color-mix(in srgb, var(--warn) 22%, transparent); }
+.conn-down { display: flex; align-items: center; justify-content: center; flex-wrap: nowrap; gap: 4px 12px; min-height: 32px; box-sizing: border-box; padding: 7px 12px; flex-shrink: 0; font-size: var(--fs-label); color: var(--fg); background: color-mix(in srgb, var(--warn) 16%, var(--panel)); border-bottom: 1px solid var(--line); }
+.conn-down > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conn-down .text-btn { flex: none;  color: var(--fg); font-weight: 600; background: color-mix(in srgb, var(--warn) 22%, transparent); }
 .boot-wait { flex-direction: column; gap: 10px; padding: 24px; text-align: center; color: var(--fg); font-size: var(--fs-body); }
 .boot-wait-hint { color: var(--muted); font-size: var(--fs-label); max-width: 32em; }
 .boot-wait-more { color: var(--muted); font-size: var(--fs-label); max-width: 32em; }
@@ -1790,6 +1791,9 @@ button.hl-row-main:hover { background: var(--hover); }
 .toast-item > span { flex: 1; min-width: 0; overflow-wrap: anywhere; padding-top: 2px; }
 .toast-item.error { background: linear-gradient(var(--danger-soft), var(--danger-soft)), var(--panel); color: var(--danger); box-shadow: var(--shadow), inset 0 0 0 1px color-mix(in srgb, var(--danger) 35%, transparent); }
 .toast-item .icon-btn { flex: none; color: inherit; }
+.toast-detail { margin-top: 4px; font-size: var(--fs-meta); }
+.toast-detail > summary { cursor: pointer; opacity: .85; }
+.toast-detail > code { display: block; margin-top: 2px; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); }
 /* 열기: the toast's action, in the link colour (>= 4.5:1 on the panel), not the muted text-btn grey. */
 .toast-item:not(.error) .text-btn { flex: none; color: var(--link); font-weight: 600; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-6px); } }
@@ -2739,3 +2743,8 @@ button.head-chip[aria-expanded="true"] .caret { transform: rotate(180deg); }
 
 /* Phone: the 작업으로 button keeps its 44px square (this rule comes after the base .task-add above). */
 @media (max-width: 720px) { .task-add { width: var(--phone-tap); height: var(--phone-tap); padding: 0; } }
+
+/* 본문으로 건너뛰기 (App): off screen until Tab reaches it, then a visible pill at the top-left. */
+.skip-link { position: fixed; z-index: 100; top: 8px; left: 8px; padding: 8px 14px; border-radius: var(--r-sm); background: var(--panel); color: var(--link); font-weight: 600; box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); transform: translateY(-200%); }
+.skip-link:focus, .skip-link:focus-visible { transform: none; }
+.body:focus { outline: none; }

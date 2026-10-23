@@ -1,5 +1,9 @@
 import { useState } from 'react';
 import type { QueueItem } from '../state';
+import { ui } from '../i18n';
+
+/** QueueChips' 다시 보내기 while offline: App connects now instead of waiting out the backoff. */
+export const RETRY_CONNECTION_EVENT = 'deck:retry-connection';
 
 /** ux-state: messages queued while a turn runs — a compact card above the composer: header (대기열 N · 모두 지우기), then one row per message (click to edit, ✕ to drop). */
 export function QueueChips({ queue, paused, onEdit, onRemove, onClear, onResume, onSendNow, connected = true }: {
@@ -11,7 +15,7 @@ export function QueueChips({ queue, paused, onEdit, onRemove, onClear, onResume,
   onResume: () => void;
   /** 지금 전송 (absent = not offered). */
   onSendNow?: (id: string) => void;
-  /** Socket state: an offline hold reads 연결되면 전송, a restart hold 재시작 뒤 전송. */
+  /** Socket state: offline, every message not yet sent reads 안 보냄 with 다시 보내기 (connect now; a paused queue resumes); a restart hold reads 재시작 뒤 전송. */
   connected?: boolean;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
@@ -50,8 +54,12 @@ export function QueueChips({ queue, paused, onEdit, onRemove, onClear, onResume,
                 {q.attachments.length > 0 && <span className="queue-att" aria-hidden="true">📎{q.attachments.length}</span>}
                 {q.text || '첨부만'}
                 {q.steer && <span className="queue-steer" title="이미 보냈습니다 — 기다리면 다음 단계에서 Claude 가 이어서 반영합니다 (멈출 필요 없음)"> · 보냄 · 다음 단계에서 반영</span>}
-                {q.restart && <span className="queue-steer" title={connected ? '서버가 재시작 중이라 보내지 못했습니다 — 다시 연결되면 자동으로 보냅니다' : '연결이 끊겨 보내지 못했습니다 — 다시 연결되면 자동으로 보냅니다'}> · {connected ? '재시작 뒤 전송' : '연결되면 전송'}</span>}
+                {q.restart && connected && <span className="queue-steer" title="서버가 재시작 중이라 보내지 못했습니다 — 다시 연결되면 자동으로 보냅니다"> · 재시작 뒤 전송</span>}
+                {!connected && !q.steer && <span className="queue-steer queue-unsent" title={ui().common.unsentHint}> · {ui().common.unsent}</span>}
               </button>
+            )}
+            {!connected && !q.steer && editing !== q.id && (
+              <button type="button" className="text-btn queue-resend" onClick={() => { if (paused) onResume(); window.dispatchEvent(new Event(RETRY_CONNECTION_EVENT)); }}>{ui().common.resend}</button>
             )}
             {onSendNow && editing !== q.id && (
               <button type="button" className="queue-now" aria-label={`대기 메시지 ${i + 1} ${q.steer ? '멈추고 지금 보내기' : '지금 전송'}`} title={q.steer ? '멈추고 지금 보내기 — 기다리면 저절로 반영됩니다. 누르면 실행 중인 작업을 멈추고 이 메시지로 바로 새로 시작합니다' : '지금 전송 — 실행 중인 턴을 멈추고 이 메시지를 바로 보냅니다'} onClick={() => onSendNow(q.id)}>

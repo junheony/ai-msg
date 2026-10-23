@@ -7,7 +7,7 @@ import path from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
 import { isGeminiAccount, isGrokAccount, type AccountNames } from '../shared/accounts';
 import { DEFAULT_CODEX_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_GROK_MODEL, DEFAULT_SANDBOX, defaultGeminiSandbox, IMPORTED_DEFAULT_MODEL, isGrokModel, type ClaudeModel, type CodexSandbox, type EngineKind } from '../shared/models';
-import { CLIENT_REF_MAX, ClientMessageSchema, FEATURES, accountInfos, type ClientMessage, type CommanderView, type StreamPos, type GeminiStatus, type GrokStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
+import { CLIENT_REF_MAX, ClientMessageSchema, FEATURES, HEARTBEAT_MS, accountInfos, type ClientMessage, type DrainReason, type CommanderView, type StreamPos, type GeminiStatus, type GrokStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
 import type { SessionEntry, TranscriptMessage } from '../shared/session-types';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
@@ -191,6 +191,8 @@ export type WsDeps = {
   grokHome?: string | null;
   /** See OUTSIDE_POLL_MS; 0 = no poll. */
   outsidePollMs?: number;
+  /** How often sockets that asked get `heartbeat` (default HEARTBEAT_MS; tests). */
+  heartbeatMs?: number;
   /** See CATCHUP_KEEP_EVENTS (tests shrink it). */
   catchupKeep?: number;
   /** …and at most this many bytes (default CATCHUP_KEEP_BYTES), idle for at most this long (default CATCHUP_IDLE_MS). */
@@ -281,8 +283,8 @@ export type WsHandle = {
   broadcast(msg: ServerMessage): void;
   broadcastIndex(): void;
   close(): void;
-  /** Graceful restart: from now on refuse sends that need a new process (running turns, their background work and follow-ups into them go on). */
-  drain(): void;
+  /** Graceful restart: from now on refuse sends that need a new process (running turns, their background work and follow-ups into them go on). `reason` (default 'restart') picks what devices are told. */
+  drain(reason?: DrainReason): void;
   /** Turns still running, including processes held open for background work. */
   activeTurns(): number;
   /** Ends every running turn (drain deadline). */
@@ -350,6 +352,11 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     attachments: msg.attachments?.length ? (deps.attachments?.resolve([...new Set(msg.attachments)]).found ?? []).map(({ id, name, isImage }) => ({ id, name, isImage })) : [],
   });
   let draining = false;
+  let drainReason: DrainReason = 'restart';
+  /** What a send refused while draining is told (재시작 예고, or the server going down). */
+  const drainingMessage = () => (drainReason === 'stop' ? sm().turn.stopping : DRAINING_MESSAGE);
+  /** Sockets that asked for `heartbeat` ('heartbeat' feature). */
+  const beating = new Set<WebSocket>();
   /**
    * While draining, only a process waiting with no work left is ended at once (the 10-09 incident: such processes sat
    * out the whole drain window and took the real turns down with them at the deadline). A process held open for live
@@ -447,7 +454,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   // The task names are in it too: work swapped for other work of the same count is still a change (activityFile lists them).
   let activitySig = '[[],[]]';
   const serverStartedAt = deps.serverStartedAt ?? SERVER_STARTED_AT;
-  const activityMsg = (sessions = activity()): ServerMessage => ({ type: 'activity', sessions, ...(draining ? { draining: true } : {}), serverStartedAt });
+  const activityMsg = (sessions = activity()): ServerMessage => ({ type: 'activity', sessions, ...(draining ? { draining: true, drainReason } : {}), serverStartedAt });
   const broadcastActivity = () => {
     const sessions = activity();
     const sig = JSON.stringify([sessions.map(({ forMs: _f, ...rest }) => rest), shownTurns().map((t) => t.bg?.msg.tasks ?? [])]);
@@ -559,6 +566,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       for (const ws of sockets) if (viewing.get(ws)?.has(id)) sendClaudeHistory(ws, id, read, clean);
     }
   };
+  // 'heartbeat': an app-level beat, so a device can tell a half-dead socket (phone asleep, network switched) from a quiet one.
+  const heartbeatTimer = setInterval(() => { for (const c of beating) send(c, { type: 'heartbeat' }); }, deps.heartbeatMs ?? HEARTBEAT_MS);
+  heartbeatTimer.unref?.();
   let following = false;
   const pollMs = deps.outsidePollMs ?? OUTSIDE_POLL_MS;
   const outsideTimer = pollMs > 0 ? setInterval(() => {
@@ -869,7 +879,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         // queues the same message twice (pendingRefs), and the pane shows what it waits behind.
         if (deps.runner.resendingFor(sid)) { holdBehindBg(base, RESEND_NOTICE); base.afterRelease.push({ ws, msg, ...hop, ...(msg.clientRef ? { held: true as const } : {}) }); return; }
         if (base.current !== null) { base.afterRelease.push({ ws, msg, ...hop }); return; }
-        if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining', ...ref }); return; }
+        if (draining) { send(ws, { type: 'error', turnId: null, message: drainingMessage(), code: 'draining', ...ref }); return; }
         base.recycling = true;
         base.afterRelease.push({ ws, msg, ...hop });
         const running = base.bg?.msg.tasks.length ?? 0;
@@ -891,7 +901,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const live = !base.recycling && base.current === null && turns.get(busy.get(sid) ?? '') === base;
           // While draining a new process is not started: the held one is left alone (its background work goes on) and
           // the send is refused like any that needs a new process — the device sends it again after the restart.
-          if (foreign && live && draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining', ...ref }); return; }
+          if (foreign && live && draining) { send(ws, { type: 'error', turnId: null, message: drainingMessage(), code: 'draining', ...ref }); return; }
           if (foreign && live) {
             base.recycling = true;
             const stopped = base.bg?.msg.tasks.length ?? 0;
@@ -944,7 +954,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       return;
     }
     // Draining refuses only a send that needs a new process: one joining a live process (follow-up above) still goes in.
-    if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining', ...ref }); return; }
+    if (draining) { send(ws, { type: 'error', turnId: null, message: drainingMessage(), code: 'draining', ...ref }); return; }
     const turnId = commanderHop ? `${randomUUID()}:cmd${commanderHop}` : randomUUID();
     markConcise(turnId, msg);
     const ac = new AbortController();
@@ -1692,6 +1702,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         case 'close_session':
           viewing.get(ws)?.delete(msg.sessionId);
           break;
+        case 'heartbeat':
+          beating.add(ws);
+          break;
         case 'refresh_index':
           void rescanIndex()
             .then(() => broadcast(indexMsg()))
@@ -1757,7 +1770,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const refuse = (message: string) => send(ws, { type: 'error', turnId: null, sessionId: id, message });
           const held = turns.get(busy.get(id) ?? '');
           if (held && (held.current !== null || held.bg !== null || held.pendingRefs.size > 0 || held.afterRelease.length > 0)) { refuse('세션이 실행 중이라 작업 폴더를 바꿀 수 없습니다 — 끝난 뒤 다시 해 주세요'); break; }
-          if (draining) { refuse(DRAINING_MESSAGE); break; }
+          if (draining) { refuse(drainingMessage()); break; }
           void (async () => {
             let cwd: string;
             try {
@@ -1838,7 +1851,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         case 'start_task': {
           const ref = msg.clientRef ? { clientRef: msg.clientRef } : {};
           if (!deps.tasks) { send(ws, { type: 'error', turnId: null, message: '이 서버는 백그라운드 작업을 지원하지 않습니다', ...ref }); break; }
-          if (draining) { send(ws, { type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining', ...ref }); break; }
+          if (draining) { send(ws, { type: 'error', turnId: null, message: drainingMessage(), code: 'draining', ...ref }); break; }
           if (deps.tasks.queued() >= TASKS_QUEUED_MAX) { send(ws, { type: 'error', turnId: null, message: `대기 중인 작업이 ${TASKS_QUEUED_MAX}개라 더 받을 수 없습니다`, ...ref }); break; }
           const t = deps.tasks.create({ fromSessionId: msg.fromSessionId, cwd: msg.cwd, text: msg.text }, taskCap());
           taskTexts.set(t.taskId, { text: msg.text, concise: msg.concise === true, ...(msg.lang ? { lang: msg.lang } : {}) });
@@ -1883,16 +1896,17 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       }
     });
 
-    ws.on('close', () => { clients.delete(ws); viewing.delete(ws); routeAsk.delete(ws); routeSent.delete(ws); historyAt.delete(ws); for (const t of turns.values()) t.watchers.delete(ws); });
+    ws.on('close', () => { clients.delete(ws); beating.delete(ws); viewing.delete(ws); routeAsk.delete(ws); routeSent.delete(ws); historyAt.delete(ws); for (const t of turns.values()) t.watchers.delete(ws); });
   });
 
   return {
     broadcast,
     broadcastIndex: () => broadcast(indexMsg()),
-    drain() {
+    drain(reason = 'restart') {
       if (draining) return;
       draining = true;
-      broadcast({ type: 'error', turnId: null, message: DRAINING_MESSAGE, code: 'draining' });
+      drainReason = reason;
+      broadcast({ type: 'error', turnId: null, message: drainingMessage(), code: 'draining' });
       // Every device shows 재시작 대기 중 at once, not with the next change of the running work.
       broadcast(activityMsg());
       // restart.sh reads `draining` from the activity file: written now, not with the next change.
@@ -1923,6 +1937,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     close() {
       unsubscribeUsage();
       if (outsideTimer) clearInterval(outsideTimer);
+      clearInterval(heartbeatTimer);
       if (activityTimer) { clearTimeout(activityTimer); activityTimer = null; }
       activityClosed = true;
       // Gone at once: a stale file must not make restart.sh refuse (or trust) a server that is no longer this one.

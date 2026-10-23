@@ -116,6 +116,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   /** After a reconnect: keep receiving a running turn this tab started (e.g. a new session with no id yet). */
   z.object({ type: z.literal('watch_turn'), turnId: z.string().min(1) }),
   z.object({ type: z.literal('refresh_index') }),
+  /** 'heartbeat' servers: this socket wants a `heartbeat` every HEARTBEAT_MS from now on (rule 3: asked for, so sent). */
+  z.object({ type: z.literal('heartbeat') }),
   /** Pin a Claude session to an account (null = 자동); persisted, applied from the next turn, broadcast as `account_pin`. */
   z.object({ type: z.literal('set_account_pin'), sessionId: z.string().min(1), pin: AccountId.nullable() }),
   /** 취소 on the 자동으로 이어가기 line: the session's booked resume (SessionState.pendingRetry) is called off; every device hears `auto_resume` null. */
@@ -272,9 +274,16 @@ export type SessionActivity = { sessionId: string; cwd: string; turnId: string; 
  * - setup: `hello.setup.needed` says whether the first-run wizard is still to be shown; GET /api/setup, POST
  *   /api/setup/refresh|profiles|done answer (설치 점검).
  * - sessionIcons: hello/index carry `sessionIcons` (session id → chosen icon); POST /api/session-icon sets or clears one.
+ * - heartbeat: a socket that sent `heartbeat` gets `heartbeat` every HEARTBEAT_MS; the UI drops a socket silent for HEARTBEAT_TIMEOUT_MS.
  */
-export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate', 'commander', 'grok', 'tasks', 'setup', 'sessionIcons'] as const;
+export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate', 'commander', 'grok', 'tasks', 'setup', 'sessionIcons', 'heartbeat'] as const;
 export type Feature = (typeof FEATURES)[number];
+export type DrainReason = 'restart' | 'stop';
+
+/** 'heartbeat' servers: how often a socket that asked gets `heartbeat` (ms). */
+export const HEARTBEAT_MS = 10_000;
+/** 'heartbeat' servers: nothing at all on the socket for this long → the UI takes it for dead and connects anew (ms). */
+export const HEARTBEAT_TIMEOUT_MS = 25_000;
 
 /**
  * Where a turn event stands in its session's stream: `seq` grows by one per event for the session (never reused while
@@ -378,7 +387,10 @@ export type ServerMessage =
   | ({ type: 'sub_tool_call'; parentToolUseId: string; toolUseId: string; name: string; input: unknown } & TurnScope)
   | ({ type: 'sub_tool_result'; parentToolUseId: string; toolUseId: string; isError: boolean } & TurnScope)
   /** `draining`: the server is waiting for running work before a restart. `serverStartedAt`: when this server process started (ms, fixed) — a change after a reconnect means it restarted. */
-  | { type: 'activity'; sessions: SessionActivity[]; draining?: boolean; serverStartedAt?: number }
+  /** `drainReason` (with `draining`): 'restart' = 재시작 예고 (SIGUSR2, 지금 재시작); 'stop' = the server is going down (SIGTERM, SIGINT) and may or may not come back. Absent = an older server (it said 재시작). */
+  | { type: 'activity'; sessions: SessionActivity[]; draining?: boolean; drainReason?: DrainReason; serverStartedAt?: number }
+  /** Sent only to a socket that asked with `heartbeat` ('heartbeat' servers), every HEARTBEAT_MS. */
+  | { type: 'heartbeat' }
   /** The answer to a `route_preview` ask (and again after each usage change): the account the next turn would take and why. */
   | { type: 'route_preview'; sessionId: string | null; account: Account; reason: string; asOpus?: boolean }
   | ({ type: 'turn_retry'; fromAccount: Account; toAccount: Account; reason: string; attempt: number } & TurnScope)

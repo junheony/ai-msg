@@ -78,6 +78,20 @@ describe('installGracefulShutdown', () => {
     expect(exits).toEqual(['SIGTERM']);
   });
 
+  it('the drain says why: SIGUSR2 and request are a restart, SIGTERM and SIGINT a stop (no promise to come back)', () => {
+    const reasons = (fire: (h: ReturnType<typeof host>, g: ReturnType<typeof installGracefulShutdown>) => void) => {
+      const h = host();
+      const got: (string | undefined)[] = [];
+      const g = installGracefulShutdown(h, { drain: (r) => got.push(r), activeTurns: () => 1, abortAll: () => {} }, { maxMs: Infinity, sleep: () => new Promise(() => {}), exit: () => {} });
+      fire(h, g);
+      return got;
+    };
+    expect(reasons((h) => h.fire('SIGUSR2'))).toEqual(['restart']);
+    expect(reasons((_h, g) => g.request('UI 재시작'))).toEqual(['restart']);
+    expect(reasons((h) => h.fire('SIGTERM'))).toEqual(['stop']);
+    expect(reasons((h) => h.fire('SIGINT'))).toEqual(['stop']);
+  });
+
   it('exits after the drain completes', async () => {
     const h = host();
     let active = 1;

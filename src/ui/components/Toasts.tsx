@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useState } from 'react';
 import { useIsPhone } from '../useIsPhone';
+import { ui } from '../i18n';
 
 /** An info toast's life (ms): long enough to read a short line, short enough not to pile up. */
 export const INFO_TOAST_MS = 5_000;
@@ -12,7 +13,7 @@ export const PHONE_TOAST_MS = 4_000;
 /** Space (px) between a phone's toast stack and the top of the composer under it. */
 const COMPOSER_GAP = 8;
 
-export type ToastItem = { id: number; text: string; kind?: 'error' | 'info'; /** A button next to the text (열기): runs, then closes the toast. */ action?: { label: string; run: () => void }; /** Life (ms) instead of the kind's default. */ ms?: number };
+export type ToastItem = { id: number; text: string; kind?: 'error' | 'info'; /** A button next to the text (열기): runs, then closes the toast. */ action?: { label: string; run: () => void }; /** Life (ms) instead of the kind's default. */ ms?: number; /** The raw text under a readable one (errorText.ts): folded, opened on a tap. */ detail?: string };
 
 function Toast({ toast, onDismiss, phone }: { toast: ToastItem; onDismiss: (id: number) => void; phone: boolean }) {
   const kind = toast.kind ?? 'error';
@@ -24,7 +25,7 @@ function Toast({ toast, onDismiss, phone }: { toast: ToastItem; onDismiss: (id: 
   }, [toast.id, kind]);
   return (
     <div className={`toast-item ${kind}`} role={kind === 'info' ? 'status' : 'alert'}>
-      <span>{toast.text}</span>
+      <span>{toast.text}{toast.detail && <details className="toast-detail"><summary>{ui().common.errorRaw}</summary><code>{toast.detail}</code></details>}</span>
       {toast.action && <button type="button" className="text-btn" onClick={() => { toast.action!.run(); onDismiss(toast.id); }}>{toast.action.label}</button>}
       <button type="button" className="icon-btn" aria-label="닫기" onClick={() => onDismiss(toast.id)}>✕</button>
     </div>

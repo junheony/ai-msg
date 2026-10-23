@@ -9,10 +9,12 @@
  * wait — the way to force a restart: what runs is aborted and given settleMs to record its cut; a third signal exits at once.
  */
 
+import type { DrainReason } from '../shared/protocol';
 import { sm } from './i18n';
 
 export type DrainTarget = {
-  drain(): void;
+  /** `reason`: what devices are told — 'restart' (SIGUSR2, 지금 재시작) or 'stop' (SIGTERM, SIGINT: going down, maybe for good). */
+  drain(reason?: DrainReason): void;
   activeTurns(): number;
   abortAll(): void;
 };
@@ -41,12 +43,12 @@ const cut = (o: DrainOptions, log: (msg: string) => void) => {
 };
 
 /** Drains `target`; resolves 'drained' when no turn is left, 'timeout' when a finite deadline aborted the rest. */
-export async function drain(target: DrainTarget, o: DrainOptions): Promise<'drained' | 'timeout'> {
+export async function drain(target: DrainTarget, o: DrainOptions, reason: DrainReason = 'restart'): Promise<'drained' | 'timeout'> {
   const sleep = o.sleep ?? defaultSleep;
   const now = o.now ?? (() => Date.now());
   const log = o.log ?? (() => {});
   const pollMs = o.pollMs ?? 1000;
-  target.drain();
+  target.drain(reason);
   const deadline = now() + o.maxMs;
   let lastLogged = -1;
   for (;;) {
@@ -84,6 +86,8 @@ export type SignalHost = { on(sig: NodeJS.Signals, fn: () => void): unknown };
 export function installGracefulShutdown(host: SignalHost, target: DrainTarget, o: DrainOptions & { exit: (reason: string) => void; onDrain?: () => void }): { draining: () => boolean; request: (reason: string) => void; force: (reason: string) => boolean } {
   let draining = false;
   let exited = false;
+  /** SIGTERM (launchd stop, or ai-msg service restart) and SIGINT promise no restart; SIGUSR2 and the UI's 지금 재시작 do. */
+  const reasonOf = (sig: string): DrainReason => (sig === 'SIGTERM' || sig === 'SIGINT' ? 'stop' : 'restart');
   const log = o.log ?? (() => {});
   const exit = (reason: string) => { if (exited) return; exited = true; o.exit(reason); };
   /** Set once an abort-now has started: a further signal while its turns settle exits at once. */
@@ -96,7 +100,7 @@ export function installGracefulShutdown(host: SignalHost, target: DrainTarget, o
     if (settling) { if (fromSignal) exit(sig); return; }
     settling = true;
     log(`deck: ${sig} — 기다리지 않고 종료합니다`);
-    target.drain();
+    target.drain(reasonOf(sig));
     cut(o, log);
     target.abortAll();
     if (target.activeTurns() === 0) { exit(sig); return; }
@@ -114,7 +118,7 @@ export function installGracefulShutdown(host: SignalHost, target: DrainTarget, o
     draining = true;
     try { o.onDrain?.(); } catch (err) { log(`deck: 종료 준비 기록 실패 — ${errText(err)}`); }
     log(`deck: ${sig} — 새 턴을 받지 않고 진행 중인 턴과 살아 있는 백그라운드 작업을 기다린 뒤 종료합니다 — 작업 없는 대기 프로세스는 바로 끊음 (다시 보내면 즉시 종료)`);
-    void drain(target, o).then((r) => exit(`${sig}:${r}`), () => exit(`${sig}:error`));
+    void drain(target, o, reasonOf(sig)).then((r) => exit(`${sig}:${r}`), () => exit(`${sig}:error`));
   };
   host.on('SIGTERM', () => graceful('SIGTERM'));
   host.on('SIGUSR2', () => graceful('SIGUSR2'));

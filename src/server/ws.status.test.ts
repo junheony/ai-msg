@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
-import type { ServerMessage } from '../shared/protocol';
+import { HEARTBEAT_MS, type ServerMessage } from '../shared/protocol';
 import { cookieValueFor } from './auth';
 import { ClaudeEngine } from './engine/ClaudeEngine';
 import { fakeClaudeCli, cli } from './engine/claudeCli/fakeClaudeCli';
@@ -17,7 +17,7 @@ import { SettingsStore } from './settings';
 import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
 import { UsageService } from './usage/UsageService';
-import { attachWebSocket } from './ws';
+import { DRAINING_MESSAGE, attachWebSocket } from './ws';
 import { rootsOf, testRegistry } from '../shared/accounts.testkit';
 
 const TOKEN = 'e'.repeat(64);
@@ -173,5 +173,49 @@ describe('ws: server status and 다음 턴 미리보기', () => {
     expect(await late.next('activity')).toMatchObject({ draining: true, serverStartedAt: 12345 });
     await c.close();
     await late.close();
+  });
+
+  it('drain(stop): the refusal and activity say the server is stopping, not restarting', async () => {
+    const srv = await makeServer(7);
+    const c = await client(srv);
+    await c.next('hello');
+    srv.wsApi.drain('stop');
+    expect(await c.next('error', (m) => m.code === 'draining')).toMatchObject({ message: '서버가 멈추는 중입니다 — 다시 켜지면 보내지 못한 메시지를 이어서 보냅니다' });
+    expect(await c.next('activity', (m) => m.draining === true)).toMatchObject({ drainReason: 'stop' });
+    await c.close();
+  });
+
+  it('drain() (restart): activity says drainReason restart, the refusal keeps the restart wording', async () => {
+    const srv = await makeServer(8);
+    const c = await client(srv);
+    await c.next('hello');
+    srv.wsApi.drain();
+    expect((await c.next('error', (m) => m.code === 'draining')).message).toBe(DRAINING_MESSAGE);
+    expect(await c.next('activity', (m) => m.draining === true)).toMatchObject({ drainReason: 'restart' });
+    await c.close();
+  });
+});
+
+describe('ws: heartbeat', () => {
+  it('announced as a feature; beats every HEARTBEAT_MS only to a socket that asked, and stops when it closes', async () => {
+    // Only intervals are faked (sockets and timeouts stay real): the server's beat moves with vi.advanceTimersByTime.
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const srv = await makeServer(9);
+      const asked = await client(srv);
+      const quiet = await client(srv);
+      expect((await asked.next('hello')).features).toContain('heartbeat');
+      await quiet.next('hello');
+      asked.send({ type: 'heartbeat' });
+      await new Promise((r) => setTimeout(r, 50)); // the subscribe reaches the server
+      vi.advanceTimersByTime(HEARTBEAT_MS);
+      await asked.next('heartbeat');
+      vi.advanceTimersByTime(HEARTBEAT_MS);
+      await asked.next('heartbeat');
+      await new Promise((r) => setTimeout(r, 50));
+      expect(quiet.got.some((m) => m.type === 'heartbeat')).toBe(false);
+      await asked.close();
+      await quiet.close();
+    } finally { vi.useRealTimers(); }
   });
 });

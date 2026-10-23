@@ -15,6 +15,8 @@ import { SetupWizard } from './components/SetupWizard';
 import { getSetup } from './setupApi';
 import { readHashToken } from './loginHash';
 import { Toasts, type ToastItem } from './components/Toasts';
+import { RETRY_CONNECTION_EVENT } from './components/QueueChips';
+import { describeError } from './errorText';
 import { SplitIcon } from './components/icons';
 import { postPin, postPinOrder, postSessionIcon } from './pins';
 import { findHitElement } from './scrollToHit';
@@ -41,7 +43,8 @@ import { FIND_EVENT } from './components/FindBar';
 
 /** Disconnected this long → the 서버에 연결할 수 없어요 bar (short blips during a restart stay at 재연결 중…). */
 const DOWN_NOTICE_MS = 20_000;
-const DOWN_TICK_MS = 10_000;
+/** A drop shorter than this (a blip, a phone waking) shows nothing but the dot; past it the one-line 다시 연결하는 중… bar. */
+const RECONNECT_NOTICE_MS = 3_000;
 /** A language pick reloads the page once the server echoes `settings`, or after this long without it. */
 const SETTINGS_ACK_MS = 3_000;
 /** Hidden sidebar peek: dwell on the left edge this long before it slides out; this long outside it before it goes. */
@@ -167,16 +170,22 @@ export function App() {
   const sock = useRef<ReturnType<typeof createSocket> | null>(null);
   /** A language pick waiting for the server's `settings` echo before the page reloads (SettingsView onLanguage). */
   const settingsAck = useRef<(() => void) | null>(null);
-  // Down for a while: the header dot alone says nothing (on a phone it is all there is), so after DOWN_NOTICE_MS a bar
-  // says since when the server stopped answering and offers 다시 시도. `now` ticks only while disconnected.
+  // Down: the header dot alone says nothing (on a phone it is all there is), so after RECONNECT_NOTICE_MS a one-line bar
+  // in the flow (it pushes the body down, never covers it) says 다시 연결하는 중… (or 서버를 다시 시작하는 중… when the
+  // server announced a restart), and after DOWN_NOTICE_MS since when it stopped answering. `now` moves at those two marks.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (state.connected || state.disconnectedSince === null) return;
+    const since = state.disconnectedSince;
     setNow(Date.now());
-    const t = setInterval(() => setNow(Date.now()), DOWN_TICK_MS);
-    return () => clearInterval(t);
+    const ts = [RECONNECT_NOTICE_MS, DOWN_NOTICE_MS].map((ms) => setTimeout(() => setNow(Date.now()), Math.max(0, since + ms - Date.now())));
+    return () => ts.forEach(clearTimeout);
   }, [state.connected, state.disconnectedSince]);
-  const downSince = !state.connected && state.disconnectedSince !== null && now - state.disconnectedSince >= DOWN_NOTICE_MS ? state.disconnectedSince : null;
+  const downFor = !state.connected && state.disconnectedSince !== null ? now - state.disconnectedSince : -1;
+  const downSince = downFor >= DOWN_NOTICE_MS ? state.disconnectedSince : null;
+  const connBar = downSince !== null ? ui().common.connDown(hhmm(downSince))
+    : downFor >= RECONNECT_NOTICE_MS ? (state.draining && state.drainReason !== 'stop' ? ui().common.connRestarting : ui().common.connReconnecting)
+    : null;
   const retryNow = () => { sock.current?.retry(); setNow(Date.now()); };
   const latest = useRef(state);
   latest.current = state;
@@ -304,8 +313,9 @@ export function App() {
   const toastSeq = useRef(0);
   useEffect(() => {
     if (state.error === null) return;
-    const text = state.error;
-    setToasts((t) => [...t, { id: ++toastSeq.current, text, kind: 'error' }]);
+    // A raw code (error_during_execution, an API's English) reads as a sentence; the original folds underneath.
+    const { text, raw } = describeError(state.error);
+    setToasts((t) => [...t, { id: ++toastSeq.current, text, kind: 'error', ...(raw !== null ? { detail: raw } : {}) }]);
     dispatch({ type: 'dismiss_error' });
   }, [state.error]);
   const dismissToast = useCallback((id: number) => setToasts((t) => t.filter((x) => x.id !== id)), []);
@@ -445,11 +455,14 @@ export function App() {
           if (p.activeTurnId && msg.running.some((r) => r.turnId === p.activeTurnId)) sock.current?.send({ type: 'watch_turn', turnId: p.activeTurnId });
         }
       }
-    }, (value) => { if (!value) tracker.cancel(); dispatch({ type: 'connected', value, at: Date.now() }); }, () => setAuthed(false));
+    }, (value) => { if (!value) tracker.cancel(); dispatch({ type: 'connected', value, at: Date.now() }); }, () => setAuthed(false), { heartbeat: () => has('heartbeat') });
+    // QueueChips' 다시 보내기 (offline): connect now instead of sitting out the backoff wait.
+    const onRetry = () => sock.current?.retry();
+    window.addEventListener(RETRY_CONNECTION_EVENT, onRetry);
     const onVis = () => { if (document.hidden) return; sock.current?.wake(); tracker.visible(); };
     document.addEventListener('visibilitychange', onVis);
     window.addEventListener('online', onVis);
-    return () => { document.removeEventListener('visibilitychange', onVis); window.removeEventListener('online', onVis); tracker.cancel(); catchup.current = null; sock.current?.close(); };
+    return () => { document.removeEventListener('visibilitychange', onVis); window.removeEventListener('online', onVis); window.removeEventListener(RETRY_CONNECTION_EVENT, onRetry); tracker.cancel(); catchup.current = null; sock.current?.close(); };
   }, [authed]);
 
   // Only once this socket's hello is in: a send between onopen and hello would be requeued by that hello.
@@ -1313,6 +1326,7 @@ export function App() {
   return (
     <AccountsContext value={accounts}>
     <div className="app">
+      <a className="skip-link" href="#main" onClick={(e) => { e.preventDefault(); bodyRef.current?.focus(); }}>{ui().common.skipToMain}</a>
       <header className="topbar">
         {phone && <button type="button" className="menu" aria-label="메뉴" aria-expanded={drawer} onClick={() => setDrawer((d) => !d)}>☰</button>}
         {/* Tablet / unfolded (721–1100px, CSS only shows it there): a visible way to fold the sidebar away without ⌘\. */}
@@ -1344,10 +1358,10 @@ export function App() {
         </div>
       </header>
       <div className="usage-strip-slot" ref={setStripRow} />
-      {downSince !== null && (
+      {connBar !== null && (
         <div className="conn-down" role="status">
-          <span>서버에 연결할 수 없어요 · {hhmm(downSince)}부터 — 연결되면 자동으로 이어집니다</span>
-          <button type="button" className="text-btn" onClick={retryNow}>다시 시도</button>
+          <span title={connBar}>{connBar}</span>
+          <button type="button" className="text-btn" onClick={retryNow}>{ui().common.retry}</button>
         </div>
       )}
       {setupBanner && !setupOpen && (
@@ -1389,7 +1403,7 @@ export function App() {
       )}
       {newBuild && <button type="button" className="update-pill" onClick={() => location.reload()}>새 버전이 있어요 · 새로고침</button>}
       <Toasts toasts={toasts} onDismiss={dismissToast} aboveComposer />
-      <div ref={bodyRef} className="body">
+      <div ref={bodyRef} className="body" id="main" tabIndex={-1}>
         <div ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" data-testid="cards-live" />
         {phone && drawer && <div className="drawer-backdrop" onClick={() => setDrawer(false)} />}
         {peekable && <div className="sidebar-hotzone" data-testid="sidebar-hotzone" aria-hidden="true" onMouseEnter={peek ? undefined : armPeek} onMouseLeave={() => { unlatchPeek(); if (!peek) clearPeekTimer(); }} />}

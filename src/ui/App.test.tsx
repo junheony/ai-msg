@@ -5,9 +5,10 @@ import type { ClientMessage, ServerMessage } from '../shared/protocol';
 
 Element.prototype.scrollIntoView = () => {};
 
-const sock = vi.hoisted(() => ({ frames: [] as unknown[], onMessage: null as ((m: unknown) => void) | null, onStatus: null as ((v: boolean) => void) | null, retries: 0 }));
+const sock = vi.hoisted(() => ({ frames: [] as unknown[], onMessage: null as ((m: unknown) => void) | null, onStatus: null as ((v: boolean) => void) | null, retries: 0, opts: null as { heartbeat?: () => boolean } | null }));
 vi.mock('./ws', () => ({
-  createSocket: (onMessage: (m: unknown) => void, onStatus: (v: boolean) => void) => {
+  createSocket: (onMessage: (m: unknown) => void, onStatus: (v: boolean) => void, _onUnauthed?: () => void, opts?: { heartbeat?: () => boolean }) => {
+    sock.opts = opts ?? null;
     sock.onMessage = onMessage;
     sock.onStatus = onStatus;
     onStatus(true);
@@ -1198,6 +1199,66 @@ describe('App boot', () => {
     expect(screen.queryByText(/서버에 연결할 수 없어요/)).toBeNull();
     expect(screen.queryByTestId('act-conn')).toBeNull();
     expect(dot.classList.contains('lvl-down')).toBe(false);
+  });
+});
+
+describe('App connection bar (D1)', () => {
+  beforeEach(() => { localStorage.clear(); sock.frames = []; sock.onMessage = null; sock.retries = 0; vi.useFakeTimers({ shouldAdvanceTime: true }); vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 }))); });
+  afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+  const bar = () => document.querySelector('.conn-down');
+
+  it('a drop past 3 s shows one line, 다시 연결하는 중…, in the flow above the body; reconnecting clears it', async () => {
+    await boot();
+    act(() => sock.onStatus!(false));
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    expect(bar()).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_100); });
+    expect(bar()!.textContent).toContain('다시 연결하는 중…');
+    // Pushes the body down (a sibling before it in the flow), never a floating layer.
+    expect(bar()!.compareDocumentPosition(document.getElementById('main')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(within(bar() as HTMLElement).getByRole('button', { name: '다시 시도' }));
+    expect(sock.retries).toBe(1);
+    act(() => sock.onStatus!(true));
+    expect(bar()).toBeNull();
+  });
+
+  it('after a restart notice (drain) the bar says the server is restarting; a stop (SIGTERM) reads as a plain drop', async () => {
+    await boot();
+    server({ type: 'activity', sessions: [], draining: true, drainReason: 'restart' } as ServerMessage);
+    act(() => sock.onStatus!(false));
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_100); });
+    expect(bar()!.textContent).toContain('서버를 다시 시작하는 중…');
+    act(() => sock.onStatus!(true));
+    server({ type: 'activity', sessions: [], draining: true, drainReason: 'stop' } as ServerMessage);
+    act(() => sock.onStatus!(false));
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_100); });
+    expect(bar()!.textContent).toContain('다시 연결하는 중…');
+  });
+
+  it('the heartbeat watch is asked only of a server with the feature', async () => {
+    await boot();
+    expect(sock.opts?.heartbeat?.()).toBe(false);
+    cleanup();
+    await boot(['heartbeat']);
+    expect(sock.opts?.heartbeat?.()).toBe(true);
+  });
+
+  it('본문으로 건너뛰기: the first thing Tab reaches, moves focus to the body', async () => {
+    await boot();
+    const skip = screen.getByRole('link', { name: '본문으로 건너뛰기' });
+    expect(document.querySelector('.app')!.firstElementChild).toBe(skip);
+    fireEvent.click(skip);
+    expect(document.activeElement).toBe(document.getElementById('main'));
+  });
+
+  it('a raw error code shows as a sentence, the original folded under it', async () => {
+    await boot();
+    server({ type: 'error', turnId: null, message: 'error_during_execution' } as ServerMessage);
+    const t = screen.getByRole('alert');
+    expect(t.textContent).toContain('AI 가 작업하다 오류로 멈췄어요');
+    const raw = t.querySelector('details')!;
+    expect(raw.open).toBe(false);
+    expect(raw.textContent).toContain('error_during_execution');
   });
 });
 

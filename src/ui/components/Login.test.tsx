@@ -8,7 +8,7 @@ afterEach(cleanup);
 describe('Login', () => {
   it('one plain line up front; the command lives only behind the 토큰은 어디 있나요? fold', () => {
     const { container } = render(<Login onLoggedIn={() => {}} />);
-    expect(screen.getByText('이 컴퓨터의 deck 이 만든 로그인 토큰을 붙여 넣으세요.')).toBeTruthy();
+    expect(screen.getByText('이 컴퓨터의 AI-MSG 가 만든 로그인 토큰을 붙여 넣으세요.')).toBeTruthy();
     const fold = container.querySelector('details.login-where') as HTMLDetailsElement;
     expect(fold.open).toBe(false);
     expect(fold.querySelector('code')?.textContent).toBe('ai-msg login-url');

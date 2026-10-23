@@ -1,4 +1,4 @@
-import type { ClientMessage, ServerMessage } from '../shared/protocol';
+import { HEARTBEAT_TIMEOUT_MS, type ClientMessage, type ServerMessage } from '../shared/protocol';
 
 /** Server message kinds beyond the base set this UI handles: told with every open_session (docs/protocol.md rule 3). */
 const ACCEPTS = ['sandbox', 'turn_queued'];
@@ -12,6 +12,8 @@ export function createSocket(
   onMessage: (m: ServerMessage) => void,
   onStatus: (connected: boolean) => void,
   onUnauthed: () => void = () => {},
+  /** `heartbeat`: asked right after each hello — true (the server has the 'heartbeat' feature) subscribes and arms a watchdog that drops a socket silent for `timeoutMs` (default HEARTBEAT_TIMEOUT_MS). An older server: no watch. */
+  opts: { heartbeat?: () => boolean; timeoutMs?: number } = {},
 ): { /** `false`: not connected, nothing sent. */ send(m: ClientMessage): boolean; /** Drops the current socket (it stopped answering) and connects anew, without waiting for its close. */ reconnect(): void; /** The page is back in view or the network is back: skips the reconnect wait (or the check before it) and connects now; nothing when connected or connecting. */ wake(): void; /** The user asked (다시 시도): like wake(), but a socket stuck in CONNECTING is dropped for a fresh one instead of being waited on. */ retry(): void; close(): void } {
   let ws: WebSocket | null = null;
   let closed = false;
@@ -23,13 +25,37 @@ export function createSocket(
   /** wake() came during that check: connect as soon as it answers, without waiting. */
   let wakeRequested = false;
   const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+  /** The heartbeat watchdog, while this socket's server beats: reset by every message, reconnects when it runs out. */
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  let beating = false;
+  const stopWatch = () => { beating = false; if (watchdog !== undefined) { clearTimeout(watchdog); watchdog = undefined; } };
+  const arm = () => {
+    if (!beating) return;
+    if (watchdog !== undefined) clearTimeout(watchdog);
+    watchdog = setTimeout(() => { watchdog = undefined; reconnect(); }, opts.timeoutMs ?? HEARTBEAT_TIMEOUT_MS);
+  };
 
   const open = () => {
     if (closed) return;
     ws = new WebSocket(url);
     ws.onopen = () => { delay = 1000; onStatus(true); };
-    ws.onmessage = (ev) => { try { onMessage(JSON.parse(String(ev.data)) as ServerMessage); } catch { /* ignore */ } };
+    const self = ws;
+    ws.onmessage = (ev) => {
+      let m: ServerMessage;
+      try { m = JSON.parse(String(ev.data)) as ServerMessage; } catch { return; }
+      arm();
+      // The beat only keeps the watchdog quiet: nothing else to do with it.
+      if (m.type === 'heartbeat') return;
+      try { onMessage(m); } catch { /* ignore */ }
+      // onMessage set the hello's features: subscribe (rule 3 — the server beats only for a socket that asked) and start watching.
+      if (m.type === 'hello' && ws === self && self.readyState === WebSocket.OPEN && opts.heartbeat?.()) {
+        self.send(JSON.stringify({ type: 'heartbeat' } satisfies ClientMessage));
+        beating = true;
+        arm();
+      }
+    };
     ws.onclose = () => {
+      stopWatch();
       onStatus(false);
       if (closed) return;
       checking = true;
@@ -55,6 +81,7 @@ export function createSocket(
     if (closed || !ws) return;
     const old = ws;
     old.onopen = old.onmessage = old.onclose = old.onerror = null;
+    stopWatch();
     old.close();
     // A wait set by the old socket's close must not open a second socket next to this one.
     clearWait();
@@ -82,6 +109,6 @@ export function createSocket(
       if (pending !== undefined || checking) { wake(); return; }
       reconnect();
     },
-    close() { closed = true; clearWait(); ws?.close(); },
+    close() { closed = true; clearWait(); stopWatch(); ws?.close(); },
   };
 }

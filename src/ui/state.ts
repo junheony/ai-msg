@@ -1,7 +1,7 @@
 import type { TaskInfo } from '../shared/tasks';
 import type { Account, Seat } from '../shared/accounts';
 import { contextWindowOf, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_GROK_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultGeminiSandbox, IMPORTED_DEFAULT_MODEL, isClaudeModel, isCodexModel, isGeminiModel, isGrokModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
-import { ACCEPTED_REFS_TTL_MS, type AccountInfo, type CommanderView, type DeckSettings, type ExperimentalSettings, type RefusalCode, type SessionFacts, type GeminiStatus, type GrokStatus, type RoutingPolicy, type ServerMessage, type SessionActivity, type TurnBadge, type TurnPrompt } from '../shared/protocol';
+import { ACCEPTED_REFS_TTL_MS, type AccountInfo, type CommanderView, type DeckSettings, type DrainReason, type ExperimentalSettings, type RefusalCode, type SessionFacts, type GeminiStatus, type GrokStatus, type RoutingPolicy, type ServerMessage, type SessionActivity, type TurnBadge, type TurnPrompt } from '../shared/protocol';
 import type { BgTaskInfo, TaskStatus, TaskUsage, TurnPhase } from '../shared/turn-types';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from '../shared/session-types';
 import type { UsageSnapshot } from '../shared/usage-types';
@@ -364,6 +364,8 @@ export type AppState = {
   recent: Record<string, ChatItem[]>;
   /** The server is waiting for running work before a restart (activity.draining). */
   draining: boolean;
+  /** Why it drains (activity.drainReason): 'stop' = shutting down, not coming straight back. Absent/null = not draining or an older server. */
+  drainReason?: DrainReason | null;
   /** The connected server process's start (activity.serverStartedAt); null until one said. */
   serverStartedAt: number | null;
   /** Set when a reconnect found a different server process (its start, ms) — the 재시작됨 chip; null once dismissed. */
@@ -1201,6 +1203,7 @@ function dropSuggestion(suggestions: AppState['suggestions'], sessionId: string 
 
 function onServer(state: AppState, msg: ServerMessage): AppState {
   switch (msg.type) {
+    case 'heartbeat': return state;
     case 'auto_resume': return { ...state, autoResumes: withAutoResume(state.autoResumes, msg.sessionId, msg.atMs) };
     case 'prompt_suggestion': return msg.sessionId ? { ...state, suggestions: { ...state.suggestions, [msg.sessionId]: msg.text } } : state;
     case 'hello': {
@@ -1319,7 +1322,7 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       // An older server sends no serverStartedAt: nothing is compared and no 재시작됨 chip shows.
       const at = typeof msg.serverStartedAt === 'number' ? msg.serverStartedAt : null;
       const restarted = at !== null && state.serverStartedAt !== null && at !== state.serverStartedAt;
-      return { ...state, activity: msg.sessions, unread: add.length ? [...state.unread, ...add] : state.unread, panes: mapPanes(state, msg), draining: msg.draining === true, serverStartedAt: at ?? state.serverStartedAt, restartedAt: restarted ? at : state.restartedAt };
+      return { ...state, activity: msg.sessions, unread: add.length ? [...state.unread, ...add] : state.unread, panes: mapPanes(state, msg), draining: msg.draining === true, drainReason: msg.draining ? (msg.drainReason ?? 'restart') : null, serverStartedAt: at ?? state.serverStartedAt, restartedAt: restarted ? at : state.restartedAt };
     }
     case 'route_preview': {
       const { type: _t, ...preview } = msg;
@@ -1393,7 +1396,12 @@ export function reducer(state: AppState, action: Action): AppState {
       const records = action.sentFiles;
       return { ...next, panes: next.panes.map((p) => (p.session?.sessionId === msg.sessionId ? { ...p, items: restoreSentFiles(p.items, records) } : p)) };
     }
-    case 'connected': return { ...state, connected: action.value, disconnectedSince: action.value ? null : state.disconnectedSince ?? action.at ?? Date.now(), ...(action.value ? {} : { ready: false }) };
+    case 'connected': {
+      // A send still waiting for its turn_started when the socket drops goes back into the queue now (안 보냄), not at the
+      // next hello — so the pane does not sit on a frozen 확인 timer while offline. The hello path checks the history as before.
+      const lost = action.value ? null : state.panes.map((p) => (p.awaitingStart && p.awaitingRef !== null && p.awaitingSend ? { ...requeue(p, p.awaitingSend, 'lost'), ...(p.activeTurnId === null ? { runStartedAt: null, progress: null } : {}) } : p));
+      return { ...state, connected: action.value, disconnectedSince: action.value ? null : state.disconnectedSince ?? action.at ?? Date.now(), ...(action.value ? {} : { ready: false }), ...(lost && lost.some((p, i) => p !== state.panes[i]) ? { panes: lost } : {}) };
+    }
     // Prompts stay: they belong to their own session and the card says which (review I3).
     case 'open': {
       // Opening the session the pane already shows (a reload of it) keeps its queue and pending send as they are.

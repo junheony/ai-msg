@@ -1120,6 +1120,27 @@ describe('message queue (ux-state)', () => {
       expect(nextQueued(pane(s))?.text).toBe('계속');
     });
 
+    it('socket drops while 확인 waits: back in the queue at once (안 보냄), no frozen timer; the next hello checks the history as before', () => {
+      let s = play([history(['old'])], openedOn('s1'));
+      s = reducer(s, { type: 'sent', text: '계속', clientRef: 'r1' });
+      expect(pane(s).runStartedAt).not.toBeNull();
+      s = reducer(s, { type: 'connected', value: false, at: 1 });
+      expect(pane(s).awaitingStart).toBe(false);
+      expect(pane(s).runStartedAt).toBeNull();
+      expect(pane(s).items.filter((i) => i.kind === 'user').map((i) => (i as { text: string }).text)).toEqual(['old']);
+      expect(pane(s).queue.map((q) => [q.text, q.restart, q.maybeSent])).toEqual([['계속', 'hello', 1]]);
+      s = play([hello], s);
+      expect(pane(s).queue).toHaveLength(1); // not queued twice
+      s = play([history(['old'])], s);
+      expect(nextQueued(pane(s))?.text).toBe('계속');
+    });
+
+    it('a disconnect with nothing waiting leaves the panes as they are', () => {
+      const s0 = play([history(['old'])], openedOn('s1'));
+      const s = reducer(s0, { type: 'connected', value: false, at: 1 });
+      expect(s.panes).toBe(s0.panes);
+    });
+
     it('socket lost in a new session (it may have made one): queued paused, never sent by itself', () => {
       let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'new' });
       s = reducer(s, { type: 'sent', text: 'first', clientRef: 'r1' });
@@ -2045,5 +2066,17 @@ describe('reducer: prompt suggestions (volatile, per session)', () => {
     expect(same.suggestions).toEqual({ s1: '하나', s2: '둘' });
     const moved = reducer(s, { type: 'open', sessionId: 's3', cwd: '/w', title: 't' });
     expect(moved.suggestions).toEqual({ s2: '둘' });
+  });
+});
+
+describe('activity.drainReason', () => {
+  it('kept while draining (absent = an older server: restart), cleared when the drain ends; heartbeat changes nothing', () => {
+    let s = reducer(initialState, { type: 'server', msg: { type: 'activity', sessions: [], draining: true, drainReason: 'stop' } });
+    expect([s.draining, s.drainReason]).toEqual([true, 'stop']);
+    s = reducer(s, { type: 'server', msg: { type: 'activity', sessions: [], draining: true } });
+    expect(s.drainReason).toBe('restart');
+    s = reducer(s, { type: 'server', msg: { type: 'activity', sessions: [] } });
+    expect([s.draining, s.drainReason]).toEqual([false, null]);
+    expect(reducer(s, { type: 'server', msg: { type: 'heartbeat' } })).toBe(s);
   });
 });

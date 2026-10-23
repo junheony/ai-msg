@@ -161,4 +161,55 @@ describe('createSocket', () => {
     await vi.advanceTimersByTimeAsync(5000);
     expect(FakeWS.instances).toHaveLength(1);
   });
+
+  describe('heartbeat', () => {
+    const hello = { type: 'hello' } as const;
+    const deliver = (w: FakeWS, m: object) => w.onmessage?.({ data: JSON.stringify(m) });
+    const opened = (opts: Parameters<typeof createSocket>[3], onMessage: (m: unknown) => void = () => {}) => {
+      const sock = createSocket(onMessage, () => {}, () => {}, opts);
+      const w = FakeWS.instances[0]!;
+      w.readyState = FakeWS.OPEN;
+      w.onopen?.();
+      return { sock, w };
+    };
+
+    it('a heartbeat server: subscribes after hello, beats keep the socket, 25 s of silence drops it for a new one', () => {
+      const got: unknown[] = [];
+      const { w } = opened({ heartbeat: () => true }, (m) => got.push(m));
+      deliver(w, hello);
+      expect(w.sent.map((d) => JSON.parse(d))).toEqual([{ type: 'heartbeat' }]);
+      // Beats every 10 s: never dropped, and never handed on.
+      for (let i = 0; i < 5; i++) { vi.advanceTimersByTime(10_000); deliver(w, { type: 'heartbeat' }); }
+      expect(FakeWS.instances).toHaveLength(1);
+      expect(got).toEqual([hello]);
+      // Any other message counts as life too.
+      vi.advanceTimersByTime(20_000);
+      deliver(w, { type: 'activity', sessions: [] });
+      vi.advanceTimersByTime(20_000);
+      expect(FakeWS.instances).toHaveLength(1);
+      // Silent for 25 s: closed and reconnected (the old socket's late events go nowhere).
+      vi.advanceTimersByTime(5_000);
+      expect(FakeWS.instances).toHaveLength(2);
+      expect(w.onmessage).toBeNull();
+    });
+
+    it('an older server (no heartbeat feature): nothing sent, no watch — a quiet socket stays', () => {
+      const { w } = opened({ heartbeat: () => false });
+      deliver(w, hello);
+      expect(w.sent).toEqual([]);
+      vi.advanceTimersByTime(120_000);
+      expect(FakeWS.instances).toHaveLength(1);
+    });
+
+    it('no watch before hello, and none after the socket closed or close()', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => ({ status: 200, ok: true })));
+      const { sock, w } = opened({ heartbeat: () => true, timeoutMs: 1000 });
+      vi.advanceTimersByTime(5000);
+      expect(FakeWS.instances).toHaveLength(1);
+      deliver(w, hello);
+      sock.close();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(FakeWS.instances).toHaveLength(1);
+    });
+  });
 });

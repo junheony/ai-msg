@@ -252,7 +252,7 @@ export const SHUTDOWN_ABORTED = '서버가 다시 시작되어 중단됨';
 /** The error text of an aborted turn: the user's stop (interrupt, 지금 전송; also a recycle) vs. the server shutting down. */
 export const abortedText = (signal: AbortSignal): string => (signal.reason === SHUTDOWN_ABORT ? SHUTDOWN_ABORTED : ABORTED);
 /** Told to the model once, with the first prompt of a brand-new session (systemNote; never shown in the pane). */
-export const DECK_INTRO_NOTE = '[deck] 사용자는 deck 웹 UI(대개 폰·다른 기기의 브라우저)로 이 대화를 봅니다. 파일이나 URL 을 open/xdg-open/code 로 띄우지 마세요 — 서버에서만 열리고 사용자에게는 보이지 않습니다. 보여줄 파일은 경로를 인라인 코드로 적으면 사용자가 클릭해 사이드 패널에서 봅니다(세션 폴더 안의 파일만; 밖의 파일은 핵심 내용을 답장에 옮기세요).';
+export const DECK_INTRO_NOTE = '[deck] 사용자는 AI-MSG 웹 UI(대개 폰·다른 기기의 브라우저)로 이 대화를 봅니다. 파일이나 URL 을 open/xdg-open/code 로 띄우지 마세요 — 서버에서만 열리고 사용자에게는 보이지 않습니다. 보여줄 파일은 경로를 인라인 코드로 적으면 사용자가 클릭해 사이드 패널에서 봅니다(세션 폴더 안의 파일만; 밖의 파일은 핵심 내용을 답장에 옮기세요).';
 
 /** A Grok turn's mode moved into or out of plan mid-turn (other modes apply to the next request at once). */
 export const GROK_MODE_NEXT_TURN_NOTICE = 'Grok 은 다음 턴부터 계획 모드 변경을 씁니다';
@@ -2293,10 +2293,10 @@ export class TurnRunner {
         // hops used up — the user's next message, which then carries the note.
         const auto = !!p.bgCapHop;
         early.push(`${at} ${cut.cause}로 백그라운드 작업 ${n}개가 끊겼습니다: ${cut.tasks.join(', ')} — ${auto ? 'AI-MSG 가 자동으로 이어갑니다' : '모델에게 알렸습니다'}`);
-        systemNote = `[deck] 이 세션의 이전 프로세스는 ${at} 에 ${cut.cause}로 종료되었고, 그때 돌고 있던 백그라운드 작업 ${n}개는 끊겨 결과가 오지 않습니다: ${list}. ${auto ? '이 턴은 deck 이 자동으로 이어 보낸 것입니다(사용자가 보낸 메시지가 아닙니다). ' : ''}끊긴 작업이 파일 등에 남긴 부분 결과가 있으면 확인하고, 필요한 작업은 더 작은 단위로 다시 띄우거나 직접 마무리해 보고까지 끝내세요. 끊겼던 사실을 사용자에게 한 줄로 알리세요.`;
+        systemNote = `[deck] 이 세션의 이전 프로세스는 ${at} 에 ${cut.cause}로 종료되었고, 그때 돌고 있던 백그라운드 작업 ${n}개는 끊겨 결과가 오지 않습니다: ${list}. ${auto ? '이 턴은 AI-MSG 가 자동으로 이어 보낸 것입니다(사용자가 보낸 메시지가 아닙니다). ' : ''}끊긴 작업이 파일 등에 남긴 부분 결과가 있으면 확인하고, 필요한 작업은 더 작은 단위로 다시 띄우거나 직접 마무리해 보고까지 끝내세요. 끊겼던 사실을 사용자에게 한 줄로 알리세요.`;
       } else if (!cut.cause) {
         early.push(`${at} 서버 재시작으로 백그라운드 작업 ${n}개가 끊겼습니다: ${cut.tasks.join(', ')} — 모델에게 알렸습니다`);
-        systemNote = `[deck] 이 세션의 이전 프로세스는 ${at} 에 deck 서버 재시작으로 종료되었고, 그때 돌고 있던 백그라운드 작업 ${n}개는 끊겨 결과가 오지 않습니다: ${list}. 필요한 작업은 다시 띄우고, 끊겼던 사실을 사용자에게 한 줄로 알리세요. 이미 다시 띄웠거나 더 필요 없으면 무시하세요.`;
+        systemNote = `[deck] 이 세션의 이전 프로세스는 ${at} 에 AI-MSG 서버 재시작으로 종료되었고, 그때 돌고 있던 백그라운드 작업 ${n}개는 끊겨 결과가 오지 않습니다: ${list}. 필요한 작업은 다시 띄우고, 끊겼던 사실을 사용자에게 한 줄로 알리세요. 이미 다시 띄웠거나 더 필요 없으면 무시하세요.`;
       } else if (n) {
         // A limit / auth failure of the held-open process (failoverAfterBackground): this turn runs on another account.
         early.push(`${at} ${cut.cause}로 백그라운드 작업 ${n}개가 끊겼습니다: ${cut.tasks.join(', ')} — 다른 계정에서 이어갑니다 (모델에게 알렸습니다)`);
