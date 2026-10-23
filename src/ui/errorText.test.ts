@@ -13,6 +13,17 @@ describe('describeError', () => {
     expect(describeError('rate_limit_error').text).toMatch(/요청이 너무 많아요/);
     expect(describeError('authentication_error: invalid x-api-key').text).toMatch(/로그인/);
     expect(describeError('read ECONNRESET').raw).toBe('read ECONNRESET');
+    expect(describeError('Request failed with status 401').text).toMatch(/로그인/);
+    expect(describeError('HTTP 429 Too Many Requests').text).toMatch(/요청이 너무 많아요/);
+    expect(describeError('API Error: 401 {"type":"error"}').text).toMatch(/로그인/);
+    expect(describeError('Request timed out.').text).toBe(describeError('ETIMEDOUT').text);
+  });
+
+  it('an ordinary tool error with a bare number or word in it is not taken for an API error', () => {
+    setLocale('ko');
+    for (const s of ['Expected 401 rows, got 400', 'line 429: unexpected token', 'Test timeout of 5000ms exceeded in authentication.spec.ts', 'unauthorized_user fixture missing']) {
+      expect(describeError(s)).toEqual({ text: s, raw: null });
+    }
   });
 
   it('an unknown bare code gets the generic sentence; prose and Korean pass through untouched', () => {

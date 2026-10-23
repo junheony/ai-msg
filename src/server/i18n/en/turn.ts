@@ -6,9 +6,11 @@ export const turn = {
   /** The new session's hidden context: what it takes over and an excerpt of the earlier conversation. */
   crossCarry: (from: string, excerpt: string) =>
     `[deck] This new session takes over a conversation the user was having with another AI (${from}): AI-MSG moved it here by itself because ${from} hit its usage limit. Below is an excerpt of the earlier conversation (tool calls left out, secrets masked). Answer this message, and tell the user in one line that you took over.\n\n${excerpt || '(no earlier conversation to excerpt)'}`,
-  /** A background continuation moved to another engine: the message it sends there. */
+  /** A send refused while the server gets ready to restart (drain). */
+  draining: 'The server is getting ready to restart — please send again in a moment',
   /** A send refused while the server shuts down (SIGTERM/SIGINT drain), not a restart. */
-  stopping: 'The server is stopping — messages that could not be sent go out once it is back',
+  stopping: 'The server is shutting down — messages that could not be sent go out once it is back',
+  /** A background continuation moved to another engine: the message it sends there. */
   crossContinue: 'Please continue.',
   crossCarried: 'Only a summary excerpt of the earlier conversation is carried over',
   crossNotCarried: 'The earlier conversation could not be carried over',

@@ -31,6 +31,28 @@ describe('QueueChips hold label', () => {
     expect(retry).toHaveBeenCalledTimes(1);
     expect(onResume).toHaveBeenCalledTimes(1);
   });
+  it('offline, an item that may have gone in reads 확인 중 — never 안 보냄 / 다시 보내기 (it could go in twice)', () => {
+    for (const extra of [{ maybeLost: true }, { restart: 'hello', maybeSent: 3 }, { lostSteer: 's1' }]) {
+      const maybe = { id: 'q3', text: 'maybe', attachments: [], ...extra } as unknown as QueueItem;
+      render(<QueueChips queue={[maybe]} paused onEdit={vi.fn()} onRemove={vi.fn()} onClear={vi.fn()} onResume={vi.fn()} connected={false} />);
+      expect(screen.getByText(/확인 중/)).toBeTruthy();
+      expect(screen.queryByText(/안 보냄/)).toBeNull();
+      expect(screen.queryByRole('button', { name: '다시 보내기' })).toBeNull();
+      cleanup();
+    }
+  });
+  it('다시 보내기 beside a maybe-sent item only reconnects: the queue stays paused, the mark stays', () => {
+    const onResume = vi.fn();
+    const retry = vi.fn();
+    window.addEventListener(RETRY_CONNECTION_EVENT, retry);
+    const maybe = { id: 'q4', text: 'maybe', attachments: [], maybeLost: true } as unknown as QueueItem;
+    const plain = { id: 'q5', text: 'refused', attachments: [] } as unknown as QueueItem;
+    render(<QueueChips queue={[maybe, plain]} paused onEdit={vi.fn()} onRemove={vi.fn()} onClear={vi.fn()} onResume={onResume} connected={false} />);
+    fireEvent.click(screen.getByRole('button', { name: '다시 보내기' }));
+    window.removeEventListener(RETRY_CONNECTION_EVENT, retry);
+    expect(retry).toHaveBeenCalledTimes(1);
+    expect(onResume).not.toHaveBeenCalled();
+  });
   it('connected: no 안 보냄 / 다시 보내기', () => {
     chips(true);
     expect(screen.queryByText(/안 보냄/)).toBeNull();

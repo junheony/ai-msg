@@ -173,9 +173,9 @@ export const QUEUE_KEY = 'deck.queues.v1';
  * A queued message (QueueItem minus its per-page id): `restart` = held back by a restarting server, sent after the reconnect;
  * `maybeSent` = may have gone in as that user message (QueueItem); `lostSteer` = a steer whose answer was lost; `ref` = the
  * clientRef it was sent with (checked against the server's acceptedRefs); `at` = when it was sent (ms); `kept` = came back
- * from a parked bucket (QueueItem).
+ * from a parked bucket (QueueItem); `maybeLost` = may have gone in where no history can tell (QueueItem).
  */
-export type PersistedQueueItem = { text: string; attachments: UploadedAttachment[]; restart?: true; maybeSent?: number; lostSteer?: string; ref?: string; at?: number; kept?: true };
+export type PersistedQueueItem = { text: string; attachments: UploadedAttachment[]; restart?: true; maybeSent?: number; lostSteer?: string; ref?: string; at?: number; kept?: true; maybeLost?: true };
 /**
  * A pane's queue, kept with its session so it only ever comes back into that session: `pane` = the pane it sat in
  * (null = parked: its pane left the session; a parked new session's comes back into the next new session in `cwd`).
@@ -207,6 +207,7 @@ function queueItem(x: unknown): PersistedQueueItem | null {
     ...(shortStr(x.ref, 64) && x.ref ? { ref: x.ref } : {}),
     ...(typeof x.at === 'number' && Number.isFinite(x.at) && x.at > 0 ? { at: x.at } : {}),
     ...(x.kept === true ? { kept: true as const } : {}),
+    ...(x.maybeLost === true ? { maybeLost: true as const } : {}),
   };
 }
 
@@ -238,6 +239,7 @@ function persistQueue(queue: QueueItem[]): PersistedQueueItem[] {
     ...(q.ref ? { ref: q.ref } : {}),
     ...(q.at !== undefined ? { at: q.at } : {}),
     ...(q.kept ? { kept: true as const } : {}),
+    ...(q.maybeLost ? { maybeLost: true as const } : {}),
   }));
 }
 
@@ -252,7 +254,7 @@ function awaiting(p: PaneState): { item: PersistedQueueItem; checkable: boolean 
   const checkable = !!p.session?.sessionId && a.n !== undefined && !a.branch;
   const item: PersistedQueueItem = {
     text: a.text, attachments: a.attachments.map(({ id, name, isImage }) => ({ id, name, size: 0, isImage })),
-    ...(checkable ? { restart: true as const, maybeSent: a.n! } : {}),
+    ...(checkable ? { restart: true as const, maybeSent: a.n! } : { maybeLost: true as const }),
     ref: p.awaitingRef, ...(a.at !== undefined ? { at: a.at } : {}),
   };
   return { item, checkable };

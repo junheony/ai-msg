@@ -86,7 +86,11 @@ export type SignalHost = { on(sig: NodeJS.Signals, fn: () => void): unknown };
 export function installGracefulShutdown(host: SignalHost, target: DrainTarget, o: DrainOptions & { exit: (reason: string) => void; onDrain?: () => void }): { draining: () => boolean; request: (reason: string) => void; force: (reason: string) => boolean } {
   let draining = false;
   let exited = false;
-  /** SIGTERM (launchd stop, or ai-msg service restart) and SIGINT promise no restart; SIGUSR2 and the UI's 지금 재시작 do. */
+  /**
+   * SIGTERM and SIGINT promise no restart; SIGUSR2 and the UI's 지금 재시작 do. A SIGTERM may still be a restart
+   * (install-launchd.sh, ai-msg service restart: launchd's KeepAlive starts it again) — it cannot tell, so 'stop' only
+   * means "no promise": its wording is neutral (서버가 꺼지는 중 — 다시 켜지면 …), the UI's bar a plain reconnect.
+   */
   const reasonOf = (sig: string): DrainReason => (sig === 'SIGTERM' || sig === 'SIGINT' ? 'stop' : 'restart');
   const log = o.log ?? (() => {});
   const exit = (reason: string) => { if (exited) return; exited = true; o.exit(reason); };

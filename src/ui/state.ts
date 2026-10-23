@@ -94,6 +94,8 @@ export type QueueItem = {
   at?: number;
   /** Came back from a parked bucket: parked again (not dropped) if the pane leaves the session once more. */
   kept?: true;
+  /** Lost with its socket where no history can tell (a new session, no ordinal, a branch): it may have gone in. Offline it reads 확인 중, never 안 보냄. */
+  maybeLost?: true;
 };
 
 /** The parked bucket of a session that has no id yet (its held messages come back into the next new session in that folder). */
@@ -185,7 +187,7 @@ function requeue(pane: PaneState, back: NonNullable<PaneState['awaitingSend']>, 
     : held ? { restart: 'hold' }
     : how === 'lost' && sid && back.n !== undefined ? { restart: 'hello', maybeSent: back.n }
     : null;
-  const item: QueueItem = { id: nextQueueId(), text: back.text, attachments: back.attachments.map((f) => ({ ...f, size: 0 })), ...mark, ...(pane.awaitingRef ? { ref: pane.awaitingRef } : {}), ...(back.at !== undefined ? { at: back.at } : {}) };
+  const item: QueueItem = { id: nextQueueId(), text: back.text, attachments: back.attachments.map((f) => ({ ...f, size: 0 })), ...mark, ...(how === 'lost' && !mark ? { maybeLost: true as const } : {}), ...(pane.awaitingRef ? { ref: pane.awaitingRef } : {}), ...(back.at !== undefined ? { at: back.at } : {}) };
   // A second draining refusal goes after the messages already held, so they keep their order.
   const at = held ? pane.queue.filter((q) => q.restart).length : 0;
   const queue = [...pane.queue.slice(0, at), item, ...pane.queue.slice(at)];

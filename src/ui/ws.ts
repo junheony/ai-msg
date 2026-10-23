@@ -2,6 +2,11 @@ import { HEARTBEAT_TIMEOUT_MS, type ClientMessage, type ServerMessage } from '..
 
 /** Server message kinds beyond the base set this UI handles: told with every open_session (docs/protocol.md rule 3). */
 const ACCEPTS = ['sandbox', 'turn_queued'];
+/** The watchdog's deadline is this many times longer while a history is on its way (review M2). */
+const HISTORY_GRACE = 4;
+/** A watchdog callback this late (ms) ran after a frozen tab woke: the socket gets LATE_GRACE_MS before it is dropped. */
+const LATE_SLACK_MS = 2_000;
+const LATE_GRACE_MS = 5_000;
 
 /**
  * Review M10: a browser cannot see the HTTP status of a refused upgrade, so after every close
@@ -25,24 +30,43 @@ export function createSocket(
   /** wake() came during that check: connect as soon as it answers, without waiting. */
   let wakeRequested = false;
   const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
-  /** The heartbeat watchdog, while this socket's server beats: reset by every message, reconnects when it runs out. */
+  /**
+   * The heartbeat watchdog, while this socket's server beats: reset by every message, reconnects when it runs out.
+   * Review M2: a big history frame on a slow line can take longer than the timeout (no beat gets past it), so while an
+   * open_session waits for its history the deadline is `HISTORY_GRACE` times longer; a callback that runs well past its
+   * time (the tab was frozen in the background, its queued messages not delivered yet) gives the socket `LATE_GRACE_MS`
+   * before it is dropped. A socket the watchdog replaced is not watched until its own hello (the first message) arrives.
+   */
   let watchdog: ReturnType<typeof setTimeout> | undefined;
   let beating = false;
+  /** open_session frames sent on this socket whose history has not come yet. */
+  let awaitingHistory = 0;
   const stopWatch = () => { beating = false; if (watchdog !== undefined) { clearTimeout(watchdog); watchdog = undefined; } };
+  const schedule = (ms: number, late: boolean) => {
+    const due = Date.now() + ms;
+    watchdog = setTimeout(() => {
+      watchdog = undefined;
+      if (!late && Date.now() - due > LATE_SLACK_MS) { schedule(LATE_GRACE_MS, true); return; }
+      reconnect();
+    }, ms);
+  };
   const arm = () => {
     if (!beating) return;
     if (watchdog !== undefined) clearTimeout(watchdog);
-    watchdog = setTimeout(() => { watchdog = undefined; reconnect(); }, opts.timeoutMs ?? HEARTBEAT_TIMEOUT_MS);
+    const ms = opts.timeoutMs ?? HEARTBEAT_TIMEOUT_MS;
+    schedule(awaitingHistory > 0 ? ms * HISTORY_GRACE : ms, false);
   };
 
   const open = () => {
     if (closed) return;
     ws = new WebSocket(url);
+    awaitingHistory = 0;
     ws.onopen = () => { delay = 1000; onStatus(true); };
     const self = ws;
     ws.onmessage = (ev) => {
       let m: ServerMessage;
       try { m = JSON.parse(String(ev.data)) as ServerMessage; } catch { return; }
+      if (m.type === 'history' && awaitingHistory > 0) awaitingHistory--;
       arm();
       // The beat only keeps the watchdog quiet: nothing else to do with it.
       if (m.type === 'heartbeat') return;
@@ -100,6 +124,7 @@ export function createSocket(
     send(m) {
       if (!ws || ws.readyState !== WebSocket.OPEN) return false;
       ws.send(JSON.stringify(m.type === 'open_session' ? { ...m, accepts: ACCEPTS } : m));
+      if (m.type === 'open_session') { awaitingHistory++; arm(); }
       return true;
     },
     reconnect,

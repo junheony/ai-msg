@@ -277,8 +277,6 @@ export const CATCHUP_IDLE_MS = 10 * 60_000;
 
 type Turn = RunningTurn & { /** As its turn_started said (absent until then). */ engine?: EngineKind; origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; /** 복제: the title the new session gets once it has an id. */ title?: string; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }>; retryHop?: number; /** Told the device it is going in (pendingRefs): run even if that socket closed. */ held?: true }[]; /** Refs of sends / steers handed to the process but not yet recorded as accepted (`history.pendingRefs`). */ pendingRefs: Set<string>; /** The foreign-write check a send to the held-open process waits on (shared by sends arriving together). */ outside: Promise<boolean> | null; /** Being ended because the conversation went on outside deck: sends wait in `afterRelease` for a new process. */ recycling: boolean; /** The last stream position this process stamped (0: none yet). */ seq: number; /** Its newest stamped events as sent, oldest first (see CATCHUP_KEEP_*). */ stream: { seq: number; data: string; bytes: number }[]; streamBytes: number; /** Drops `stream` once the process has sat idle (CATCHUP_IDLE_MS). */ streamIdle: ReturnType<typeof setTimeout> | null; /** ⚡ 빠르게: the process was started with fast mode (TurnRunner.fastTurn) — a send asking otherwise never joins it. */ fast: boolean; /** 다른 AI 로 이어가기: the sessions this turn moved away from, in order (Claude → GPT → Gemini: both; sends to any follow the turn). */ crossFrom?: string[]; /** …until the old turn `fromTurnId`'s result is out (the turn keeps the old session meanwhile). */ crossing?: { fromTurnId: string; from: string | null } };
 
-export const DRAINING_MESSAGE = '서버가 재시작을 준비 중입니다 — 잠시 뒤 다시 보내 주세요';
-
 export type WsHandle = {
   broadcast(msg: ServerMessage): void;
   broadcastIndex(): void;
@@ -354,7 +352,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   let draining = false;
   let drainReason: DrainReason = 'restart';
   /** What a send refused while draining is told (재시작 예고, or the server going down). */
-  const drainingMessage = () => (drainReason === 'stop' ? sm().turn.stopping : DRAINING_MESSAGE);
+  const drainingMessage = () => (drainReason === 'stop' ? sm().turn.stopping : sm().turn.draining);
   /** Sockets that asked for `heartbeat` ('heartbeat' feature). */
   const beating = new Set<WebSocket>();
   /**

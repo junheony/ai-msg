@@ -196,11 +196,12 @@ describe('persist (ux-state)', () => {
     const ui = parseUi({ v: 1, active: 0, collapsed: [], drawer: false, panes: [{ session: { sessionId: 's1', cwd: '/w', title: 't', engine: 'claude' } }] });
     const r = hydrate(initialState, ui, loadQueues(tab));
     expect(r.panes[0]!.queue[0]).toMatchObject({ text: 'in flight', restart: 'hold', maybeSent: 1, ref: 'r5', at: saved.queue[0]!.at });
-    // a new session's pending send cannot be checked: a plain item, the queue saved paused
+    // a new session's pending send cannot be checked: no hold, the queue saved paused, marked maybeLost (확인 중 offline)
     let n = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'n' });
     n = reducer(n, { type: 'sent', text: 'first', clientRef: 'r6' });
-    expect(snapshotQueues(n).queues[0]).toMatchObject({ sessionId: null, paused: true, queue: [{ text: 'first', ref: 'r6' }] });
+    expect(snapshotQueues(n).queues[0]).toMatchObject({ sessionId: null, paused: true, queue: [{ text: 'first', ref: 'r6', maybeLost: true }] });
     expect(snapshotQueues(n).queues[0]!.queue[0]).not.toHaveProperty('restart');
+    expect(parseQueues(JSON.parse(JSON.stringify(snapshotQueues(n))))!.queues[0]!.queue[0]!.maybeLost).toBe(true);
   });
 
   it('F: kept and the send time survive a reload; bad values are dropped', () => {

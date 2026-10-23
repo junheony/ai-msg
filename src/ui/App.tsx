@@ -1323,10 +1323,19 @@ export function App() {
     if (pane) { dispatch({ type: 'focus_pane', paneId: pane.id }); requestFocus(pane.id); }
   };
 
+  /** 본문으로 건너뛰기: into the active pane's transcript (so the next Tab stays in it, not the sidebar); a new chat's input; the body when neither is there. */
+  const skipToChat = () => {
+    const pane = document.querySelector<HTMLElement>(`.pane[data-pane="${state.activePaneId}"]`);
+    const chat = pane?.querySelector<HTMLElement>('main.chat');
+    if (!chat) { const input = pane?.querySelector<HTMLElement>('textarea:not([disabled])'); if (input) input.focus(); else bodyRef.current?.focus(); return; }
+    if (!chat.hasAttribute('tabindex')) chat.tabIndex = -1;
+    chat.focus();
+  };
+
   return (
     <AccountsContext value={accounts}>
     <div className="app">
-      <a className="skip-link" href="#main" onClick={(e) => { e.preventDefault(); bodyRef.current?.focus(); }}>{ui().common.skipToMain}</a>
+      <a className="skip-link" href="#main" onClick={(e) => { e.preventDefault(); skipToChat(); }}>{ui().common.skipToMain}</a>
       <header className="topbar">
         {phone && <button type="button" className="menu" aria-label="메뉴" aria-expanded={drawer} onClick={() => setDrawer((d) => !d)}>☰</button>}
         {/* Tablet / unfolded (721–1100px, CSS only shows it there): a visible way to fold the sidebar away without ⌘\. */}
@@ -1358,9 +1367,11 @@ export function App() {
         </div>
       </header>
       <div className="usage-strip-slot" ref={setStripRow} />
+      {/* Always there (empty while connected): a live region that appears with its text is often not read the first time. The button stays outside it. */}
+      <div className="sr-only" aria-live="polite" aria-atomic="true" data-testid="conn-live">{connBar ?? ''}</div>
       {connBar !== null && (
-        <div className="conn-down" role="status">
-          <span title={connBar}>{connBar}</span>
+        <div className="conn-down">
+          <span aria-hidden="true">{connBar}</span>
           <button type="button" className="text-btn" onClick={retryNow}>{ui().common.retry}</button>
         </div>
       )}

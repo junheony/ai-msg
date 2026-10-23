@@ -3,14 +3,17 @@ import { ui } from './i18n';
 /** An error put into words: `text` to show, `raw` (the original) to fold underneath — null when `text` is already it. */
 export type ErrorText = { text: string; raw: string | null };
 
+/** An HTTP status only counts with its context ("status 401", "HTTP 429", "API Error: 529", "401 Unauthorized"): a bare number or word in a tool's own error is not the API's. */
+const status = (code: number, reason: string) => `(?:status(?: code)?|HTTP(?:/[\\d.]+)?|API Error:?)\\s*${code}\\b|\\b${code} ${reason}`;
+
 /** Raw codes and English API phrases → the readable sentence (ui().common.errors); first match wins. */
 const RULES: [RegExp, keyof ReturnType<typeof ui>['common']['errors']][] = [
   [/error_max_turns|max[_ ]turns/i, 'maxTurns'],
   [/error_max_budget|max[_ ]budget|budget[_ ]exceeded/i, 'maxBudget'],
-  [/overloaded|\b529\b/i, 'overloaded'],
-  [/rate[_ ]?limit|too many requests|\b429\b/i, 'rateLimit'],
-  [/authentication|unauthori[sz]ed|invalid[_ ]api[_ ]key|not logged in|\b401\b|oauth token/i, 'auth'],
-  [/timed? ?out|timeout|ETIMEDOUT/i, 'timeout'],
+  [new RegExp(`overloaded_error|API is overloaded|${status(529, 'Overloaded')}`, 'i'), 'overloaded'],
+  [new RegExp(`rate_limit_error|rate limit (?:exceeded|reached)|${status(429, 'Too Many Requests')}`, 'i'), 'rateLimit'],
+  [new RegExp(`authentication_error|invalid[_ ]api[_ ]key|invalid x-api-key|not logged in|oauth token (?:has )?expired|${status(401, 'Unauthorized')}`, 'i'), 'auth'],
+  [/request timed out|timeout_error|ETIMEDOUT|(?:API|request) timeout/i, 'timeout'],
   [/ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up|network error|fetch failed/i, 'network'],
   [/error_during_execution/i, 'execution'],
 ];

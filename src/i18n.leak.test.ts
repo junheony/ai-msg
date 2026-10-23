@@ -92,7 +92,7 @@ const BASELINE: Record<string, number> = {
   'src/server/usage/GrokUsageTracker.ts': 5,
   'src/server/usage/UsageIndex.ts': 30,
   'src/server/usage/UsageService.ts': 5,
-  'src/server/ws.ts': 64,
+  'src/server/ws.ts': 63,
   'src/shared/accounts.ts': 23,
   'src/shared/choices.ts': 5,
   'src/shared/concise.ts': 24,

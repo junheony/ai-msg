@@ -2747,4 +2747,6 @@ button.head-chip[aria-expanded="true"] .caret { transform: rotate(180deg); }
 /* 본문으로 건너뛰기 (App): off screen until Tab reaches it, then a visible pill at the top-left. */
 .skip-link { position: fixed; z-index: 100; top: 8px; left: 8px; padding: 8px 14px; border-radius: var(--r-sm); background: var(--panel); color: var(--link); font-weight: 600; box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); transform: translateY(-200%); }
 .skip-link:focus, .skip-link:focus-visible { transform: none; }
-.body:focus { outline: none; }
+.body:focus, main.chat:focus:not(:focus-visible) { outline: none; }
+/* Phone: the connection bar's sentence wraps instead of being cut. */
+@media (max-width: 720px) { .conn-down { flex-wrap: wrap; } .conn-down > span { white-space: normal; overflow: visible; text-overflow: clip; text-align: center; } }

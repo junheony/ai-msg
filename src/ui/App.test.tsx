@@ -1188,7 +1188,7 @@ describe('App boot', () => {
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('dialog', { name: '활동' })).toBeNull();
     await act(async () => { await vi.advanceTimersByTimeAsync(21_000); });
-    expect(screen.getByText(/서버에 연결할 수 없어요 · 00:25부터 — 연결되면/)).toBeTruthy();
+    expect(within(document.querySelector('.conn-down') as HTMLElement).getByText(/서버에 연결할 수 없어요 · 00:25부터 — 연결되면/)).toBeTruthy();
     // Both the banner's button and the sheet's retry now.
     fireEvent.click(screen.getByText('다시 시도'));
     fireEvent.click(dot);
@@ -1243,12 +1243,34 @@ describe('App connection bar (D1)', () => {
     expect(sock.opts?.heartbeat?.()).toBe(true);
   });
 
-  it('본문으로 건너뛰기: the first thing Tab reaches, moves focus to the body', async () => {
+  it('본문으로 건너뛰기: the first thing Tab reaches, moves focus into the active pane (a new chat: its input; a session: its transcript), not the body, so Tab stays out of the sidebar', async () => {
     await boot();
     const skip = screen.getByRole('link', { name: '본문으로 건너뛰기' });
     expect(document.querySelector('.app')!.firstElementChild).toBe(skip);
     fireEvent.click(skip);
-    expect(document.activeElement).toBe(document.getElementById('main'));
+    expect((document.activeElement as HTMLElement).matches('.pane.active textarea')).toBe(true);
+    // A pane showing a transcript: focus lands on its main.chat (made focusable, out of the Tab order).
+    const chat = document.createElement('main');
+    chat.className = 'chat';
+    document.querySelector('.pane.active')!.prepend(chat);
+    fireEvent.click(skip);
+    expect(document.activeElement).toBe(chat);
+    expect(chat.tabIndex).toBe(-1);
+    chat.remove();
+  });
+
+  it('the connection sentence goes into a live region that is there before it (read the first time), the button outside it', async () => {
+    await boot();
+    const live = screen.getByTestId('conn-live');
+    expect(live.getAttribute('aria-live')).toBe('polite');
+    expect(live.textContent).toBe('');
+    act(() => sock.onStatus!(false));
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_100); });
+    expect(screen.getByTestId('conn-live')).toBe(live);
+    expect(live.textContent).toContain('다시 연결하는 중…');
+    expect(within(live).queryByRole('button')).toBeNull();
+    act(() => sock.onStatus!(true));
+    expect(live.textContent).toBe('');
   });
 
   it('a raw error code shows as a sentence, the original folded under it', async () => {

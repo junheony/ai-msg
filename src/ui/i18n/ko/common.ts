@@ -14,6 +14,8 @@ export const common: Widen<typeof en> = {
   skipToMain: '본문으로 건너뛰기',
   unsent: '안 보냄',
   unsentHint: '연결이 끊겨 보내지 못했습니다 — 다시 연결되면 보냅니다 (다시 보내기를 눌러도 됩니다)',
+  checking: '확인 중',
+  checkingHint: '이미 들어갔을 수 있어요 — 다시 연결되면 대화 기록으로 확인해 두 번 보내지 않습니다',
   resend: '다시 보내기',
   errorRaw: '원래 메시지',
   errors: {

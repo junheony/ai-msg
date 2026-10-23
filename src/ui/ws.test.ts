@@ -201,6 +201,61 @@ describe('createSocket', () => {
       expect(FakeWS.instances).toHaveLength(1);
     });
 
+    it('M2: while an open_session waits for its history the deadline is longer (a big frame on a slow line), back to normal once it came', () => {
+      const { sock, w } = opened({ heartbeat: () => true });
+      deliver(w, hello);
+      expect(sock.send({ type: 'open_session', sessionId: 's1', cwd: '/w' } as never)).toBe(true);
+      vi.advanceTimersByTime(90_000); // no beat gets past the big frame
+      expect(FakeWS.instances).toHaveLength(1);
+      deliver(w, { type: 'history', sessionId: 's1', cwd: '/w', account: null, runningTurnId: null, messages: [] });
+      vi.advanceTimersByTime(24_000);
+      expect(FakeWS.instances).toHaveLength(1);
+      vi.advanceTimersByTime(1_000);
+      expect(FakeWS.instances).toHaveLength(2);
+    });
+
+    it('M2: a history that never comes still ends in a reconnect (the longer deadline is a deadline)', () => {
+      const { sock, w } = opened({ heartbeat: () => true });
+      deliver(w, hello);
+      sock.send({ type: 'open_session', sessionId: 's1', cwd: '/w' } as never);
+      vi.advanceTimersByTime(100_000);
+      expect(FakeWS.instances).toHaveLength(2);
+    });
+
+    it('M2: a tab frozen past the deadline gets 5 s for its queued messages before the socket is dropped', () => {
+      const { w } = opened({ heartbeat: () => true });
+      deliver(w, hello);
+      // Frozen for a minute: the clock moved, the timer had no chance to run.
+      vi.setSystemTime(Date.now() + 60_000);
+      vi.advanceTimersByTime(25_000);
+      expect(FakeWS.instances).toHaveLength(1);
+      deliver(w, { type: 'heartbeat' }); // what queued up while frozen
+      vi.advanceTimersByTime(24_000);
+      expect(FakeWS.instances).toHaveLength(1);
+      // Frozen again, and nothing arrives in the grace: dropped then.
+      vi.setSystemTime(Date.now() + 60_000);
+      vi.advanceTimersByTime(1_000);
+      expect(FakeWS.instances).toHaveLength(1);
+      vi.advanceTimersByTime(5_000);
+      expect(FakeWS.instances).toHaveLength(2);
+    });
+
+    it('M2: the socket the watchdog opened is not watched until its first message (its hello)', () => {
+      const { w } = opened({ heartbeat: () => true });
+      deliver(w, hello);
+      vi.advanceTimersByTime(25_000);
+      expect(FakeWS.instances).toHaveLength(2);
+      const next = FakeWS.instances[1]!;
+      next.readyState = FakeWS.OPEN;
+      next.onopen?.();
+      vi.advanceTimersByTime(120_000); // a slow start: no hello yet, no second drop
+      expect(FakeWS.instances).toHaveLength(2);
+      deliver(next, hello);
+      expect(next.sent.map((d) => JSON.parse(d))).toEqual([{ type: 'heartbeat' }]);
+      vi.advanceTimersByTime(25_000);
+      expect(FakeWS.instances).toHaveLength(3);
+    });
+
     it('no watch before hello, and none after the socket closed or close()', async () => {
       vi.stubGlobal('fetch', vi.fn(async () => ({ status: 200, ok: true })));
       const { sock, w } = opened({ heartbeat: () => true, timeoutMs: 1000 });

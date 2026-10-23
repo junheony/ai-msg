@@ -1151,6 +1151,19 @@ describe('message queue (ux-state)', () => {
       expect(nextQueued(pane(s))).toBeNull();
     });
 
+    it('socket drops before a new session\'s start: marked maybeLost (확인 중 offline, not 안 보냄), kept through a reload', () => {
+      let s = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'new' });
+      s = reducer(s, { type: 'sent', text: 'first', clientRef: 'r1' });
+      s = reducer(s, { type: 'connected', value: false, at: 1 });
+      expect(pane(s).queue.map((q) => [q.text, q.maybeLost, q.restart])).toEqual([['first', true, undefined]]);
+      expect(pane(s).queuePaused).toBe(true);
+      // a refusal (it surely did not go in) carries no such mark
+      let r = reducer(initialState, { type: 'open', sessionId: null, cwd: '/w', title: 'new' });
+      r = reducer(r, { type: 'sent', text: 'first', clientRef: 'r1' });
+      r = play([{ type: 'error', turnId: null, message: 'nope', clientRef: 'r1' }], r);
+      expect(pane(r).queue.every((q) => !q.maybeLost)).toBe(true);
+    });
+
     // M1: a released item goes out alone; the rest of a paused queue (a lost steer) stays paused.
     it('a released item does not unpause the queue: a lost steer behind it is not sent', () => {
       let s = running();

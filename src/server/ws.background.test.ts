@@ -18,7 +18,9 @@ import { SettingsStore } from './settings';
 import { SessionStateStore } from './turn/SessionState';
 import { RESEND_NOTICE, TurnRunner } from './turn/TurnRunner';
 import { UsageService } from './usage/UsageService';
-import { DRAINING_MESSAGE, attachWebSocket } from './ws';
+import { attachWebSocket } from './ws';
+import { sm } from './i18n';
+const DRAINING_MESSAGE = sm().turn.draining;
 import { rootsOf, testRegistry } from '../shared/accounts.testkit';
 
 const TOKEN = 'e'.repeat(64);

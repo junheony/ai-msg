@@ -17,7 +17,9 @@ import { SettingsStore } from './settings';
 import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
 import { UsageService } from './usage/UsageService';
-import { DRAINING_MESSAGE, attachWebSocket } from './ws';
+import { attachWebSocket } from './ws';
+import { sm } from './i18n';
+const DRAINING_MESSAGE = sm().turn.draining;
 import { rootsOf, testRegistry } from '../shared/accounts.testkit';
 
 const TOKEN = 'e'.repeat(64);
@@ -180,7 +182,7 @@ describe('ws: server status and 다음 턴 미리보기', () => {
     const c = await client(srv);
     await c.next('hello');
     srv.wsApi.drain('stop');
-    expect(await c.next('error', (m) => m.code === 'draining')).toMatchObject({ message: '서버가 멈추는 중입니다 — 다시 켜지면 보내지 못한 메시지를 이어서 보냅니다' });
+    expect(await c.next('error', (m) => m.code === 'draining')).toMatchObject({ message: '서버가 꺼지는 중입니다 — 다시 켜지면 보내지 못한 메시지를 이어서 보냅니다' });
     expect(await c.next('activity', (m) => m.draining === true)).toMatchObject({ drainReason: 'stop' });
     await c.close();
   });

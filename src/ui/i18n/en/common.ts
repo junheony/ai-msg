@@ -16,6 +16,9 @@ export const common = {
   /** A queued message that did not go out while offline (QueueChips). */
   unsent: 'Not sent',
   unsentHint: 'The connection dropped before this went out — it is sent once connected (or tap Resend)',
+  /** …and one that may already have gone in (its answer was lost): checked once connected, never offered to resend. */
+  checking: 'Checking',
+  checkingHint: 'It may already have gone in — checked against the conversation once connected, so it is not sent twice',
   resend: 'Resend',
   /** Error codes put into words (errorText.ts); the raw text folds underneath. */
   errorRaw: 'Original message',
