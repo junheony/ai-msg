@@ -1857,9 +1857,10 @@ button.hl-row-main:hover { background: var(--hover); }
 .shortcut-group-title { margin: 0 0 var(--s2); font-size: var(--fs-meta); font-weight: 600; color: var(--muted); }
 /* No keyboard: no keyboard hints (the palette's foot and key labels). Same test as App's `keyboardless` (a phone, or a
    touch-only screen — a tablet with a keyboard or trackpad attached keeps them). */
-@media (max-width: 720px), (pointer: coarse) and (not (any-pointer: fine)) {
+@media (pointer: coarse) and (not (any-pointer: fine)) {
   .palette-foot, .palette-hint { display: none; }
 }
+:where(:root[data-phone]) { .palette-foot, .palette-hint { display: none; } }
 .toast { position: fixed; z-index: 55; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 32px); padding: 8px 8px 8px 14px; border-radius: 10px; background: var(--panel); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); font-size: var(--fs-label); }
 .toast > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .toast .text-btn { color: var(--accent); font-weight: 600; }
