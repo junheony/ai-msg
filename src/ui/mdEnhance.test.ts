@@ -61,6 +61,14 @@ describe('mdEnhance: math delimiters', () => {
     expect(html('\\[\n\\frac{a}{b}\n\\]')).toContain('katex-display');
   });
 
+  it('escaped brackets mid-line and \\( … \\) with spaces inside stay text', () => {
+    for (const md of ['논문 결과\\[1\\]와 \\[2\\]', '체크 \\[x\\] 완료', '\\[x\\] 완료', '앞 \\[\na\n\\]', '\\[\na\n\\] 뒤', '정규식에서 \\(와 \\)는 괄호', '\\( x \\)']) {
+      expect(hasMath(md), md).toBe(false);
+    }
+    expect(hasMath('  \\[ a+b \\]  ')).toBe(true);
+    expect(hasMath('- 항목\n\n  \\[\n  x\n  \\]')).toBe(true);
+  });
+
   it('an escaped backslash, an unclosed \\( and code stay text', () => {
     expect(hasMath('\\\\(not math\\\\)')).toBe(false);
     expect(hasMath('streaming \\(x + ')).toBe(false);
@@ -69,11 +77,3 @@ describe('mdEnhance: math delimiters', () => {
   });
 });
 
-describe('mdEnhance: diff blocks', () => {
-  it('a hunk line is marked with or without counts', () => {
-    const out = html('```diff\n@@ -1 +1 @@\n-a\n+b\n@@ -10,2 +10,3 @@\n x\n```');
-    expect(out).toContain('<span class="hljs-meta">@@ -1 +1 @@</span>');
-    expect(out).toContain('<span class="hljs-meta">@@ -10,2 +10,3 @@</span>');
-    expect(out.match(/hljs-meta/g)).toHaveLength(2);
-  });
-});

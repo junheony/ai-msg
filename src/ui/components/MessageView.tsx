@@ -55,11 +55,14 @@ const CODE_FOLD_SHOW = 24;
 type FoldChoice = 'open' | 'closed' | null;
 /**
  * An assistant reply's code-fold state. While it streams a long block stays open (new lines stay in sight); after, it
- * folds unless the reader chose. Choices are kept per reply by the block's offset in the reply's full text (`base` = where
- * the rendered text starts in it), so the block re-created when 간결 모드 swaps the live stretch for the whole reply, or
- * when the highlighter loads, keeps them. Without a provider (thinking, side panel) the block keeps its own.
+ * folds unless the reader chose. Choices are kept per reply under the block's place in the reply — the non-space
+ * characters before its fence (`base` counts those before the rendered `text`) — so the block re-created when 간결 모드
+ * swaps the live stretch for the whole reply, or when the highlighter loads, keeps them. Counting non-space characters
+ * makes the key blind to splitDeckChoices' trim and blank-line squeeze. Without a provider (thinking, side panel) the
+ * block keeps its own.
  */
-export const CodeFoldContext = createContext<{ streaming: boolean; base: number; choices: Map<number, FoldChoice> | null }>({ streaming: false, base: 0, choices: null });
+export const CodeFoldContext = createContext<{ streaming: boolean; base: number; text: string; choices: Map<number, FoldChoice> | null }>({ streaming: false, base: 0, text: '', choices: null });
+const nonSpace = (s: string) => s.replace(/\s+/g, '').length;
 
 /** Fenced code: a header strip with the language, 줄바꿈 · 저장 · copy buttons above the scrolling body. */
 function CodeBlock({ children, at }: { children?: ReactNode; /** Source offset of the fence in the rendered text. */ at?: number }) {
@@ -75,7 +78,7 @@ function CodeBlock({ children, at }: { children?: ReactNode; /** Source offset o
   const lines = text.split('\n').length;
   const foldable = lines > CODE_FOLD_AT;
   const fold = useContext(CodeFoldContext);
-  const key = fold.choices && at !== undefined ? fold.base + at : null;
+  const key = fold.choices && at !== undefined ? fold.base + nonSpace(fold.text.slice(0, at)) : null;
   const [own, setOwn] = useState<FoldChoice>(null);
   const choice = key !== null ? (fold.choices!.get(key) ?? null) : own;
   const folded = foldable && (choice ? choice === 'closed' : !fold.streaming);
@@ -704,7 +707,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
   const liveLead = useMemo(() => (liveCuts ? conciseLead(liveHead, liveCuts) : null), [liveHead, cutKey]);
   const foldChoices = useRef(new Map<number, FoldChoice>()).current;
   const streaming = item.kind === 'assistant' && item.streaming;
-  const fold = useMemo(() => ({ streaming, base: liveCut, choices: foldChoices }), [streaming, liveCut, foldChoices]);
+  const foldBase = useMemo(() => nonSpace(liveHead), [liveHead]);
   // Copy feedback as one toast (a status: read out once). The hover row's ✓ already says it on a desktop; on touch the
   // icon alone is easy to miss, so the row's copy toasts too.
   const feedback = useFileActions();
@@ -798,7 +801,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
           {item.toolCalls.length > 0 ? null : item.thinking ? '생각하는 중…' : '처리 중…'}
         </div>
       )}
-      <CodeFoldContext.Provider value={fold}>
+      <CodeFoldContext.Provider value={{ streaming, base: foldBase, text: (split ? split.live : shownText) ?? '', choices: foldChoices }}>
         {split ? split.live && <Markdown text={split.live} /> : shownText && <Markdown text={shownText} />}
       </CodeFoldContext.Provider>
       {choices && !item.streaming && <ChoiceCards choices={choices} onPick={reply} />}

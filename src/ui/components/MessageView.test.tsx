@@ -462,6 +462,20 @@ describe('MessageView · 간결 모드 live text', () => {
     expect(container.querySelector('.code-folded')).toBeNull(); // not the after-stream default (folded)
   });
 
+  it('the opened block stays open even when deck-choices and blank-line runs reshape the text around it', () => {
+    // splitDeckChoices trims and squeezes \n{3,}: offsets in the shown text move, the block's place must not.
+    const before = '먼저 볼게요.\n\n```\nnpm test\n```';
+    const body = Array.from({ length: 70 }, (_, i) => `line ${i}`).join('\n');
+    const text = `${before}\n\n\n\n코드:\n\n\n\n\`\`\`\n${body}\n\`\`\`\n\n\`\`\`deck-choices\n? 고르기\n- 가\n- 나\n\`\`\``;
+    const { container, rerender } = render(<MessageView item={turn(text, [call('1', before.length)])} />);
+    fireEvent.click(container.querySelector('.code-fold')!);
+    fireEvent.click(container.querySelector('.code-fold')!);
+    rerender(<MessageView item={turn(text, [call('1', before.length)], false)} />);
+    expect(container.querySelectorAll('.code-block')).toHaveLength(2);
+    expect(container.querySelector('.code-fold')).not.toBeNull();
+    expect(container.querySelector('.code-folded')).toBeNull();
+  });
+
   it('when the turn ends: one reply with the whole text, like before (no lead line, no progress, no cursor)', () => {
     const before = '먼저 테스트부터 볼게요.';
     const text = `${before}\n\n원인은 오타였어요`;

@@ -23,7 +23,7 @@ function texNode(value: string, display: boolean): MdNode {
   return { type: 'inlineMath', value, data: { hName: 'code', hProperties: { className }, hChildren: [{ type: 'text', value }] } };
 }
 
-function splitTex(text: MdNode, source: string): MdNode[] {
+function splitTex(text: MdNode, source: string, first: boolean, lastChild: boolean): MdNode[] {
   const from = text.position?.start.offset;
   const to = text.position?.end.offset;
   if (from === undefined || to === undefined) return [text];
@@ -33,27 +33,37 @@ function splitTex(text: MdNode, source: string): MdNode[] {
   const at: number[] = [];
   const esc: boolean[] = [];
   let value = '';
+  const want = text.value ?? '';
   for (let r = 0; r < raw.length; r++) {
+    // A continuation line's indent (list item, blockquote-free paragraph) is in the source, not in the value.
+    if ((raw[r] === ' ' || raw[r] === '\t') && value.endsWith('\n') && want[value.length] !== raw[r]) continue;
     const escaped = raw[r] === '\\' && r + 1 < raw.length && ESCAPABLE.test(raw[r + 1]!);
     if (escaped) r++;
     at.push(r);
     esc.push(escaped);
     value += raw[r];
   }
-  if (value !== text.value) return [text]; // entities, stripped indents: the mapping is off, leave it alone
+  if (value !== want) return [text]; // entities, a blockquote's `>`: the mapping is off, leave it alone
+  // `\[` opens a line and `\]` ends one (only spaces around), so `결과\[1\]` and `\[x\] 완료` stay brackets. At the
+  // node's edge the line goes on in a sibling (emphasis, a link) unless the node is its paragraph's first / last child.
+  const lineOpens = (i: number) => /(^|\n)[ \t]*$/.test(value.slice(0, i)) && (first || value.slice(0, i).includes('\n'));
+  const lineEnds = (j: number) => /^[ \t]*(\n|$)/.test(value.slice(j + 1)) && (lastChild || value.slice(j + 1).includes('\n'));
   const out: MdNode[] = [];
   let last = 0;
   for (let i = 0; i < value.length; i++) {
     const open = value[i];
     if (!esc[i] || (open !== '(' && open !== '[')) continue;
-    const close = open === '(' ? ')' : ']';
+    const display = open === '[';
+    if (display && !lineOpens(i)) continue;
+    const close = display ? ']' : ')';
     let j = i + 1;
-    while (j < value.length && !(esc[j] && value[j] === close)) j++;
-    if (j >= value.length) break; // unclosed (still streaming): text
-    const tex = raw.slice(at[i]! + 1, at[j]! - 1).trim();
-    if (!tex) continue;
+    while (j < value.length && !(esc[j] && value[j] === close && (!display || lineEnds(j)))) j++;
+    if (j >= value.length) continue; // unclosed (still streaming): text
+    const tex = raw.slice(at[i]! + 1, at[j]! - 1);
+    // `\( x \)` with space inside reads as prose about parentheses (`\(와 \)는 괄호`), not a formula.
+    if (!tex.trim() || (!display && tex !== tex.trim())) continue;
     if (i > last) out.push({ type: 'text', value: value.slice(last, i) });
-    out.push(texNode(tex, open === '['));
+    out.push(texNode(tex.trim(), display));
     last = j + 1;
     i = j;
   }
@@ -64,8 +74,9 @@ function splitTex(text: MdNode, source: string): MdNode[] {
 
 function walkTex(node: MdNode, source: string): void {
   if (!node.children) return;
-  node.children = node.children.flatMap((child) => {
-    if (child.type === 'text') return splitTex(child, source);
+  const n = node.children.length;
+  node.children = node.children.flatMap((child, k) => {
+    if (child.type === 'text') return splitTex(child, source, k === 0, k === n - 1);
     walkTex(child, source);
     return [child];
   });
@@ -76,37 +87,4 @@ const remarkTexDelimiters = () => (tree: MdNode, file: { value?: unknown }) => w
 export const REMARK_ENHANCE = [[remarkMath, { singleDollarTextMath: false }], remarkTexDelimiters] as never[];
 /** No `maxExpand`: KaTeX's own limit (1000) is finite, and a lower one breaks ordinary blocks (a dozen `\implies`). */
 export const KATEX_OPTIONS = { throwOnError: false, strict: 'ignore', maxSize: 20 } as const;
-type HNode = { type: string; tagName?: string; value?: string; properties?: { className?: unknown }; children?: HNode[] };
-
-/** highlight.js marks a hunk line only with counts on both sides (`@@ -1,3 +1,4 @@`); `@@ -1 +1 @@` gets the same span here. */
-function markHunks(code: HNode): void {
-  let lineStart = true;
-  code.children = (code.children ?? []).flatMap((child): HNode[] => {
-    if (child.type !== 'text') {
-      lineStart = false;
-      return [child];
-    }
-    const out: HNode[] = [];
-    for (const piece of (child.value ?? '').split(/(?<=\n)/)) {
-      if (lineStart && piece.startsWith('@@')) {
-        const body = piece.replace(/\n$/, '');
-        out.push({ type: 'element', tagName: 'span', properties: { className: ['hljs-meta'] }, children: [{ type: 'text', value: body }]});
-        if (body.length < piece.length) out.push({ type: 'text', value: '\n' });
-      } else if (piece) out.push({ type: 'text', value: piece });
-      lineStart = piece.endsWith('\n');
-    }
-    return out;
-  });
-}
-
-function walkDiff(node: HNode): void {
-  for (const child of node.children ?? []) {
-    const cls = child.properties?.className;
-    if (child.tagName === 'code' && Array.isArray(cls) && cls.includes('language-diff')) markHunks(child);
-    else walkDiff(child);
-  }
-}
-
-const rehypeDiffHunks = () => (tree: HNode) => walkDiff(tree);
-
-export const REHYPE_ENHANCE = [[rehypeHighlight, { detect: false }], rehypeDiffHunks, [rehypeKatex, KATEX_OPTIONS]] as never[];
+export const REHYPE_ENHANCE = [[rehypeHighlight, { detect: false }], [rehypeKatex, KATEX_OPTIONS]] as never[];
