@@ -822,7 +822,8 @@ export async function readUserImage(file: string, n: number, k: number, types: R
       const idx = await imageIndexFor(key, fh, version);
       let r: Rec | null = null;
       if (n < idx.offsets.length) r = parseLine((await lineAt(fh, idx.offsets[n]!, st.size)).toString('utf8'));
-      else if (!idx.done) {
+      // Done, but `pos` short of the end: the unfinished last line is still to read (never recorded, so read again).
+      else if (!idx.done || idx.pos < st.size) {
         try {
           r = await scanTo(fh, idx, n, st.size);
         } finally {

@@ -414,6 +414,10 @@ describe('readUserImage (historyImages)', () => {
     // Appended (a running session): the index is kept and the scan reads on from where it stopped.
     await fs.appendFile(file, said('c') + '\n' + ask('u3', 'A3'));
     expect(await at(3)).toBe('A3'); // the last line, its newline not written yet
+    expect(await at(3)).toBe('A3'); // again, the file unchanged: still there
+    expect(await at(4)).toBeNull();
+    expect(await at(1)).toBe('A1');
+    expect(await at(3)).toBe('A3');
     expect(imageIndexState(file)).toMatchObject({ messages: 3, pos: scanned.pos + said('c').length + 1 }); // read on, the unfinished line not passed
     await fs.appendFile(file, '\n' + ask('u4', 'A4') + '\n');
     expect(await at(4)).toBe('A4');
