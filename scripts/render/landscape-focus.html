@@ -1,5 +1,5 @@
 <!doctype html><html><head><meta charset="utf-8">
-<!-- 폰 가로 · 포커스 fixture for scripts/render-check.sh (keep in step with App.tsx / Pane.tsx / Chat.tsx shells):
+<!-- 폰 가로 · 포커스 fixture (?open: the phone drawer open) for scripts/render-check.sh (keep in step with App.tsx / Pane.tsx / Chat.tsx shells):
      #shell — the app frame (top bar with ☰ · chip · usage, usage line, sidebar + one pane: head, transcript with a code
      block, composer) filling the window, to check 844×390 (phone on its side) against 390 and 1440 widths.
      #focus — controls whose keyboard focus ring was unified on --focus / --focus-inset; a script focuses one at a time.
@@ -19,10 +19,11 @@
 <script>
   // As App.tsx renders it: ☰ (drawer) on a phone width, the sidebar toggle above it; ?focus shows the focus gallery.
   addEventListener('DOMContentLoaded', () => {
-    const phone = matchMedia('(max-width: 720px)').matches;
+    const phone = matchMedia('(max-width: 720px), (max-height: 500px) and (orientation: landscape)').matches; // useIsPhone PHONE_QUERY
     document.querySelector(phone ? '.sidebar-toggle' : '.menu')?.remove();
     if (phone) document.querySelector('.sidebar-wrap').classList.add('drawer');
     if (location.search.includes('focus')) document.body.classList.add('fx-focus');
+    if (phone && location.search.includes('open')) { document.querySelector('.sidebar-wrap').classList.add('open'); document.querySelector('.body').insertAdjacentHTML('afterbegin', '<div class="drawer-backdrop"></div>'); }
   });
 </script>
 </head><body>

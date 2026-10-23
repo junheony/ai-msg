@@ -464,7 +464,7 @@ describe('Pane side panel tabs', () => {
     const { unmount } = render(ui());
     fireEvent.click(screen.getByTitle('/w/src/a.ts — 사이드 패널에서 열기'));
     unmount();
-    vi.stubGlobal('matchMedia', (q: string) => ({ matches: q === '(max-width: 720px)', addEventListener() {}, removeEventListener() {} }));
+    vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('(max-width: 720px)'), addEventListener() {}, removeEventListener() {} }));
     render(ui());
     expect(screen.queryByTestId('side-panel')).toBeNull();
     fireEvent.click(screen.getByTitle('src/b.md — 사이드 패널에서 열기'));

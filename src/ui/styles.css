@@ -564,7 +564,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 @media (max-width: 720px) { .login input, .login .btn { height: var(--tap); } .login-where > summary { min-height: var(--tap); display: flex; align-items: center; } }
 
 /* ───────── Phone ───────── */
-@media (max-width: 720px) {
+@media (max-width: 720px), (max-height: 500px) and (orientation: landscape) {
   .topbar { height: 54px; gap: 4px; padding: 0 4px; }
   .menu { display: inline-flex; align-items: center; justify-content: center; width: var(--phone-tap); height: var(--phone-tap); font-size: var(--fs-title); color: var(--fg); flex-shrink: 0; }
   .topbar-end { margin-left: 0; }
@@ -1791,7 +1791,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .toast-item:not(.error) .text-btn { flex: none; color: var(--link); font-weight: 600; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-6px); } }
 /* Phone: bottom, above the composer (and the home-indicator safe area), full width. */
-@media (max-width: 720px) {
+@media (max-width: 720px), (max-height: 500px) and (orientation: landscape) {
   .toasts { top: auto; right: 8px; left: 8px; width: auto; bottom: calc(env(safe-area-inset-bottom, 0px) + 96px); }
   .toast-item .icon-btn { width: var(--phone-tap); height: var(--phone-tap); margin: -8px -4px -8px 0; }
 }
@@ -2742,14 +2742,14 @@ button.head-chip[aria-expanded="true"] .caret { transform: rotate(180deg); }
 
 /* === 폰 가로 (844×390 and the like) ===
    A phone on its side is wider than 720px, so it gets the desktop layout — but only ~390px tall. The bars give back
-   height: a lower top bar and pane head, a one-line composer, a slimmer usage line, no context hint; the sidebar keeps
-   a narrow column (☰ in the top bar folds it away into the left-edge overlay, which stays closed by default). */
+   height: a lower top bar and pane head, a one-line composer, a slimmer usage line, no context hint. useIsPhone counts
+   it as a phone (PHONE_QUERY), and the phone block / phone toasts above share its query: ☰ opens the sidebar as a
+   drawer (closed by default) and one pane shows. */
 @media (max-height: 500px) and (orientation: landscape) {
   .topbar { height: 44px; min-height: 44px; }
   .pane-head { min-height: 36px; }
   .pane-head.in-topbar .head-chip, .pane-head.in-topbar .head-chip-input { height: 32px; }
   .pane-head.in-topbar .with-folder .head-chip { height: 38px; padding-top: 2px; padding-bottom: 2px; }
-  .sidebar { width: min(240px, 30vw); }
   .usage-strip-row, .usage-strip-row .usage-strip { height: 26px; }
   .ctx-hint { display: none; }
   .chat { --composer-fade: 16px; }
