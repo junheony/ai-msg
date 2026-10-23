@@ -552,11 +552,11 @@ describe('MessageView · quiet status lines (CSS)', () => {
     }
     expect(rule('.turn-meta')).toContain('var(--faint)');
   });
-  it('expandable rows are at least 34px tall; prose paragraphs get 16px apart', () => {
+  it('expandable rows are at least 34px tall; prose paragraphs get .7em apart (scales with the text)', () => {
     expect(rule('.meta-item')).toContain('min-height: 28px');
     expect(rule('.sys-notice > summary')).toContain('min-height: 34px');
     expect(rule('.turn-error .sys-raw > summary')).toContain('min-height: 34px');
-    expect(rule('.markdown p')).toContain('margin: 0 0 16px');
+    expect(rule('.markdown p')).toContain('margin: 0 0 .7em');
   });
 });
 
