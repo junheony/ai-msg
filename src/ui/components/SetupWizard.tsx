@@ -40,9 +40,40 @@ function EngineRow({ e }: { e: EngineProbe }) {
         {installed && <span className="setup-meta">{e.version ?? T.noVersion}</span>}
         {installed ? <State tone={LOGIN_TONE[e.login]}>{shared().loginState[e.login]}</State> : <State tone="warn">{T.notInstalled}</State>}
       </div>
-      {e.note && <p className="setup-note">{e.note}</p>}
+      {e.note && <More>{e.note}</More>}
       {installed && e.login === 'no' && <Command cmd={e.loginCommand} />}
     </li>
+  );
+}
+
+/** Technical detail (env names, paths) kept out of the main view: a small 자세히 fold. */
+function More({ children }: { children: string }) {
+  return (
+    <details className="setup-more">
+      <summary>{T.details}</summary>
+      <p className="setup-note">{children}</p>
+    </details>
+  );
+}
+
+/** Claude, big: one state line, and what to do (the command to paste in a terminal) when it is not ready. */
+function ClaudeCard({ e }: { e: EngineProbe }) {
+  const installed = e.bin !== null;
+  const ready = installed && e.login !== 'no';
+  return (
+    <div className="setup-claude">
+      <div className="setup-row-main">
+        {ready ? <State tone="ok">{T.claudeReady}</State> : <State tone="warn">{installed ? shared().loginState.no : T.notInstalled}</State>}
+      </div>
+      {!installed && <p className="setup-todo">{T.claudeNeedInstall}</p>}
+      {installed && e.login === 'no' && (
+        <>
+          <p className="setup-todo">{T.claudeNeedLogin}</p>
+          <Command cmd={e.loginCommand} />
+        </>
+      )}
+      <More>{[installed ? T.versionLine(e.version ?? T.noVersion) : '', e.note ?? ''].filter(Boolean).join(' · ') || T.noDetails}</More>
+    </div>
   );
 }
 
@@ -52,10 +83,10 @@ function ProfileRow({ p, restartNeeded }: { p: ClaudeProfileProbe; restartNeeded
       <div className="setup-row-main">
         <span className="setup-name">{p.label}</span>
         {p.home && <span className="setup-badge">{T.profileHome}</span>}
-        <span className="setup-meta setup-dir">{p.dir}</span>
         {p.active ? <State tone={LOGIN_TONE[p.login]}>{shared().loginState[p.login]}</State> : <State tone="muted">{restartNeeded ? T.profileNext : T.profileOff}</State>}
       </div>
       {p.login === 'no' && <Command cmd={p.loginCommand} />}
+      <More>{p.dir}</More>
     </li>
   );
 }
@@ -147,6 +178,9 @@ export function SetupWizard({ load = getSetup, onAddProfile = addProfile, onDone
   };
 
   const pendingRestart = added || !!status?.restartNeeded;
+  const claude = status?.engines.find((e) => e.engine === 'claude');
+  const others = status?.engines.filter((e) => e.engine !== 'claude') ?? [];
+  const profilesOpen = pendingRestart || !!status?.claudeProfiles.some((p) => p.active && p.login === 'no');
 
   return (
     <Sheet className="setup-wizard" label={T.title} onClose={onClose}>
@@ -162,22 +196,28 @@ export function SetupWizard({ load = getSetup, onAddProfile = addProfile, onDone
         <>
           <section className="setup-step" aria-labelledby={`${uid}-engines`}>
             <div className="setup-step-head">
-              <h3 id={`${uid}-engines`}><span className="setup-num" aria-hidden="true">1</span>{T.enginesHead}</h3>
+              <h3 id={`${uid}-engines`} className="setup-claude-name">{ENGINE_NAME.claude}</h3>
               <span className="setup-meta">{T.checkedAt(hhmm(status.checkedAt))}</span>
               <button type="button" className="btn ghost setup-recheck" onClick={() => void recheck()} disabled={checking}>{checking ? T.checking : T.recheck}</button>
             </div>
-            <ul className="setup-list">{status.engines.map((e) => <EngineRow key={e.engine} e={e} />)}</ul>
-            {status.engines.some((e) => e.bin !== null && e.login === 'no') && <p className="setup-note">{T.loginHow}</p>}
+            {claude && <ClaudeCard e={claude} />}
+            {claude && claude.bin !== null && claude.login === 'no' && <p className="setup-note">{T.loginHow}</p>}
+            {others.length > 0 && (
+              <details className="setup-fold">
+                <summary>{T.otherEngines}</summary>
+                <ul className="setup-list">{others.map((e) => <EngineRow key={e.engine} e={e} />)}</ul>
+                {others.some((e) => e.bin !== null && e.login === 'no') && <p className="setup-note">{T.loginHow}</p>}
+              </details>
+            )}
           </section>
 
-          <section className="setup-step" aria-labelledby={`${uid}-profiles`}>
-            <div className="setup-step-head"><h3 id={`${uid}-profiles`}><span className="setup-num" aria-hidden="true">2</span>{T.profilesHead}</h3></div>
+          <details className="setup-fold" open={profilesOpen}>
+            <summary id={`${uid}-profiles`}>{T.profilesHead}</summary>
             <ul className="setup-list">{status.claudeProfiles.map((p) => <ProfileRow key={p.id} p={p} restartNeeded={status.restartNeeded} />)}</ul>
-            {!status.accountsFile && <p className="setup-notice">{T.fixNotice}</p>}
             <form className="setup-add" onSubmit={(ev) => void submit(ev)}>
               <label className="setup-field setup-field-id">
                 <span>{T.addId}</span>
-                <input value={id} onChange={(ev) => setId(ev.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false} maxLength={16} placeholder="d" aria-describedby={`${uid}-idhint`} />
+                <input value={id} onChange={(ev) => setId(ev.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false} maxLength={16} aria-describedby={`${uid}-idhint`} />
               </label>
               <label className="setup-field">
                 <span>{T.addLabel}</span>
@@ -186,6 +226,7 @@ export function SetupWizard({ load = getSetup, onAddProfile = addProfile, onDone
               <button type="submit" className="btn primary setup-add-btn" disabled={adding || !id.trim()}>{adding ? T.adding : T.add}</button>
             </form>
             <p className="setup-note" id={`${uid}-idhint`}>{T.addIdHint}</p>
+            <More>{`${T.addIdDetail}${status.accountsFile ? '' : ` ${T.fixNotice}`}`}</More>
             {addError && <p className="setup-error" role="alert">{addError}</p>}
             {pendingRestart && (
               <div className="setup-restart" role="status">
@@ -209,10 +250,10 @@ export function SetupWizard({ load = getSetup, onAddProfile = addProfile, onDone
                   : <p className="setup-note">{T.restartManual}</p>}
               </div>
             )}
-          </section>
+          </details>
 
           <section className="setup-step" aria-labelledby={`${uid}-addresses`}>
-            <div className="setup-step-head"><h3 id={`${uid}-addresses`}><span className="setup-num" aria-hidden="true">3</span>{T.addressesHead}</h3></div>
+            <div className="setup-step-head"><h3 id={`${uid}-addresses`}>{T.addressesHead}</h3></div>
             <p className="setup-note">{T.addressesNote}</p>
             {status.addresses.length ? (
               <ul className="setup-addrs">{status.addresses.map((a) => <li key={a}><Command cmd={a} /></li>)}</ul>

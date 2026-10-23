@@ -47,6 +47,35 @@ describe('SetupWizard', () => {
     expect(screen.getAllByText('로그인됨').length).toBeGreaterThan(0);
   });
 
+  it('Claude is the big card; the other engines sit in a closed fold, technical notes behind 자세히', async () => {
+    const { container } = render(<SetupWizard load={async () => sample} onDone={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByText('claude auth login');
+    const fold = screen.getByText(SETUP_TEXTS.otherEngines).closest('details') as HTMLDetailsElement;
+    expect(fold.open).toBe(false);
+    expect(fold.textContent).toContain('GPT (Codex)');
+    expect(container.querySelector('.setup-claude')?.textContent).not.toContain('GPT');
+    // The env-var note is inside a 자세히 fold, not in the main text.
+    const note = screen.getByText(/DECK_GEMINI_BIN/);
+    expect((note.closest('details') as HTMLDetailsElement).className).toBe('setup-more');
+    expect((note.closest('details') as HTMLDetailsElement).open).toBe(false);
+    fireEvent.click(screen.getByText(SETUP_TEXTS.otherEngines));
+  });
+
+  it('Claude installed and logged in: one ready line and no command', async () => {
+    const ready = { ...sample, engines: sample.engines.map((e) => (e.engine === 'claude' ? { ...e, login: 'yes' as const } : e)) };
+    render(<SetupWizard load={async () => ready} onDone={vi.fn()} onClose={vi.fn()} />);
+    expect(await screen.findByText(SETUP_TEXTS.claudeReady)).toBeTruthy();
+    expect(screen.queryByText('claude auth login')).toBeNull();
+    expect(screen.queryByText(SETUP_TEXTS.claudeNeedLogin)).toBeNull();
+  });
+
+  it('Claude missing: says to install it, no login command', async () => {
+    const none = { ...sample, engines: sample.engines.map((e) => (e.engine === 'claude' ? { ...e, bin: null, version: null } : e)) };
+    render(<SetupWizard load={async () => none} onDone={vi.fn()} onClose={vi.fn()} />);
+    expect(await screen.findByText(SETUP_TEXTS.claudeNeedInstall)).toBeTruthy();
+    expect(screen.queryByText('claude auth login')).toBeNull();
+  });
+
   it('a missing CLI shows the install note, no login command', async () => {
     render(<SetupWizard load={async () => sample} onDone={vi.fn()} onClose={vi.fn()} />);
     expect(await screen.findByText(/agy 를 찾지 못했습니다/)).toBeTruthy();
@@ -62,11 +91,12 @@ describe('SetupWizard', () => {
 
   it('without accounts.json the add form warns that auto-discovery ends', async () => {
     render(<SetupWizard load={async () => sample} onDone={vi.fn()} onClose={vi.fn()} />);
-    expect(await screen.findByText(SETUP_TEXTS.fixNotice)).toBeTruthy();
+    const withNotice = (c: string) => c.includes(SETUP_TEXTS.fixNotice);
+    expect(await screen.findByText(withNotice)).toBeTruthy();
     cleanup();
     render(<SetupWizard load={async () => ({ ...sample, accountsFile: true })} onDone={vi.fn()} onClose={vi.fn()} />);
     await screen.findByText('Claude');
-    expect(screen.queryByText(SETUP_TEXTS.fixNotice)).toBeNull();
+    expect(screen.queryByText(withNotice)).toBeNull();
   });
 
   it('adding a profile posts the id and shows the restart notice; supervised shows 지금 재시작', async () => {

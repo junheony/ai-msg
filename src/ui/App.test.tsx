@@ -1648,15 +1648,44 @@ describe('App setup wizard · address token login', () => {
   beforeEach(() => { localStorage.clear(); sock.frames = []; sock.onMessage = null; fetchFn.mockClear(); vi.stubGlobal('fetch', fetchFn); });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); window.history.replaceState(null, '', '/'); });
 
-  it('opens the wizard when hello says setup is needed', async () => {
+  const claudeWith = (login: 'yes' | 'no', bin: string | null = '/b/claude') => ({ ...status, engines: [{ ...status.engines[0], login, bin }] });
+  const mockStatus = (st: unknown) => fetchFn.mockImplementation(async (url: unknown) => new Response(JSON.stringify(url === '/api/setup' ? st : {}), { status: 200 }));
+
+  it('Claude installed and logged in: no wizard and no banner even when setup is needed', async () => {
+    mockStatus(claudeWith('yes'));
     render(<App />);
     await waitFor(() => expect(sock.onMessage).not.toBeNull());
     server({ ...hello(['setup']), setup: { needed: true } } as ServerMessage);
+    await waitFor(() => expect(fetchFn.mock.calls.some((c) => c[0] === '/api/setup')).toBe(true));
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(screen.queryByRole('dialog', { name: '설치 점검' })).toBeNull();
+    expect(screen.queryByText('Claude 설정이 아직 끝나지 않았어요')).toBeNull();
+  });
+
+  it('a Claude problem raises a small banner (not the wizard); 확인하기 opens it; a reconnect does not bring it back', async () => {
+    mockStatus(claudeWith('no'));
+    render(<App />);
+    await waitFor(() => expect(sock.onMessage).not.toBeNull());
+    server({ ...hello(['setup']), setup: { needed: true } } as ServerMessage);
+    expect(await screen.findByText('Claude 설정이 아직 끝나지 않았어요')).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: '설치 점검' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '확인하기' }));
     expect(await screen.findByRole('dialog', { name: '설치 점검' })).toBeTruthy();
-    // Closed, a reconnect's hello does not bring it back.
+    expect(screen.queryByText('Claude 설정이 아직 끝나지 않았어요')).toBeNull();
     fireEvent.click(within(screen.getByRole('dialog', { name: '설치 점검' })).getByRole('button', { name: '닫기' }));
     server({ ...hello(['setup']), setup: { needed: true } } as ServerMessage);
     expect(screen.queryByRole('dialog', { name: '설치 점검' })).toBeNull();
+    expect(screen.queryByText('Claude 설정이 아직 끝나지 않았어요')).toBeNull();
+  });
+
+  it('Claude not installed raises the banner too, and ✕ dismisses it', async () => {
+    mockStatus(claudeWith('no', null));
+    render(<App />);
+    await waitFor(() => expect(sock.onMessage).not.toBeNull());
+    server({ ...hello(['setup']), setup: { needed: true } } as ServerMessage);
+    expect(await screen.findByText('Claude 설정이 아직 끝나지 않았어요')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '닫기' }));
+    expect(screen.queryByText('Claude 설정이 아직 끝나지 않았어요')).toBeNull();
   });
 
   it('does not open it for a server without the setup feature, nor when it is done', async () => {

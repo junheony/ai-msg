@@ -12,6 +12,7 @@ import { deleteLayout, layoutPanes, listLayouts, saveLayout, type SavedLayout } 
 import { Login } from './components/Login';
 import { SettingsView } from './components/SettingsView';
 import { SetupWizard } from './components/SetupWizard';
+import { getSetup } from './setupApi';
 import { readHashToken } from './loginHash';
 import { Toasts, type ToastItem } from './components/Toasts';
 import { SplitIcon } from './components/icons';
@@ -190,6 +191,7 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** 설치 점검: opened by itself once per page when the server says the first-run wizard is still to be shown. */
   const [setupOpen, setSetupOpen] = useState(false);
+  const [setupBanner, setSetupBanner] = useState(false);
   const setupAsked = useRef(false);
   const [buildId, setBuildId] = useState<string | null>(null);
   const [prefs, setPref] = usePrefs();
@@ -410,7 +412,11 @@ export function App() {
     catchup.current = tracker;
     sock.current = createSocket((msg) => {
       if (msg.type === 'hello') setFeatures(msg.features);
-      if (msg.type === 'hello' && has('setup') && msg.setup?.needed && !setupAsked.current) { setupAsked.current = true; setSetupOpen(true); }
+      // Claude installed and logged in: nothing to show. Only a problem with Claude raises the small banner (it opens the wizard).
+      if (msg.type === 'hello' && has('setup') && msg.setup?.needed && !setupAsked.current) {
+        setupAsked.current = true;
+        getSetup().then((st) => { const c = st.engines.find((e) => e.engine === 'claude'); if (!c || c.bin === null || c.login === 'no') setSetupBanner(true); }, () => {});
+      }
       // 총사령탑 켜기·끄기 changed what the server does (before the dispatch, so the render that follows sees it).
       if (msg.type === 'settings' && msg.features) setFeatures(msg.features);
       if (msg.type === 'settings') settingsAck.current?.();
@@ -1342,6 +1348,13 @@ export function App() {
         <div className="conn-down" role="status">
           <span>서버에 연결할 수 없어요 · {hhmm(downSince)}부터 — 연결되면 자동으로 이어집니다</span>
           <button type="button" className="text-btn" onClick={retryNow}>다시 시도</button>
+        </div>
+      )}
+      {setupBanner && !setupOpen && (
+        <div className="setup-banner" role="status">
+          <span>{ui().setup.bannerText}</span>
+          <button type="button" className="text-btn" onClick={() => { setSetupBanner(false); setSetupOpen(true); }}>{ui().setup.bannerOpen}</button>
+          <button type="button" className="text-btn" aria-label={ui().setup.bannerClose} onClick={() => setSetupBanner(false)}>✕</button>
         </div>
       )}
       {usageOpen && <UsageSheet usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} initialHistory={usageOpen === 'history'} onClose={() => setUsageOpen(null)} />}

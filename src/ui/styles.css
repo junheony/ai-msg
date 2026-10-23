@@ -513,12 +513,18 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 
 /* Login */
 .login { max-width: 340px; margin: 18vh auto; padding: 0 16px; display: flex; flex-direction: column; gap: 10px; }
-.login-mark { width: 26px; height: 26px; }
-.login h1 { display: flex; align-items: center; gap: 10px; font-size: var(--fs-h); margin: 0 0 4px; }
-.login p { margin: 0 0 6px; color: var(--muted); font-size: var(--fs-label); }
-.login input { height: 36px; padding: 0 10px; border-radius: var(--r-sm); border: 1px solid var(--line-strong); background: var(--bg-raised); }
-.login .btn { height: 36px; }
+.login-mark { width: 36px; height: 36px; }
+.login h1 { display: flex; align-items: center; gap: var(--s3); font-size: var(--fs-display); line-height: var(--lh-display, 1.2); font-weight: 700; margin: 0 0 var(--s2); }
+.login p { margin: 0 0 6px; color: var(--muted); font-size: var(--fs-label); text-wrap: pretty; word-break: keep-all; overflow-wrap: anywhere; }
+.login input { height: var(--ctl); padding: 0 10px; border-radius: var(--r-sm); border: 1px solid var(--line-strong); background: var(--bg-raised); }
+.login .btn { height: var(--ctl); }
+.login .btn.primary { background: var(--accent); color: var(--on-accent); }
+.login .btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .login code { font-family: var(--mono); font-size: var(--fs-mono); color: var(--fg); overflow-wrap: anywhere; }
+.login-where { color: var(--muted); font-size: var(--fs-label); }
+.login-where > summary { cursor: pointer; width: fit-content; user-select: none; color: var(--link); }
+.login-where > p { margin: var(--s2) 0 0; }
+@media (max-width: 720px) { .login input, .login .btn { height: var(--tap); } .login-where > summary { min-height: var(--tap); display: flex; align-items: center; } }
 
 /* ───────── Phone ───────── */
 @media (max-width: 720px) {
@@ -1551,17 +1557,17 @@ button.hl-row-main:hover { background: var(--hover); }
 .settings h3:focus:not(:focus-visible) { outline: none; }
 .settings-groups { display: flex; flex-direction: column; gap: var(--s5); min-width: 0; }
 .settings-group { display: flex; flex-direction: column; gap: var(--s3); scroll-margin-top: var(--s4); }
-.settings h3 { margin: 0; font-size: var(--fs-label); line-height: var(--lh-label); font-weight: 600; letter-spacing: .3px; color: var(--muted); }
+.settings h3 { margin: 0; font-size: var(--fs-label); line-height: var(--lh-label); font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); }
 /* A group's sub-group (실험적 기능 › 다른 앱 연동 / 계정 순환): each with its own notice. */
 .settings-subgroup { display: flex; flex-direction: column; gap: var(--s3); }
 .settings h4 { margin: var(--s2) 0 0; font-size: var(--fs-label); line-height: var(--lh-label); font-weight: 600; color: var(--fg-strong); }
-.settings-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); flex-wrap: wrap; }
+.settings-row { font-size: var(--fs-body); line-height: var(--lh-body); display: flex; align-items: center; justify-content: space-between; gap: var(--s3); flex-wrap: wrap; }
 .settings-row > span:first-child { white-space: nowrap; }
 /* A long lock reason wraps instead of running off the sheet. */
 .settings-row.grok-locked > .grok-locked-why { flex: 1 1 0; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
-.settings-row select { max-width: 100%; height: 30px; padding: 0 var(--s2); border: 1px solid var(--line-strong); border-radius: var(--r-xs); background: var(--bg); font-size: var(--fs-label); }
+.settings-row select { max-width: 100%; height: var(--ctl); padding: 0 var(--s2); border: 1px solid var(--line-strong); border-radius: var(--r-xs); background: var(--bg); font-size: var(--fs-label); }
 /* A row's note: one 12px line, the long text behind 자세히. Pulled up to its row. */
-.settings-hint { margin-top: calc(-1 * var(--s2)); margin-bottom: 0; color: var(--faint); font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.settings-hint { text-wrap: pretty; word-break: keep-all; overflow-wrap: anywhere; margin-top: calc(-1 * var(--s2)); margin-bottom: 0; color: var(--faint); font-size: var(--fs-meta); line-height: var(--lh-meta); }
 .settings-hint p { margin: 0; }
 /* 자세히: a short word in a line of text — the press area grows past it (::after) without moving the line. */
 .settings-hint .hint-more { position: relative; padding: 0; color: var(--link); font-size: inherit; }
@@ -1581,7 +1587,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .settings-about + .settings-foot { border-top: 0; padding-top: 0; }
 .settings-foot { margin: 0; padding-top: var(--s3); border-top: 1px solid var(--line); color: var(--faint); font-size: var(--fs-meta); line-height: var(--lh-meta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .seg { display: inline-flex; border-radius: var(--r-sm); box-shadow: inset 0 0 0 1px var(--line-strong); overflow: hidden; }
-.seg button { height: 30px; padding: 0 11px; border-radius: 0; color: var(--muted); font-size: var(--fs-label); white-space: nowrap; }
+.seg button { height: var(--ctl); padding: 0 12px; border-radius: 0; color: var(--muted); font-size: var(--fs-label); white-space: nowrap; }
 .seg button[aria-pressed="true"] { background: var(--selected); color: var(--fg-strong); }
 .seg button:not([aria-pressed="true"]):not(:disabled):hover { background: var(--hover); color: var(--fg); }
 .seg button:disabled { opacity: .5; cursor: not-allowed; }
@@ -1608,7 +1614,7 @@ button.hl-row-main:hover { background: var(--hover); }
   /* The press area grows to 44px. */
   .settings-hint .hint-more::after { inset: -14px -8px; }
 }
-@media (max-width: 720px) { .seg button { height: var(--phone-tap); } .sheet-backdrop { padding: 0; align-items: stretch; } .sheet { max-height: 100%; border-radius: 0; width: 100%; } }
+@media (max-width: 720px) { .seg button { height: var(--tap); } .sheet-backdrop { padding: 0; align-items: stretch; } .sheet { max-height: 100%; border-radius: 0; width: 100%; } }
 /* 설치 점검 (SetupWizard): one sheet, three numbered parts (engines · Claude accounts · addresses) and a sticky 완료.
    Rows sit in a hairline box; state = a coloured dot + muted word; commands (and addresses) on a --pill-bg strip. */
 .sheet.setup-wizard { width: min(600px, 100%); padding: 0 var(--sheet-pad); display: flex; flex-direction: column; gap: var(--s5); }
@@ -1626,14 +1632,26 @@ button.hl-row-main:hover { background: var(--hover); }
 .setup-meta { color: var(--muted); font-size: var(--fs-meta); line-height: var(--lh-meta); font-variant-numeric: tabular-nums; }
 .setup-dir { font-family: var(--mono); }
 .setup-badge { padding: 1px 7px; border-radius: var(--r-full); background: var(--pill-bg); color: var(--muted); font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.setup-claude .setup-state { margin-left: 0; font-size: var(--fs-body); color: var(--fg); }
 .setup-state { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: var(--fs-label); white-space: nowrap; }
 .setup-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
 .setup-state.is-ok .setup-dot { background: var(--ok); }
 .setup-state.is-warn .setup-dot { background: var(--warn); }
-.setup-note { margin: 0; color: var(--muted); font-size: var(--fs-meta); line-height: var(--lh-meta); overflow-wrap: anywhere; }
+.setup-note { text-wrap: pretty; word-break: keep-all; margin: 0; color: var(--muted); font-size: var(--fs-meta); line-height: var(--lh-meta); overflow-wrap: anywhere; }
 .setup-cmd { display: flex; align-items: center; gap: var(--s2); min-width: 0; padding: 4px 4px 4px var(--s3); border-radius: var(--r-xs); background: var(--pill-bg); }
 .setup-cmd code { flex: 1; min-width: 0; font-family: var(--mono); font-size: var(--fs-mono); line-height: var(--lh-mono); color: var(--fg); overflow-wrap: anywhere; }
 .setup-copy { flex-shrink: 0; height: 28px; }
+.setup-claude { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s4) var(--s3); border-radius: var(--r-md); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.setup-step-head h3.setup-claude-name { font-size: var(--fs-title); line-height: var(--lh-title); font-weight: 600; }
+.setup-todo { margin: 0; color: var(--fg); font-size: var(--fs-label); line-height: var(--lh-label); text-wrap: pretty; word-break: keep-all; overflow-wrap: anywhere; }
+.setup-more > summary, .setup-fold > summary { cursor: pointer; width: fit-content; user-select: none; color: var(--muted); font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.setup-more > summary:hover, .setup-fold > summary:hover { color: var(--fg); }
+.setup-more > .setup-note { margin-top: var(--s1); }
+.setup-fold > summary { font-size: var(--fs-label); font-weight: 600; color: var(--fg-strong); }
+.setup-fold[open] > summary { margin-bottom: var(--s2); }
+.setup-fold { display: block; }
+.setup-banner { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px 12px; padding: 7px 12px; flex-shrink: 0; font-size: var(--fs-label); color: var(--fg); background: color-mix(in srgb, var(--warn) 16%, var(--panel)); border-bottom: 1px solid var(--line); }
+.setup-banner .text-btn { color: var(--fg); font-weight: 600; }
 .setup-addrs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s2); }
 .setup-notice { margin: 0; padding: 10px var(--s3); border-radius: var(--r-sm); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--fg); font-size: var(--fs-label); line-height: var(--lh-label); }
 .setup-add { display: flex; align-items: flex-end; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s1); }
@@ -1650,6 +1668,7 @@ button.hl-row-main:hover { background: var(--hover); }
 @media (max-width: 720px) {
   .setup-field, .setup-field-id { flex: 1 1 100%; }
   .setup-field input, .setup-add-btn, .setup-recheck, .setup-copy, .setup-restart .btn { min-height: var(--phone-tap); }
+  .setup-more > summary, .setup-fold > summary, .setup-banner .text-btn { min-height: var(--tap); display: flex; align-items: center; }
   .setup-add-btn, .setup-done { width: 100%; }
   .setup-foot { align-items: stretch; }
   .setup-done { height: var(--phone-tap); }
@@ -2544,7 +2563,7 @@ html[data-concise='on'] .note.concise-note { font-size: var(--fs-meta); color: v
 
 /* deck 메모 (Settings → 일반) */
 .memory-editor { display: flex; flex-direction: column; gap: 6px; }
-.memory-editor .settings-hint { margin-top: -2px; }
+.memory-editor .settings-hint { text-wrap: pretty; word-break: keep-all; overflow-wrap: anywhere; margin-top: -2px; }
 .memory-editor textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 96px; font: inherit; color: var(--fg); background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 10px; }
 .memory-foot { display: flex; align-items: center; gap: 10px; }
 .memory-count { color: var(--muted); font-size: var(--fs-meta); font-variant-numeric: tabular-nums; }
