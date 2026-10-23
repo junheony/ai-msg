@@ -96,7 +96,13 @@ export function StatusRow({ startedAt, started, queuedBehind = null, progress, l
   const now = useNow(!waiting);
   const [prefs] = usePrefs();
   const concise = prefs.conciseMode;
-  const ms = startedAt === null ? 0 : now - startedAt;
+  // The clock counts the turn's working time: time spent waiting on a card is set aside, so a resume carries on
+  // from where it stopped instead of jumping ahead by the wait.
+  const paused = useRef({ start: startedAt, total: 0, since: null as number | null });
+  if (paused.current.start !== startedAt) paused.current = { start: startedAt, total: 0, since: null };
+  if (waiting && paused.current.since === null) paused.current.since = Date.now();
+  if (!waiting && paused.current.since !== null) { paused.current.total += Date.now() - paused.current.since; paused.current.since = null; }
+  const ms = startedAt === null ? 0 : (paused.current.since ?? Math.max(now, Date.now())) - startedAt - paused.current.total;
   const running = live ? live.toolCalls.findLast((c) => c.result === null) : undefined;
   const tool = running ? toolVerb(running) : null;
   const tools = live ? live.toolCalls.length : 0;

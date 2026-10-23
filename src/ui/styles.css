@@ -2095,8 +2095,9 @@ button.hl-row-main:hover { background: var(--hover); }
   .attach, .send, .composer-send .icon-btn.dictate { width: var(--phone-tap); height: var(--phone-tap); }
   .composer-row { padding: 2px 6px 6px; gap: 4px; }
   .composer-send { gap: 3px; }
-  /* At most two round buttons on the right: while a turn runs with a draft (보내기 + 중지), the mic steps aside. */
-  .composer[data-crowded] .icon-btn.dictate { display: none; }
+  /* At most two round buttons on the right: while a turn runs with a draft (보내기 + 중지), the mic steps aside —
+     unless it is recording (its first words make the draft; it must stay to be turned off). */
+  .composer[data-crowded] .icon-btn.dictate:not(.on) { display: none; }
 }
 
 /* === session chip (design §3.4) ===
@@ -2183,13 +2184,10 @@ button.hl-row-main:hover { background: var(--hover); }
 @keyframes session-sheet-up { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .sheet.session-sheet { animation: none; } }
 
-/* 작업으로: a quiet pill with its word on a wide screen; a phone moves it into the + menu (따로 작업으로 돌리기). */
+/* 작업으로: a quiet pill with its word on a wide screen; a phone / touch screen gets it in the + menu instead (Chat.tsx). */
 .task-add { display: inline-flex; align-items: center; justify-content: center; gap: var(--s1); }
 .task-add-icon { display: none; }
 .attach-item .task-add-icon { display: block; }
-@media (max-width: 720px) {
-  .composer-send .task-add { display: none; }
-}
 
 /* === sidebar rows (list rows) ===
    Grok Bot's list: one <button class="row-open"> per row (Tab, Enter / Space open it) — a round avatar (project colour

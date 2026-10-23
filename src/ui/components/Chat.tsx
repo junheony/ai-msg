@@ -489,6 +489,7 @@ export function Chat(p: ChatProps) {
   const fastOn = useFast(p.sessionId) && fastEligible;
   const showAccount = !!p.onAccountPin && (effectiveEngine === 'claude' || (!!p.isNew && effectiveEngine === 'auto'));
   const phone = useIsPhone();
+  const taskInMenu = phone || coarse;
   // The share actions close the menu themselves once done (a copy is async): the open menu's closer, kept here.
   const closeMenu = useRef<() => void>(() => {});
   const share = useShareActions({ title: p.title, items: p.items, ...(p.cwd ? { cwd: p.cwd } : {}), sessionId: p.sessionId ?? null, assistant: p.sessionEngine === 'codex' ? 'GPT' : p.sessionEngine === 'gemini' ? 'Gemini' : p.sessionEngine === 'grok' ? 'Grok' : 'Claude' }, () => closeMenu.current());
@@ -745,11 +746,11 @@ export function Chat(p: ChatProps) {
           onFiles={(f) => void addFiles(f)}
           text={text}
           onText={setText}
-          {...(taskReady ? { menu: [{ key: 'task', label: ui().chat.taskMenu, icon: <TaskIcon />, run: () => startTask(text) }] } : {})}
+          {...(taskReady && taskInMenu ? { menu: [{ key: 'task', label: ui().chat.taskMenu, icon: <TaskIcon />, run: () => startTask(text) }] } : {})}
           crowded={!!p.activeTurnId && runSend}
           extra={<>
-            {/* Desktop: a 작업으로 pill; the phone keeps it in the + menu only (C-1: at most two round buttons on the right). */}
-            {taskReady && (
+            {/* Desktop: a 작업으로 pill; a phone / touch screen has it in the + menu instead (C-1: at most two round buttons on the right). */}
+            {taskReady && !taskInMenu && (
               <button type="button" className="task-add" data-testid="task-add" onClick={() => startTask(text)} aria-label="작업으로" title="작업으로 — 새 세션에서 따로 돌리고, 이 대화는 계속 씁니다. 끝나면 알림과 결과 카드가 옵니다 (/bg 로도 시작)">
                 <span className="task-add-text">작업으로</span><TaskIcon />
               </button>

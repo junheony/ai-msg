@@ -105,6 +105,16 @@ describe('StatusRow', () => {
       cleanup();
       render(<StatusRow startedAt={Date.now()} started progress={null} live={null} waiting="permission" />);
       expect(screen.getByTestId('turn-status').textContent).toContain('승인을 기다리는 중');
+      cleanup();
+      // Resume after a 30s wait: the clock carries on from 0:05, it does not jump to 0:35.
+      const t1 = Date.now();
+      const view = render(<StatusRow startedAt={t1 - 5_000} started progress={null} live={null} waiting={null} />);
+      view.rerender(<StatusRow startedAt={t1 - 5_000} started progress={null} live={null} waiting="question" />);
+      act(() => { vi.advanceTimersByTime(30_000); });
+      view.rerender(<StatusRow startedAt={t1 - 5_000} started progress={null} live={null} waiting={null} />);
+      expect(screen.getByTestId('turn-status').textContent).toContain('0:05');
+      act(() => { vi.advanceTimersByTime(2_000); });
+      expect(screen.getByTestId('turn-status').textContent).toContain('0:07');
     } finally {
       vi.useRealTimers();
     }

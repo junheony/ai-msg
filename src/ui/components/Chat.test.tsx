@@ -673,21 +673,38 @@ describe('waiting for the user (Q2) and the crowded composer (C-1)', () => {
     expect(document.querySelector('main.chat')?.hasAttribute('data-waiting')).toBe(false);
   });
 
+  it('desktop: the 작업으로 pill only, no + menu duplicate', () => {
+    busy({ onStartTask: vi.fn() });
+    fireEvent.change(screen.getByLabelText('메시지'), { target: { value: 'next' } });
+    expect(screen.getByTestId('task-add')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('첨부'));
+    expect(screen.queryByTestId('attach-extra-task')).toBeNull();
+  });
+
   it('cards sit in a data-await-card wrapper (the scroll reveal finds them by request id)', () => {
     busy({ questions: [question], pending: [permission] });
     expect(document.querySelector('[data-await-card="q1"]')).not.toBeNull();
     expect(document.querySelector('[data-await-card="p1"]')).not.toBeNull();
   });
 
-  it('running + draft: send and a mini stop, the composer marked crowded; 작업으로 is also in the + menu', () => {
-    const onStartTask = vi.fn();
-    busy({ onStartTask });
-    fireEvent.change(screen.getByLabelText('메시지'), { target: { value: 'next' } });
-    expect(document.querySelector('.composer')?.hasAttribute('data-crowded')).toBe(true);
-    fireEvent.click(screen.getByLabelText('첨부'));
-    fireEvent.click(screen.getByTestId('attach-extra-task'));
-    expect(onStartTask).toHaveBeenCalledWith('next');
+  it('running + draft on a phone: the composer marked crowded; 작업으로 lives in the + menu, not as a pill', () => {
+    const mm = window.matchMedia;
+    window.matchMedia = ((q: string) => ({ matches: q.includes('max-width'), media: q, addEventListener: () => {}, removeEventListener: () => {} })) as unknown as typeof window.matchMedia;
+    try {
+      const onStartTask = vi.fn();
+      busy({ onStartTask });
+      fireEvent.change(screen.getByLabelText('메시지'), { target: { value: 'next' } });
+      expect(document.querySelector('.composer')?.hasAttribute('data-crowded')).toBe(true);
+      expect(screen.queryByTestId('task-add')).toBeNull();
+      fireEvent.click(screen.getByLabelText('첨부'));
+      fireEvent.click(screen.getByTestId('attach-extra-task'));
+      expect(onStartTask).toHaveBeenCalledWith('next');
+    } finally {
+      window.matchMedia = mm;
+    }
     const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
-    expect(css).toMatch(/\.composer\[data-crowded\] \.icon-btn\.dictate \{[^}]*display: none/);
+    // A recording mic (.on) stays: its first words make the draft, and it must be there to be turned off.
+    expect(css).toMatch(/\.composer\[data-crowded\] \.icon-btn\.dictate:not\(\.on\) \{[^}]*display: none/);
+    expect(css).not.toMatch(/\.composer\[data-crowded\] \.icon-btn\.dictate \{/);
   });
 });

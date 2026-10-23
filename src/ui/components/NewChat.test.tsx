@@ -66,7 +66,7 @@ describe('NewChat', () => {
       if (u.startsWith('/api/recent-folders')) return new Response(JSON.stringify({ recent: [] }), { status: 200 });
       return new Response(JSON.stringify({ path: '/Users/me', dirs: [] }), { status: 200 });
     }) as unknown as typeof fetch;
-    const { container } = render(<NewChat projects={[]} onStart={onStart} fetchFn={fetchFn} />);
+    const { container } = render(<NewChat projects={[]} loaded onStart={onStart} fetchFn={fetchFn} />);
     const first = screen.getByTestId('newchat-first');
     expect(first.textContent).toContain('폴더를 고르면');
     expect(container.textContent).not.toMatch(/projects\.json|\.config/);
@@ -79,13 +79,41 @@ describe('NewChat', () => {
   it('first run: typing in the composer starts in the home folder', async () => {
     const onStart = vi.fn();
     const fetchFn = vi.fn(async () => new Response(JSON.stringify({ path: '/Users/me', dirs: [] }), { status: 200 })) as unknown as typeof fetch;
-    render(<NewChat projects={[]} onStart={onStart} fetchFn={fetchFn} />);
+    render(<NewChat projects={[]} loaded onStart={onStart} fetchFn={fetchFn} />);
     expect(screen.getByTestId('session-chip').textContent).toContain('홈 폴더');
     const box = screen.getByLabelText('첫 메시지');
     fireEvent.change(box, { target: { value: '시작해 줘' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(onStart).toHaveBeenCalledWith('/Users/me', 'me', '시작해 줘', [], { engine: 'claude', sandbox: 'workspace-write' }));
     expect(String((fetchFn as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![0])).toContain('/api/dirs?path=');
+  });
+
+  it('before the project list arrives: no first-run screen, and Enter on a restored draft does not start in the home folder', () => {
+    const onStart = vi.fn();
+    const fetchFn = vi.fn() as unknown as typeof fetch;
+    const view = render(<NewChat projects={[]} onStart={onStart} fetchFn={fetchFn} />);
+    expect(screen.queryByTestId('newchat-first')).toBeNull();
+    const box = screen.getByLabelText('첫 메시지');
+    fireEvent.change(box, { target: { value: '이어서' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(onStart).not.toHaveBeenCalled();
+    expect(fetchFn).not.toHaveBeenCalled();
+    // The list arrives with the user's folders: the normal screen.
+    view.rerender(<NewChat projects={projects} loaded onStart={onStart} fetchFn={fetchFn} />);
+    expect(screen.queryByTestId('newchat-first')).toBeNull();
+  });
+
+  it('first run: text typed while the home folder is looked up is sent too', async () => {
+    const onStart = vi.fn();
+    let answer: (r: Response) => void = () => {};
+    const fetchFn = vi.fn(() => new Promise<Response>((r) => { answer = r; })) as unknown as typeof fetch;
+    render(<NewChat projects={[]} loaded onStart={onStart} fetchFn={fetchFn} />);
+    const box = screen.getByLabelText('첫 메시지');
+    fireEvent.change(box, { target: { value: '시작해' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    fireEvent.change(box, { target: { value: '시작해 줘, 천천히' } });
+    answer(new Response(JSON.stringify({ path: '/Users/me', dirs: [] }), { status: 200 }));
+    await waitFor(() => expect(onStart).toHaveBeenCalledWith('/Users/me', 'me', '시작해 줘, 천천히', [], { engine: 'claude', sandbox: 'workspace-write' }));
   });
 
   it('picked and pasted attachments ride the first message', async () => {

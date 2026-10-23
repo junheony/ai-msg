@@ -45,10 +45,12 @@ export type NewChatOptions = { engine: EngineChoice; sandbox: CodexSandbox };
  * above the auto-growing text; [+] · mic · ↑ in its bottom row), the pinned sessions (pin order) and the latest others as compact cards. Everything is reachable here, so the phone does not need
  * the drawer to start or resume. Attachments upload as soon as they are picked and ride the first message.
  */
-export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit, onOpenSession, now, uploadFn, models, model = 'auto', effort = null, onModel, onEffort, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, gemini = null, grok = null, onEngine, onSandbox, defaultPerm = null, fetchFn = fetch }: {
+export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit, onOpenSession, now, uploadFn, models, model = 'auto', effort = null, onModel, onEffort, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, gemini = null, grok = null, onEngine, onSandbox, defaultPerm = null, fetchFn = fetch, loaded = false }: {
   projects: ProjectEntry[];
   /** No projects yet (first run): 폴더 고르기 (FolderPicker) and the home folder lookup go through this. */
   fetchFn?: typeof fetch;
+  /** The server's project list has arrived (hello): until then an empty list says nothing, so no first-run screen. */
+  loaded?: boolean;
   /** The server's default permission mode for a new session (the chip's read-only tail; null = unknown, no tail). */
   defaultPerm?: PermMode | null;
   /** Pinned session ids in pin order (AppState.pins): shown above 최근 대화 and left out of it. */
@@ -115,7 +117,15 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit
 
   const hasDraft = text.trim().length > 0 || attachments.length > 0;
   // First run (no projects): the composer starts in the home folder; 폴더 고르기 opens a session in a picked one.
-  const firstRun = projects.length === 0;
+  // Only once the list has arrived (an existing user's list is [] until then); a later reconnect does not undo it.
+  const listSeen = useRef(false);
+  if (loaded) listSeen.current = true;
+  const firstRun = listSeen.current && projects.length === 0;
+  // Read at the start, not at the press: the home lookup is async and the text / picks may grow while it runs.
+  const textNow = useRef(text);
+  textNow.current = text;
+  const attachmentsNow = useRef(attachments);
+  attachmentsNow.current = attachments;
   const [picking, setPicking] = useState(false);
   const [homeBusy, setHomeBusy] = useState(false);
   const [homeError, setHomeError] = useState<string | null>(null);
@@ -123,6 +133,8 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit
   const [{ sendKey }] = usePrefs();
   /** Opens the new session in `dir` with whatever is typed (an empty text opens it empty: a picked folder). */
   const begin = (dir: string, name: string, split: boolean) => {
+    const text = textNow.current;
+    const attachments = attachmentsNow.current;
     const msg = text.trim() || (attachments.length ? ATTACHMENT_ONLY_TEXT : '');
     clearDraft(draftKey);
     if (split && onStartSplit) {
