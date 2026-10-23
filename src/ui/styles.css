@@ -564,7 +564,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 @media (max-width: 720px) { .login input, .login .btn { height: var(--tap); } .login-where > summary { min-height: var(--tap); display: flex; align-items: center; } }
 
 /* ───────── Phone ───────── */
-@media (max-width: 720px), (max-height: 500px) and (orientation: landscape) {
+@media (max-width: 720px), (max-height: 560px) and (orientation: landscape) and (pointer: coarse) {
   .topbar { height: 54px; gap: 4px; padding: 0 4px; }
   .menu { display: inline-flex; align-items: center; justify-content: center; width: var(--phone-tap); height: var(--phone-tap); font-size: var(--fs-title); color: var(--fg); flex-shrink: 0; }
   .topbar-end { margin-left: 0; }
@@ -674,6 +674,10 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 /* Hovered / its sheet open: the line lifts to --panel (--hover over --bg leaves the light red under 4.5:1). */
 .usage-strip-row .usage-strip:hover, .usage-strip-row .usage-strip[aria-expanded="true"] { background: var(--panel); box-shadow: none; }
 .usage-strip-row .usage-strip:focus-visible { box-shadow: var(--focus-inset); }
+/* Its own line (a phone, a short or narrow window): the current seat, the next one and any warning only — every seat
+   is a tap away in the sheet; the ⋯ says there is more. */
+.usage-strip-row .usage-seg:not([data-current], .warn, .danger, :has(> .usage-seg-next)) { display: none; }
+.usage-strip-row .usage-strip:has(.usage-seg:not([data-current], .warn, .danger, :has(> .usage-seg-next)))::after { content: "⋯"; padding: 0 var(--s2); color: var(--muted); }
 
 /* The usage sheet. Desktop: a panel on the right edge, full height; wider while the history is open. */
 .sheet-backdrop:has(> .usage-sheet) { justify-content: flex-end; align-items: stretch; padding: 0; }
@@ -1196,7 +1200,15 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 /* Home-screen app (viewport-fit=cover): keep content out of the notch / home indicator. */
 /* No bottom padding here: the transcript and the sidebar list run to the screen edge, and the composer / sidebar foot
    keep themselves above the home indicator (see "bottom edge" at the end). */
-.app { box-sizing: border-box; padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) 0 env(safe-area-inset-left, 0); }
+.app { box-sizing: border-box; padding: env(safe-area-inset-top, 0) 0 0; }
+/* Side insets (landscape notch, a foldable's rounded inner screen): no padding band of page colour down each side —
+   the bars and columns run to the screen edge in their own colour (a border of it) and only their content steps in. */
+:root { --sa-left: env(safe-area-inset-left, 0px); --sa-right: env(safe-area-inset-right, 0px); }
+.topbar { border-left: var(--sa-left) solid var(--sidebar); border-right: var(--sa-right) solid var(--sidebar); }
+.usage-strip-row { border-left: var(--sa-left) solid var(--bg); border-right: var(--sa-right) solid var(--bg); }
+.sidebar-wrap { border-left: var(--sa-left) solid var(--sidebar); }
+.sidebar-wrap:is(.drawer, .hidden) ~ .panes { border-left: var(--sa-left) solid var(--bg); }
+.panes { border-right: var(--sa-right) solid var(--bg); }
 /* The status-bar strip (the top inset) is painted the top bar's colour, so clock / battery sit on the bar itself
    instead of on a band of page colour above it. Full width: it also covers the side insets in landscape. */
 .app::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: env(safe-area-inset-top, 0); background: var(--sidebar); pointer-events: none; }
@@ -1791,7 +1803,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .toast-item:not(.error) .text-btn { flex: none; color: var(--link); font-weight: 600; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-6px); } }
 /* Phone: bottom, above the composer (and the home-indicator safe area), full width. */
-@media (max-width: 720px), (max-height: 500px) and (orientation: landscape) {
+@media (max-width: 720px), (max-height: 560px) and (orientation: landscape) and (pointer: coarse) {
   .toasts { top: auto; right: 8px; left: 8px; width: auto; bottom: calc(env(safe-area-inset-bottom, 0px) + 96px); }
   .toast-item .icon-btn { width: var(--phone-tap); height: var(--phone-tap); margin: -8px -4px -8px 0; }
 }
@@ -2069,6 +2081,11 @@ button.hl-row-main:hover { background: var(--hover); }
 .sidebar-foot > * { pointer-events: auto; }
 /* The avatar (설정 및 계정 menu) bottom left; 새 세션 is in the head's + menu. Flat: no drop shadow, just its ring. */
 .sidebar-foot { gap: var(--s2); }
+/* Touch and short screens: a solid band at the sidebar's foot (no fade over the last row); the list ends above it. */
+@media (pointer: coarse), (max-height: 560px) {
+  .sidebar-foot { padding-top: var(--s2); border-top: 1px solid var(--line); background: var(--sidebar); pointer-events: auto; }
+  .sidebar { scroll-padding-bottom: 64px; }
+}
 .foot-menu-wrap { position: relative; display: inline-flex; }
 .sidebar-avatar { display: inline-flex; align-items: center; gap: var(--s1); height: 36px; padding: 0 var(--s3) 0 0; border-radius: var(--r-full); background: var(--panel); color: var(--fg-strong); box-shadow: inset 0 0 0 1px var(--line-strong); font-size: var(--fs-label); font-weight: 600; letter-spacing: .01em; transition: background var(--t-fast); }
 .sidebar-avatar-mark { display: grid; place-items: center; width: 36px; height: 36px; }
@@ -2745,16 +2762,20 @@ button.head-chip[aria-expanded="true"] .caret { transform: rotate(180deg); }
    height: a lower top bar and pane head, a one-line composer, a slimmer usage line, no context hint. useIsPhone counts
    it as a phone (PHONE_QUERY), and the phone block / phone toasts above share its query: ☰ opens the sidebar as a
    drawer (closed by default) and one pane shows. */
-@media (max-height: 500px) and (orientation: landscape) {
+@media (max-height: 560px) and (orientation: landscape) and (pointer: coarse) {
   .topbar { height: 44px; min-height: 44px; }
   .pane-head { min-height: 36px; }
   .pane-head.in-topbar .head-chip, .pane-head.in-topbar .head-chip-input { height: 32px; }
   .pane-head.in-topbar .with-folder .head-chip { height: 38px; padding-top: 2px; padding-bottom: 2px; }
-  .usage-strip-row, .usage-strip-row .usage-strip { height: 26px; }
+  /* The usage line moves up into the top bar's free right side (it shows only the current seat and warnings). */
+  .usage-strip-row { position: absolute; z-index: 8; top: env(safe-area-inset-top, 0px); right: calc(var(--sa-right) + 56px); height: 44px; max-width: 30vw; border: 0; background: transparent; }
+  .usage-strip-row .usage-strip { height: 44px; min-width: 0; }
+  .topbar-head { flex: 0 1 auto; max-width: calc(100% - 2 * (30vw + 56px)); margin-inline: auto; }
   .ctx-hint { display: none; }
   .chat { --composer-fade: 16px; }
   .chat-body { padding-top: 8px; }
   .composer textarea { min-height: 34px; max-height: 30vh; padding-top: 6px; }
   .composer-row { padding-top: 0; padding-bottom: 4px; }
+  .attach, .send { width: 40px; height: 40px; min-width: 40px; min-height: 40px; }
   .composer-wrap { padding-bottom: max(6px, env(safe-area-inset-bottom, 0px)); }
 }
