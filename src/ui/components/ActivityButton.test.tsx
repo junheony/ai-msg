@@ -386,3 +386,9 @@ describe('활동 시트 · body 포털', () => {
     expect(document.activeElement).toBe(btn);
   });
 });
+
+describe('활동 button icon (C-4)', () => {
+  it('is a bell (the state dot rides on its corner), not a bare dot', () => {
+    expect(readFileSync(path.join(process.cwd(), 'src/ui/components/ActivityButton.tsx'), 'utf8')).toContain('className="activity-bell"');
+  });
+});

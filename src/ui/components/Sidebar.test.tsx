@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { AVATAR_COLORS, DECK_VERSION_LINE, META_TICK_MS, ROW_PRESS_MS, Sidebar, avatarIndex } from './Sidebar';
+import { AVATAR_COLORS, DECK_VERSION_LINE, META_TICK_MS, ROW_PRESS_MS, Sidebar, avatarIndex, previewLine } from './Sidebar';
 import { SessionChipHead } from './SessionChipHead';
 import { useSessionAvatar, useSessionIconStore } from './SessionIcon';
 import type { SessionActivity } from '../../shared/protocol';
@@ -500,7 +500,8 @@ describe('Sidebar: Desktop parity (새 세션, avatar menu, empty copy, menu key
     render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onNewChat={noop} avatar="B" avatarTitle="deck · 계정 B"
       footMenu={[{ label: '설정', hint: '⌘,', run: settings }, { label: '사용량 기록', run: usage }]} />);
     const avatar = screen.getByRole('button', { name: '설정 및 계정' });
-    expect(avatar.textContent).toBe('B');
+    expect(avatar.querySelector('.sidebar-avatar-mark')?.textContent).toBe('B'); // the letter, plus a 설정 label so it reads as the way in
+    expect(avatar.querySelector('.sidebar-avatar-label')?.textContent).toBe('설정');
     expect(avatar.getAttribute('aria-haspopup')).toBe('menu');
     expect(avatar.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(avatar);
@@ -1135,5 +1136,40 @@ describe('Sidebar UX polish: status marks, 칸 번호, same titles, 고정됨 fo
   it('the list keeps room under its last row for the avatar foot', () => {
     expect(css).toMatch(/\.sidebar \{ scroll-padding-bottom: \d+px; \}/);
     expect(css).toMatch(/\.sidebar > section:last-of-type \{ padding-bottom: var\(--s5\); \}/);
+  });
+});
+
+describe('previewLine (S-1)', () => {
+  it('strips markdown marks and keeps plain words on one line', () => {
+    expect(previewLine('**굵게** 와 `code` 그리고 [링크](http://x.y) ![그림](a.png)')).toBe('굵게 와 code 그리고 링크 그림');
+    expect(previewLine('# 제목\n- 하나\n- 둘\n1. 셋\n> 인용')).toBe('제목 하나 둘 셋 인용');
+    expect(previewLine('```ts\nconst a = 1;\n```')).toBe('const a = 1;');
+    expect(previewLine('snake_case_name stays')).toBe('snake_case_name stays');
+  });
+  it('cuts a leading copy of the row title, with the separator after it', () => {
+    expect(previewLine('**신용점수 API 응답 캐시** 관련해서 세 곳을 봤어요', '신용점수 API 응답 캐시')).toBe('관련해서 세 곳을 봤어요');
+    expect(previewLine('Stripe retry — **ready**', 'stripe retry')).toBe('ready');
+    expect(previewLine('다른 내용', '제목')).toBe('다른 내용');
+  });
+  it('is empty when nothing is left', () => {
+    expect(previewLine('**제목**', '제목')).toBe('');
+    expect(previewLine(undefined)).toBe('');
+  });
+  it('a row whose preview was only its title shows 폴더 · 시간 on line 2', () => {
+    const e = { sessionId: 'p1', account: 'a' as const, cwd: '/w/one', projectDir: '/r', file: '/r/f', title: '제목', lastModified: Date.now() - 120_000, sizeBytes: 1, preview: '**제목**' };
+    render(<Sidebar projects={[{ cwd: '/w/one', name: 'one', pinned: false, sessions: [e] }]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
+    expect(screen.getByText('제목').closest('li')!.querySelector('.meta-text')?.textContent).toBe('one · 2분 전');
+  });
+});
+
+describe('Sidebar avatar (S-2)', () => {
+  afterEach(cleanup);
+  it('the avatar is hidden from assistive tech (the row is named by its title) and an emoji-first title shows that emoji', () => {
+    const e = { sessionId: 'p1', account: 'a' as const, cwd: '/w/one', projectDir: '/r', file: '/r/f', title: '🚀 launch', lastModified: Date.now(), sizeBytes: 1 };
+    render(<Sidebar projects={[{ cwd: '/w/one', name: 'one', pinned: false, sessions: [e] }]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
+    const li = screen.getByText('🚀 launch').closest('li')!;
+    expect(li.querySelector('.row-avatar')!.getAttribute('aria-hidden')).toBe('true');
+    expect(li.querySelector('[data-testid="avatar-emoji"]')?.textContent).toBe('🚀');
+    expect(li.querySelector('[data-testid="avatar-mono"]')).toBeNull();
   });
 });

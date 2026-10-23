@@ -35,7 +35,7 @@ function HeadAvatar({ sessionKey, cwd, title }: { sessionKey: string; cwd?: stri
   const color = shared?.color ?? avatarIndex(folder);
   return (
     <span className="head-avatar" data-avatar={color} style={{ '--av': `var(--avatar-${color})` } as CSSProperties} aria-hidden="true">
-      <AvatarFace mono={shared?.mono ?? monogram(title, folder)} icon={shared ? shared.icon : icons[sessionKey] ?? null} />
+      <AvatarFace mono={shared?.mono ?? monogram(title, folder)} icon={shared ? shared.icon : icons[sessionKey] ?? null} title={title} />
     </span>
   );
 }
@@ -176,14 +176,14 @@ export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, p
   }
   const hasMenu = built.length > 0;
   const items = built.map((g, i) => <Fragment key={i}>{i > 0 && <div className="menu-sep" role="separator" />}{g}</Fragment>);
-  // Identity first: avatar · title (the engine a small mark after it) · caret. On the desktop top bar the folder line sits
+  // Identity first: avatar · title (a non-Claude engine a small mark after it: Claude is the default and says nothing) · caret. On the desktop top bar the folder line sits
   // under the title, over the chip's lower half (a sibling button, so it keeps its own menu); `.head-chip-spacer` holds
   // that room inside the chip.
   const label = (
     <>
       {sessionKey && <HeadAvatar sessionKey={sessionKey} cwd={cwd} title={title} />}
       <span className="head-chip-text">
-        <span className="head-chip-title"><span className="head-chip-name">{title}</span>{engine && <EngineMark engine={engine} />}</span>
+        <span className="head-chip-title"><span className="head-chip-name">{title}</span>{engine && engine !== 'claude' && <EngineMark engine={engine} />}</span>
         {folderLine && folder && <span className="head-chip-spacer" aria-hidden="true" />}
       </span>
       {hasMenu && <Caret />}

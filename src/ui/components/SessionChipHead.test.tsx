@@ -179,3 +179,14 @@ describe('SessionChipHead · 세션 정체성', () => {
     expect(css).toMatch(/\.pane-head-chips > \.chip\.perm-badge \.perm-badge-full \{[^}]*display: inline-block;[^}]*clip: rect\(0 0 0 0\)/);
   });
 });
+
+describe('head engine mark (C-5)', () => {
+  it('Claude (the default) shows no engine mark; another engine does', () => {
+    const groups = () => [[]];
+    render(<SessionChipHead title="a" sessionKey="s1" engine="claude" groups={groups} />);
+    expect(document.querySelector('.head-chip-title .engine-mark')).toBeNull();
+    cleanup();
+    render(<SessionChipHead title="a" sessionKey="s1" engine="codex" groups={groups} />);
+    expect(document.querySelector('.head-chip-title .engine-mark')).not.toBeNull();
+  });
+});

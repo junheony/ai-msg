@@ -8,4 +8,8 @@ export const sessionIcon = {
   reset: 'Default (first letter)',
   failed: 'Could not change the icon',
   network: 'Could not change the icon: network error',
+  // Sidebar / usage strip words that sit beside it (kept here so one block is ours).
+  settings: 'Settings',
+  periodFiveHour: '5h',
+  periodWeek: 'Wk',
 };

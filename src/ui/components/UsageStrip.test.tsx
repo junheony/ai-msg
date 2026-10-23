@@ -58,14 +58,14 @@ describe('UsageStrip', () => {
     const segs = el().querySelectorAll('.usage-seg');
     expect([...segs].map((s) => s.getAttribute('data-testid'))).toEqual(['seg-a', 'seg-b', 'seg-c', 'seg-gpt']);
     // 42 % used reads 58 % left; the bar is as full as what is left (a battery).
-    expect(seg('a').textContent).toBe('A58%2h');
+    expect(seg('a').textContent).toBe('A5시간58%2h');
     expect((seg('a').querySelector('.usage-seg-bar > i') as HTMLElement).style.width).toBe('58%');
     expect(seg('c').className).toContain('spent');
     expect(seg('c').textContent).toBe('C소진· 12m');
     // Spent: an empty battery (the track turns red in CSS), not a full bar.
     expect((seg('c').querySelector('.usage-seg-bar > i') as HTMLElement).style.width).toBe('0%');
     expect(seg('gpt').className).toContain('warn');
-    expect(seg('gpt').textContent).toBe('GPT15%2h');
+    expect(seg('gpt').textContent).toBe('GPT5시간15%2h');
     // The strip says once that the numbers are what is left; the title too.
     expect(el().querySelector('.usage-strip-head')!.textContent).toBe('남음');
     expect(el().title).toMatch(/^계정별 남은 사용량 — 숫자와 막대는 남은 양/);
@@ -115,7 +115,7 @@ describe('UsageStrip', () => {
     strip(snap({ accounts: { a: acct(97, 10, { status: 'stale' }), b: acct(30, 5, { status: 'stale' }) } }), 'a');
     // Old numbers, read time unknown: "오래됨" as before (red still red: 97 % used = 3 % left).
     expect(seg('a').className).toBe('usage-seg danger stale');
-    expect(seg('a').textContent).toBe('A3%오래됨');
+    expect(seg('a').textContent).toBe('A5시간3%오래됨');
     expect(seg('b').className).toBe('usage-seg stale');
     expect(seg('a').querySelector('.usage-seg-age svg')).not.toBeNull();
     expect(el().getAttribute('aria-label')).toContain('A 3퍼센트 남음, 2시간 뒤 초기화, 마지막 턴 기준의 오래된 값, 지금은 이보다 적게 남았을 수 있음');
@@ -149,7 +149,7 @@ describe('UsageStrip', () => {
     const c = { status: 'stale' as const, fetchedAt: read, fiveHour: null, weekly: { usedPct: 90, resetsAt: at(2 * 86_400_000) }, fable: null };
     strip(snap({ accounts: { a: acct(42, 10), c } }), 'a');
     expect(seg('c').className).toBe('usage-seg warn stale');
-    expect(seg('c').textContent).toBe('C10%3일 전');
+    expect(seg('c').textContent).toBe('C주10%3일 전');
     expect(seg('c').querySelector('.usage-seg-age svg')).not.toBeNull();
     expect(el().getAttribute('aria-label')).toContain('C 10퍼센트 남음, 2일 뒤 초기화, 3일 전 마지막 턴 기준 값, 지금은 이보다 적게 남았을 수 있음');
     expect(el().title).toContain('C 10% — 3일 전 마지막 턴 기준 값. 지금은 이보다 적게 남았을 수 있음');
@@ -172,12 +172,12 @@ describe('UsageStrip', () => {
     cleanup();
     // No reset time known: as before.
     strip(snap({ accounts: { a: acct(42, 10), c: { ...c, weekly: { usedPct: 90, resetsAt: null } } } }), 'a');
-    expect(seg('c').textContent).toBe('C10%오래됨');
+    expect(seg('c').textContent).toBe('C주10%오래됨');
     expect(el().getAttribute('aria-label')).toContain('C 10퍼센트 남음, 마지막 턴 기준의 오래된 값');
     cleanup();
     // mid (phone): the clock and the age stay (no bar to dim); past the reset the refresh and "리셋됨".
     strip(snap({ accounts: { a: acct(42, 10), c } }), 'a', { phone: true });
-    expect(seg('c').textContent).toBe('C10%3일 전');
+    expect(seg('c').textContent).toBe('C주10%3일 전');
     expect(seg('c').querySelector('.usage-seg-age svg')).not.toBeNull();
     cleanup();
     strip(snap({ accounts: { a: acct(42, 10), c: gone } }), 'a', { phone: true });
@@ -190,7 +190,7 @@ describe('UsageStrip', () => {
     const c = { status: 'stale' as const, fetchedAt: read, fiveHour: { usedPct: 95, resetsAt: at(-3_600_000) }, weekly: { usedPct: 30, resetsAt: at(2 * 86_400_000) }, fable: null };
     strip(snap({ accounts: { a: acct(42, 10), c } }), 'a');
     expect(seg('c').className).toBe('usage-seg stale');
-    expect(seg('c').textContent).toBe('C70%3일 전');
+    expect(seg('c').textContent).toBe('C주70%3일 전');
     expect((seg('c').querySelector('.usage-seg-bar > i') as HTMLElement).style.width).toBe('70%');
     expect(el().getAttribute('aria-label')).toContain('C 70퍼센트 남음, 2일 뒤 초기화, 3일 전 마지막 턴 기준 값');
     cleanup();
@@ -200,7 +200,7 @@ describe('UsageStrip', () => {
     cleanup();
     // A window without a reset time is not known to have passed: it stays, as 오래됨.
     strip(snap({ accounts: { a: acct(42, 10), c: { ...c, weekly: { usedPct: 30, resetsAt: null } } } }), 'a');
-    expect(seg('c').textContent).toBe('C70%오래됨');
+    expect(seg('c').textContent).toBe('C주70%오래됨');
     cleanup();
     // Fresh numbers are not judged by reset time (the server's own job): the fuller window still shows.
     strip(snap({ accounts: { a: acct(42, 10), c: { ...c, status: 'ok' as const } } }), 'a');
@@ -211,8 +211,8 @@ describe('UsageStrip', () => {
     const { container } = strip(snap(), 'a', { phone: true });
     expect(container.querySelector('.usage-strip-row')).toBeTruthy();
     expect(el().querySelector('.usage-seg-bar')).toBeNull();
-    expect(seg('a').textContent).toBe('A58%');
-    expect(seg('gpt').textContent).toBe('GPT15%2h');
+    expect(seg('a').textContent).toBe('A5시간58%');
+    expect(seg('gpt').textContent).toBe('GPT5시간15%2h');
     expect(el().querySelector('.usage-strip-head')!.textContent).toBe('남음');
     expect(seg('c').textContent).toBe('C소진· 12m');
   });
@@ -285,7 +285,7 @@ describe('UsageStrip', () => {
         expect(wrapIn(bar)).toBeNull();
         expect(bar.querySelector('[data-testid="usage-strip"]')).toBeNull();
         expect(slot.querySelector('.usage-strip-row [data-testid="usage-strip"]')).toBeTruthy();
-        expect(seg('a').textContent).toBe('A58%');
+        expect(seg('a').textContent).toBe('A5시간58%');
         expect(document.activeElement).toBe(el());
         // The room does not depend on where the strip is: the same with it in the bar or in the line.
         barW = 1000;
@@ -331,8 +331,8 @@ describe('UsageStrip', () => {
       const [full, mid, min] = [...container.querySelector('.usage-strip-measure')!.children] as HTMLElement[];
       const segOf = (copy: HTMLElement, i: number) => copy.querySelectorAll('.usage-seg')[i] as HTMLElement;
       // Seats: A, B (reset passed), C (old, not reset).
-      expect(segOf(full!, 2).textContent).toBe('C70%3일 전');
-      expect(segOf(mid!, 2).textContent).toBe('C70%3일 전');
+      expect(segOf(full!, 2).textContent).toBe('C주70%3일 전');
+      expect(segOf(mid!, 2).textContent).toBe('C주70%3일 전');
       expect(segOf(min!, 2).textContent).toBe('C70%');
       expect(segOf(min!, 2).querySelector('.usage-seg-age svg')).not.toBeNull();
       expect(segOf(full!, 1).textContent).toBe('B리셋됨');
@@ -381,3 +381,25 @@ describe('UsageStrip', () => {
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('UsageStrip: period and hidden GPT (C-4)', () => {
+  it('a plain % names its window ("5시간" / "주") except in min; the words and the bar are unchanged', () => {
+    strip(snap({ accounts: { a: acct(42, 10), b: acct(18, 5), c: acct(100, 10) } }), 'a', { phone: true });
+    expect(seg('a').querySelector('.usage-seg-per')?.textContent).toBe('5시간');
+    expect(seg('a').querySelector('.usage-seg-num')?.textContent).toBe('58%');
+    expect(seg('c').querySelector('.usage-seg-per')).toBeNull(); // spent: "소진", no window
+    cleanup();
+    strip(snap({ accounts: { a: acct(10, 95), b: acct(18, 5), c: acct(100, 10) } }), 'a', { phone: true });
+    expect(seg('a').querySelector('.usage-seg-per')?.textContent).toBe('주'); // the weekly window has less left
+  });
+  it('"GPT ?" is left out when GPT has no numbers, unless it is the session seat', () => {
+    const noGpt = snap({ gpt: { status: 'down', fetchedAt: null, fiveHour: null, weekly: null, fable: null } });
+    strip(noGpt, 'a');
+    expect(screen.queryByTestId('seg-gpt')).toBeNull();
+    expect(el().getAttribute('aria-label')).not.toContain('GPT');
+    cleanup();
+    strip(noGpt, 'gpt');
+    expect(screen.getByTestId('seg-gpt')).toBeTruthy();
+  });
+});
+

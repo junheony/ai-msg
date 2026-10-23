@@ -121,6 +121,15 @@ export type ActivityAlert = { text: string; open?: () => void };
  */
 export const ALERT_SEED_MS = 1_000;
 
+/** A line bell: what the activity button is for (things that run or wait on you). */
+function BellIcon() {
+  return (
+    <svg className="activity-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z" /><path d="M10 21h4" />
+    </svg>
+  );
+}
+
 const hhmm = (ms: number): string => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 
 /**
@@ -207,6 +216,7 @@ export function ActivityButton({ ready, serverUpdate, highlights, visibleSession
         ref={btn} type="button" className={`activity-btn lvl-${summary.level}`} data-testid="activity-btn" aria-label={label} title={label}
         aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((v) => !v)}
       >
+        <BellIcon />
         <span className="activity-dot" aria-hidden="true" />
         {summary.level === 'server' && <span className="activity-ring" aria-hidden="true">↻</span>}
         {summary.waiting > 0 && <span className="activity-badge" data-testid="activity-badge" aria-hidden="true">{summary.waiting > 99 ? '99+' : summary.waiting}</span>}

@@ -60,7 +60,7 @@ describe('Chat', () => {
     expect(screen.getByRole('img', { name: 'Codex (GPT)' }).closest('.head-chip-title')).not.toBeNull();
     cleanup();
     renderChat([], false, vi.fn(), { title: 'thread', sessionEngine: 'claude' });
-    expect(screen.getByRole('img', { name: 'Claude' }).closest('.head-chip-title')).not.toBeNull();
+    expect(screen.queryByRole('img', { name: 'Claude' })).toBeNull(); // Claude is the default: no mark
     cleanup();
     renderChat([], false, vi.fn(), { title: 'thread', sessionEngine: 'claude', isNew: true });
     expect(screen.queryByRole('img', { name: 'Claude' })).toBeNull();

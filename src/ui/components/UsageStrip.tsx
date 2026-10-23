@@ -4,7 +4,8 @@ import type { GrokStatus } from '../../shared/protocol';
 import type { Seat } from '../../shared/accounts';
 import type { UsageSnapshot } from '../../shared/usage-types';
 import { useAccounts } from '../accounts';
-import { buildSeats, chipCountdown, chipState, pickMain, RESET_PASSED_NOTE, RESET_PASSED_SAID, spokenCountdown, staleNote, useClock, type ChipKind, type RouteNext, type SeatData } from './usageSeats';
+import { ui } from '../i18n';
+import { buildSeats, chipCountdown, chipState, pickMain, windowPassed, RESET_PASSED_NOTE, RESET_PASSED_SAID, spokenCountdown, staleNote, useClock, type ChipKind, type RouteNext, type SeatData } from './usageSeats';
 import { ClockIcon, RefreshIcon } from './icons';
 
 /**
@@ -68,6 +69,8 @@ export type StripSeg = {
   bar: number | null;
   /** The remaining "58%", "리셋됨", "소진", "쿨다운", "가능", "?". */
   value: string;
+  /** Which window `value` is about: "5시간", "주" (a plain % only; '' for the words and for rows we cannot name). */
+  period: string;
   /** "2h", "12m" (spent, a cooldown's end), "3일 전" (old numbers: when read), "오래됨"; '' when none. */
   reset: string;
   /** `reset` is said with a "·" before it (spent, a cooldown's end; an old reading's age has the clock instead). */
@@ -101,16 +104,29 @@ export function stripSegs({ seats, current, next, stale, now, label }: {
       : spent ? '소진' : st.left !== null ? `${st.left}퍼센트 남음` : st.text === '가능' ? '사용 가능' : '알 수 없음';
     const resetSaid = (spent || st.left !== null) && st.reset ? `, ${spokenCountdown(st.reset)} 뒤 초기화` : '';
     const old = st.stale && !st.resetPassed && st.left !== null;
+    const judged = st.stale && !cooldown;
+    const main = judged ? pickMain(d.rows.filter((r) => !windowPassed(r.w, now))) : pickMain(d.rows);
+    const period = !cooldown && !spent && !st.resetPassed && st.left !== null && main ? stripPeriod(main.row.key) : '';
     const note = old ? staleNote(st.ago, d.polled) : '';
     const spoken = `${name} ${said}${resetSaid}${old ? `, ${note.replace('. ', ', ')}` : st.kind === 'estimated' ? ', 추정' : ''}`;
     return {
       seat: d.seat, label: name, kind: st.kind, stale: st.stale || st.kind === 'stale', icon: st.resetPassed ? 'refresh' : old ? 'clock' : null,
-      bar: spent ? 0 : cooldown ? null : st.left, value, reset, dot: (spent || cooldown) && !old, spoken,
+      bar: spent ? 0 : cooldown ? null : st.left, value, period, reset, dot: (spent || cooldown) && !old, spoken,
       note: st.resetPassed ? `${name} — ${RESET_PASSED_NOTE}` : old ? `${name} ${st.left}% — ${note}` : '',
       current: d.seat === current, next: !!next && next.account === d.seat && next.account !== current,
     };
   });
 }
+
+/** The window a strip % belongs to, short ("주 33%", "5시간 58%"): the sheet's rows are named the same way. */
+const stripPeriod = (key: string): string => {
+  const t = ui().sessionIcon;
+  return key === 'fiveHour' ? t.periodFiveHour : key === 'weekly' || key === 'week' ? t.periodWeek : '';
+};
+
+/** A GPT seat with no numbers (never read, Codex not installed or not signed in) says nothing: "GPT ?" is left out of the strip unless it is the session's own seat. */
+const hiddenSeat = (d: SeatData, current: Seat | null, next: RouteNext | null) =>
+  d.seat === 'gpt' && d.status === 'down' && !pickMain(d.rows) && current !== 'gpt' && next?.account !== 'gpt';
 
 /** The strip's hover title, first line: the numbers are what is left (they read the other way round before). */
 const STRIP_TITLE = '계정별 남은 사용량 — 숫자와 막대는 남은 양 · 노랑 20% 이하 · 빨강 5% 이하';
@@ -134,6 +150,7 @@ function Segment({ s, stage, measure }: { s: StripSeg; stage: Exclude<StripStage
       {s.next && <span className="usage-seg-next" {...(measure ? {} : { 'data-testid': `next-${s.seat}` })}>→</span>}
       <span className="usage-seg-who">{s.label}</span>
       {stage === 'full' && <span className="usage-seg-bar"><i style={{ width: `${s.bar ?? 0}%` }} /></span>}
+      {s.period && stage !== 'min' && <span className="usage-seg-per">{s.period}</span>}
       <span className="usage-seg-num">
         {s.icon === 'refresh' && <RefreshIcon className="usage-seg-icon" />}
         {s.icon === 'refresh' && stage === 'min' ? null : s.value}
@@ -169,7 +186,7 @@ export function UsageStrip({ usage, current, next = null, grok = null, phone = f
   /** The strip had the focus when it moved between the bar and the line: the new button takes it. */
   const refocus = useRef(false);
   const check = useRef<() => void>(() => {});
-  const seats = usage ? buildSeats(usage, active, grok, now) : [];
+  const seats = usage ? buildSeats(usage, active, grok, now).filter((d) => !hiddenSeat(d, current, next)) : [];
   const shown = seats.length > 0 && (!!current || !!next || seats.some((s) => pickMain(s.rows)));
   // jsdom (tests) has no layout and no ResizeObserver: the strip stays full there.
   const canMeasure = shown && !phone && typeof ResizeObserver !== 'undefined';

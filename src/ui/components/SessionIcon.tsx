@@ -112,11 +112,18 @@ export function SessionGlyph({ name }: { name: string }) {
   );
 }
 
+/** The emoji a title opens with ("🚀 launch" → "🚀", a flag or a joined emoji whole), else null. */
+export function leadingEmoji(title: string): string | null {
+  const first = graphemes(title.trimStart())[0];
+  return first && (/^\p{Extended_Pictographic}/u.test(first) || /^\p{Regional_Indicator}{2}/u.test(first)) ? first : null;
+}
+
 /**
- * What sits on the avatar's colour: the icon the user chose (an emoji, or `glyph:<name>`), else the letters. Decorative —
- * the row's title names the session.
+ * What sits on the avatar's colour: the icon the user chose (an emoji, or `glyph:<name>`), else the emoji the title opens
+ * with, else the letters. Decorative — the row's title names the session.
  */
-export function AvatarFace({ mono, icon }: { mono: string; icon?: string | null }) {
+export function AvatarFace({ mono, icon, title }: { mono: string; icon?: string | null; title?: string }) {
+  if (!icon && title) { const e = leadingEmoji(title); if (e) icon = e; }
   const glyph = icon?.startsWith(GLYPH_PREFIX) ? icon.slice(GLYPH_PREFIX.length) : null;
   if (glyph && SESSION_ICONS.some((x) => x.name === glyph)) return <SessionGlyph name={glyph} />;
   if (icon && glyph === null) return <span className="avatar-emoji" data-testid="avatar-emoji" aria-hidden="true">{icon}</span>;

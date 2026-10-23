@@ -9,4 +9,7 @@ export const sessionIcon: Widen<typeof en> = {
   reset: '기본으로 (첫 글자)',
   failed: '아이콘 바꾸기 실패',
   network: '아이콘 바꾸기 실패: 네트워크 오류',
+  settings: '설정',
+  periodFiveHour: '5시간',
+  periodWeek: '주',
 };

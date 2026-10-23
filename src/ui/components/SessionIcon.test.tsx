@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SESSION_GLYPH_NAMES } from '../../shared/sessionIcons';
-import { SESSION_ICONS, assignMonograms, monogram } from './SessionIcon';
+import { SESSION_ICONS, assignMonograms, leadingEmoji, monogram } from './SessionIcon';
 
 describe('monogram', () => {
   it('takes the first usable character: Hangul, Latin upper-cased, digits', () => {
@@ -81,5 +81,16 @@ describe('assignMonograms', () => {
 describe('SESSION_ICONS', () => {
   it('matches the server allow-list, names unique', () => {
     expect(SESSION_ICONS.map((i) => i.name)).toEqual([...SESSION_GLYPH_NAMES]);
+  });
+});
+
+describe('leadingEmoji', () => {
+  it('the emoji a title opens with, whole; null for letters, digits and a later emoji', () => {
+    expect(leadingEmoji('🚀 launch')).toBe('🚀');
+    expect(leadingEmoji('  👩‍💻 dev')).toBe('👩‍💻');
+    expect(leadingEmoji('🇰🇷 한국')).toBe('🇰🇷');
+    expect(leadingEmoji('launch 🚀')).toBeNull();
+    expect(leadingEmoji('2026 계획')).toBeNull();
+    expect(leadingEmoji('')).toBeNull();
   });
 });

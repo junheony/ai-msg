@@ -17,6 +17,7 @@ import { BrandMark, BrandWordmark } from './BrandMark';
 import { AvatarFace, assignMonograms, avatarIndex, monogram, publishSessionAvatars, type MonoRow, type SessionAvatar } from './SessionIcon';
 import { SessionIconButton } from './SessionIconPicker';
 import { usePrefs } from '../usePrefs';
+import { ui } from '../i18n';
 // Re-exported so existing importers of these avatar helpers keep working after they moved to SessionIcon.
 export { AVATAR_COLORS, avatarIndex } from './SessionIcon';
 
@@ -296,8 +297,8 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
    * the row's end and on the second line.
    */
   const avatarOf = (slug: string, sessionId: string, title: string) => (
-    <span className="row-avatar" data-avatar={avatarIndex(slug)} style={{ '--av': `var(--avatar-${avatarIndex(slug)})` } as CSSProperties}>
-      <AvatarFace mono={monos.get(sessionId) ?? monogram(title, slug)} icon={sessionIcons[iconKey(sessionId)] ?? null} />
+    <span className="row-avatar" data-avatar={avatarIndex(slug)} style={{ '--av': `var(--avatar-${avatarIndex(slug)})` } as CSSProperties} aria-hidden="true">
+      <AvatarFace mono={monos.get(sessionId) ?? monogram(title, slug)} icon={sessionIcons[iconKey(sessionId)] ?? null} title={title} />
     </span>
   );
   /** 직접 고르기: a button over the avatar (beside the row's open button, so a tap there never opens the session). */
@@ -348,10 +349,10 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     const current = !!currentSessionId && members.includes(currentSessionId);
     const engine = engineOf(target);
     // A 갈래 row shows its newest version (`target`): title and preview both come from it.
-    const preview = oneLine(target.preview);
+    const preview = previewLine(target.preview, target.title);
     // Another row shows the same title: line 2 leads with the folder (when the preview would otherwise hide it).
     const folder = preview && (titleCount.get(target.title) ?? 0) > 1 ? slug : null;
-    const meta = metaLine({ engine, tag: rowTag(s), text: preview || slug, folder, ...(s.imported ? { title: importTitle(s) } : {}) });
+    const meta = metaLine({ engine, tag: rowTag(s), text: preview || (target.preview?.trim() ? `${slug} · ${ago(target.lastModified, now)}` : slug), folder, ...(s.imported ? { title: importTitle(s) } : {}) });
     const avatarEl = avatarOf(slug, s.sessionId, target.title);
     // The row's tooltip keeps what the row stopped showing: folder, engine, run kind, 갈래, the time.
     const facts = [slug, engine !== 'claude' ? ENGINE_NAME[engine] ?? engine : null, s.codexExec || s.autoRun ? '자동 실행' : null, ...grokBotTags(s).filter((t) => !t.startsWith('안 읽음')), s.codexArchived ? 'Codex 보관' : null, s.cwdMissing ? '폴더 없음' : null, members.length > 1 ? `갈래 ${members.length}` : null, ago(target.lastModified, now)];
@@ -553,7 +554,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
         <span className="grow" />
         <button ref={searchBtn} type="button" className="icon-btn" aria-label="검색" title="세션 검색" aria-expanded={searchOpen} onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}><SearchIcon /></button>
         <span className="new-menu-wrap">
-          <button ref={plusBtn} type="button" className="icon-btn" aria-label="새 세션" title="새 세션 · 폴더 열기" aria-haspopup="menu" aria-expanded={newMenu} onClick={() => setNewMenu((o) => !o)}><PlusIcon /></button>
+          <button ref={plusBtn} type="button" className="icon-btn" aria-label="새 세션" title="새 세션 또는 폴더 열기" aria-haspopup="menu" aria-expanded={newMenu} onClick={() => setNewMenu((o) => !o)}><PlusIcon /></button>
           {newMenu && (
             <MenuList className="session-menu new-menu" label="새 세션" onClose={() => setNewMenu(false)}>
               {onNewChat && <button type="button" role="menuitem" onClick={plusItem(onNewChat)}><span>새 세션</span><kbd>{mod}N</kbd></button>}
@@ -639,7 +640,8 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
         <div className="sidebar-foot">
           <span className="foot-menu-wrap">
             <button type="button" className="sidebar-avatar" aria-haspopup="menu" aria-expanded={footOpen} aria-label="설정 및 계정" title="설정 및 계정" onClick={() => setFootOpen((o) => !o)}>
-              {avatar ?? 'D'}
+              <span className="sidebar-avatar-mark" aria-hidden="true">{avatar ?? 'D'}</span>
+              <span className="sidebar-avatar-label" aria-hidden="true">{ui().sessionIcon.settings}</span>
             </button>
             {footOpen && (
               <MenuList className="session-menu foot-menu" label="설정 및 계정" onClose={() => setFootOpen(false)}>
@@ -691,8 +693,29 @@ const SIDEBAR_HELD = {
   title: '터미널에서 grok 이 열고 있어 지금은 읽기만 할 수 있어요 — 그쪽 grok 을 끝내면 AI-MSG 에서 이어 쓸 수 있어요',
 } as const;
 
-/** A preview as one line (the row truncates it with an ellipsis). */
-const oneLine = (t: string | undefined) => (t ? t.replace(/\s+/g, ' ').trim() : '');
+/**
+ * A reply's preview as plain text on one line (the row truncates it with an ellipsis): markdown marks dropped (`**`,
+ * `#` / `>` / `- ` / `1.` line heads, backticks, link and image syntax) and, when the preview opens with the row's own
+ * title, that part cut so line 2 does not say it twice. '' when nothing is left (the row then shows folder · time).
+ */
+export function previewLine(preview: string | undefined, title = ''): string {
+  if (!preview) return '';
+  const plain = preview
+    .split('\n')
+    .map((l) => l.replace(/^\s{0,3}(?:#{1,6}\s+|>\s?|[-*+]\s+|\d{1,3}[.)]\s+)/, '').replace(/^\s*```\w*\s*$/, ''))
+    .join(' ')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/(\*\*|__)(.+?)\1/g, '$2')
+    .replace(/\*\*|`+/g, '')
+    .replace(/(^|\s)\*(\S[^*]*?)\*(?=\s|$|[.,!?])/g, '$1$2')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const t = title.replace(/\s+/g, ' ').trim();
+  if (t && plain.toLocaleLowerCase().startsWith(t.toLocaleLowerCase())) {
+    return plain.slice(t.length).replace(/^[\s—–:·.,;!?-]+/, '');
+  }
+  return plain;
+}
 
 /** Line 2's engine badge (non-Claude only): 12px, single colour (the line's muted grey), decorative — the tooltip names it. */
 function MetaEngine({ engine }: { engine: EngineKind }) {
