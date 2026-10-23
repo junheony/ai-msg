@@ -52,6 +52,45 @@ export function dangerSpans(cmd: string): { text: string; danger: boolean }[] {
   return out;
 }
 
+/** One thing 이 세션 would stop asking about: a permission rule, a folder, or file edits (acceptEdits). */
+export type SessionGrant = { kind: 'rule'; rule: string } | { kind: 'dir'; dir: string } | { kind: 'edits' };
+
+/**
+ * The server sends 이 세션 as one Korean sentence (Engine `sessionAllowLabel`: "이 세션 동안 `Bash(x)`, `/d` 폴더 접근, 파일 편집
+ * 허용"); read its items back so the card can say them in the UI language. null when the sentence is not in that shape.
+ */
+export function sessionGrants(label: string | null): SessionGrant[] | null {
+  const m = label ? /^이 세션 동안 (.+) 허용$/s.exec(label) : null;
+  if (!m) return null;
+  const out: SessionGrant[] = [];
+  const ITEM = /`([^`]+)`( 폴더 접근)?|파일 편집/g;
+  let rest = m[1]!;
+  for (const g of m[1]!.matchAll(ITEM)) {
+    out.push(g[1] === undefined ? { kind: 'edits' } : g[2] ? { kind: 'dir', dir: g[1]! } : { kind: 'rule', rule: g[1]! });
+    rest = rest.replace(g[0], '');
+  }
+  // Anything left besides the ", " separators means a shape this reader does not know: better the raw sentence than a wrong list.
+  return out.length && !rest.replace(/,\s*/g, '').trim() ? out : null;
+}
+
+/** What 이 세션 동안 허용 covers, in a sentence next to the buttons (a tooltip alone never shows on a phone). */
+function SessionScope({ label }: { label: string | null }) {
+  const T = ui().cards.permission;
+  const grants = sessionGrants(label);
+  if (!grants) return label ? <div className="permission-session-rule muted" data-testid="session-rule">{label}</div> : null;
+  return (
+    <div className="permission-session-rule muted" data-testid="session-rule">
+      {T.sessionScope}{' '}
+      {grants.map((g, i) => (
+        <span key={i}>
+          {i > 0 && ', '}
+          {g.kind === 'rule' ? <code title={g.rule}>{clip(g.rule, 160)}</code> : g.kind === 'dir' ? T.sessionDir(g.dir) : T.sessionEdits}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
 const clip = (s: string, max: number) => (s.length > max ? s.slice(0, max) + '…' : s);
 
@@ -137,11 +176,12 @@ function ToolPermissionCard({ req, onDecide }: { req: PendingPermission; onDecid
           <pre>{input.length > 2000 ? input.slice(0, 2000) + '\n…' : input}</pre>
         </details>
       )}
+      {req.allowSession && <SessionScope label={req.sessionLabel} />}
       <div className={pending ? 'permission-actions sending' : 'permission-actions'}>
         {/* defaultToNo: the card opens on 거부 so a stray Enter cannot approve. */}
         <button type="button" className="btn deny" autoFocus={req.defaultToNo} disabled={!!pending} onClick={() => decide('deny')}>{T.deny}</button>
-        {/* Review I4: only when an SDK suggestion can be kept for the session; the rule it keeps is the tooltip, not a line. */}
-        {req.allowSession && <button type="button" className="btn ghost session-allow" title={req.sessionLabel ?? undefined} disabled={!!pending} onClick={() => decide('session')}>{T.allowSession}</button>}
+        {/* Review I4: only when an SDK suggestion can be kept for the session; what it keeps is the line above the buttons. */}
+        {req.allowSession && <button type="button" className="btn ghost session-allow" disabled={!!pending} onClick={() => decide('session')}>{T.allowSession}</button>}
         <button type="button" className="btn primary" disabled={!!pending} onClick={() => decide('once')}>{T.allowOnce}</button>
         {pending && sendingNote()}
       </div>
