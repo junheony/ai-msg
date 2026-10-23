@@ -1,5 +1,6 @@
 import { ui } from '../i18n';
 import type { ToolCallItem } from '../state';
+import { splitRecommended } from './QuestionCard';
 
 type Asked = { question: string; header: string };
 
@@ -54,11 +55,20 @@ export function QuestionSummary({ call }: { call: ToolCallItem }) {
   const asked = askedOf(call.input);
   if (call.result === null || asked.length === 0) return null;
   const answers = call.isError ? {} : questionAnswers(call);
+  // Answered, but in a shape this reader does not know: the result as Claude Code wrote it beats a row of 답하지 않음.
+  if (!call.isError && Object.keys(answers).length === 0 && call.result.trim()) {
+    const raw = call.result.trim();
+    return (
+      <div className="question-summary" role="group" aria-label={T.label} data-testid="question-summary">
+        <div className="question-summary-raw" data-testid="question-summary-raw">{raw.length > 600 ? raw.slice(0, 600) + '…' : raw}</div>
+      </div>
+    );
+  }
   return (
     <div className="question-summary" role="group" aria-label={T.label} data-testid="question-summary">
       {asked.map(({ question, header }) => {
-        // "Postgres (Recommended)" reads as "Postgres", like on the card.
-        const a = answers[question]?.replace(/\s*\((?:recommended|추천)\)/gi, '');
+        // "Postgres (Recommended)" reads as "Postgres", like on the card: only each pick's tail, never text in the middle.
+        const a = answers[question]?.split(', ').map((s) => splitRecommended(s).text).join(', ');
         return (
           <div key={question} className="question-summary-row">
             <span className="question-summary-q" title={question}>{header || question}</span>

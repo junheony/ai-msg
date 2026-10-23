@@ -4,6 +4,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { QuestionSummary, questionAnswers } from './QuestionSummary';
 import { ToolCalls } from './ToolCallView';
 import { MessageView } from './MessageView';
+import { foldedCalls } from './TurnMeta';
 import type { ToolCallItem } from '../state';
 
 const input = { questions: [
@@ -50,6 +51,27 @@ describe('QuestionSummary', () => {
     render(<ToolCalls calls={[bash('b1'), call(), bash('b2')]} />);
     expect(screen.getByTestId('question-summary')).toBeTruthy();
     expect(screen.getAllByTestId('tool-call')).toHaveLength(2);
+  });
+
+  it('an answered call whose answers cannot be read shows the result as written; a refused one still says 답하지 않음', () => {
+    const { rerender } = render(<QuestionSummary call={call({ result: 'The user picked something new.' })} />);
+    expect(screen.getByTestId('question-summary-raw').textContent).toBe('The user picked something new.');
+    rerender(<QuestionSummary call={call({ result: 'denied', isError: true })} />);
+    expect(screen.queryByTestId('question-summary-raw')).toBeNull();
+    expect(screen.getAllByText('답하지 않음')).toHaveLength(2);
+  });
+
+  it('drops only each pick\'s (Recommended) tail, never one in the middle of an answer', () => {
+    const one = { questions: [input.questions[0]!] };
+    render(<QuestionSummary call={call({ input: { ...one, answers: { '인증 방식은 무엇으로 할까요?': 'OAuth (Recommended), Use (Recommended) wording' } } })} />);
+    expect(screen.getByTestId('question-summary').textContent).toContain('OAuth, Use (Recommended) wording');
+  });
+
+  it('간결 모드 meta line does not fold the answered question (its summary is in the reply)', () => {
+    const bash: ToolCallItem = { toolUseId: 'b1', name: 'Bash', input: { command: 'ls' }, result: 'x', isError: false };
+    const item = { kind: 'assistant' as const, turnId: 't', text: 'ok', toolCalls: [call(), bash], badge: null, streaming: false, error: null, notes: [], attempts: [] };
+    expect(foldedCalls(item, true).map((c) => c.toolUseId)).toEqual(['b1']);
+    expect(foldedCalls(item, false).map((c) => c.toolUseId)).toEqual(['b1']);
   });
 
   it('a call whose questions cannot be read stays an ordinary tool call', () => {

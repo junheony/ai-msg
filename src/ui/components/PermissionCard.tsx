@@ -84,7 +84,7 @@ function SessionScope({ label }: { label: string | null }) {
       {grants.map((g, i) => (
         <span key={i}>
           {i > 0 && ', '}
-          {g.kind === 'rule' ? <code title={g.rule}>{clip(g.rule, 160)}</code> : g.kind === 'dir' ? T.sessionDir(g.dir) : T.sessionEdits}
+          {g.kind === 'rule' ? <code title={g.rule}>{clipMiddle(g.rule)}</code> : g.kind === 'dir' ? T.sessionDir(g.dir) : T.sessionEdits}
         </span>
       ))}
     </div>
@@ -93,6 +93,8 @@ function SessionScope({ label }: { label: string | null }) {
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
 const clip = (s: string, max: number) => (s.length > max ? s.slice(0, max) + '…' : s);
+/** A long rule keeps its head and its tail (`…:*` says how wide the grant is). */
+const clipMiddle = (s: string) => (s.length > 160 ? `${s.slice(0, 120)}…${s.slice(-30)}` : s);
 
 /** What the tool would do, readable: Bash as its description and `$ command`; any other tool as key · value rows. */
 function InputView({ toolName, input }: { toolName: string; input: unknown }) {

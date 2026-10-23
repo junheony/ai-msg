@@ -160,6 +160,15 @@ describe('이 세션 scope line', () => {
     expect(container.innerHTML).not.toMatch(/[가-힣]/);
   });
 
+  it('a long rule keeps its head and its tail (the :* that says how wide it is)', () => {
+    const rule = `Bash(${'a'.repeat(200)} --end:*)`;
+    render(<PermissionCard req={{ ...bashReq, sessionLabel: `이 세션 동안 \`${rule}\` 허용` }} onDecide={() => {}} />);
+    const code = screen.getByTestId('session-rule').querySelector('code')!;
+    expect(code.textContent).toBe(`${rule.slice(0, 120)}…${rule.slice(-30)}`);
+    expect(code.textContent!.endsWith('--end:*)')).toBe(true);
+    expect(code.getAttribute('title')).toBe(rule);
+  });
+
   it('a sentence it cannot read is shown as sent rather than dropped', () => {
     render(<PermissionCard req={{ ...bashReq, sessionLabel: '이 세션 동안 무언가 허용' }} onDecide={() => {}} />);
     expect(screen.getByTestId('session-rule').textContent).toBe('이 세션 동안 무언가 허용');

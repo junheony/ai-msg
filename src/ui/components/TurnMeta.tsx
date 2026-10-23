@@ -7,7 +7,7 @@ import type { ChatItem } from '../state';
 import { groupLabel } from '../toolLabel';
 import { modelLabelOf } from '../../shared/models';
 import { RoleBadge, roleCountLabel } from './RoleBadge';
-import { ToolCalls, isSoloCall } from './ToolCallView';
+import { ToolCalls, isQuestionCall, isSoloCall } from './ToolCallView';
 import { useTurnBadge } from './TurnBadge';
 
 type Assistant = Extract<ChatItem, { kind: 'assistant' }>;
@@ -20,9 +20,12 @@ function noticeTone(status: string): 'completed' | 'failed' | 'stopped' | 'runni
 }
 const NOTICE_MARK: Record<ReturnType<typeof noticeTone>, string> = { completed: '✓', failed: '!', stopped: '■', running: '…', other: '·' };
 
-/** The calls the meta line's tools item folds: all of them in 간결 모드, else all but file edits and subagents (shown in the reply). */
+/**
+ * The calls the meta line's tools item folds: in 간결 모드 all but answered questions (their summary stays in the reply), else
+ * all but file edits, subagents and answered questions (shown in the reply).
+ */
 export function foldedCalls(item: Assistant, concise: boolean) {
-  return concise ? item.toolCalls : item.toolCalls.filter((c) => !isSoloCall(c));
+  return item.toolCalls.filter((c) => !(concise ? isQuestionCall(c) : isSoloCall(c)));
 }
 
 /**
