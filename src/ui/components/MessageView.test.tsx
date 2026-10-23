@@ -55,7 +55,7 @@ describe('MessageView', () => {
   it('renders GFM: a pipe table becomes a scrollable <table>, plus strikethrough and task lists', () => {
     const text = '| 계정 | 남음 |\n|---|---|\n| A | 42% |\n| B | 7% |\n\n~~old~~\n\n- [x] done\n- [ ] todo';
     const { container } = render(<MessageView item={{ kind: 'assistant', turnId: 't', text, toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [] }} />);
-    const table = container.querySelector('.md-table > table');
+    const table = container.querySelector('.md-table-frame > .md-table > table');
     expect(table).not.toBeNull();
     expect([...table!.querySelectorAll('th')].map((th) => th.textContent)).toEqual(['계정', '남음']);
     expect(table!.querySelectorAll('tbody tr')).toHaveLength(2);
@@ -291,7 +291,8 @@ describe('MessageView code blocks and turn footer', () => {
     expect(blocks).toHaveLength(2);
     expect(blocks[0]!.querySelector('.code-lang')?.textContent).toBe('ts');
     expect(blocks[0]!.querySelector('pre code')?.textContent).toContain('const a = 1;');
-    expect(blocks[1]!.querySelector('.code-lang')?.textContent).toBe('text');
+    // No language: no made-up "text" label.
+    expect(blocks[1]!.querySelector('.code-lang')?.textContent).toBe('');
     expect(container.querySelector('p > code')?.textContent).toBe('npm test');
   });
 
@@ -302,6 +303,34 @@ describe('MessageView code blocks and turn footer', () => {
     expect(code.textContent).toBe('src/ui/components/App.tsx');
     expect(code.querySelectorAll('wbr')).toHaveLength(3);
     expect(container.querySelector('pre code wbr')).toBeNull();
+  });
+
+  it('a block over 60 lines folds to 24 with "N줄 더 보기"; the toggle unfolds and folds; copy takes every line', async () => {
+    const body = Array.from({ length: 70 }, (_, i) => `line ${i}`).join('\n');
+    let copied = '';
+    Object.defineProperty(document, 'execCommand', { value: () => { copied = document.querySelector('textarea')?.value ?? ''; return true; }, configurable: true });
+    const { container, findByText } = render(<MessageView item={{ kind: 'assistant', turnId: 't', text: `\`\`\`\n${body}\n\`\`\``, toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [] }} />);
+    const pre = container.querySelector('.code-block pre')!;
+    const fold = container.querySelector<HTMLButtonElement>('.code-fold')!;
+    expect(pre.classList.contains('code-folded')).toBe(true);
+    expect(pre.textContent).toContain('line 69'); // folded by CSS height; every line stays in the DOM
+    expect(fold.textContent).toBe('46줄 더 보기');
+    expect(fold.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(fold);
+    expect(pre.classList.contains('code-folded')).toBe(false);
+    expect(fold.textContent).toBe('접기');
+    fireEvent.click(fold);
+    expect(pre.classList.contains('code-folded')).toBe(true);
+    fireEvent.click(container.querySelector('.code-copy')!);
+    expect(await findByText('복사됨')).toBeTruthy();
+    expect(copied).toBe(body);
+  });
+
+  it('a block of 60 lines or fewer has no fold toggle', () => {
+    const body = Array.from({ length: 60 }, (_, i) => `l${i}`).join('\n');
+    const { container } = render(<MessageView item={{ kind: 'assistant', turnId: 't', text: `\`\`\`ts\n${body}\n\`\`\``, toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [] }} />);
+    expect(container.querySelector('.code-fold')).toBeNull();
+    expect(container.querySelector('.code-folded')).toBeNull();
   });
 
   it('copy button copies the code text and confirms', async () => {

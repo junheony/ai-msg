@@ -54,6 +54,8 @@ export const chat = {
     placeholderPermission: 'Approve the request above, or type a message',
   },
   placeholder: 'Send a message',
+  /** A long fenced code block shows its first lines; the toggle under it. */
+  code: { more: (n: number) => `Show ${n} more line${n === 1 ? '' : 's'}`, less: 'Show less' },
   taskMenu: 'Run as a separate task',
   /** The new-chat screen; `intro`…`homeFailed` = the first run (no folders yet). */
   newChat: {

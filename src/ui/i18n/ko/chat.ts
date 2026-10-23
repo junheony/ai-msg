@@ -53,6 +53,8 @@ export const chat: Widen<typeof en> = {
     placeholderPermission: '위 요청을 승인하거나 직접 입력해 보내기',
   },
   placeholder: '메시지 보내기',
+  /** A long fenced code block shows its first lines; the toggle under it. */
+  code: { more: (n: number) => `${n}줄 더 보기`, less: '접기' },
   taskMenu: '따로 작업으로 돌리기',
   newChat: {
     send: '보내기 — 새 대화로 시작 (Enter)',

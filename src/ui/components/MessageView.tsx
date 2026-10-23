@@ -49,6 +49,10 @@ function saveCode(text: string, lang: string) {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+/** Fenced code longer than CODE_FOLD_AT lines starts folded to CODE_FOLD_SHOW (keep in step with .code-folded in styles.css). */
+const CODE_FOLD_AT = 60;
+const CODE_FOLD_SHOW = 24;
+
 /** Fenced code: a header strip with the language, 줄바꿈 · 저장 · copy buttons above the scrolling body. */
 function CodeBlock({ children }: { children?: ReactNode }) {
   const code = Array.isArray(children) ? children[0] : children;
@@ -58,10 +62,16 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   const open = useContext(SidePanelContext);
   const previewable = open && (lang === 'html' || lang === 'svg' || (lang === 'xml' && /^\s*<svg[\s>]/i.test(text)));
   const [wrap, setWrap] = useCodeWrap();
+  // A long block shows its first CODE_FOLD_SHOW lines (CSS cuts the height; the DOM keeps every line, so streaming only
+  // ever appends and find-in-page still sees it). Copy and save always take the whole text.
+  const lines = text.split('\n').length;
+  const foldable = lines > CODE_FOLD_AT;
+  const [unfolded, setUnfolded] = useState(false);
+  const folded = foldable && !unfolded;
   return (
     <div className="code-block">
       <div className="code-head">
-        <span className="code-lang">{lang || 'text'}</span>
+        <span className="code-lang">{lang}</span>
         <span className="code-actions">
           {previewable && <button type="button" className="code-copy" onClick={() => open({ kind: 'html', title: `${lang.toUpperCase()} 미리보기`, html: text })}>미리보기</button>}
           <button type="button" className="code-tool code-wrap-toggle" aria-pressed={wrap} title="긴 줄 접기 (모든 코드 블록)" onClick={() => setWrap(!wrap)}>줄바꿈</button>
@@ -69,7 +79,8 @@ function CodeBlock({ children }: { children?: ReactNode }) {
           <CopyButton text={text} label="코드 복사" />
         </span>
       </div>
-      <pre className={wrap ? 'code-wrap' : undefined}>{children}</pre>
+      <pre className={[wrap && 'code-wrap', folded && 'code-folded'].filter(Boolean).join(' ') || undefined}>{children}</pre>
+      {foldable && <button type="button" className="code-fold" aria-expanded={!folded} onClick={(e) => { if (unfolded) e.currentTarget.parentElement?.scrollIntoView?.({ block: 'nearest' }); setUnfolded(!unfolded); }}>{folded ? ui().chat.code.more(lines - CODE_FOLD_SHOW) : ui().chat.code.less}</button>}
     </div>
   );
 }
@@ -142,6 +153,23 @@ function breakAfterSlash(text: string): ReactNode[] {
   return text.split('/').flatMap((part, i, all) => (i < all.length - 1 ? [part, '/', <wbr key={i} />] : [part]));
 }
 
+/** A GFM table scrolls sideways in its frame; while more columns sit to the right, the frame fades its right edge. */
+function MdTable({ children }: { children?: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const sync = () => { el.parentElement?.toggleAttribute('data-more', el.scrollLeft + el.clientWidth < el.scrollWidth - 1); };
+    sync();
+    el.addEventListener('scroll', sync, { passive: true });
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(sync);
+    ro?.observe(el);
+    if (el.firstElementChild) ro?.observe(el.firstElementChild);
+    return () => { el.removeEventListener('scroll', sync); ro?.disconnect(); };
+  }, []);
+  return <div className="md-table-frame"><div ref={ref} className="md-table"><table>{children}</table></div></div>;
+}
+
 const MD_COMPONENTS: Components = {
   img: ({ src, alt }) => <MdImage src={src} alt={alt} />,
   a: ({ href, children }) => <MdLink href={href}>{children}</MdLink>,
@@ -154,7 +182,7 @@ const MD_COMPONENTS: Components = {
     return <FileLink path={text && !className ? filePathIn(text) : null} fallback={plain}><code>{shown}</code></FileLink>;
   },
   // GFM tables scroll sideways inside the message instead of widening the chat (phone).
-  table: ({ children }) => <div className="md-table"><table>{children}</table></div>,
+  table: ({ children }) => <MdTable>{children}</MdTable>,
   pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
   // A paragraph opening with bold text reads as a small heading: it gets a little more room above it (CSS .md-lead).
   p: ({ node, children }) => {
@@ -167,11 +195,12 @@ const MD_PLUGINS = [remarkGfm];
 type Enhance = typeof import('../mdEnhance');
 let enhance: Enhance | null = null;
 let enhancing: Promise<void> | null = null;
-/** Highlighting + math are a separate chunk, fetched the first time a message has a code fence or a `$`. */
+/** Highlighting + math are a separate chunk, fetched the first time a message has a code fence or math. */
 function loadEnhance(): Promise<void> {
   return (enhancing ??= import('../mdEnhance').then((m) => { enhance = m; }, () => { enhancing = null; }));
 }
-const NEEDS_ENHANCE = /```|~~~|\$\$/;
+// A looser cousin of mdEnhance's INLINE_MATH: loading the chunk for a false hit costs nothing visible.
+const NEEDS_ENHANCE = /```|~~~|\$\$|\$[^\s$](?:[^$\n]*[^\s$])?\$(?!\d)/;
 
 /** Memoized on its text: parsing is the expensive part, and a streaming turn re-creates its item on every delta. */
 export const Markdown = memo(function Markdown({ text, className = 'markdown' }: { text: string; className?: string }) {

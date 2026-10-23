@@ -352,32 +352,6 @@ body.pane-dragging iframe { pointer-events: none; }
 .msg.user pre { max-width: 85%; padding: 8px 12px; border-radius: var(--r-lg); background: var(--bubble); font-family: var(--font); font-size: var(--fs-body); line-height: 1.55; color: var(--fg-strong); }
 .msg.user .chip { margin: 0; }
 .msg.assistant { display: flex; flex-direction: column; gap: 6px; }
-.markdown { overflow-wrap: anywhere; }
-.markdown > :first-child { margin-top: 0; } .markdown > :last-child { margin-bottom: 0; }
-.markdown:empty { display: none; }
-.markdown p { margin: 0 0 8px; }
-.markdown h1, .markdown h2, .markdown h3, .markdown h4 { margin: 14px 0 6px; line-height: 1.35; font-weight: 650; color: var(--fg-strong); }
-.markdown h1 { font-size: var(--fs-title); } .markdown h2 { font-size: var(--fs-title); } .markdown h3 { font-size: var(--fs-body); } .markdown h4 { font-size: var(--fs-body); }
-.markdown ul, .markdown ol { margin: 4px 0 8px; padding-left: 22px; }
-.markdown li { margin: 2px 0; }
-.markdown li > ul, .markdown li > ol { margin: 2px 0; }
-.markdown strong { color: var(--fg-strong); font-weight: 650; }
-.markdown a { color: var(--link); text-decoration: none; } .markdown a:hover { text-decoration: underline; }
-.markdown code { font-family: var(--mono); font-size: var(--fs-mono); padding: 1px 5px; border-radius: 4px; background: var(--code-bg); color: var(--code-fg); }
-.markdown pre { margin: 6px 0 10px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--code-bg); box-shadow: inset 0 0 0 1px var(--line); overflow-x: auto; }
-.markdown pre code { padding: 0; background: none; color: var(--fg); }
-.markdown blockquote { margin: 6px 0; padding-left: 12px; border-left: 2px solid var(--line-strong); color: var(--muted); }
-.markdown .md-table { margin: 6px 0 10px; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--line); border-radius: var(--r-sm); }
-.markdown table { border-collapse: collapse; width: max-content; min-width: 100%; font-size: var(--fs-label); line-height: 1.45; }
-.markdown th, .markdown td { padding: 5px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); }
-.markdown th:last-child, .markdown td:last-child { border-right: 0; }
-.markdown tbody tr:last-child td { border-bottom: 0; }
-.markdown th { color: var(--fg-strong); font-weight: 600; background: var(--code-bg); white-space: nowrap; }
-.markdown td { overflow-wrap: normal; word-break: keep-all; max-width: 420px; }
-.markdown del { color: var(--muted); }
-.markdown li:has(> input[type="checkbox"]) { list-style: none; margin-left: -18px; }
-.markdown li > input[type="checkbox"] { margin: 0 6px 0 0; vertical-align: -1px; accent-color: var(--accent); }
-.markdown hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
 .cursor { color: var(--accent); animation: blink 1s steps(2) infinite; } @keyframes blink { to { opacity: 0; } }
 .failed-attempt { opacity: .6; border-left: 2px solid var(--line-strong); padding-left: 10px; }
 .retry { align-self: flex-start; }
@@ -857,10 +831,12 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6 { margin: 26px 0 10px; line-height: 1.35; font-weight: 650; letter-spacing: -.005em; color: var(--fg-strong); }
 .markdown h1 { font-size: var(--fs-h); } .markdown h2 { font-size: var(--fs-title); } .markdown h3 { font-size: var(--fs-body); } .markdown h4, .markdown h5, .markdown h6 { font-size: var(--fs-body); }
 .markdown ul, .markdown ol { margin: 4px 0 14px; padding-left: 24px; }
-.markdown li { margin: 5px 0; padding-left: 3px; }
+.markdown li { margin: 0; padding-left: 3px; }
+.markdown li + li { margin-top: var(--s2); }
+.markdown li li + li { margin-top: var(--s1); }
 .markdown li::marker { color: var(--faint); }
 .markdown ol > li::marker { font-variant-numeric: tabular-nums; color: var(--muted); }
-.markdown li > p { margin: 0 0 6px; }
+.markdown li > p { margin: 0 0 var(--s1); }
 .markdown li > ul, .markdown li > ol { margin: 4px 0 6px; }
 .markdown strong { color: var(--fg-strong); font-weight: 650; }
 .markdown a { color: var(--link); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--link) 35%, transparent); text-underline-offset: 3px; text-decoration-thickness: 1px; transition: text-decoration-color .15s ease; }
@@ -869,8 +845,12 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .markdown blockquote { margin: 10px 0 14px; padding: 8px 16px; border-left: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 0 10px 10px 0; background: var(--pill-bg); color: color-mix(in srgb, var(--fg) 78%, var(--muted)); }
 .markdown blockquote > :last-child { margin-bottom: 0; }
 .markdown del { color: var(--muted); }
+/* Task list: GFM's checkboxes are disabled (read-only), which the browser greys out whatever accent-color says, so they
+   are drawn here — a brand-colour box with a tick when done, an outlined one when not. */
 .markdown li:has(> input[type="checkbox"]) { list-style: none; margin-left: -20px; }
-.markdown li > input[type="checkbox"] { margin: 0 8px 0 0; vertical-align: -1px; accent-color: var(--accent); }
+.markdown li > input[type="checkbox"] { appearance: none; -webkit-appearance: none; position: relative; display: inline-block; width: 1em; height: 1em; margin: 0 var(--s2) 0 0; vertical-align: -.15em; border: 1.5px solid var(--line-strong); border-radius: 4px; background: transparent; accent-color: var(--accent); }
+.markdown li > input[type="checkbox"]:checked { border-color: var(--accent); background: var(--accent); }
+.markdown li > input[type="checkbox"]:checked::after { content: ""; position: absolute; left: 31%; top: 10%; width: 28%; height: 55%; border: solid var(--on-accent); border-width: 0 2px 2px 0; transform: rotate(45deg); }
 .markdown hr { border: 0; border-top: 1px solid var(--line-strong); margin: 22px 0; }
 
 /* Code blocks — header strip with language + copy, body scrolls sideways */
@@ -881,15 +861,33 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .code-copy:hover { background: var(--hover); color: var(--fg); }
 .code-block pre { margin: 0; padding: 12px 16px 14px; overflow-x: auto; white-space: pre; word-break: normal; overflow-wrap: normal; font-size: var(--fs-mono); line-height: 1.6; }
 .code-block pre code { padding: 0; background: none; box-shadow: none; color: var(--fg); font-size: var(--fs-mono); overflow-wrap: normal; }
+/* Over 60 lines: the first 24 (1.6em each, the pre's line-height) plus the top padding, the last lines fading out. */
+.code-block pre.code-folded { max-height: calc(var(--s3) + 24 * 1.6em); overflow-y: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--s6)), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - var(--s6)), transparent); }
+.code-fold { display: block; width: 100%; min-height: var(--icon-btn); padding: 0 var(--s4); border-top: 1px solid var(--line); font-size: var(--fs-meta); color: var(--muted); text-align: center; transition: background var(--t-fast) ease, color var(--t-fast) ease; }
+.code-fold:hover { background: var(--hover); color: var(--fg); }
+/* ```diff: whole-row tints like the diff card — added / removed lines, the @@ hunk line; the ---/+++ file lines plain.
+   Each row reaches across the pre's side padding, stopping 1px short so the block's inset border stays. */
+.code-block code.language-diff .hljs-addition, .code-block code.language-diff .hljs-deletion, .code-block code.language-diff .hljs-meta { display: inline-block; min-width: calc(100% + 2 * var(--s4) - 2px); margin: 0 calc(1px - var(--s4)); padding: 0 calc(var(--s4) - 1px); }
+.code-block code.language-diff .hljs-addition { background: var(--diff-add-bg); }
+.code-block code.language-diff .hljs-deletion { background: var(--diff-del-bg); }
+.code-block code.language-diff .hljs-meta { background: var(--accent-soft); color: var(--muted); }
+.code-block code.language-diff .hljs-comment { font-style: normal; color: var(--muted); }
 
-/* Tables — rounded frame, tinted head, zebra + hover, scroll sideways when narrow */
-.markdown .md-table { margin: 8px 0 16px; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 12px; box-shadow: inset 0 0 0 1px var(--line-strong); }
+/* Tables — rounded frame, tinted head, zebra + hover, scroll sideways when narrow. The frame (MdTable) holds the border
+   and, while columns are hidden to the right (data-more), a fade on that edge; the .md-table inside it scrolls. */
+.markdown .md-table-frame { position: relative; margin: 8px 0 16px; max-width: 100%; border: 1px solid var(--line-strong); border-radius: 12px; overflow: hidden; }
+.markdown .md-table-frame::after { content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: var(--s6); pointer-events: none; background: linear-gradient(to right, transparent, var(--bg)); opacity: 0; transition: opacity var(--t-fast) ease; }
+.markdown .md-table-frame[data-more]::after { opacity: 1; }
+.markdown .md-table { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
 .markdown table { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%; font-size: var(--fs-body); line-height: 1.5; }
 .markdown th, .markdown td { padding: 8px 14px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
 .markdown th + th, .markdown td + td { border-left: 1px solid var(--line); }
 .markdown tbody tr:last-child td { border-bottom: 0; }
-.markdown th { background: var(--table-head); color: var(--fg-strong); font-weight: 600; white-space: nowrap; border-bottom-color: var(--line-strong); }
-.markdown td { overflow-wrap: normal; word-break: keep-all; max-width: 420px; }
+.markdown th { background: var(--table-head); color: var(--fg-strong); font-weight: 600; border-bottom-color: var(--line-strong); }
+/* Wrapping: Korean breaks between words (keep-all), a long path / URL breaks anywhere instead of widening its column,
+   and a cell wraps past 420px (70% of a phone's width, so the next column peeks in) — a short cell stays on one line,
+   a long one reads as a paragraph. */
+.markdown th, .markdown td { word-break: keep-all; overflow-wrap: anywhere; max-width: min(420px, 70vw); }
 .markdown tbody tr:nth-child(even) td { background: var(--table-zebra); }
 .markdown tbody tr:hover td { background: var(--hover); }
 .markdown th[align="right"], .markdown td[align="right"] { text-align: right; font-variant-numeric: tabular-nums; }
@@ -994,6 +992,8 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .code-copy { min-height: var(--phone-tap); }
   .tool-group > summary, .tool-call > summary, .sys-notice > summary { min-height: 34px; }
   .code-block pre { padding: 10px 12px 12px; }
+  .code-block code.language-diff .hljs-addition, .code-block code.language-diff .hljs-deletion, .code-block code.language-diff .hljs-meta { min-width: calc(100% + 2 * var(--s3) - 2px); margin: 0 calc(1px - var(--s3)); padding: 0 calc(var(--s3) - 1px); }
+  .code-fold { min-height: var(--tap); }
   .markdown th, .markdown td { padding: 7px 11px; }
 }
 /* After the 720px block so a phone's finger gets 44px, not the 34px floor above. */
