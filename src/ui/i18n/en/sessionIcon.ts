@@ -5,11 +5,7 @@ export const sessionIcon = {
   picker: 'Session icon',
   emoji: 'Emoji',
   glyphs: 'Line icons',
-  reset: 'Default (first letter)',
+  reset: 'Default (title emoji or first letter)',
   failed: 'Could not change the icon',
   network: 'Could not change the icon: network error',
-  // Sidebar / usage strip words that sit beside it (kept here so one block is ours).
-  settings: 'Settings',
-  periodFiveHour: '5h',
-  periodWeek: 'Wk',
 };

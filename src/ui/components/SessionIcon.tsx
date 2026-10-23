@@ -115,7 +115,10 @@ export function SessionGlyph({ name }: { name: string }) {
 /** The emoji a title opens with ("🚀 launch" → "🚀", a flag or a joined emoji whole), else null. */
 export function leadingEmoji(title: string): string | null {
   const first = graphemes(title.trimStart())[0];
-  return first && (/^\p{Extended_Pictographic}/u.test(first) || /^\p{Regional_Indicator}{2}/u.test(first)) ? first : null;
+  if (!first) return null;
+  // Text-default symbols (© ® ™ ‼) only count with VS16, a joiner or as a flag.
+  const pictograph = /^\p{Extended_Pictographic}/u.test(first) && (/^\p{Emoji_Presentation}/u.test(first) || /[\uFE0F\u200D]/.test(first));
+  return pictograph || /^\p{Regional_Indicator}{2}/u.test(first) ? first : null;
 }
 
 /**

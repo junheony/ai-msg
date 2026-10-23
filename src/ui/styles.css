@@ -631,11 +631,11 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
    and as wide as the window. The slot it is portalled into does not box it (an .app flex item of its own). */
 .usage-strip-slot { display: contents; }
 .usage-strip-row {
-  flex-shrink: 0; height: 28px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none;
+  flex-shrink: 0; height: 32px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none;
   border-bottom: 1px solid var(--line); background: var(--bg);
 }
 .usage-strip-row::-webkit-scrollbar { display: none; }
-.usage-strip-row .usage-strip { min-width: 100%; height: 28px; padding: 0 var(--s2); border-radius: 0; background: transparent; box-shadow: none; }
+.usage-strip-row .usage-strip { min-width: 100%; height: 32px; padding: 0 var(--s2); border-radius: 0; background: transparent; box-shadow: none; }
 /* Hovered / its sheet open: the line lifts to --panel (--hover over --bg leaves the light red under 4.5:1). */
 .usage-strip-row .usage-strip:hover, .usage-strip-row .usage-strip[aria-expanded="true"] { background: var(--panel); box-shadow: none; }
 .usage-strip-row .usage-strip:focus-visible { outline-offset: -2px; }
@@ -2223,6 +2223,8 @@ button.hl-row-main:hover { background: var(--hover); }
 .avatar-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .row-avatar-pick { left: 10px; top: 50%; width: 28px; height: 28px; transform: translateY(-50%); }
 @media (max-width: 720px) { .row-avatar { --av-size: 32px; } .row-avatar-pick { width: 32px; height: 32px; } }
+/* Phone: the look stays 32px; the tap area grows to 44px around it (the button sits above the row's open button, so the overshoot is the avatar's). */
+@media (max-width: 720px) { .avatar-pick::before { content: ''; position: absolute; top: 50%; left: 50%; width: var(--tap); height: var(--tap); transform: translate(-50%, -50%); border-radius: var(--r-full); } }
 .head-avatar-pick { left: var(--head-pad); top: 50%; width: var(--head-av); height: var(--head-av); transform: translateY(-50%); }
 .icon-picker { position: fixed; z-index: 1000; width: min(296px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow-y: auto; padding: var(--s2); border-radius: var(--r-lg); background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); color: var(--fg); }
 .icon-picker-head { padding: var(--s1) var(--s1) 2px; color: var(--muted); font-size: var(--fs-meta); font-weight: 500; }
@@ -2448,12 +2450,11 @@ mark.find-hit.current { background: var(--accent); color: var(--on-accent); box-
 .activity-btn:hover .activity-bell { color: var(--fg); }
 /* The bell says what the button is; the dot on its corner says the state (colour and shape rules below), the badge counts what waits. */
 .activity-dot { position: absolute; top: 5px; right: 5px; width: 9px; height: 9px; border-radius: var(--r-full); background: var(--faint); }
-.lvl-idle .activity-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--faint); display: none; }
+.lvl-idle .activity-dot { display: none; }
 .lvl-waiting .activity-dot { display: none; }
 /* Shape as well as colour (accent and danger are both reddish in the dark theme): 끊김 is a hollow ring struck through,
    실행 중 a solid dot with a turning arc around it (a still full ring under reduced motion). */
 .lvl-down .activity-dot { background: linear-gradient(135deg, transparent calc(50% - 1px), var(--danger) calc(50% - 1px) calc(50% + 1px), transparent calc(50% + 1px)); box-shadow: inset 0 0 0 2px var(--danger); }
-.lvl-waiting .activity-dot { background: var(--warn); animation: activity-wait 1.2s ease-in-out infinite; }
 .lvl-server .activity-dot { background: var(--muted); }
 .lvl-running .activity-dot { background: var(--accent); }
 .lvl-running::before { content: ""; position: absolute; top: 50%; left: 50%; width: 26px; height: 26px; margin: -13px 0 0 -13px; box-sizing: border-box; border: 1.5px solid transparent; border-top-color: var(--accent); border-right-color: var(--accent); border-radius: var(--r-full); animation: activity-spin 1.1s linear infinite; }
@@ -2461,10 +2462,8 @@ mark.find-hit.current { background: var(--accent); color: var(--on-accent); box-
 .activity-ring { position: absolute; right: 4px; bottom: 3px; font-size: var(--fs-meta); line-height: 1; color: var(--muted); }
 /* off-scale 11px: fixed-height count badge (not text) */
 .activity-badge { position: absolute; top: 1px; right: -1px; min-width: 17px; height: 17px; padding: 0 4px; box-sizing: border-box; border-radius: var(--r-full); background: var(--warn); color: var(--bg); font-size: calc(11px * var(--font-scale, 1)); font-weight: 700; line-height: 17px; text-align: center; font-variant-numeric: tabular-nums; }
-@keyframes activity-wait { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--warn) 35%, transparent); } }
 @keyframes activity-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
-  .lvl-waiting .activity-dot { animation: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--warn) 45%, transparent); }
   .lvl-running::before { animation: none; border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
 }
 @media (max-width: 720px) { .activity-btn { width: var(--phone-tap); height: var(--phone-tap); } .activity-bell { width: 20px; height: 20px; } .activity-dot { top: 10px; right: 10px; } .lvl-running::before { width: 30px; height: 30px; margin: -15px 0 0 -15px; } .activity-badge { top: 4px; right: 2px; } }

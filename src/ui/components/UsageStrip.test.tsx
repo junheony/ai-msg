@@ -392,6 +392,18 @@ describe('UsageStrip: period and hidden GPT (C-4)', () => {
     strip(snap({ accounts: { a: acct(10, 95), b: acct(18, 5), c: acct(100, 10) } }), 'a', { phone: true });
     expect(seg('a').querySelector('.usage-seg-per')?.textContent).toBe('주'); // the weekly window has less left
   });
+  it('a Grok % names its real billing period: 주 weekly, 월 monthly, nothing for a subscription', () => {
+    const grok = { bin: true } as GrokStatus;
+    const seatWith = (periodType: string) => snap({ grokSeats: { x1: { status: 'ok', lastTurnAt: at(-60_000), lastError: null, cooldownUntil: null, today, billing: {
+      usedPct: 10, windowStart: at(-86_400_000), windowEnd: at(6 * 86_400_000), tier: 'SuperGrok', fetchedAt: at(-60_000), periodType } } } });
+    for (const [type, per] of [['USAGE_PERIOD_TYPE_WEEKLY', '주'], ['USAGE_PERIOD_TYPE_MONTHLY', '월']] as const) {
+      strip(seatWith(type), 'a', { grok, phone: true });
+      expect(seg('x1').querySelector('.usage-seg-per')?.textContent).toBe(per);
+      cleanup();
+    }
+    strip(seatWith('USAGE_PERIOD_TYPE_OTHER'), 'a', { grok, phone: true });
+    expect(seg('x1').querySelector('.usage-seg-per')).toBeNull();
+  });
   it('"GPT ?" is left out when GPT has no numbers, unless it is the session seat', () => {
     const noGpt = snap({ gpt: { status: 'down', fetchedAt: null, fiveHour: null, weekly: null, fable: null } });
     strip(noGpt, 'a');

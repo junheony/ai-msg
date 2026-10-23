@@ -746,7 +746,7 @@ describe('Sidebar rows: list rows (avatar, title + time, meta, ⋯ on demand)', 
     expect(li.querySelector('.row-avatar svg')!.getAttribute('data-icon')).toBe('leaf');
     // Reset, Esc and an outside press.
     fireEvent.click(pick);
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '기본으로 (첫 글자)' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '기본으로 (제목 이모지 또는 첫 글자)' }));
     expect(onSetSessionIcon).toHaveBeenLastCalledWith('s1', null);
     rerender(view({}));
     expect(li.querySelector('.avatar-mono')!.textContent).toBe('F');
@@ -1150,6 +1150,16 @@ describe('previewLine (S-1)', () => {
     expect(previewLine('**신용점수 API 응답 캐시** 관련해서 세 곳을 봤어요', '신용점수 API 응답 캐시')).toBe('관련해서 세 곳을 봤어요');
     expect(previewLine('Stripe retry — **ready**', 'stripe retry')).toBe('ready');
     expect(previewLine('다른 내용', '제목')).toBe('다른 내용');
+  });
+  it('cuts the title only at a word edge', () => {
+    expect(previewLine('테스트가 모두 통과', '테스트')).toBe('테스트가 모두 통과');
+    expect(previewLine('APIs are fine', 'API')).toBe('APIs are fine');
+    expect(previewLine('테스트: 통과', '테스트')).toBe('통과');
+  });
+  it('strips __bold__ only at word edges', () => {
+    expect(previewLine('__굵게__ 와 __init__.py')).toBe('굵게 와 __init__.py');
+    expect(previewLine('call __init__ now')).toBe('call init now');
+    expect(previewLine('a__b__c')).toBe('a__b__c');
   });
   it('is empty when nothing is left', () => {
     expect(previewLine('**제목**', '제목')).toBe('');

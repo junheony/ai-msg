@@ -6,7 +6,7 @@ import { SESSION_ICONS, SessionGlyph } from './SessionIcon';
 
 /**
  * 직접 고르기: a transparent button over a session's avatar (a sibling of the row / chip button, never inside it, so a tap
- * here never opens the session) and the popover it opens — emoji, the line glyphs, and 기본으로 (첫 글자). The popover
+ * here never opens the session) and the popover it opens — emoji, the line glyphs, and 기본으로 (제목 이모지 또는 첫 글자). The popover
  * renders into <body> (out of the sidebar's scroll box and the top bar), under the avatar or above it when it does not fit,
  * always inside the viewport, and follows the avatar on scroll and resize.
  */

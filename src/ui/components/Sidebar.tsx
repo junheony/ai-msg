@@ -641,7 +641,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           <span className="foot-menu-wrap">
             <button type="button" className="sidebar-avatar" aria-haspopup="menu" aria-expanded={footOpen} aria-label="설정 및 계정" title="설정 및 계정" onClick={() => setFootOpen((o) => !o)}>
               <span className="sidebar-avatar-mark" aria-hidden="true">{avatar ?? 'D'}</span>
-              <span className="sidebar-avatar-label" aria-hidden="true">{ui().sessionIcon.settings}</span>
+              <span className="sidebar-avatar-label" aria-hidden="true">{ui().common.settings}</span>
             </button>
             {footOpen && (
               <MenuList className="session-menu foot-menu" label="설정 및 계정" onClose={() => setFootOpen(false)}>
@@ -705,13 +705,15 @@ export function previewLine(preview: string | undefined, title = ''): string {
     .map((l) => l.replace(/^\s{0,3}(?:#{1,6}\s+|>\s?|[-*+]\s+|\d{1,3}[.)]\s+)/, '').replace(/^\s*```\w*\s*$/, ''))
     .join(' ')
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/(\*\*|__)(.+?)\1/g, '$2')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/(^|\s)__(.+?)__(?=\s|$)/g, '$1$2')
     .replace(/\*\*|`+/g, '')
     .replace(/(^|\s)\*(\S[^*]*?)\*(?=\s|$|[.,!?])/g, '$1$2')
     .replace(/\s+/g, ' ')
     .trim();
   const t = title.replace(/\s+/g, ' ').trim();
-  if (t && plain.toLocaleLowerCase().startsWith(t.toLocaleLowerCase())) {
+  // Cut only at a word edge: "테스트" + "테스트가 …" or "API" + "APIs …" keep their text.
+  if (t && plain.toLocaleLowerCase().startsWith(t.toLocaleLowerCase()) && /^(?:$|[\s—–:·.,;!?-])/.test(plain.slice(t.length))) {
     return plain.slice(t.length).replace(/^[\s—–:·.,;!?-]+/, '');
   }
   return plain;

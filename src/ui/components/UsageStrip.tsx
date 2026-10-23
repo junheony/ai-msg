@@ -5,7 +5,7 @@ import type { Seat } from '../../shared/accounts';
 import type { UsageSnapshot } from '../../shared/usage-types';
 import { useAccounts } from '../accounts';
 import { ui } from '../i18n';
-import { buildSeats, chipCountdown, chipState, pickMain, windowPassed, RESET_PASSED_NOTE, RESET_PASSED_SAID, spokenCountdown, staleNote, useClock, type ChipKind, type RouteNext, type SeatData } from './usageSeats';
+import { buildSeats, chipCountdown, chipState, pickMain, windowPassed, RESET_PASSED_NOTE, RESET_PASSED_SAID, spokenCountdown, staleNote, useClock, type ChipKind, type RouteNext, type SeatData, type SeatRow } from './usageSeats';
 import { ClockIcon, RefreshIcon } from './icons';
 
 /**
@@ -106,7 +106,7 @@ export function stripSegs({ seats, current, next, stale, now, label }: {
     const old = st.stale && !st.resetPassed && st.left !== null;
     const judged = st.stale && !cooldown;
     const main = judged ? pickMain(d.rows.filter((r) => !windowPassed(r.w, now))) : pickMain(d.rows);
-    const period = !cooldown && !spent && !st.resetPassed && st.left !== null && main ? stripPeriod(main.row.key) : '';
+    const period = !cooldown && !spent && !st.resetPassed && st.left !== null && main ? stripPeriod(main.row) : '';
     const note = old ? staleNote(st.ago, d.polled) : '';
     const spoken = `${name} ${said}${resetSaid}${old ? `, ${note.replace('. ', ', ')}` : st.kind === 'estimated' ? ', 추정' : ''}`;
     return {
@@ -119,9 +119,10 @@ export function stripSegs({ seats, current, next, stale, now, label }: {
 }
 
 /** The window a strip % belongs to, short ("주 33%", "5시간 58%"): the sheet's rows are named the same way. */
-const stripPeriod = (key: string): string => {
-  const t = ui().sessionIcon;
-  return key === 'fiveHour' ? t.periodFiveHour : key === 'weekly' || key === 'week' ? t.periodWeek : '';
+const stripPeriod = (row: SeatRow): string => {
+  const t = ui().common;
+  if (row.key === 'week') return row.period === 'week' ? t.periodWeek : row.period === 'month' ? t.periodMonth : '';
+  return row.key === 'fiveHour' ? t.periodFiveHour : row.key === 'weekly' ? t.periodWeek : '';
 };
 
 /** A GPT seat with no numbers (never read, Codex not installed or not signed in) says nothing: "GPT ?" is left out of the strip unless it is the session's own seat. */

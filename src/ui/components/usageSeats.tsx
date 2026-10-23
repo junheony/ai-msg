@@ -123,7 +123,9 @@ export function useClock(fixed: number | undefined, periodMs = 30_000): number {
 }
 
 /** One window row in the sheet (and, for the main row, the source of the chip's number). */
-export type SeatRow = { key: string; name: string; w: UsageWindow | null; empty?: string; mainEligible?: boolean };
+export type SeatRow = { key: string; name: string; w: UsageWindow | null; empty?: string; mainEligible?: boolean;
+  /** Grok only: the billing period behind the 'week' key (the strip says 주 / 월; a subscription or unknown period says nothing). */
+  period?: 'week' | 'month' | null };
 
 /** What an adapter (claudeRows/gptRows/geminiRows/grokRows) builds for one seat; the chip and the sheet only render this. */
 export type SeatData = {
@@ -211,6 +213,10 @@ function grokMainText(g: GrokUsage, now: number): string {
 }
 
 /** The billing period's row name: "주간" for SuperGrok's weekly period, "월간" for a monthly one, else "구독". */
+function grokPeriodKind(type: string | null | undefined): 'week' | 'month' | null {
+  return type && /WEEK/i.test(type) ? 'week' : type && /MONTH/i.test(type) ? 'month' : null;
+}
+
 function grokPeriodName(type: string | null | undefined): string {
   if (type && /WEEK/i.test(type)) return WINDOW_NAME.weekly;
   if (type && /MONTH/i.test(type)) return '월간';
@@ -251,7 +257,7 @@ function grokSeatData(seat: Seat, snap: GrokUsage, now: number, bot?: GrokBotUsa
   }
   const blocked = g.status === 'down' || g.status === 'cooldown';
   return {
-    seat, engine: 'grok', mark, rows: [{ key: 'week', name: grokPeriodName(g.billing.periodType), w: week, mainEligible: true }],
+    seat, engine: 'grok', mark, rows: [{ key: 'week', name: grokPeriodName(g.billing.periodType), period: grokPeriodKind(g.billing.periodType), w: week, mainEligible: true }],
     // The subscription answered: no turn yet is not "unknown" any more.
     status: g.status === 'unknown' ? 'ok' : g.status,
     ...(blocked ? { reasonLine: grokMainText(g, now) } : {}),

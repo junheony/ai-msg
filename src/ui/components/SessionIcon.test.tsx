@@ -89,6 +89,11 @@ describe('leadingEmoji', () => {
     expect(leadingEmoji('🚀 launch')).toBe('🚀');
     expect(leadingEmoji('  👩‍💻 dev')).toBe('👩‍💻');
     expect(leadingEmoji('🇰🇷 한국')).toBe('🇰🇷');
+    expect(leadingEmoji('👍🏽 ok')).toBe('👍🏽');
+    expect(leadingEmoji('❤️ x')).toBe('❤️');
+    expect(leadingEmoji('© 2026')).toBeNull();
+    expect(leadingEmoji('® ™ ‼ x')).toBeNull();
+    expect(leadingEmoji('‼ x')).toBeNull();
     expect(leadingEmoji('launch 🚀')).toBeNull();
     expect(leadingEmoji('2026 계획')).toBeNull();
     expect(leadingEmoji('')).toBeNull();
