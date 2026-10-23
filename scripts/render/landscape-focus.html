@@ -1,0 +1,60 @@
+<!doctype html><html><head><meta charset="utf-8">
+<!-- 폰 가로 · 포커스 fixture for scripts/render-check.sh (keep in step with App.tsx / Pane.tsx / Chat.tsx shells):
+     #shell — the app frame (top bar with ☰ · chip · usage, usage line, sidebar + one pane: head, transcript with a code
+     block, composer) filling the window, to check 844×390 (phone on its side) against 390 and 1440 widths.
+     #focus — controls whose keyboard focus ring was unified on --focus / --focus-inset; a script focuses one at a time.
+       RENDER_HEIGHT=390 scripts/render-check.sh landscape-focus 844 -->
+<link rel="stylesheet" href="../../src/ui/styles.css">
+<style>
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); }
+  body:not(.fx-focus) #focus { display: none; }
+  body.fx-focus .app { display: none; }
+  #focus { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; padding: 24px; }
+  #focus .fx-cell { position: relative; padding: 12px; border: 1px dashed var(--line); border-radius: 8px; min-height: 60px; }
+  #focus .fx-cell > small { display: block; margin-bottom: 8px; color: var(--muted); font-size: 11px; }
+  #focus .session-menu, #focus .mp-pop, #focus .attach-pop { position: static; }
+  #focus .icon-picker { position: static; width: 200px; }
+</style>
+<script>
+  // As App.tsx renders it: ☰ (drawer) on a phone width, the sidebar toggle above it; ?focus shows the focus gallery.
+  addEventListener('DOMContentLoaded', () => {
+    const phone = matchMedia('(max-width: 720px)').matches;
+    document.querySelector(phone ? '.sidebar-toggle' : '.menu')?.remove();
+    if (phone) document.querySelector('.sidebar-wrap').classList.add('drawer');
+    if (location.search.includes('focus')) document.body.classList.add('fx-focus');
+  });
+</script>
+</head><body>
+<div class="app">
+  <header class="topbar">
+    <button type="button" class="icon-btn sidebar-toggle" aria-label="사이드바 숨기기" aria-pressed="true">☰</button>
+    <button type="button" class="menu" aria-label="메뉴">☰</button>
+    <div class="topbar-head"><div class="pane-head in-topbar"><div class="pane-head-main"><span class="head-chip-wrap"><button type="button" class="head-chip"><span class="head-chip-text"><span class="head-chip-title"><span class="head-chip-name">가로 화면 점검</span></span></span></button></span></div></div></div>
+    <div class="topbar-end"><button type="button" class="icon-btn" aria-label="활동">◔</button></div>
+  </header>
+  <div class="usage-strip-row"><button type="button" class="usage-strip" aria-label="사용량"><span class="usage-strip-head">남음</span><span class="usage-seg ok" data-current=""><span class="usage-seg-who">A</span><span class="usage-seg-per">주</span><span class="usage-seg-num">58%</span></span><span class="usage-seg ok"><span class="usage-seg-who">B</span><span class="usage-seg-per">주</span><span class="usage-seg-num">82%</span></span></button></div>
+  <div class="body">
+    <div class="sidebar-wrap"><aside class="sidebar"><ul><li class="session-item" title="릴리스 노트 정리"><button type="button" class="row-open"><span class="row-avatar" data-avatar="1" style="--av: var(--avatar-1);"><span class="avatar-mono" data-len="1">릴</span></span><span class="row-text"><span class="row-line"><span class="session-title">릴리스 노트 정리</span><span class="row-time">30분 전</span></span><span class="session-meta">deck</span></span></button><span class="row-end"><button type="button" class="row-more-btn" aria-label="세션 메뉴">⋯</button></span></li><li class="session-item" title="라우팅 표 개정"><button type="button" class="row-open"><span class="row-avatar" data-avatar="2" style="--av: var(--avatar-2);"><span class="avatar-mono" data-len="1">라</span></span><span class="row-text"><span class="row-line"><span class="session-title">라우팅 표 개정</span><span class="row-time">30분 전</span></span><span class="session-meta">my-app</span></span></button><span class="row-end"><button type="button" class="row-more-btn" aria-label="세션 메뉴">⋯</button></span></li><li class="session-item" title="가로 화면 점검"><button type="button" class="row-open"><span class="row-avatar" data-avatar="3" style="--av: var(--avatar-3);"><span class="avatar-mono" data-len="1">가</span></span><span class="row-text"><span class="row-line"><span class="session-title">가로 화면 점검</span><span class="row-time">30분 전</span></span><span class="session-meta">deck</span></span></button><span class="row-end"><button type="button" class="row-more-btn" aria-label="세션 메뉴">⋯</button></span></li><li class="session-item" title="포커스 링 통일"><button type="button" class="row-open"><span class="row-avatar" data-avatar="4" style="--av: var(--avatar-4);"><span class="avatar-mono" data-len="1">포</span></span><span class="row-text"><span class="row-line"><span class="session-title">포커스 링 통일</span><span class="row-time">30분 전</span></span><span class="session-meta">deck</span></span></button><span class="row-end"><button type="button" class="row-more-btn" aria-label="세션 메뉴">⋯</button></span></li><li class="session-item" title="사용량 시트"><button type="button" class="row-open"><span class="row-avatar" data-avatar="5" style="--av: var(--avatar-5);"><span class="avatar-mono" data-len="1">사</span></span><span class="row-text"><span class="row-line"><span class="session-title">사용량 시트</span><span class="row-time">30분 전</span></span><span class="session-meta">deck</span></span></button><span class="row-end"><button type="button" class="row-more-btn" aria-label="세션 메뉴">⋯</button></span></li></ul></aside></div>
+    <div class="panes" data-count="1"><div class="pane active"><div class="chat">
+      <div class="chat-body">
+        <div class="msg user"><pre>코드 블록 글꼴 확인해줘</pre></div>
+        <div class="msg assistant"><div class="markdown"><p>인라인 <code>--fs-mono</code> 와 블록이 같은 크기예요.</p><div class="code-block"><div class="code-head"><span class="code-lang">css</span><button type="button" class="code-copy">복사</button></div><pre><code>.code-block pre { font-size: var(--fs-mono); }</code></pre></div></div></div>
+      </div>
+      <div class="ctx-hint">컨텍스트 31% · 312k / 1M</div>
+      <div class="composer-wrap"><div class="composer"><textarea rows="1" placeholder="메시지 입력" aria-label="메시지"></textarea><div class="composer-row"><button type="button" class="attach" aria-label="첨부">+</button><div class="composer-send"><button type="button" class="send" aria-label="보내기"><span aria-hidden="true">↑</span></button></div></div></div></div>
+    </div></div></div>
+  </div>
+</div>
+<div id="focus">
+  <div class="fx-cell"><small>.mp-item (모델 메뉴)</small><div class="mp-pop"><button type="button" class="mp-item" id="f-mp"><span class="mp-text"><span class="mp-name">Opus 5.5</span></span></button><button type="button" class="mp-item"><span class="mp-text"><span class="mp-name">Fable 5.1</span></span></button></div></div>
+  <div class="fx-cell"><small>.session-menu button</small><div class="session-menu"><button type="button" id="f-menu">이름 바꾸기</button><button type="button">보관</button></div></div>
+  <div class="fx-cell"><small>.attach-item</small><div class="attach-pop"><button type="button" class="attach-item" id="f-attach">사진 보관함</button><button type="button" class="attach-item">파일</button></div></div>
+  <div class="fx-cell"><small>.row-open (inset)</small><aside class="sidebar" style="width:240px;padding:0"><ul><li class="session-item" title="포커스 링 통일"><button type="button" class="row-open" id="f-row"><span class="row-avatar" data-avatar="2" style="--av: var(--avatar-2);"><span class="avatar-mono" data-len="1">포</span></span><span class="row-text"><span class="row-line"><span class="session-title">포커스 링 통일</span><span class="row-time">30분 전</span></span><span class="session-meta">deck</span></span></button><span class="row-end"><button type="button" class="row-more-btn" aria-label="세션 메뉴">⋯</button></span></li></ul></aside></div>
+  <div class="fx-cell"><small>.usage-strip</small><button type="button" class="usage-strip" id="f-usage"><span class="usage-seg ok" data-current=""><span class="usage-seg-who">A</span><span class="usage-seg-num">58%</span></span></button></div>
+  <div class="fx-cell"><small>.fast-chip · .sidebar-avatar</small><button type="button" class="fast-chip" id="f-fast">↯</button> <button type="button" class="sidebar-avatar" id="f-avatar"><span class="sidebar-avatar-mark">B</span><span class="sidebar-avatar-label">설정</span></button></div>
+  <div class="fx-cell"><small>.palette-input (테두리)</small><div class="palette"><input class="palette-input" id="f-palette" placeholder="세션 · 명령 검색"></div></div>
+  <div class="fx-cell"><small>.find-input (테두리)</small><div class="find-bar"><input class="find-input" id="f-find" placeholder="대화에서 찾기"></div></div>
+  <div class="fx-cell"><small>.icon-picker-item (inset)</small><div class="icon-picker"><div class="icon-picker-grid"><button type="button" class="icon-picker-item" id="f-icon">★</button><button type="button" class="icon-picker-item" aria-pressed="true">♥</button><button type="button" class="icon-picker-item">☂</button></div></div></div>
+</div>
+</body></html>

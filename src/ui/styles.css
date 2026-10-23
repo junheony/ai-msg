@@ -37,6 +37,7 @@
   --ctl: 36px;
   --icon-btn: 32px;
   --focus: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+  --focus-inset: inset 0 0 0 2px var(--accent); /* the same ring inside the box, where the container clips --focus */
   /* scales (§4.2–4.5); defined here, adopted by later steps */
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
   --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-full: 999px;
@@ -151,6 +152,8 @@ html, body { overscroll-behavior: none; }
 button { font: inherit; color: inherit; cursor: pointer; border: 0; background: transparent; padding: 0; border-radius: var(--r-xs); }
 button:disabled { opacity: .45; cursor: default; }
 button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus); }
+/* A mouse / touch press focuses without a ring; only the keyboard (:focus-visible) shows one. */
+:focus:not(:focus-visible) { outline: none; }
 /* These fields sit in a wrapper that shows its own focus state. */
 .composer textarea:focus-visible, .newchat-box textarea:focus-visible, .palette-input:focus-visible, .sidebar-search input:focus-visible, .head-chip-input:focus-visible { box-shadow: none; }
 pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: var(--mono); font-size: var(--fs-mono); line-height: 1.5; }
@@ -323,7 +326,7 @@ body.pane-dragging iframe { pointer-events: none; }
 .float-resize { position: absolute; right: 0; bottom: 0; width: 18px; height: 18px; cursor: nwse-resize; touch-action: none; z-index: 3; }
 .float-resize::after { content: ""; position: absolute; right: 4px; bottom: 4px; width: 8px; height: 8px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); border-radius: 0 0 2px 0; opacity: .7; }
 .float-resize:hover::after, .float-resize:focus-visible::after { border-color: var(--accent); opacity: 1; }
-.float-resize:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; border-radius: var(--r-xs) 0 12px 0; }
+.float-resize:focus-visible { box-shadow: var(--focus-inset); border-radius: var(--r-xs) 0 12px 0; }
 .pane-ghost { position: absolute; z-index: 30; pointer-events: none; border-radius: 12px; box-sizing: border-box; }
 .pane-ghost.card { border: 2px dashed var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); color: transparent; }
 .pane-ghost.chip { padding: 4px 10px; border-radius: var(--r-sm); background: var(--fg-strong); color: var(--bg); font-size: var(--fs-meta); line-height: 1.4; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; box-shadow: 0 4px 14px rgba(0, 0, 0, .25); }
@@ -488,7 +491,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .question-summary-a { min-width: 0; color: var(--fg-strong); font-weight: 600; overflow-wrap: anywhere; }
 .question-summary-a.none { color: var(--muted); font-weight: 400; }
 .question-summary-raw { color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
-@media (prefers-reduced-motion: reduce) { .question-options .option, .option-mark { transition: none; } .question-options button.option:active:not(:disabled) { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .question-options button.option:active:not(:disabled) { transform: none; } }
 
 /* Composer */
 .composer-wrap { flex-shrink: 0; padding: 2px 12px 12px; }
@@ -508,7 +511,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 @keyframes skeleton-pulse { 50% { opacity: .45; } }
 /* Cached transcript shown while the fresh history is on its way: a quiet line instead of the skeleton. */
 .chat-refreshing { text-align: center; font-size: var(--fs-meta); color: var(--muted); padding: 6px 0; animation: skeleton-pulse 1.4s ease-in-out infinite; }
-@media (prefers-reduced-motion: reduce) { .chat-loading .skeleton-line { animation: none; } }
 .composer textarea { display: block; width: 100%; min-height: 46px; max-height: 40vh; padding: 12px 14px 4px; border: 0; background: transparent; resize: none; outline: none; line-height: 1.5; font-size: var(--fs-body); }
 .composer textarea::placeholder { color: var(--faint); }
 .composer textarea:placeholder-shown { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -529,7 +531,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .pick-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pick select { appearance: none; -webkit-appearance: none; position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; border-radius: inherit; opacity: 0; cursor: pointer; font: inherit; color: var(--fg); background: transparent; }
 .pick:hover { background: var(--hover); color: var(--fg); }
-.pick:has(select:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+.pick:has(select:focus-visible) { outline: 2px solid transparent; box-shadow: var(--focus-inset); }
 /* off-scale 11px: chevron glyph (not text) */
 .pick::after { content: "⌄"; position: absolute; right: 7px; top: 50%; transform: translateY(-62%); font-size: calc(11px * var(--font-scale, 1)); color: var(--faint); pointer-events: none; }
 .pick select option { background: var(--panel); color: var(--fg); }
@@ -627,7 +629,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   transition: background-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
 }
 .usage-strip:hover, .usage-strip[aria-expanded="true"] { box-shadow: inset 0 0 0 1px var(--line-strong), var(--shadow-sm); }
-.usage-strip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.usage-strip:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus); }
 .usage-seg { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 7px; border-radius: var(--r-full); }
 .usage-seg[data-current] { background: var(--panel); box-shadow: inset 0 0 0 1px var(--line-strong), var(--shadow-sm); }
 .usage-seg-who { font-weight: 600; color: var(--fg); }
@@ -671,8 +673,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-strip-row .usage-strip { min-width: 100%; height: 32px; padding: 0 var(--s2); border-radius: 0; background: transparent; box-shadow: none; }
 /* Hovered / its sheet open: the line lifts to --panel (--hover over --bg leaves the light red under 4.5:1). */
 .usage-strip-row .usage-strip:hover, .usage-strip-row .usage-strip[aria-expanded="true"] { background: var(--panel); box-shadow: none; }
-.usage-strip-row .usage-strip:focus-visible { outline-offset: -2px; }
-@media (prefers-reduced-motion: reduce) { .usage-seg-bar > i, .usage-strip { transition: none; } }
+.usage-strip-row .usage-strip:focus-visible { box-shadow: var(--focus-inset); }
 
 /* The usage sheet. Desktop: a panel on the right edge, full height; wider while the history is open. */
 .sheet-backdrop:has(> .usage-sheet) { justify-content: flex-end; align-items: stretch; padding: 0; }
@@ -720,7 +721,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .usage-sheet-inner { padding-bottom: calc(var(--s5) + env(safe-area-inset-bottom, 0px)); }
 }
 @keyframes usage-sheet-up { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .sheet.usage-sheet { animation: none; } }
 
 /* Vendor marks share one size; only the colour differs. */
 .usage-mark { font-size: var(--fs-body); flex-shrink: 0; }
@@ -794,7 +794,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .chat-body > *, .composer-wrap > * { width: 100%; max-width: var(--read-width); margin-left: auto; margin-right: auto; }
 /* Retry: a small pill at the column's left edge, not a full-width bar */
 .chat-body > .retry { width: auto; align-self: flex-start; margin-left: max(0px, calc((100% - var(--read-width)) / 2)); padding: 0 14px; border-radius: 999px; font-size: var(--fs-label); }
-.cursor { color: var(--accent); animation: blink 1s steps(2) infinite; } @keyframes blink { to { opacity: 0; } }
 .msg { min-width: 0; }
 .chat-body > .msg { animation: msg-in .22s cubic-bezier(.2, .8, .2, 1) both; }
 @keyframes msg-in { from { opacity: 0; transform: translateY(4px); } }
@@ -874,8 +873,8 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .code-lang { font-family: var(--mono); font-size: var(--fs-meta); color: var(--faint); text-transform: lowercase; letter-spacing: .2px; }
 .code-copy { height: 24px; padding: 0 9px; border-radius: var(--r-xs); font-size: var(--fs-meta); color: var(--muted); transition: background .15s ease, color .15s ease; }
 .code-copy:hover { background: var(--hover); color: var(--fg); }
-.code-block pre { margin: 0; padding: 12px 16px 14px; overflow-x: auto; white-space: pre; word-break: normal; overflow-wrap: normal; font-size: var(--fs-label); line-height: 1.6; }
-.code-block pre code { padding: 0; background: none; box-shadow: none; color: var(--fg); font-size: var(--fs-label); overflow-wrap: normal; }
+.code-block pre { margin: 0; padding: 12px 16px 14px; overflow-x: auto; white-space: pre; word-break: normal; overflow-wrap: normal; font-size: var(--fs-mono); line-height: 1.6; }
+.code-block pre code { padding: 0; background: none; box-shadow: none; color: var(--fg); font-size: var(--fs-mono); overflow-wrap: normal; }
 
 /* Tables — rounded frame, tinted head, zebra + hover, scroll sideways when narrow */
 .markdown .md-table { margin: 8px 0 16px; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 12px; box-shadow: inset 0 0 0 1px var(--line-strong); }
@@ -993,13 +992,12 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 }
 /* After the 720px block so a phone's finger gets 44px, not the 34px floor above. */
 @media (pointer: coarse) { .sys-notice > summary, .turn-error .sys-raw > summary { min-height: 44px; } }
-@media (prefers-reduced-motion: reduce) { .chat-body > .msg { animation: none; } }
 /* === model picker === */
 .mp-pop { position: fixed; z-index: 40; width: 300px; max-width: calc(100vw - 16px); overflow-y: auto; overscroll-behavior: contain; padding: 6px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--shadow); color: var(--fg); }
 .mp-section + .mp-section { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line); }
 .mp-head { padding: 6px 10px 4px; font-size: var(--fs-meta); font-weight: 600; color: var(--faint); letter-spacing: .01em; }
 .mp-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border: 0; border-radius: var(--r-sm); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.mp-item:hover, .mp-item:focus-visible { background: var(--hover); outline: none; }
+.mp-item:hover { background: var(--hover); }
 .mp-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .mp-name { font-size: var(--fs-label); color: var(--fg-strong); }
 .mp-desc { font-size: var(--fs-meta); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1173,7 +1171,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 /* sessions: rename / archive / 대화 내용 검색 */
 .session-menu { position: absolute; z-index: 30; right: 6px; top: calc(100% - 2px); display: flex; flex-direction: column; min-width: 120px; padding: 4px; border-radius: var(--r-sm); background: var(--panel); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); }
 .session-menu button { text-align: left; padding: 6px 9px; border-radius: var(--r-xs); color: var(--fg); font-size: var(--fs-label); }
-.session-menu button:hover, .session-menu button:focus-visible { background: var(--hover); }
+.session-menu button:hover { background: var(--hover); }
 .session-menu-which { padding: 4px 9px 6px; font-size: var(--fs-meta); white-space: nowrap; }
 .search-group li.search-hit { flex-direction: column; align-items: stretch; gap: 2px; }
 .search-snippet { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--muted); font-size: var(--fs-meta); line-height: 1.4; word-break: break-word; }
@@ -1322,9 +1320,6 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   .bg-list li { min-height: var(--phone-tap); }
   .bg-stop-one { height: 34px; }
   .agent-meta .agent-status { display: none; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .pulse-dot { animation: none; }
 }
 
 /* Context: the one-line cost hint above the composer */
@@ -1557,7 +1552,6 @@ button.hl-row-main:hover { background: var(--hover); }
 .sheet-backdrop:has(> .msg-sheet) { align-items: flex-end; padding: 0; }
 .sheet.msg-sheet { width: min(480px, 100%); max-height: 86%; border-radius: var(--r-lg) var(--r-lg) 0 0; padding: 0 var(--sheet-pad) calc(var(--s2) + env(safe-area-inset-bottom, 0px)); animation: msg-sheet-up var(--t-sheet) var(--ease); }
 @keyframes msg-sheet-up { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .sheet.msg-sheet { animation: none; } }
 .msg-sheet-list { display: flex; flex-direction: column; gap: 2px; }
 .msg-sheet-item { display: flex; align-items: center; gap: var(--s3); width: 100%; min-height: var(--phone-tap); padding: 0 var(--s3); border-radius: var(--r-sm); color: var(--fg); font-size: var(--fs-body); text-align: left; }
 .msg-sheet-item:hover { background: var(--hover); }
@@ -1756,13 +1750,12 @@ button.hl-row-main:hover { background: var(--hover); }
 .sidebar-wrap.hidden { position: absolute; top: 0; left: 0; bottom: 0; z-index: 20; visibility: hidden; transform: translateX(-100%); transition: transform .18s cubic-bezier(.2, .8, .2, 1), visibility 0s linear .18s; }
 .sidebar-wrap.hidden.peek { visibility: visible; transform: none; box-shadow: 6px 0 18px rgba(0, 0, 0, .18); transition: transform .18s cubic-bezier(.2, .8, .2, 1), visibility 0s; }
 .sidebar-hotzone { position: absolute; top: 0; left: 0; bottom: 0; width: 3px; z-index: 19; }
-@media (prefers-reduced-motion: reduce) { .sidebar-wrap.hidden, .sidebar-wrap.hidden.peek { transition: none; } }
 .palette-hint, .shortcut-list kbd { font-family: var(--mono); font-size: var(--fs-meta); padding: 1px 5px; border-radius: 4px; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong); background: transparent; }
 .modal-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-start; justify-content: center; padding: 12vh 16px 16px; background: rgba(0, 0, 0, .35); }
 .palette, .modal { width: 100%; max-width: 600px; display: flex; flex-direction: column; border-radius: 12px; background: var(--panel); box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); overflow: hidden; }
 .palette { max-height: 70vh; }
-.palette-input { height: 48px; padding: 0 16px; border: 0; border-bottom: 1px solid var(--line); background: transparent; font-size: var(--fs-body); outline: none; }
-.palette-input:focus-visible { outline: none; }
+.palette-input { height: 48px; padding: 0 16px; border: 0; border-bottom: 1px solid var(--line); background: transparent; font-size: var(--fs-body); }
+.palette-input:focus-visible { border-bottom-color: var(--accent); }
 .palette-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; flex: 1; }
 .palette-head { padding: 8px 10px 4px; font-size: var(--fs-meta); color: var(--faint); }
 .palette-item { display: flex; align-items: baseline; gap: 10px; padding: 7px 10px; border-radius: var(--r-xs); cursor: pointer; font-size: var(--fs-label); }
@@ -1802,7 +1795,6 @@ button.hl-row-main:hover { background: var(--hover); }
   .toasts { top: auto; right: 8px; left: 8px; width: auto; bottom: calc(env(safe-area-inset-bottom, 0px) + 96px); }
   .toast-item .icon-btn { width: var(--phone-tap); height: var(--phone-tap); margin: -8px -4px -8px 0; }
 }
-@media (prefers-reduced-motion: reduce) { .toast-item { animation: none; } }
 .session-menu button.danger { color: var(--danger); }
 .newchat { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; display: flex; justify-content: center; padding: 10vh 16px 24px; container: newchat / inline-size; }
 .newchat-inner { width: 100%; max-width: 680px; min-width: 0; display: flex; flex-direction: column; gap: 18px; }
@@ -1885,7 +1877,6 @@ button.hl-row-main:hover { background: var(--hover); }
 .side-loading { display: flex; flex-direction: column; gap: 10px; padding: 16px 18px; animation: side-fade-in .2s ease-out; }
 .side-loading .skeleton-line { display: block; height: 11px; border-radius: var(--r-xs); background: color-mix(in srgb, currentColor 9%, transparent); animation: skeleton-pulse 1.4s ease-in-out infinite; }
 @keyframes side-fade-in { from { opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .side-loading, .side-loading .skeleton-line { animation: none; } }
 /* Footer: the open file's facts in the faint mono of a status bar. */
 .side-foot { flex-shrink: 0; display: flex; align-items: center; gap: 6px; min-height: 26px; padding: 0 12px; border-top: 1px solid var(--line); font-family: var(--mono); font-size: var(--fs-meta); color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
 .side-code { display: flex; align-items: flex-start; min-width: max-content; font-family: var(--mono); font-size: var(--fs-meta); line-height: 1.6; }
@@ -1897,7 +1888,7 @@ button.hl-row-main:hover { background: var(--hover); }
   /* A checkerboard behind the picture shows where a transparent PNG is see-through. */
   background-image: conic-gradient(var(--hover) 25%, transparent 0 50%, var(--hover) 0 75%, transparent 0); background-size: 16px 16px; }
 .side-image-btn { display: flex; max-width: 100%; max-height: 100%; padding: 0; border-radius: var(--r-xs); cursor: zoom-in; }
-.side-image-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.side-image-btn:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus); }
 .side-image img { max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: var(--shadow-sm); }
 .side-frame { flex: 1; width: 100%; min-height: 300px; border: 0; background: #fff; }
 .side-body .diff-list { padding: 10px; }
@@ -1906,7 +1897,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .side-pick-label { padding: 0 2px; color: var(--muted); font-size: var(--fs-meta); }
 .side-pick-row { display: flex; gap: 6px; }
 .side-pick input { flex: 1; min-width: 0; height: 34px; padding: 0 10px; border-radius: var(--r-sm); border: 1px solid var(--line-strong); background: var(--bg); color: var(--fg); font-family: var(--mono); font-size: var(--fs-label); }
-.side-pick input:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+.side-pick input:focus-visible { border-color: var(--accent); }
 .side-pick .btn { height: 34px; flex-shrink: 0; }
 .side-pick-status { padding: 2px 2px; color: var(--muted); font-size: var(--fs-meta); }
 .side-pick-status.warn { color: var(--warn); }
@@ -1926,7 +1917,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .side-doc-tab.on .side-doc-close, .side-doc-tab:hover .side-doc-close, .side-doc-close:focus-visible { opacity: 1; }
 .side-doc-close:hover { background: var(--hover); color: var(--fg); }
 @media (hover: none) { .side-doc-close { opacity: 1; } }
-.side-doc-name:focus-visible, .side-doc-close:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.side-doc-name:focus-visible, .side-doc-close:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-inset); }
 /* Desktop: the panel slides out from the right edge and back in (Pane SIDE_SLIDE_MS waits for side-out). The wrap's
    width animates while the panel inside holds its full width, pinned right, so its content never reflows; only on
    mount / close, so dragging the splitter stays immediate. Phones keep the plain full-screen sheet; 동작 줄이기 = none. */
@@ -2001,7 +1992,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .attach-pop { position: fixed; z-index: 40; min-width: 168px; max-width: calc(100vw - 16px); overflow-y: auto; overscroll-behavior: contain; padding: 4px; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--shadow); }
 .attach-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--r-sm); text-align: left; color: var(--fg); font-size: var(--fs-label); white-space: nowrap; }
 .attach-item svg { flex-shrink: 0; color: var(--muted); }
-.attach-item:hover, .attach-item:focus-visible { background: var(--hover); outline: none; }
+.attach-item:hover { background: var(--hover); }
 @media (max-width: 720px), (pointer: coarse) { .attach-item { min-height: var(--phone-tap); padding: 0 14px 0 12px; } }
 
 /* Close ✕ (the split pane's, the side panel's): outlined in the text colour so it reads on any header. */
@@ -2084,7 +2075,7 @@ button.hl-row-main:hover { background: var(--hover); }
 /* The way to 설정 says so: the account's letter alone did not look like a door to anything. */
 .sidebar-avatar-label { font-size: var(--fs-label); font-weight: 500; color: var(--muted); }
 .sidebar-avatar:hover, .sidebar-avatar[aria-expanded="true"] { background: var(--bubble); }
-.sidebar-avatar:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sidebar-avatar:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus); }
 .session-menu.foot-menu { left: 0; right: auto; top: auto; bottom: calc(100% + 8px); min-width: 210px; }
 .foot-menu button { display: flex; align-items: center; gap: 12px; }
 .foot-menu kbd { margin-left: auto; color: var(--faint); font: inherit; font-size: var(--fs-meta); }
@@ -2174,12 +2165,11 @@ button.hl-row-main:hover { background: var(--hover); }
   .session-chip { position: relative; height: 32px; }
   .session-chip::after { content: ""; position: absolute; left: 0; right: 0; top: -6px; bottom: -6px; }
 }
-@media (prefers-reduced-motion: reduce) { .session-chip { transition: none; } }
 /* ⚡ 빠르게 on: a ↯ next to the composer's session chip (warn text: >= 4.5 on bg/panel); presses to turn it off. Its
    44px touch area is in the shared touch hit-area block below. */
 .fast-chip { position: relative; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--r-full); background: transparent; color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 55%, transparent); font: inherit; font-size: var(--fs-meta); line-height: 1; font-weight: 700; cursor: pointer; }
 .fast-chip:hover { background: var(--hover); }
-.fast-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.fast-chip:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus); }
 .sheet.fast-consent { width: min(480px, 100%); padding: 0 var(--sheet-pad) var(--sheet-pad); }
 .fast-consent-body { font-size: var(--fs-body); line-height: 1.6; }
 .fast-consent-body p { margin: 0 0 var(--s2); }
@@ -2208,7 +2198,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .ss-project::after { content: "⌄"; position: absolute; right: var(--s3); top: 50%; transform: translateY(-62%); font-size: calc(11px * var(--font-scale, 1)); color: var(--faint); pointer-events: none; }
 .ss-project select { appearance: none; -webkit-appearance: none; position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0 28px 0 var(--s3); border: 0; border-radius: inherit; background: transparent; color: var(--fg); font: inherit; cursor: pointer; }
 .ss-project select option { background: var(--panel); color: var(--fg); }
-.ss-project:has(select:focus-visible) { outline: 2px solid var(--focus); outline-offset: -2px; }
+.ss-project:has(select:focus-visible) { outline: 2px solid transparent; box-shadow: var(--focus-inset); }
 .session-sheet .mp-list { margin: 0 calc(-1 * var(--s2)); }
 .session-sheet .mp-head { padding-top: var(--s1); }
 @media (max-width: 720px) {
@@ -2218,7 +2208,6 @@ button.hl-row-main:hover { background: var(--hover); }
   .session-sheet .pick, .ss-project { height: var(--phone-tap); }
 }
 @keyframes session-sheet-up { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .sheet.session-sheet { animation: none; } }
 
 /* 작업으로: a quiet pill with its word on a wide screen; a phone / touch screen gets it in the + menu instead (Chat.tsx). */
 .task-add { display: inline-flex; align-items: center; justify-content: center; gap: var(--s1); }
@@ -2240,7 +2229,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .sidebar li.session-item.active { --row-tint: var(--selected); }
 .sidebar li.search-hit { padding: 0; }
 .row-open { display: flex; align-items: center; gap: var(--s3); flex: 1; align-self: stretch; min-width: 0; padding: var(--s2) var(--s3) var(--s2) 10px; border-radius: inherit; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.row-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.row-open:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-inset); }
 .search-hit .row-open { flex-direction: column; align-items: stretch; gap: 2px; padding: var(--s1) var(--s2); }
 .session-row { display: flex; align-items: center; gap: var(--s3); flex: 1; min-width: 0; }
 .row-text { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
@@ -2274,7 +2263,7 @@ button.hl-row-main:hover { background: var(--hover); }
 /* 직접 고르기: a transparent button over the avatar (beside the row's open button, never inside it). */
 .avatar-pick { position: absolute; z-index: 1; padding: 0; border: 0; border-radius: var(--r-full); background: transparent; cursor: pointer; }
 .avatar-pick:hover { box-shadow: 0 0 0 2px var(--line-strong); }
-.avatar-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.avatar-pick:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus); }
 .row-avatar-pick { left: 10px; top: 50%; width: 28px; height: 28px; transform: translateY(-50%); }
 @media (max-width: 720px) { .row-avatar { --av-size: 32px; } .row-avatar-pick { width: 32px; height: 32px; } }
 /* Phone: the look stays 32px; the tap area grows to 44px around it (the button sits above the row's open button, so the overshoot is the avatar's). */
@@ -2287,7 +2276,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .icon-picker-item .row-avatar-icon { width: 24px; height: 24px; }
 .icon-picker-item:hover, .icon-picker-reset:hover { background: var(--hover); }
 .icon-picker-item[aria-pressed="true"], .icon-picker-reset[aria-pressed="true"] { background: var(--selected); }
-.icon-picker-item:focus-visible, .icon-picker-reset:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.icon-picker-item:focus-visible, .icon-picker-reset:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-inset); }
 .icon-picker-reset { display: block; width: 100%; margin-top: var(--s2); padding: var(--s2); border-radius: var(--r-sm); text-align: left; color: var(--fg); font: inherit; font-size: var(--fs-label); }
 /* The row's end mark: a 16px slot, so the dots and the number line up down the list. Nothing spins: 응답 중 breathes,
    백그라운드 is a still hollow circle, 안 읽음 a filled accent dot, 승인 대기 a warn dot with a ring. */
@@ -2421,20 +2410,21 @@ button.folder-chip:hover, button.folder-chip[aria-expanded="true"] { color: var(
 /* 붙여넣은 텍스트: a long paste is a chip (pasted-N.txt); click shows its text in a small fixed popover. */
 .chip.attachment.pasted { max-width: 240px; }
 .chip.attachment.pasted .pasted-open { all: unset; cursor: pointer; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chip.attachment.pasted .pasted-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.chip.attachment.pasted .pasted-open:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus); border-radius: 4px; }
 .paste-preview { position: fixed; z-index: 40; width: min(480px, calc(100vw - 16px)); max-height: 50vh; overflow: auto; overscroll-behavior: contain; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--shadow); }
 .paste-preview pre { font-size: var(--fs-meta); }
 
 /* === reduced motion ===
    One place for 동작 줄이기: message slide-in (msg-in), toasts (toast-in), the 검색 hit flash, the sidebar slide / peek,
    the phone drawer, pulses and spinners — and pseudo-elements (the 재연결 중 dot's pulse, summary carets); the earlier
-   `*` rule was folded into this one. The per-component reduced-motion lines above stay; this one covers all.
+   `*` rule was folded into this one, and so were the per-component lines that only stopped an animation / transition.
+   Kept elsewhere: real stand-ins — the 활동 spinner's still ring, a pressed option not shrinking, 응답 중 holding still
+   as its accent dot (both pinned by their tests); the stream cursor stays shown, no blink.
    The 검색 hit keeps a still highlight for its 2 s instead of the fade, so the found message is still marked. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
   .msg.search-flash { background: color-mix(in srgb, var(--accent) 16%, transparent); }
   :root { --t-fast: 0ms; --t-base: 0ms; --t-sheet: 0ms; }
-  .pulse-dot { animation: none !important; }
 }
 
 /* === 다시 생성 / 긴 사용자 메시지 접기 ===
@@ -2456,7 +2446,7 @@ button.folder-chip:hover, button.folder-chip[aria-expanded="true"] { color: var(
    Touch tooltip: a long press on a titled button shows its title in a small fixed bubble (useTouchTooltip). */
 .find-bar { display: flex; align-items: center; gap: 4px; padding: 6px 12px; border-bottom: 1px solid var(--line-strong); background: var(--panel); }
 .find-input { flex: 1 1 auto; min-width: 0; padding: 5px 9px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: transparent; color: inherit; font: inherit; font-size: var(--fs-label); }
-.find-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+.find-input:focus-visible { border-color: var(--accent); box-shadow: none; }
 .find-count { flex: none; min-width: 3.5em; text-align: center; color: var(--muted); font-size: var(--fs-meta); font-variant-numeric: tabular-nums; }
 .find-bar .icon-btn { flex: none; }
 .find-bar .icon-btn:disabled { opacity: .4; cursor: default; }
@@ -2677,7 +2667,7 @@ html[data-concise='on'] .note.concise-note { font-size: var(--fs-meta); color: v
 .head-chip.static { padding-right: var(--s3); }
 .pane.active .head-chip, .pane-head.in-topbar .head-chip { color: var(--fg-strong); }
 button.head-chip:hover, button.head-chip[aria-expanded="true"] { background: var(--hover); }
-button.head-chip:focus-visible { outline: none; box-shadow: var(--focus); }
+button.head-chip:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus); }
 .head-chip[data-grip] { touch-action: none; }
 body.pane-dragging .head-chip { cursor: grabbing; }
 .head-avatar { --av-size: var(--head-av); flex: none; display: grid; place-items: center; width: var(--head-av); height: var(--head-av); border-radius: var(--r-full); background: var(--av, var(--avatar-8)); color: var(--avatar-glyph); transition: opacity var(--t-fast) var(--ease); }
@@ -2702,7 +2692,7 @@ button.head-chip[aria-expanded="true"] .caret { transform: rotate(180deg); }
 /* Over the chip's lower half, under the title (the chip's spacer holds the room): left = inset + avatar + gap. */
 .with-folder > .folder-chip.head-folder { position: absolute; left: calc(var(--head-pad) + var(--head-av) + var(--s2)); bottom: 4px; max-width: calc(100% - var(--head-pad) - var(--head-av) - var(--s2) - var(--s3)); margin: 0; padding: 0; border-radius: var(--r-xs); font-size: var(--fs-meta); }
 .with-folder > .folder-chip.head-folder:hover, .with-folder > .folder-chip.head-folder[aria-expanded="true"] { color: var(--fg); text-decoration: underline; text-underline-offset: 2px; text-decoration-color: var(--line-strong); }
-.with-folder > .folder-chip.head-folder:focus-visible { outline: none; box-shadow: var(--focus); }
+.with-folder > .folder-chip.head-folder:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus); }
 .with-folder:not(.with-avatar) > .folder-chip.head-folder { left: var(--s3); max-width: calc(100% - var(--s3) * 2); }
 .with-folder:has(.head-chip-input) > .folder-chip.head-folder { display: none; }
 .pane-head-chips { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; }
@@ -2730,7 +2720,6 @@ button.head-chip[aria-expanded="true"] .caret { transform: rotate(180deg); }
 .session-menu.head-menu.as-sheet .head-menu-list > button, .session-menu.head-menu.as-sheet .menu-folder { min-height: var(--phone-tap); padding: var(--s2) var(--s3); font-size: var(--fs-body); }
 .session-menu.head-menu.as-sheet .menu-hint { display: none; }
 @keyframes head-sheet-up { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .session-menu.head-menu.as-sheet { animation: none; } }
 @media (max-width: 720px) {
   .topbar-head { justify-content: flex-start; }
   .pane-head.in-topbar { justify-content: flex-start; }
@@ -2750,3 +2739,22 @@ button.head-chip[aria-expanded="true"] .caret { transform: rotate(180deg); }
 .body:focus, main.chat:focus:not(:focus-visible) { outline: none; }
 /* Phone: the connection bar's sentence wraps instead of being cut. */
 @media (max-width: 720px) { .conn-down { flex-wrap: wrap; } .conn-down > span { white-space: normal; overflow: visible; text-overflow: clip; text-align: center; } }
+
+/* === 폰 가로 (844×390 and the like) ===
+   A phone on its side is wider than 720px, so it gets the desktop layout — but only ~390px tall. The bars give back
+   height: a lower top bar and pane head, a one-line composer, a slimmer usage line, no context hint; the sidebar keeps
+   a narrow column (☰ in the top bar folds it away into the left-edge overlay, which stays closed by default). */
+@media (max-height: 500px) and (orientation: landscape) {
+  .topbar { height: 44px; min-height: 44px; }
+  .pane-head { min-height: 36px; }
+  .pane-head.in-topbar .head-chip, .pane-head.in-topbar .head-chip-input { height: 32px; }
+  .pane-head.in-topbar .with-folder .head-chip { height: 38px; padding-top: 2px; padding-bottom: 2px; }
+  .sidebar { width: min(240px, 30vw); }
+  .usage-strip-row, .usage-strip-row .usage-strip { height: 26px; }
+  .ctx-hint { display: none; }
+  .chat { --composer-fade: 16px; }
+  .chat-body { padding-top: 8px; }
+  .composer textarea { min-height: 34px; max-height: 30vh; padding-top: 6px; }
+  .composer-row { padding-top: 0; padding-bottom: 4px; }
+  .composer-wrap { padding-bottom: max(6px, env(safe-area-inset-bottom, 0px)); }
+}
