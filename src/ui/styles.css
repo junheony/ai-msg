@@ -479,7 +479,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .question-actions .btn.question-send { flex-shrink: 0; height: var(--ctl); padding: 0 var(--s4); font-size: var(--fs-label); font-weight: 600; }
 .question-send:disabled { opacity: 1; background: var(--pill-bg); color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .question-card.sending .question-options .option { opacity: .6; }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .question-actions .btn.question-send { flex: 1; height: var(--phone-tap); }
   .question-nav-btn { min-width: var(--phone-tap); min-height: var(--phone-tap); }
 }
@@ -546,7 +546,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .send.stop.stop-mini { width: 28px; height: 28px; margin-left: 0; margin-right: 6px; }
 .send.stop.stop-mini i { width: 8px; height: 8px; }
 @media (pointer: coarse) { .send.stop.stop-mini { width: 40px; height: 40px; margin-right: 8px; } }
-@media (max-width: 720px) { .send.stop.stop-mini { width: var(--phone-tap); height: var(--phone-tap); margin-right: 8px; } }
+:where(:root[data-phone]) { .send.stop.stop-mini { width: var(--phone-tap); height: var(--phone-tap); margin-right: 8px; } }
 
 /* Login */
 .login { max-width: 340px; margin: 18vh auto; padding: 0 16px; display: flex; flex-direction: column; gap: 10px; }
@@ -561,10 +561,10 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .login-where { color: var(--muted); font-size: var(--fs-label); }
 .login-where > summary { cursor: pointer; width: fit-content; user-select: none; color: var(--link); }
 .login-where > p { margin: var(--s2) 0 0; }
-@media (max-width: 720px) { .login input, .login .btn { height: var(--tap); } .login-where > summary { min-height: var(--tap); display: flex; align-items: center; } }
+:where(:root[data-phone]) { .login input, .login .btn { height: var(--tap); } .login-where > summary { min-height: var(--tap); display: flex; align-items: center; } }
 
 /* ───────── Phone ───────── */
-@media (max-width: 720px), (max-height: 560px) and (orientation: landscape) and (pointer: coarse) {
+:where(:root[data-phone]) {
   .topbar { height: 54px; gap: 4px; padding: 0 4px; }
   .menu { display: inline-flex; align-items: center; justify-content: center; width: var(--phone-tap); height: var(--phone-tap); font-size: var(--fs-title); color: var(--fg); flex-shrink: 0; }
   .topbar-end { margin-left: 0; }
@@ -600,7 +600,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .permission-actions .btn { max-width: 100%; min-width: 0; flex: 0 1 auto; }
 .permission-actions .btn.session-allow { overflow: hidden; text-overflow: ellipsis; display: inline-block; line-height: var(--ctl); }
 .question-options .option { max-width: 100%; min-width: 0; white-space: normal; text-align: left; overflow-wrap: anywhere; }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .permission-actions .btn { flex: 1 1 auto; }
   .permission-actions .btn.session-allow { line-height: var(--phone-tap); }
   .question-options .option { padding: 10px 12px; }
@@ -674,10 +674,11 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 /* Hovered / its sheet open: the line lifts to --panel (--hover over --bg leaves the light red under 4.5:1). */
 .usage-strip-row .usage-strip:hover, .usage-strip-row .usage-strip[aria-expanded="true"] { background: var(--panel); box-shadow: none; }
 .usage-strip-row .usage-strip:focus-visible { box-shadow: var(--focus-inset); }
-/* Its own line (a phone, a short or narrow window): the current seat, the next one and any warning only — every seat
-   is a tap away in the sheet; the ⋯ says there is more. */
-.usage-strip-row .usage-seg:not([data-current], .warn, .danger, :has(> .usage-seg-next)) { display: none; }
-.usage-strip-row .usage-strip:has(.usage-seg:not([data-current], .warn, .danger, :has(> .usage-seg-next)))::after { content: "⋯"; padding: 0 var(--s2); color: var(--muted); }
+/* Its own line (a phone, a short or narrow window) and a phone's low top bar held sideways: the current seat, the next
+   one and any warning only (UsageStrip marks the rest data-quiet) — whole seats, never cut mid-word; "+N" counts the
+   rest, every seat is a tap away in the sheet. */
+.usage-seg[data-quiet] { display: none; }
+.usage-strip-more { flex-shrink: 0; margin: 0 2px 0 4px; padding: 1px 7px; border-radius: var(--r-full); background: var(--pill-bg); color: var(--muted); font-size: var(--fs-meta); font-weight: 600; }
 
 /* The usage sheet. Desktop: a panel on the right edge, full height; wider while the history is open. */
 .sheet-backdrop:has(> .usage-sheet) { justify-content: flex-end; align-items: stretch; padding: 0; }
@@ -719,7 +720,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-sheet .usage-view .uv-head { position: static; margin: 0; padding: 0; }
 .usage-sheet .usage-view .uv-head h3 { margin: 0 auto 0 0; }
 /* Phone: a bottom sheet (rounded top, up to 86% of the screen), like the commander sheet. */
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .sheet-backdrop:has(> .usage-sheet) { justify-content: center; align-items: flex-end; }
   .sheet.usage-sheet, .sheet.usage-sheet.with-history { width: 100%; height: auto; max-height: 86%; border-radius: var(--r-lg) var(--r-lg) 0 0; animation-name: usage-sheet-up; }
   .usage-sheet-inner { padding-bottom: calc(var(--s5) + env(safe-area-inset-bottom, 0px)); }
@@ -986,7 +987,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 /* Narrow split columns: tighten the gutters */
 .panes:not([data-count="1"]) .chat-body { padding: 12px 14px 20px; }
 
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .chat-body, .panes:not([data-count="1"]) .chat-body { padding: 8px calc(var(--s4) + var(--s1)) 16px; gap: 16px; }
   .msg.user pre { max-width: 90%; }
   .code-copy { min-height: var(--phone-tap); }
@@ -1017,9 +1018,9 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .mp-effort-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); }
 .mp-effort-row .mp-head { padding: 0; }
 .mp-effort-select { height: 30px; min-width: 0; padding: 0 var(--s2); border: 1px solid var(--line-strong); border-radius: var(--r-xs); background: var(--bg); font-size: var(--fs-label); }
-@media (max-width: 720px) { .mp-effort-select { height: var(--phone-tap); } }
+:where(:root[data-phone]) { .mp-effort-select { height: var(--phone-tap); } }
 .mp-effort button.on { background: var(--bg-raised); color: var(--fg-strong); box-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .mp-item { min-height: var(--phone-tap); }
   .mp-effort button { height: 36px; position: relative; }
   .mp-effort button::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: var(--phone-tap); transform: translateY(-50%); }
@@ -1075,7 +1076,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .lightbox { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(0, 0, 0, .82); cursor: zoom-out; }
 .lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--r-xs); box-shadow: var(--shadow); }
 .lightbox-close { position: absolute; top: 12px; right: 12px; width: 36px; height: 36px; border: 0; border-radius: 50%; background: rgba(255, 255, 255, .12); color: #fff; font-size: var(--fs-body); cursor: pointer; }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .todo-head, .queue-item, .queue-text { min-height: var(--phone-tap); }
   .queue-remove, .queue-clear, .queue-resume { min-height: 36px; min-width: 36px; }
   .attach-thumb img { max-width: 120px; max-height: 96px; }
@@ -1130,7 +1131,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .img-ratios { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-sm); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .img-ratio { min-width: 44px; height: 32px; padding: 0 8px; border-radius: var(--r-xs); color: var(--muted); font-size: var(--fs-meta); }
 .img-ratio.on { color: var(--fg); background: var(--selected); }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .img-editor-stage { padding: 16px; }
   .img-editor-bar .btn { height: 36px; min-width: 56px; }
   .img-ratio { height: 40px; }
@@ -1191,7 +1192,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .suggest-label { flex-shrink: 0; max-width: 70%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: var(--fs-meta); color: var(--fg); }
 .suggest-detail { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: var(--fs-meta); }
 .suggest-empty { padding: 6px 9px; }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .session-menu button { min-height: var(--phone-tap); }
   .suggest li { min-height: 36px; align-items: center; }
 }
@@ -1205,6 +1206,10 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
    the bars and columns run to the screen edge in their own colour (a border of it) and only their content steps in. */
 :root { --sa-left: env(safe-area-inset-left, 0px); --sa-right: env(safe-area-inset-right, 0px); }
 .topbar { border-left: var(--sa-left) solid var(--sidebar); border-right: var(--sa-right) solid var(--sidebar); }
+/* Its bottom line runs under those side bands too (the border would stop short at their corners): the border keeps
+   its 1px of height but goes clear, and the line is drawn across the whole width. */
+.topbar { border-bottom-color: transparent; }
+.topbar::after { content: ''; position: absolute; left: calc(-1 * var(--sa-left)); right: calc(-1 * var(--sa-right)); bottom: -1px; height: 1px; background: var(--line); pointer-events: none; }
 .usage-strip-row { border-left: var(--sa-left) solid var(--bg); border-right: var(--sa-right) solid var(--bg); }
 .sidebar-wrap { border-left: var(--sa-left) solid var(--sidebar); }
 .sidebar-wrap:is(.drawer, .hidden) ~ .panes { border-left: var(--sa-left) solid var(--bg); }
@@ -1222,7 +1227,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .notify-hint { margin: 0; color: var(--muted); font-size: var(--fs-meta); line-height: 1.45; }
 .notify-note { margin: 0; color: var(--fg); font-size: var(--fs-meta); }
 .notify-test { align-self: flex-start; }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .notify-btn, .notify-toggle, .notify-test { min-height: var(--phone-tap); }
   .notify-pop { position: fixed; right: 8px; top: calc(env(safe-area-inset-top, 0) + 50px); }
 }
@@ -1240,7 +1245,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .fork-pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; width: 280px; max-width: calc(100vw - 16px); padding: 10px; display: flex; flex-direction: column; gap: 8px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--shadow); color: var(--fg); font-size: var(--fs-label); }
 .fork-pop .btn { text-align: left; }
 .fork-hint { margin: 0; color: var(--muted); font-size: var(--fs-meta); line-height: 1.45; }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .fork-btn, .fork-pop .btn { min-height: var(--phone-tap); }
 }
 /* === activity: status row, background pill, agent cards, sidebar dots (Desktop Code tab) === */
@@ -1323,7 +1328,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .agent-group > .agent-card.running { margin: 4px 0; }
 
 
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .turn-status .status-arg { display: none; }
   /* The composer's stop button sits right below; the row keeps room for the pill. */
   .turn-status .status-stop { display: none; }
@@ -1343,7 +1348,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .msg.user.handoff-req pre { color: var(--muted); font-size: var(--fs-meta); }
 .tb-cold { text-decoration: underline dotted color-mix(in srgb, var(--warn) 70%, transparent); text-underline-offset: 3px; cursor: help; }
 .tb-cold b { color: color-mix(in srgb, var(--warn) 80%, var(--fg)); }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .ctx-hint { white-space: normal; }
   .handoff-btn, .session-link { min-height: var(--phone-tap); }
 }
@@ -1424,7 +1429,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .hl-row-result + .hl-row-time { margin-left: 0; }
 .hl-row-card { padding: 0 8px 8px; grid-template-columns: minmax(0, 1fr); }
 .hl-system .hl-card.server { opacity: 0.8; }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .hl-row-main { flex-wrap: wrap; padding: 7px 10px; }
   .hl-row-title { max-width: none; flex: 1 1 auto; }
   .hl-row-project { max-width: 40%; }
@@ -1487,7 +1492,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .uv-table thead th:first-child { background: var(--bg-raised); }
 .uv-table tbody tr:last-child > * { border-bottom: 0; }
 .uv-foot { text-align: right; }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .sheet.usage-view { max-height: 100%; }
   .uv-inner { padding: 0 12px 32px; gap: 14px; }
   .uv-head { padding-top: calc(10px + env(safe-area-inset-top, 0px)); }
@@ -1535,7 +1540,7 @@ button.hl-row-main:hover { background: var(--hover); }
   .tb-pill { position: relative; }
   .tb-pill::after { content: ""; position: absolute; inset: -10px -2px; }
 }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .msg-act { min-width: 36px; height: 36px; }
   .msg-actions .msg-act { min-width: var(--phone-tap); height: var(--phone-tap); }
   .msg-act-said { display: none; }
@@ -1555,7 +1560,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .sheet-head.excerpt .sheet-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-body); font-weight: 500; color: var(--muted); }
 .icon-btn.sheet-close { position: relative; flex-shrink: 0; width: 32px; height: 32px; }
 .icon-btn.sheet-close::after { content: ""; position: absolute; inset: -6px; }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .sheet { --sheet-pad: var(--s3); }
   .icon-btn.sheet-close { width: var(--phone-tap); height: var(--phone-tap); }
   .icon-btn.sheet-close::after { content: none; }
@@ -1643,7 +1648,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .settings .notify-pop { position: static; width: auto; box-shadow: none; }
 .dictate.on { color: var(--danger); animation: dictate-pulse 1.2s ease-in-out infinite; }
 @keyframes dictate-pulse { 50% { opacity: .45; } }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .settings-body { display: block; }
   .settings-nav { display: none; }
   .settings .link-btn { min-height: var(--phone-tap); }
@@ -1655,7 +1660,7 @@ button.hl-row-main:hover { background: var(--hover); }
   /* The press area grows to 44px. */
   .settings-hint .hint-more::after { inset: -14px -8px; }
 }
-@media (max-width: 720px) { .seg button { height: var(--tap); } .sheet-backdrop { padding: 0; align-items: stretch; } .sheet { max-height: 100%; border-radius: 0; width: 100%; } }
+:where(:root[data-phone]) { .seg button { height: var(--tap); } .sheet-backdrop { padding: 0; align-items: stretch; } .sheet { max-height: 100%; border-radius: 0; width: 100%; } }
 /* 설치 점검 (SetupWizard): one sheet, three numbered parts (engines · Claude accounts · addresses) and a sticky 완료.
    Rows sit in a hairline box; state = a coloured dot + muted word; commands (and addresses) on a --pill-bg strip. */
 .sheet.setup-wizard { width: min(600px, 100%); padding: 0 var(--sheet-pad); display: flex; flex-direction: column; gap: var(--s5); }
@@ -1706,7 +1711,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .setup-error { margin: 0; color: var(--danger); font-size: var(--fs-label); line-height: var(--lh-label); overflow-wrap: anywhere; }
 .setup-foot { position: sticky; bottom: 0; z-index: 2; display: flex; flex-direction: column; align-items: flex-end; gap: var(--s2); margin-top: calc(-1 * var(--s3)); padding: var(--s3) 0 calc(var(--s3) + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--line); background: var(--panel); }
 .setup-done { height: 36px; min-width: 96px; }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .setup-field, .setup-field-id { flex: 1 1 100%; }
   .setup-field input, .setup-add-btn, .setup-recheck, .setup-copy, .setup-restart .btn { min-height: var(--phone-tap); }
   .setup-more > summary, .setup-fold > summary, .setup-banner .text-btn { min-height: var(--tap); display: flex; align-items: center; }
@@ -1803,7 +1808,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .toast-item:not(.error) .text-btn { flex: none; color: var(--link); font-weight: 600; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-6px); } }
 /* Phone: bottom, above the composer (and the home-indicator safe area), full width. */
-@media (max-width: 720px), (max-height: 560px) and (orientation: landscape) and (pointer: coarse) {
+:where(:root[data-phone]) {
   .toasts { top: auto; right: 8px; left: 8px; width: auto; bottom: calc(env(safe-area-inset-bottom, 0px) + 96px); }
   .toast-item .icon-btn { width: var(--phone-tap); height: var(--phone-tap); margin: -8px -4px -8px 0; }
 }
@@ -1839,7 +1844,7 @@ button.hl-row-main:hover { background: var(--hover); }
 @container newchat (max-width: 420px) {
   .newchat-greeting { font-size: var(--fs-h); }
 }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .modal-backdrop { padding-top: calc(8px + env(safe-area-inset-top, 0px)); }
   .palette { max-height: 80vh; }
   .palette-item { min-height: 36px; }
@@ -1933,13 +1938,13 @@ button.hl-row-main:hover { background: var(--hover); }
 /* Desktop: the panel slides out from the right edge and back in (Pane SIDE_SLIDE_MS waits for side-out). The wrap's
    width animates while the panel inside holds its full width, pinned right, so its content never reflows; only on
    mount / close, so dragging the splitter stays immediate. Phones keep the plain full-screen sheet; 동작 줄이기 = none. */
-@media (min-width: 721px) and (prefers-reduced-motion: no-preference) {
+@media (prefers-reduced-motion: no-preference) { :where(:root:not([data-phone])) {
   .side-wrap { overflow: hidden; justify-content: flex-end; animation: side-in .18s cubic-bezier(.2, .8, .2, 1); }
   .side-wrap > .side-panel { animation: side-hold .18s; }
   .side-wrap.closing { animation: side-out .18s cubic-bezier(.4, 0, .6, 1) forwards; pointer-events: none; }
   .side-wrap.closing > .side-panel { animation: side-hold-out .18s forwards; }
   .side-wrap.instant, .side-wrap.instant > .side-panel { animation: none; }
-}
+} }
 @keyframes side-in { from { width: 0; } }
 @keyframes side-out { to { width: 0; } }
 @keyframes side-hold { from, to { flex: none; width: var(--side-w); } }
@@ -1948,7 +1953,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .file-link { display: inline; padding: 0; font: inherit; color: inherit; text-align: inherit; cursor: pointer; text-decoration: underline dotted color-mix(in srgb, currentColor 45%, transparent); text-underline-offset: 3px; }
 .file-link:hover { color: var(--accent); }
 .tool-open { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: var(--fs-meta); color: var(--faint); }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   /* Phone: the panel is a full-screen sheet over the pane. */
   .pane.with-side { flex-direction: column; }
   .side-splitter { display: none; }
@@ -2022,7 +2027,7 @@ button.hl-row-main:hover { background: var(--hover); }
 /* Queue row: 지금 전송 (interrupt + send this one first). */
 .queue-now { flex-shrink: 0; display: inline-flex; align-items: center; gap: 3px; height: 24px; padding: 0 8px; border-radius: 999px; color: var(--accent); font-size: var(--fs-meta); font-weight: 600; white-space: nowrap; }
 .queue-now:hover { background: var(--accent-soft); }
-@media (max-width: 720px) { .queue-now { min-height: 36px; } }
+:where(:root[data-phone]) { .queue-now { min-height: 36px; } }
 /* Status line: one line, its edges on the composer's; the least useful parts drop out before anything wraps. */
 .activity-bar { flex-wrap: nowrap; padding: 0 2px; }
 .activity-bar .turn-status { padding: 0 2px; }
@@ -2064,7 +2069,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .chat-body { scroll-padding-bottom: calc(var(--composer-fade) + 8px); }
 /* Under the composer: the home-indicator inset only (12px on screens without one), as on Claude for iPad. */
 .composer-wrap { padding-bottom: max(12px, env(safe-area-inset-bottom, 0px)); }
-@media (max-width: 720px) { .composer-wrap { padding-bottom: max(8px, env(safe-area-inset-bottom, 0px)); } }
+:where(:root[data-phone]) { .composer-wrap { padding-bottom: max(8px, env(safe-area-inset-bottom, 0px)); } }
 /* On-screen keyboard up (Chat.tsx sets data-soft-kb): the keyboard covers the home indicator, so no inset gap above it. */
 :root[data-soft-kb] .composer-wrap { padding-bottom: 8px; }
 .composer { border-radius: 18px; }
@@ -2135,7 +2140,7 @@ button.hl-row-main:hover { background: var(--hover); }
 @media (pointer: coarse) {
   .attach, .send, .composer-send .icon-btn.dictate { width: 40px; height: 40px; }
 }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .attach, .send, .composer-send .icon-btn.dictate { width: var(--phone-tap); height: var(--phone-tap); }
   .composer-row { padding: 2px 6px 6px; gap: 4px; }
   .composer-send { gap: 3px; }
@@ -2176,7 +2181,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .ctx-out.ok { color: var(--muted); }
 .ctx-out.high { color: var(--danger); }
 @container pane (max-width: 480px) { .sc-extra { display: none; } }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .composer-top { padding: var(--s1) var(--s2) 0; }
   /* The chip stays small to look at; its tap area is the phone's 44px. */
   .session-chip { position: relative; height: 32px; }
@@ -2192,7 +2197,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .fast-consent-body p { margin: 0 0 var(--s2); }
 .fast-consent-body ul { margin: 0 0 var(--s3); padding-left: 1.2em; display: flex; flex-direction: column; gap: var(--s1); }
 .fast-consent-body .modal-actions { margin-top: var(--s3); }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .sheet-backdrop:has(> .fast-consent) { align-items: flex-end; }
   .sheet.fast-consent { max-height: 92%; height: auto; border-radius: var(--r-lg) var(--r-lg) 0 0; }
   .fast-consent-body .modal-actions .btn { min-height: var(--phone-tap); }
@@ -2218,7 +2223,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .ss-project:has(select:focus-visible) { outline: 2px solid transparent; box-shadow: var(--focus-inset); }
 .session-sheet .mp-list { margin: 0 calc(-1 * var(--s2)); }
 .session-sheet .mp-head { padding-top: var(--s1); }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .sheet-backdrop:has(> .session-sheet) { justify-content: center; align-items: flex-end; }
   .sheet.session-sheet { width: 100%; height: auto; max-height: 86%; border-radius: var(--r-lg) var(--r-lg) 0 0; animation-name: session-sheet-up; }
   .session-sheet-inner { padding-bottom: calc(var(--s5) + env(safe-area-inset-bottom, 0px)); }
@@ -2247,6 +2252,8 @@ button.hl-row-main:hover { background: var(--hover); }
 .sidebar li.search-hit { padding: 0; }
 .row-open { display: flex; align-items: center; gap: var(--s3); flex: 1; align-self: stretch; min-width: 0; padding: var(--s2) var(--s3) var(--s2) 10px; border-radius: inherit; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .row-open:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-inset); }
+/* The row's end buttons (.row-end) sit over the right of .row-open: the ring is drawn again above them so it stays whole. */
+.sidebar li.session-item:has(.row-open:focus-visible)::after { content: ''; position: absolute; inset: 0; z-index: 1; border-radius: inherit; box-shadow: var(--focus-inset); pointer-events: none; }
 .search-hit .row-open { flex-direction: column; align-items: stretch; gap: 2px; padding: var(--s1) var(--s2); }
 .session-row { display: flex; align-items: center; gap: var(--s3); flex: 1; min-width: 0; }
 .row-text { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
@@ -2284,7 +2291,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .row-avatar-pick { left: 10px; top: 50%; width: 28px; height: 28px; transform: translateY(-50%); }
 @media (max-width: 720px) { .row-avatar { --av-size: 32px; } .row-avatar-pick { width: 32px; height: 32px; } }
 /* Phone: the look stays 32px; the tap area grows to 44px around it (the button sits above the row's open button, so the overshoot is the avatar's). */
-@media (max-width: 720px) { .avatar-pick::before { content: ''; position: absolute; top: 50%; left: 50%; width: var(--tap); height: var(--tap); transform: translate(-50%, -50%); border-radius: var(--r-full); } }
+:where(:root[data-phone]) { .avatar-pick::before { content: ''; position: absolute; top: 50%; left: 50%; width: var(--tap); height: var(--tap); transform: translate(-50%, -50%); border-radius: var(--r-full); } }
 .head-avatar-pick { left: var(--head-pad); top: 50%; width: var(--head-av); height: var(--head-av); transform: translateY(-50%); }
 .icon-picker { position: fixed; z-index: 1000; width: min(296px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow-y: auto; padding: var(--s2); border-radius: var(--r-lg); background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); color: var(--fg); }
 .icon-picker-head { padding: var(--s1) var(--s1) 2px; color: var(--muted); font-size: var(--fs-meta); font-weight: 500; }
@@ -2365,7 +2372,7 @@ button.hl-row-main:hover { background: var(--hover); }
 .project-head-btn:hover .project-name { color: var(--fg); }
 .pinned-group.collapsed .chev { transform: rotate(-90deg); }
 .archived-count { margin-left: auto; color: var(--faint); font-size: var(--fs-meta); font-variant-numeric: tabular-nums; }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .sidebar li.session-item { min-height: 60px; }
   .archived-row { min-height: var(--phone-tap); }
   .sidebar-search-row .icon-btn { min-width: var(--phone-tap); min-height: var(--phone-tap); }
@@ -2449,7 +2456,7 @@ button.folder-chip:hover, button.folder-chip[aria-expanded="true"] { color: var(
    characters shows about 8 lines, fading out, with 더 보기 / 접기 under it (no animation: nothing to reduce). */
 .msg-act.regen-caret { min-width: 20px; padding: 0 2px; margin-left: -2px; }
 /* Phone: the caret stays 20px wide; its touch area reaches 44px into room kept free on its right (not over 다시 생성). */
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .msg-act.regen-caret { position: relative; margin-right: calc(var(--phone-tap) - 20px); }
   .msg-act.regen-caret::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: var(--phone-tap); }
 }
@@ -2463,7 +2470,7 @@ button.folder-chip:hover, button.folder-chip[aria-expanded="true"] { color: var(
    Touch tooltip: a long press on a titled button shows its title in a small fixed bubble (useTouchTooltip). */
 .find-bar { display: flex; align-items: center; gap: 4px; padding: 6px 12px; border-bottom: 1px solid var(--line-strong); background: var(--panel); }
 .find-input { flex: 1 1 auto; min-width: 0; padding: 5px 9px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: transparent; color: inherit; font: inherit; font-size: var(--fs-label); }
-.find-input:focus-visible { border-color: var(--accent); box-shadow: none; }
+.find-input:focus-visible { border-color: var(--accent); box-shadow: var(--focus-inset); }
 .find-count { flex: none; min-width: 3.5em; text-align: center; color: var(--muted); font-size: var(--fs-meta); font-variant-numeric: tabular-nums; }
 .find-bar .icon-btn { flex: none; }
 .find-bar .icon-btn:disabled { opacity: .4; cursor: default; }
@@ -2480,7 +2487,7 @@ mark.find-hit.current { background: var(--accent); color: var(--on-accent); box-
 .code-tool[aria-pressed="true"] { color: var(--fg); background: color-mix(in srgb, var(--fg) 7%, transparent); }
 .code-block pre.code-wrap { white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: hidden; }
 .code-block pre.code-wrap code { white-space: inherit; overflow-wrap: anywhere; }
-@media (max-width: 720px) { .code-tool { min-height: var(--phone-tap); } }
+:where(:root[data-phone]) { .code-tool { min-height: var(--phone-tap); } }
 
 /* === 세션 cwd·복제·턴별 모델 ===
    작업 폴더 바꾸기: the folder picker in a small modal under the session's current folder. A turn with no badge (a
@@ -2527,11 +2534,11 @@ mark.find-hit.current { background: var(--accent); color: var(--on-accent); box-
 @media (prefers-reduced-motion: reduce) {
   .lvl-running::before { animation: none; border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
 }
-@media (max-width: 720px) { .activity-btn { width: var(--phone-tap); height: var(--phone-tap); } .activity-bell { width: 20px; height: 20px; } .activity-dot { top: 10px; right: 10px; } .lvl-running::before { width: 30px; height: 30px; margin: -15px 0 0 -15px; } .activity-badge { top: 4px; right: 2px; } }
+:where(:root[data-phone]) { .activity-btn { width: var(--phone-tap); height: var(--phone-tap); } .activity-bell { width: 20px; height: 20px; } .activity-dot { top: 10px; right: 10px; } .lvl-running::before { width: 30px; height: 30px; margin: -15px 0 0 -15px; } .activity-badge { top: 4px; right: 2px; } }
 /* 활동 sheet (ActivitySheet.tsx): a right column on desktop, a bottom sheet on a phone. */
 .sheet-backdrop:has(> .activity-sheet) { justify-content: flex-end; align-items: stretch; padding: 0; }
 .sheet.activity-sheet { width: 320px; max-width: 100%; max-height: 100%; border-radius: 0; background: var(--bg-raised); --sheet-bg: var(--bg-raised); }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .sheet-backdrop:has(> .activity-sheet) { align-items: flex-end; }
   .sheet.activity-sheet { width: 100%; max-height: 85%; border-radius: var(--r-lg) var(--r-lg) 0 0; padding-bottom: env(safe-area-inset-bottom, 0); }
 }
@@ -2559,7 +2566,7 @@ mark.find-hit.current { background: var(--accent); color: var(--on-accent); box-
 .act-link b { color: var(--link); }
 .act-notify { flex-wrap: wrap; padding-top: 8px; border-top: 1px solid var(--line); }
 .activity-sheet .notify-pop { position: static; width: auto; margin-top: 6px; box-shadow: none; }
-@media (max-width: 720px) { .act-row, .act-stop, .act-banner .text-btn { min-height: var(--phone-tap); } }
+:where(:root[data-phone]) { .act-row, .act-stop, .act-banner .text-btn { min-height: var(--phone-tap); } }
 /* Touch: 44px hit areas for the small controls without changing their look — an invisible box centred on each. */
 @media (hover: none), (max-width: 720px) {
   .act-line .text-btn, .toast-item .text-btn, .usage-history-toggle, .usage-strip-wrap > .usage-strip { position: relative; }
@@ -2592,7 +2599,7 @@ mark.find-hit.current { background: var(--accent); color: var(--on-accent); box-
 .commander-field textarea, .commander-field input { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line-strong); border-radius: var(--r-sm); padding: 8px 10px; resize: vertical; }
 .commander-field.turns input { width: 6em; }
 .commander-error { color: var(--danger); font-size: var(--fs-label); }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .sheet-backdrop:has(> .commander-sheet) { align-items: flex-end; }
   .sheet.commander-sheet { max-height: 92%; border-radius: var(--r-lg) var(--r-lg) 0 0; }
   .chip.commander-btn { height: 30px; padding: 0 10px; }
@@ -2737,7 +2744,7 @@ button.head-chip[aria-expanded="true"] .caret { transform: rotate(180deg); }
 .session-menu.head-menu.as-sheet .head-menu-list > button, .session-menu.head-menu.as-sheet .menu-folder { min-height: var(--phone-tap); padding: var(--s2) var(--s3); font-size: var(--fs-body); }
 .session-menu.head-menu.as-sheet .menu-hint { display: none; }
 @keyframes head-sheet-up { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
-@media (max-width: 720px) {
+:where(:root[data-phone]) {
   .topbar-head { justify-content: flex-start; }
   .pane-head.in-topbar { justify-content: flex-start; }
   /* Seen at 40px; the touch target is 44 (--phone-tap) through the ::after band. */
@@ -2748,7 +2755,7 @@ button.head-chip[aria-expanded="true"] .caret { transform: rotate(180deg); }
 }
 
 /* Phone: the 작업으로 button keeps its 44px square (this rule comes after the base .task-add above). */
-@media (max-width: 720px) { .task-add { width: var(--phone-tap); height: var(--phone-tap); padding: 0; } }
+:where(:root[data-phone]) { .task-add { width: var(--phone-tap); height: var(--phone-tap); padding: 0; } }
 
 /* 본문으로 건너뛰기 (App): off screen until Tab reaches it, then a visible pill at the top-left. */
 .skip-link { position: fixed; z-index: 100; top: 8px; left: 8px; padding: 8px 14px; border-radius: var(--r-sm); background: var(--panel); color: var(--link); font-weight: 600; box-shadow: var(--shadow), inset 0 0 0 1px var(--line-strong); transform: translateY(-200%); }
@@ -2759,23 +2766,27 @@ button.head-chip[aria-expanded="true"] .caret { transform: rotate(180deg); }
 
 /* === 폰 가로 (844×390 and the like) ===
    A phone on its side is wider than 720px, so it gets the desktop layout — but only ~390px tall. The bars give back
-   height: a lower top bar and pane head, a one-line composer, a slimmer usage line, no context hint. useIsPhone counts
-   it as a phone (PHONE_QUERY), and the phone block / phone toasts above share its query: ☰ opens the sidebar as a
-   drawer (closed by default) and one pane shows. */
-@media (max-height: 560px) and (orientation: landscape) and (pointer: coarse) {
-  .topbar { height: 44px; min-height: 44px; }
+   height: a lower top bar and pane head, a one-line composer, the usage strip in the top bar, no context hint.
+   useIsPhone counts it as a phone and sets <html data-phone="landscape"> (by the screen's short side, so the keyboard
+   never flips it); the phone blocks above follow data-phone too: ☰ opens the sidebar as a drawer and one pane shows. */
+:where(:root[data-phone="landscape"]) {
+  .topbar { flex-wrap: nowrap; height: 44px; min-height: 44px; }
   .pane-head { min-height: 36px; }
   .pane-head.in-topbar .head-chip, .pane-head.in-topbar .head-chip-input { height: 32px; }
   .pane-head.in-topbar .with-folder .head-chip { height: 38px; padding-top: 2px; padding-bottom: 2px; }
-  /* The usage line moves up into the top bar's free right side (it shows only the current seat and warnings). */
-  .usage-strip-row { position: absolute; z-index: 8; top: env(safe-area-inset-top, 0px); right: calc(var(--sa-right) + 56px); height: 44px; max-width: 30vw; border: 0; background: transparent; }
-  .usage-strip-row .usage-strip { height: 44px; min-width: 0; }
-  .topbar-head { flex: 0 1 auto; max-width: calc(100% - 2 * (30vw + 56px)); margin-inline: auto; }
+  /* The chip is seen at 32–38px; its touch band stays 44 (centred, whatever the chip's height). */
+  .pane-head.in-topbar button.head-chip::after { top: 50%; bottom: auto; height: var(--phone-tap); transform: translateY(-50%); }
+  /* The usage strip sits in the bar at its own width (UsageStrip: the seats worth a look and "+N"); the session chip
+     takes what is left. */
+  .topbar > .usage-strip-wrap { flex-shrink: 0; }
+  .topbar-head { min-width: 0; }
   .ctx-hint { display: none; }
   .chat { --composer-fade: 16px; }
   .chat-body { padding-top: 8px; }
   .composer textarea { min-height: 34px; max-height: 30vh; padding-top: 6px; }
   .composer-row { padding-top: 0; padding-bottom: 4px; }
-  .attach, .send { width: 40px; height: 40px; min-width: 40px; min-height: 40px; }
+  /* Seen at 40px; the touch target stays 44 through an invisible band around each. */
+  .attach, .send { position: relative; width: 40px; height: 40px; min-width: 40px; min-height: 40px; }
+  .attach::after, .send::after { content: ''; position: absolute; inset: calc((40px - var(--phone-tap)) / 2); border-radius: 50%; }
   .composer-wrap { padding-bottom: max(6px, env(safe-area-inset-bottom, 0px)); }
 }

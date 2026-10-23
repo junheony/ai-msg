@@ -29,7 +29,7 @@ import { SidePanelContext, clampSideWidth, type SideDoc } from '../sidePanel';
 import { NO_TABS, activeTab, carriesTabs, closeTab, openTab, readSideWidth, recallSideTabs, rememberSideTabs, saveSideWidth, selectTab, type SideTabs } from '../sideTabs';
 import { hasOpenPopup } from '../composerFocus';
 import { isMacPlatform, isTypingTarget, modKeys } from '../shortcuts';
-import { PHONE_QUERY, useIsPhone } from '../useIsPhone';
+import { isPhoneNow, useIsPhone } from '../useIsPhone';
 import { isFast } from '../fastMode';
 
 // T9 prerequisite (a): every send carries a fresh correlation id so the reducer matches its turn_started / refusal
@@ -272,7 +272,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   // where the panel is a full-screen sheet, they are only kept until a document is opened. A new chat's tabs stay when
   // its first message gives it a session id.
   const sessionKey = s ? `${s.sessionId ?? ''}\n${s.cwd}` : '';
-  const recall = (key: string) => ({ key, tabs: recallSideTabs(key), open: !window.matchMedia?.(PHONE_QUERY).matches });
+  const recall = (key: string) => ({ key, tabs: recallSideTabs(key), open: !isPhoneNow() });
   const [sideTabs, setSideTabs] = useState(() => recall(sessionKey));
   const [closing, setClosing] = useState(false);
   // 총사령탑 걸기 sheet; `commanderAsked` = 걸기 sent, waiting for the server's view (closes the sheet) or refusal (stays).
@@ -306,7 +306,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   // forgets the tabs now, so leaving it mid-slide does not bring them back.
   const closeSide = useCallback(() => {
     rememberSideTabs(keyRef.current, NO_TABS);
-    if (window.matchMedia?.('(min-width: 721px) and (prefers-reduced-motion: no-preference)').matches) setClosing(true);
+    if (!isPhoneNow() && window.matchMedia?.('(prefers-reduced-motion: no-preference)').matches) setClosing(true);
     else shut();
   }, [shut]);
   useEffect(() => {

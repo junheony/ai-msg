@@ -475,7 +475,7 @@ describe('Pane side panel tabs', () => {
     vi.useFakeTimers();
     try {
       mockFetch({ path: '/w/x', size: 1, kind: 'text', text: 'x' });
-      vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('min-width: 721px'), addEventListener() {}, removeEventListener() {} }));
+      vi.stubGlobal('matchMedia', (q: string) => ({ matches: q === '(prefers-reduced-motion: no-preference)', addEventListener() {}, removeEventListener() {} }));
       const { rerender } = render(ui());
       fireEvent.click(screen.getByTitle('/w/src/a.ts — 사이드 패널에서 열기'));
       fireEvent.keyDown(window, { key: 'Escape' });

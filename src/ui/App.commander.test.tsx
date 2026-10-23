@@ -210,6 +210,6 @@ describe('commander chip text and sheet checks', () => {
     const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
     const own = css.slice(css.indexOf('/* 총사령탑'));
     expect(own).not.toMatch(/#[0-9a-f]{3,6}\b/i);
-    expect(own).toMatch(/@media \(max-width: 720px\)[\s\S]*\.sheet-backdrop:has\(> \.commander-sheet\) \{ align-items: flex-end; \}/);
+    expect(own).toMatch(/:where\(:root\[data-phone\]\) \{[\s\S]*\.sheet-backdrop:has\(> \.commander-sheet\) \{ align-items: flex-end; \}/);
   });
 });

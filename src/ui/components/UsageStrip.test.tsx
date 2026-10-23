@@ -217,6 +217,35 @@ describe('UsageStrip', () => {
     expect(seg('c').textContent).toBe('C소진· 12m');
   });
 
+  it('phone line: the session seat, the next one and warnings show; the rest are whole seats behind a "+N"', () => {
+    strip(snap(), 'a', { phone: true });
+    expect(seg('a').hasAttribute('data-quiet')).toBe(false);
+    expect(seg('gpt').hasAttribute('data-quiet')).toBe(false); // amber
+    expect(seg('c').hasAttribute('data-quiet')).toBe(true); // spent, not the session's
+    const quiet = el().querySelectorAll('.usage-seg[data-quiet]').length;
+    expect(screen.getByTestId('usage-strip-more').textContent).toBe(`+${quiet}`);
+  });
+
+  it('a phone on its side: the strip sits in the top bar (same seats and "+N"), no line of its own', () => {
+    const mm = window.matchMedia;
+    window.matchMedia = ((q: string) => ({ matches: q === '(pointer: coarse)', media: q, addEventListener() {}, removeEventListener() {} })) as unknown as typeof window.matchMedia;
+    Object.defineProperty(window.screen, 'width', { value: 844, configurable: true });
+    Object.defineProperty(window.screen, 'height', { value: 390, configurable: true });
+    Object.defineProperty(window.screen, 'orientation', { value: { type: 'landscape-primary', addEventListener() {}, removeEventListener() {} }, configurable: true });
+    try {
+      const { container } = strip(snap(), 'a', { phone: true });
+      expect(container.querySelector('.usage-strip-row')).toBeNull();
+      expect(container.querySelector('.usage-strip-wrap[data-stage="sideways"] .usage-strip')).toBeTruthy();
+      expect(seg('c').hasAttribute('data-quiet')).toBe(true);
+      expect(screen.getByTestId('usage-strip-more')).toBeTruthy();
+    } finally {
+      cleanup();
+      window.matchMedia = mm;
+      for (const k of ['width', 'height']) Object.defineProperty(window.screen, k, { value: 0, configurable: true });
+      Object.defineProperty(window.screen, 'orientation', { value: undefined, configurable: true });
+    }
+  });
+
   describe('measured in a top bar (ResizeObserver)', () => {
     // A bar 10px padded each side, 10px gaps, actions 100px wide, the session chip at least 220px: the strip's room is
     // barW − 20 − 100 − 220 − 2 × 10 = barW − 360. The measured stages: full / mid / min (in that order).

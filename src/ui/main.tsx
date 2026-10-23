@@ -5,6 +5,7 @@ import './styles.css';
 import { applyPrefs, loadPrefs } from './prefs';
 import { initUiLocale } from './i18n';
 import { pinShell, relaxViewport, watchShell } from './shellFit';
+import { watchPhone } from './useIsPhone';
 
 // Before the first render (no inline script: the CSP forbids it) so a saved theme/font size doesn't flash.
 const prefs = loadPrefs();
@@ -14,6 +15,8 @@ initUiLocale(prefs.lang ?? 'auto');
 relaxViewport();
 pinShell();
 watchShell();
+// <html data-phone>: the phone layout in styles.css follows it (useIsPhone.ts).
+watchPhone();
 
 createRoot(document.getElementById('root')!).render(<App />);
 

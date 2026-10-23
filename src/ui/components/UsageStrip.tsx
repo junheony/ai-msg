@@ -7,6 +7,7 @@ import { useAccounts } from '../accounts';
 import { ui } from '../i18n';
 import { buildSeats, chipCountdown, chipState, pickMain, windowPassed, RESET_PASSED_NOTE, RESET_PASSED_SAID, spokenCountdown, staleNote, useClock, type ChipKind, type RouteNext, type SeatData, type SeatRow } from './usageSeats';
 import { ClockIcon, RefreshIcon } from './icons';
+import { usePhoneMode } from '../useIsPhone';
 
 /**
  * How much each segment says, widest first: full = label · bar · % · reset; mid = label · % (the reset only when amber /
@@ -139,13 +140,17 @@ const loud = (k: ChipKind) => k === 'warn' || k === 'danger' || k === 'spent' ||
  * Old numbers by stage: full = muted bar · "70%" · clock "3일 전"; mid = "70%" · clock "3일 전"; min = "70%" · clock.
  * Past the reset: refresh "리셋됨" in the number's place (min: the icon alone). The words are in the title and aria.
  */
-function Segment({ s, stage, measure }: { s: StripSeg; stage: Exclude<StripStage, 'row'>; measure?: boolean }) {
+/** In a line of its own or a phone's low top bar only these show: the session's seat, where the next turn goes, a warning. */
+const worthShowing = (s: StripSeg) => s.current || s.next || s.kind === 'warn' || s.kind === 'danger';
+
+function Segment({ s, stage, measure, quiet }: { s: StripSeg; stage: Exclude<StripStage, 'row'>; measure?: boolean; quiet?: boolean }) {
   const age = s.icon === 'clock';
   const reset = age ? (stage === 'min' ? '' : s.reset) : stage === 'full' || (stage === 'mid' && loud(s.kind)) ? s.reset : '';
   return (
     <span
       className={`usage-seg ${s.kind}${s.stale && s.kind !== 'stale' ? ' stale' : ''}`}
       {...(s.current ? { 'data-current': '' } : {})}
+      {...(quiet ? { 'data-quiet': '' } : {})}
       {...(measure ? {} : { 'data-testid': `seg-${s.seat}` })}
     >
       {s.next && <span className="usage-seg-next" {...(measure ? {} : { 'data-testid': `next-${s.seat}` })}>→</span>}
@@ -166,8 +171,9 @@ function Segment({ s, stage, measure }: { s: StripSeg; stage: Exclude<StripStage
  * Every seat's usage in one row; a press opens the usage sheet. Rendered in the top bar: on a desktop / tablet the
  * strip takes just the width its stage needs (the session chip grows into the rest) and steps down full → mid → min as
  * the bar's room (barRoom) runs out; past min it goes to `rowSlot` (a line under the bar, a portal) and the bar keeps
- * nothing of it. A phone always has that line. The session's seat is highlighted; "→" marks where the next turn goes
- * when that is another seat.
+ * nothing of it. A phone always has that line — held sideways, the strip sits in its low top bar instead. In the line
+ * and in that bar only the seats worth a look show (worthShowing) and a "+N" chip counts the rest, whole seats only;
+ * the sheet has them all. The session's seat is highlighted; "→" marks where the next turn goes when that is another seat.
  */
 export function UsageStrip({ usage, current, next = null, grok = null, phone = false, rowSlot = null, open = false, onToggle, now: fixedNow }: {
   usage: UsageSnapshot | null; current: Seat | null; next?: RouteNext | null; grok?: GrokStatus | null;
@@ -178,6 +184,7 @@ export function UsageStrip({ usage, current, next = null, grok = null, phone = f
   open?: boolean; onToggle: () => void; now?: number;
 }) {
   const now = useClock(fixedNow);
+  const sideways = usePhoneMode() === 'landscape' && phone;
   const { active, label } = useAccounts();
   const wrapRef = useRef<HTMLDivElement>(null);
   const rowRef = useRef<HTMLDivElement>(null);
@@ -220,7 +227,7 @@ export function UsageStrip({ usage, current, next = null, grok = null, phone = f
   // After every render too (a seat added, a number widened): judged before paint, not a frame later via the observer.
   useLayoutEffect(() => check.current());
 
-  const inRow = phone || stage === 'row';
+  const inRow = (phone && !sideways) || stage === 'row';
   useLayoutEffect(() => {
     if (!refocus.current) return;
     refocus.current = false;
@@ -237,7 +244,9 @@ export function UsageStrip({ usage, current, next = null, grok = null, phone = f
   const nextSays = next && (next.account !== current || next.asOpus) ? `; 다음 턴 ${label(next.account)}${next.asOpus ? '(Opus)' : ''}` : '';
   const aria = `계정별 남은 사용량: ${segs.map((s) => `${s.current ? '지금 ' : ''}${s.spoken}`).join('; ')}${nextSays}`;
   const title = [STRIP_TITLE, ...segs.map((s) => s.note), next ? `다음 턴: ${label(next.account)}${next.asOpus ? ' · Opus' : ''} — ${next.reason}` : ''].filter(Boolean).join('\n');
-  const button = (st: Exclude<StripStage, 'row'>) => (
+  // Nothing worth a look (no session seat yet): every seat shows, as in the bar.
+  const few = segs.some(worthShowing);
+  const button = (st: Exclude<StripStage, 'row'>, focus = false) => (
     <button
       type="button"
       className="usage-strip"
@@ -250,10 +259,12 @@ export function UsageStrip({ usage, current, next = null, grok = null, phone = f
       onClick={onToggle}
     >
       <span className="usage-strip-head" aria-hidden="true">남음</span>
-      {segs.map((s) => <Segment key={s.seat} s={s} stage={st} />)}
+      {segs.map((s) => <Segment key={s.seat} s={s} stage={st} quiet={focus && few && !worthShowing(s)} />)}
+      {focus && few && segs.some((s) => !worthShowing(s)) && <span className="usage-strip-more" data-testid="usage-strip-more">+{segs.filter((s) => !worthShowing(s)).length}</span>}
     </button>
   );
-  const row = inRow && <div ref={rowRef} className="usage-strip-row" data-stage="row">{button('mid')}</div>;
+  if (sideways) return <div className="usage-strip-wrap" data-stage="sideways">{button('mid', true)}</div>;
+  const row = inRow && <div ref={rowRef} className="usage-strip-row" data-stage="row">{button('mid', true)}</div>;
   const placedRow = row && rowSlot ? createPortal(row, rowSlot) : row;
   if (phone) return placedRow;
 
