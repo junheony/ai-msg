@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { AttachMenu } from './AttachmentBar';
+import { AttachMenu, type AttachMenuItem } from './AttachmentBar';
 import { DictationButton } from './DictationButton';
 
 /**
@@ -7,7 +7,7 @@ import { DictationButton } from './DictationButton';
  * left), the textarea, attachment chips, then a bottom row of + · mic · send/stop only (plus the two conditional
  * buttons, 대기열에 추가 and 작업으로, when they apply).
  */
-export function Composer({ dragover, popup, chip, children, files, onFiles, text, onText, extra, hint, action }: {
+export function Composer({ dragover, popup, chip, children, files, onFiles, text, onText, extra, hint, action, menu, crowded }: {
   dragover?: boolean;
   /** Slash / @file suggestions, anchored to the card. */
   popup?: ReactNode;
@@ -26,15 +26,19 @@ export function Composer({ dragover, popup, chip, children, files, onFiles, text
   hint?: ReactNode;
   /** Send or stop. */
   action: ReactNode;
+  /** Less used actions, listed in the + menu after the attachment items (e.g. 따로 작업으로 돌리기). */
+  menu?: AttachMenuItem[];
+  /** Send and stop are both shown: the phone hides the mic so the right side keeps two round buttons. */
+  crowded?: boolean;
 }) {
   return (
-    <div className={`composer${dragover ? ' dragover' : ''}`}>
+    <div className={`composer${dragover ? ' dragover' : ''}`} {...(crowded ? { 'data-crowded': '' } : {})}>
       {popup}
       <div className="composer-top">{chip}</div>
       {children}
       {files && <div className="composer-files">{files}</div>}
       <div className="composer-row">
-        <AttachMenu onFiles={onFiles} />
+        <AttachMenu onFiles={onFiles} {...(menu ? { extra: menu } : {})} />
         {hint}
         <div className="composer-send">
           <DictationButton text={text} onText={onText} />

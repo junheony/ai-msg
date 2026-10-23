@@ -45,12 +45,47 @@ describe('NewChat', () => {
     expect(titles('최근 대화')).toEqual(['t-s0', 't-s1', 't-s2']);
   });
 
-  it('the ↑ button opens an empty new session when nothing is typed', () => {
+  it('the ↑ button looks and is disabled while nothing is typed (C-2); typing enables it', () => {
     const onStart = vi.fn();
     render(<NewChat projects={projects} onStart={onStart} />);
-    const go = screen.getByLabelText('빈 새 대화 열기');
+    const go = screen.getByLabelText('보내기 — 새 대화로 시작 (Enter)') as HTMLButtonElement;
+    expect(go.disabled).toBe(true);
+    fireEvent.keyDown(screen.getByLabelText('첫 메시지'), { key: 'Enter' });
+    expect(onStart).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('첫 메시지'), { target: { value: '안녕' } });
+    expect(go.disabled).toBe(false);
     fireEvent.click(go);
-    expect(onStart).toHaveBeenCalledWith('/w', 'w', '', [], { engine: 'claude', sandbox: 'workspace-write' });
+    expect(onStart).toHaveBeenCalledWith('/w', 'w', '안녕', [], { engine: 'claude', sandbox: 'workspace-write' });
+  });
+
+  it('first run (no folders): a short intro, 폴더 고르기 opens the folder picker and starts there; no file path talk', async () => {
+    const onStart = vi.fn();
+    const fetchFn = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = String(url);
+      if (u.startsWith('/api/recent-folders') && init?.method === 'POST') return new Response(JSON.stringify({ path: '/Users/me/code' }), { status: 200 });
+      if (u.startsWith('/api/recent-folders')) return new Response(JSON.stringify({ recent: [] }), { status: 200 });
+      return new Response(JSON.stringify({ path: '/Users/me', dirs: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const { container } = render(<NewChat projects={[]} onStart={onStart} fetchFn={fetchFn} />);
+    const first = screen.getByTestId('newchat-first');
+    expect(first.textContent).toContain('폴더를 고르면');
+    expect(container.textContent).not.toMatch(/projects\.json|\.config/);
+    fireEvent.click(screen.getByTestId('newchat-pick'));
+    fireEvent.change(screen.getByLabelText('폴더 경로'), { target: { value: '~/code' } });
+    fireEvent.click(screen.getByText('열기'));
+    await waitFor(() => expect(onStart).toHaveBeenCalledWith('/Users/me/code', 'code', '', [], { engine: 'claude', sandbox: 'workspace-write' }));
+  });
+
+  it('first run: typing in the composer starts in the home folder', async () => {
+    const onStart = vi.fn();
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify({ path: '/Users/me', dirs: [] }), { status: 200 })) as unknown as typeof fetch;
+    render(<NewChat projects={[]} onStart={onStart} fetchFn={fetchFn} />);
+    expect(screen.getByTestId('session-chip').textContent).toContain('홈 폴더');
+    const box = screen.getByLabelText('첫 메시지');
+    fireEvent.change(box, { target: { value: '시작해 줘' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(onStart).toHaveBeenCalledWith('/Users/me', 'me', '시작해 줘', [], { engine: 'claude', sandbox: 'workspace-write' }));
+    expect(String((fetchFn as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![0])).toContain('/api/dirs?path=');
   });
 
   it('picked and pasted attachments ride the first message', async () => {

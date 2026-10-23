@@ -46,4 +46,21 @@ export const chat: Widen<typeof en> = {
     queueWaitTitle: '대기열에 추가 (Enter) — 지금 턴이 끝나면 보냅니다',
   },
   autoResume: { at: (time: string) => `${time}에 자동으로 이어가요`, cancel: '취소' },
+  waiting: {
+    question: '답을 기다리는 중',
+    permission: '승인을 기다리는 중',
+    placeholderQuestion: '위 질문에 답하거나 직접 입력해 보내기',
+    placeholderPermission: '위 요청을 승인하거나 직접 입력해 보내기',
+  },
+  placeholder: '메시지 보내기',
+  taskMenu: '따로 작업으로 돌리기',
+  newChat: {
+    send: '보내기 — 새 대화로 시작 (Enter)',
+    firstLabel: '시작하기',
+    intro: '폴더를 고르면 그 안에서 AI와 같이 작업해요.',
+    pick: '폴더 고르기',
+    orHome: '또는 아래에 바로 적으면 홈 폴더에서 시작해요.',
+    home: '홈 폴더',
+    homeFailed: '홈 폴더를 열지 못했어요. 폴더 고르기로 시작해 보세요.',
+  },
 };

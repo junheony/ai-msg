@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type RefObject } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import type { UploadedAttachment } from '../state';
 import { usePopoverPlacement } from './usePopoverPlacement';
 import { lineCount } from '../upload';
@@ -20,7 +20,10 @@ const FileIcon = () => <svg {...svg}><path d="M4 2.5h5l3 3v8H4z" /><path d="M9 2
  * The composer's [+]: a small menu — 사진 보관함 (image picker; Android opens the system photo picker), 카메라 (touch
  * devices only) and 파일 (any file). Picked files go to `onFiles`; size and count limits stay with the uploader.
  */
-export function AttachMenu({ onFiles }: { onFiles: (files: File[]) => void }) {
+/** A non-attachment action in the + menu (the composer's less used ones). */
+export type AttachMenuItem = { key: string; label: string; icon?: ReactNode; run: () => void };
+
+export function AttachMenu({ onFiles, extra = [] }: { onFiles: (files: File[]) => void; extra?: AttachMenuItem[] }) {
   const [open, setOpen] = useState(false);
   const [camera, setCamera] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -73,6 +76,7 @@ export function AttachMenu({ onFiles }: { onFiles: (files: File[]) => void }) {
           <button type="button" role="menuitem" className="attach-item" onClick={() => pick(gallery)}><PhotoIcon />사진 보관함</button>
           {camera && <button type="button" role="menuitem" className="attach-item" onClick={() => pick(cam)}><CameraIcon />카메라</button>}
           <button type="button" role="menuitem" className="attach-item" onClick={() => pick(file)}><FileIcon />파일</button>
+          {extra.map((it) => <button key={it.key} type="button" role="menuitem" className="attach-item" data-testid={`attach-extra-${it.key}`} onClick={() => { setOpen(false); it.run(); }}>{it.icon}{it.label}</button>)}
         </div>
       )}
       <input ref={gallery} data-testid="attachment-gallery" type="file" accept="image/*" multiple hidden onChange={changed} />

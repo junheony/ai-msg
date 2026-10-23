@@ -605,14 +605,13 @@ describe('Chat title ⌄ menu', () => {
 
 describe('Composer placeholder and 보내기', () => {
   afterEach(cleanup);
-  it('names the session ("{이름}에게 메시지 보내기"), plain "메시지 보내기" for a new one; a long name is cut', () => {
-    renderChat([], false, vi.fn(), { title: '$BBAI' });
-    expect(screen.getByLabelText('메시지').getAttribute('placeholder')).toBe('$BBAI에게 메시지 보내기');
+  it('plain "메시지 보내기": no session name (a default one carries the folder, e.g. "deck · 새 세션")', () => {
+    renderChat([], false, vi.fn(), { title: 'deck · 새 세션' });
+    expect(screen.getByLabelText('메시지').getAttribute('placeholder')).toBe('메시지 보내기');
     cleanup();
     renderChat([], false, vi.fn(), { isNew: true, title: '새 세션' });
     expect(screen.getByLabelText('메시지').getAttribute('placeholder')).toBe('메시지 보내기');
-    expect(composerPlaceholder('  ')).toBe('메시지 보내기');
-    expect(composerPlaceholder('a'.repeat(40))).toBe(`${'a'.repeat(29)}…에게 메시지 보내기`);
+    expect(composerPlaceholder()).toBe('메시지 보내기');
   });
 
   it('disabled 보내기 is neutral (--track), only an enabled one is the accent', () => {
@@ -642,5 +641,53 @@ describe('Chat · model name once per turn', () => {
     const a = (text: string): ChatItem => ({ kind: 'assistant', turnId: null, text, model: 'claude-opus-5-5', toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [] });
     render(<Chat {...chatProps([{ kind: 'user', text: 'q0', n: 0 }, a('a'), { kind: 'user', text: 'q1', n: 1 }, a('b')])} />);
     expect(screen.getAllByTestId('msg-model')).toHaveLength(1);
+  });
+});
+
+describe('waiting for the user (Q2) and the crowded composer (C-1)', () => {
+  afterEach(cleanup);
+  const question = { turnId: 't1', sessionId: 's', cwd: '/w', requestId: 'q1', questions: [{ question: 'Which?', header: '', options: [{ label: 'a', description: '' }, { label: 'b', description: '' }], multiSelect: false }] };
+  const permission = { turnId: 't1', sessionId: 's', cwd: '/w', requestId: 'p1', toolName: 'Bash', input: { command: 'ls' }, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: false, sessionLabel: null };
+  const busy = (extra: Partial<ChatProps>) => renderChat([{ kind: 'user', text: 'p' }, { kind: 'assistant', turnId: 't1', text: 'x', toolCalls: [], badge: null, streaming: true, error: null, notes: [], attempts: [] }], true, vi.fn(), { activeTurnId: 't1', onQueue: vi.fn(), sessionEngine: 'claude', ...extra });
+
+  it('a question card: status line 답을 기다리는 중, the answer placeholder, a quiet stop, the cursor hidden (data-waiting)', () => {
+    busy({ questions: [question] });
+    expect(screen.getByTestId('turn-status').textContent).toContain('답을 기다리는 중');
+    expect(screen.getByTestId('turn-status').querySelector('.spin')).toBeNull();
+    expect(screen.getByLabelText('메시지').getAttribute('placeholder')).toBe('위 질문에 답하거나 직접 입력해 보내기');
+    expect((document.querySelector('.send.stop') as HTMLElement).classList.contains('quiet')).toBe(true);
+    expect(document.querySelector('main.chat')?.getAttribute('data-waiting')).toBe('question');
+    const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    expect(css).toMatch(/\.chat\[data-waiting\] \.cursor \{[^}]*display: none/);
+  });
+
+  it('an approval card: 승인을 기다리는 중; no card: the running line and a plain stop', () => {
+    busy({ pending: [permission] });
+    expect(screen.getByTestId('turn-status').textContent).toContain('승인을 기다리는 중');
+    expect(screen.getByLabelText('메시지').getAttribute('placeholder')).toBe('위 요청을 승인하거나 직접 입력해 보내기');
+    cleanup();
+    busy({});
+    expect(screen.getByTestId('turn-status').textContent).not.toContain('기다리는 중');
+    expect(screen.getByLabelText('메시지').getAttribute('placeholder')).toContain('실행 중');
+    expect((document.querySelector('.send.stop') as HTMLElement).classList.contains('quiet')).toBe(false);
+    expect(document.querySelector('main.chat')?.hasAttribute('data-waiting')).toBe(false);
+  });
+
+  it('cards sit in a data-await-card wrapper (the scroll reveal finds them by request id)', () => {
+    busy({ questions: [question], pending: [permission] });
+    expect(document.querySelector('[data-await-card="q1"]')).not.toBeNull();
+    expect(document.querySelector('[data-await-card="p1"]')).not.toBeNull();
+  });
+
+  it('running + draft: send and a mini stop, the composer marked crowded; 작업으로 is also in the + menu', () => {
+    const onStartTask = vi.fn();
+    busy({ onStartTask });
+    fireEvent.change(screen.getByLabelText('메시지'), { target: { value: 'next' } });
+    expect(document.querySelector('.composer')?.hasAttribute('data-crowded')).toBe(true);
+    fireEvent.click(screen.getByLabelText('첨부'));
+    fireEvent.click(screen.getByTestId('attach-extra-task'));
+    expect(onStartTask).toHaveBeenCalledWith('next');
+    const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    expect(css).toMatch(/\.composer\[data-crowded\] \.icon-btn\.dictate \{[^}]*display: none/);
   });
 });

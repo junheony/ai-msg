@@ -1788,6 +1788,13 @@ button.hl-row-main:hover { background: var(--hover); }
 .newchat-card-pin { display: inline-flex; vertical-align: -1px; margin-right: 4px; color: var(--accent); }
 .newchat-card-pin svg { width: 11px; height: 11px; }
 .newchat-card-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-meta); color: var(--muted); }
+/* First run (no folders yet): one line on what this is, a 폴더 고르기 button, and the composer below starts in the home folder. */
+.newchat-first { display: flex; flex-direction: column; align-items: center; gap: var(--s3); text-align: center; }
+.newchat-first p { margin: 0; }
+.newchat-first-intro { font-size: var(--fs-body); line-height: var(--lh-body); color: var(--fg); }
+.newchat-first-or { font-size: var(--fs-meta); }
+.newchat-pick { min-height: var(--ctl); padding: 0 var(--s5); border-radius: var(--r-full); font-size: var(--fs-body); }
+.newchat-first .folder-picker { width: 100%; text-align: left; }
 /* Narrow pane (split view, cover screen): the model label gives way first, then the card padding. */
 @container newchat (max-width: 420px) {
   .newchat-greeting { font-size: var(--fs-h); }
@@ -1796,9 +1803,13 @@ button.hl-row-main:hover { background: var(--hover); }
   .modal-backdrop { padding-top: calc(8px + env(safe-area-inset-top, 0px)); }
   .palette { max-height: 80vh; }
   .palette-item { min-height: 36px; }
-  .newchat { padding-top: 5vh; }
+  .newchat { padding: 5vh 12px 0; align-items: flex-start; }
   .newchat-greeting { font-size: var(--fs-h); }
   .newchat-box textarea { font-size: var(--fs-body); }
+  /* Phone: the composer sits at the bottom like a chat (thumb reach), the recents scroll above it. */
+  .newchat-inner { min-height: 100%; }
+  .newchat-box { order: 9; position: sticky; bottom: 0; z-index: 1; margin-top: auto; padding: var(--s2) 0 calc(var(--s2) + env(safe-area-inset-bottom, 0px)); background: var(--bg); }
+  .newchat-pick { min-height: var(--tap); }
 }
 /* Side panel (artifacts / file preview), one per pane. */
 .pane.with-side { flex-direction: row; }
@@ -2068,6 +2079,14 @@ button.hl-row-main:hover { background: var(--hover); }
 .send { width: 34px; height: 34px; margin-left: 0; }
 /* Disabled 보내기 is neutral (nothing to send yet); only an enabled one takes the accent. */
 .send:disabled { background: var(--track); color: var(--faint); }
+/* 중지 is secondary to 보내기: an outlined round button, not a second filled one. While a question / approval card
+   waits (the turn is paused on the user), it goes quieter still: a ghost. */
+.send.stop { background: var(--hover); color: var(--fg); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.send.stop.quiet { background: transparent; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); }
+.send.stop.quiet:hover { color: var(--fg); background: var(--hover); }
+/* Waiting on a card: the turn is not writing, so no blinking cursor. */
+.chat[data-waiting] .cursor { display: none; }
+.await-card { scroll-margin-top: var(--s2); }
 .attach:focus-visible, .send:focus-visible, .composer-send .icon-btn.dictate:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus); }
 @media (pointer: coarse) {
   .attach, .send, .composer-send .icon-btn.dictate { width: 40px; height: 40px; }
@@ -2076,6 +2095,8 @@ button.hl-row-main:hover { background: var(--hover); }
   .attach, .send, .composer-send .icon-btn.dictate { width: var(--phone-tap); height: var(--phone-tap); }
   .composer-row { padding: 2px 6px 6px; gap: 4px; }
   .composer-send { gap: 3px; }
+  /* At most two round buttons on the right: while a turn runs with a draft (보내기 + 중지), the mic steps aside. */
+  .composer[data-crowded] .icon-btn.dictate { display: none; }
 }
 
 /* === session chip (design §3.4) ===
@@ -2162,13 +2183,12 @@ button.hl-row-main:hover { background: var(--hover); }
 @keyframes session-sheet-up { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .sheet.session-sheet { animation: none; } }
 
-/* 작업으로: a quiet pill with its word; a phone shows the ⇗ icon only (a round button like the others). */
+/* 작업으로: a quiet pill with its word on a wide screen; a phone moves it into the + menu (따로 작업으로 돌리기). */
 .task-add { display: inline-flex; align-items: center; justify-content: center; gap: var(--s1); }
 .task-add-icon { display: none; }
+.attach-item .task-add-icon { display: block; }
 @media (max-width: 720px) {
-  .task-add { width: var(--phone-tap); height: var(--phone-tap); padding: 0; }
-  .task-add-text { display: none; }
-  .task-add-icon { display: block; }
+  .composer-send .task-add { display: none; }
 }
 
 /* === sidebar rows (list rows) ===

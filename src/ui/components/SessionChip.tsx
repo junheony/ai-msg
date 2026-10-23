@@ -145,7 +145,8 @@ export function SessionChip(p: SessionChipProps) {
       ]
     : [
         <span key="m" className="sc-part sc-model">{m.name}{m.effort && <span className="sc-extra"> {m.effort}</span>}</span>,
-        ...(p.account ? [<AccountChipName key="a" pin={p.account.pin} current={p.account.current} />] : []),
+        // 자동 with no account known yet says nothing the model part does not ("자동 · 자동"): left to the sheet.
+        ...(p.account && (p.account.pin || acct.cur) ? [<AccountChipName key="a" pin={p.account.pin} current={p.account.current} />] : []),
       ];
   if (tailShown) parts.push(<span key="t" className={`sc-part sc-perm${!sb && perm ? ` perm-${permShown}` : ''}`}>{tailShown}</span>);
   const aria = [

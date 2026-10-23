@@ -108,6 +108,22 @@ export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey:
     publish(false, false);
   }, [ref, toBottom, publish]);
 
+  /**
+   * A card that needs the user (a question / approval) just appeared while following: when it is taller than the view,
+   * show its head instead of the bottom (detached, so the follow does not pull it away); a card that fits keeps the
+   * follow. Not following (the user scrolled up to read): left alone.
+   */
+  const revealTop = useCallback((target: HTMLElement, gap = 8) => {
+    const el = ref.current;
+    if (!el || !stick.current || target.offsetHeight <= el.clientHeight - gap) return;
+    stick.current = false;
+    el.scrollTop = Math.max(0, el.scrollTop + target.getBoundingClientRect().top - el.getBoundingClientRect().top - gap);
+    lastTop.current = el.scrollTop;
+    lastHeight.current = el.scrollHeight;
+    recordAnchor(el);
+    publish(true, false);
+  }, [ref, recordAnchor, publish]);
+
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -173,5 +189,5 @@ export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey:
     if (wasSession) attach();
   }, [resetKey, attach]);
 
-  return { detached, unread, attach };
+  return { detached, unread, attach, revealTop };
 }

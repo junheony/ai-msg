@@ -25,7 +25,7 @@ describe('ContextHint', () => {
     cleanup();
     expect(render(<ContextHint info={info(400_000)} />).getByTestId('context-hint').textContent).toContain('새 세션으로 넘기면');
     cleanup();
-    expect(render(<ContextHint info={info(50_000, { at: Date.now() - WARM_MS - 60_000 })} />).getByTestId('context-hint').textContent).toBe('오래 쉬어서 다음 답은 조금 느리고 비싸요');
+    expect(render(<ContextHint info={info(50_000, { at: Date.now() - WARM_MS - 60_000 })} />).getByTestId('context-hint').textContent).toBe('쉰 지 오래돼서 다음 답은 조금 느릴 수 있어요');
   });
 });
 

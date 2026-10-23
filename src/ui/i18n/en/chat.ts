@@ -46,4 +46,23 @@ export const chat = {
     queueWaitTitle: 'Add to queue (Enter) — sent when the current turn ends',
   },
   autoResume: { at: (time: string) => `Continues automatically at ${time}`, cancel: 'Cancel' },
+  /** A question / approval card waits for the user: the status line and the composer say so. */
+  waiting: {
+    question: 'Waiting for your answer',
+    permission: 'Waiting for your approval',
+    placeholderQuestion: 'Answer the question above, or type a message',
+    placeholderPermission: 'Approve the request above, or type a message',
+  },
+  placeholder: 'Send a message',
+  taskMenu: 'Run as a separate task',
+  /** The new-chat screen; `intro`…`homeFailed` = the first run (no folders yet). */
+  newChat: {
+    send: 'Send — start a new chat (Enter)',
+    firstLabel: 'Get started',
+    intro: 'Pick a folder and work in it together with AI.',
+    pick: 'Pick a folder',
+    orHome: 'Or just type below to start in your home folder.',
+    home: 'Home folder',
+    homeFailed: "Couldn't open your home folder. Try picking a folder.",
+  },
 };

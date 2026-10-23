@@ -15,23 +15,20 @@ export const CONCISE_ENGINE_LABEL: Record<EngineKind, string> = {
 };
 
 /**
- * Instant ack after routing is known (turn_started): "확인 · GPT Sol로 처리 중".
- * Prefers a short model name; falls back to the engine label.
+ * Instant ack after routing is known (turn_started): "GPT Sol · 작업 중", or with a first step "Opus · 원인부터 찾을게요".
+ * Prefers a short model name; falls back to the engine label. The account letter is an internal name: the status row
+ * puts it in the tooltip, never in this line.
  */
 export function conciseAck(input: {
   model?: string | null;
   engine?: EngineKind | null;
-  accountLabel?: string | null;
-  /** First step guessed from the prompt (conciseFirstStep): "확인 · Opus — 원인부터 찾을게요". */
+  /** First step guessed from the prompt (conciseFirstStep). */
   step?: string | null;
 }): string {
   const model = input.model ? modelLabelOf(input.model) : null;
-  // Prefer a short family name when the full label is long (e.g. "GPT-6.1-Sol" → keep as-is from MODEL_LABEL).
   const who = model ?? (input.engine ? CONCISE_ENGINE_LABEL[input.engine] : null) ?? '모델';
-  const acct = input.accountLabel?.trim();
-  const whoAcct = acct ? `${who}(${acct})` : who;
   const step = input.step?.trim();
-  return step ? `확인 · ${whoAcct} — ${step}` : `확인 · ${whoAcct}로 처리 중`;
+  return `${who} · ${step || '작업 중'}`;
 }
 
 /**

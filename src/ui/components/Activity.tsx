@@ -77,7 +77,7 @@ const IDLE_VERBS = ['생각 중…', '작업 중…', '살펴보는 중…', '�
  * Desktop-style live line above the composer while a turn runs: spinner, what it is doing now, m:ss,
  * output tokens, tool count and a stop button. Owns the 1s timer so nothing else re-renders per tick.
  */
-export function StatusRow({ startedAt, started, queuedBehind = null, progress, live, onInterrupt, onCancel, routeAck = null }: {
+export function StatusRow({ startedAt, started, queuedBehind = null, progress, live, onInterrupt, onCancel, routeAck = null, waiting = null }: {
   startedAt: number | null;
   /** turn_started arrived (false = 시작하는 중…). */
   started: boolean;
@@ -90,8 +90,10 @@ export function StatusRow({ startedAt, started, queuedBehind = null, progress, l
   onCancel?: () => void;
   /** Concise-mode ack: model/engine/account once turn_started is known. */
   routeAck?: { model?: string | null; engine?: string | null; accountLabel?: string | null; step?: string | null } | null;
+  /** The turn waits for the user (a question / approval card): the clock stops, the spinner rests, the line says so. */
+  waiting?: 'question' | 'permission' | null;
 }) {
-  const now = useNow(true);
+  const now = useNow(!waiting);
   const [prefs] = usePrefs();
   const concise = prefs.conciseMode;
   const ms = startedAt === null ? 0 : now - startedAt;
@@ -99,20 +101,23 @@ export function StatusRow({ startedAt, started, queuedBehind = null, progress, l
   const tool = running ? toolVerb(running) : null;
   const tools = live ? live.toolCalls.length : 0;
   let verb: string;
-  if (!started) {
+  if (waiting) {
+    verb = waiting === 'question' ? ui().chat.waiting.question : ui().chat.waiting.permission;
+  } else if (!started) {
     verb = queuedBehind ? `${queuedBehind} 뒤에서 기다리는 중 — 끝나면 이어서 보냄` : (concise ? '확인…' : '시작하는 중…');
   } else if (concise) {
     // Instant short ack naming the chosen engine/model; then milestone-style progress.
     if (tools > 0 && ms >= 15_000) verb = `계속 작업 중 · 단계 ${tools}`;
-    else if (routeAck) verb = conciseAck({ model: routeAck.model, engine: routeAck.engine as 'claude' | 'codex' | 'gemini' | 'grok' | null, accountLabel: routeAck.accountLabel, step: routeAck.step ?? null });
-    else verb = '확인 · 처리 중';
+    else if (routeAck) verb = conciseAck({ model: routeAck.model, engine: routeAck.engine as 'claude' | 'codex' | 'gemini' | 'grok' | null, step: routeAck.step ?? null });
+    else verb = '작업 중…';
   } else {
     verb = tool ? tool.verb : progress ? PHASE_VERB[progress.phase] : IDLE_VERBS[Math.floor(ms / 6000) % IDLE_VERBS.length]!;
   }
   return (
-    <div className={`turn-status${concise ? ' concise' : ''}`} role="status" data-testid="turn-status">
-      <ProgressMark className="spark spin" />
-      <span className="status-verb">{verb}</span>
+    <div className={`turn-status${concise ? ' concise' : ''}${waiting ? ' waiting' : ''}`} role="status" data-testid="turn-status">
+      <ProgressMark className={waiting ? 'spark' : 'spark spin'} />
+      {/* The account letter is an internal name: it stays in the tooltip, not the line. */}
+      <span className="status-verb" title={!waiting && started && concise && routeAck?.accountLabel ? ui().chat.account(routeAck.accountLabel) : undefined}>{verb}</span>
       {!concise && tool?.arg && <code className="status-arg" title={tool.arg}>{tool.arg}</code>}
       <span className="status-meta">
         <span>{clock(ms)}</span>

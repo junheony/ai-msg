@@ -17,8 +17,11 @@ import { useAutoGrow } from '../useAutoGrow';
 import { clearDraft, loadDraft, saveDraft } from '../drafts';
 import { isMacPlatform } from '../shortcuts';
 import { usePrefs } from '../usePrefs';
+import { FolderPicker } from './FolderPicker';
+import { ui } from '../i18n';
 
 const RECENT_CARDS = 10;
+const baseName = (cwd: string) => cwd.split('/').filter(Boolean).pop() ?? cwd;
 
 export function greeting(hour: number): string {
   if (hour >= 5 && hour < 11) return '좋은 아침이에요';
@@ -42,8 +45,10 @@ export type NewChatOptions = { engine: EngineChoice; sandbox: CodexSandbox };
  * above the auto-growing text; [+] · mic · ↑ in its bottom row), the pinned sessions (pin order) and the latest others as compact cards. Everything is reachable here, so the phone does not need
  * the drawer to start or resume. Attachments upload as soon as they are picked and ride the first message.
  */
-export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit, onOpenSession, now, uploadFn, models, model = 'auto', effort = null, onModel, onEffort, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, gemini = null, grok = null, onEngine, onSandbox, defaultPerm = null }: {
+export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit, onOpenSession, now, uploadFn, models, model = 'auto', effort = null, onModel, onEffort, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, gemini = null, grok = null, onEngine, onSandbox, defaultPerm = null, fetchFn = fetch }: {
   projects: ProjectEntry[];
+  /** No projects yet (first run): 폴더 고르기 (FolderPicker) and the home folder lookup go through this. */
+  fetchFn?: typeof fetch;
   /** The server's default permission mode for a new session (the chip's read-only tail; null = unknown, no tail). */
   defaultPerm?: PermMode | null;
   /** Pinned session ids in pin order (AppState.pins): shown above 최근 대화 and left out of it. */
@@ -109,32 +114,58 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit
   useEffect(() => () => { for (const a of unsent.current) if (a.previewUrl) URL.revokeObjectURL(a.previewUrl); }, []);
 
   const hasDraft = text.trim().length > 0 || attachments.length > 0;
-  const canStart = !!project && uploading === 0;
+  // First run (no projects): the composer starts in the home folder; 폴더 고르기 opens a session in a picked one.
+  const firstRun = projects.length === 0;
+  const [picking, setPicking] = useState(false);
+  const [homeBusy, setHomeBusy] = useState(false);
+  const [homeError, setHomeError] = useState<string | null>(null);
+  const canStart = (firstRun || !!project) && uploading === 0 && !homeBusy;
   const [{ sendKey }] = usePrefs();
-  const start = (split = false) => {
-    if (!project || !canStart) return;
+  /** Opens the new session in `dir` with whatever is typed (an empty text opens it empty: a picked folder). */
+  const begin = (dir: string, name: string, split: boolean) => {
     const msg = text.trim() || (attachments.length ? ATTACHMENT_ONLY_TEXT : '');
     clearDraft(draftKey);
     if (split && onStartSplit) {
       // This screen stays: the text and the picks (their previews now ride the new pane) leave it.
       setText('');
       setAttachments([]);
-      onStartSplit(project.cwd, project.name, msg, attachments, { engine, sandbox });
+      onStartSplit(dir, name, msg, attachments, { engine, sandbox });
       return;
     }
-    onStart(project.cwd, project.name, msg, attachments, { engine, sandbox });
+    onStart(dir, name, msg, attachments, { engine, sandbox });
+  };
+  /** The home folder's real path (read-only /api/dirs), then the start there. */
+  const startHome = async (split: boolean) => {
+    setHomeBusy(true);
+    setHomeError(null);
+    try {
+      const res = await fetchFn(`/api/dirs?path=${encodeURIComponent('~')}`, { credentials: 'same-origin' });
+      const home = res.ok ? ((await res.json()) as { path?: string }).path : undefined;
+      if (home) begin(home, baseName(home), split);
+      else setHomeError(ui().chat.newChat.homeFailed);
+    } catch {
+      setHomeError(ui().chat.newChat.homeFailed);
+    } finally {
+      setHomeBusy(false);
+    }
+  };
+  // ↑ / Enter in the text needs something to send (C-2); Enter on the 프로젝트 picker still opens an empty session there.
+  const start = (split = false, empty = false) => {
+    if (!canStart || (!hasDraft && !empty)) return;
+    if (firstRun) { void startHome(split); return; }
+    if (project) begin(project.cwd, project.name, split);
   };
   /**
    * Enter in the composer or on the 프로젝트 picker: start here; ⌘Enter (Ctrl elsewhere): in a new split pane — unless
    * ⌘Enter is the send key (설정), then it starts here as it always did. ⌘⇧Enter is the global 패널 최대화.
    */
-  const startKey = (e: { key: string; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; keyCode: number; nativeEvent: { isComposing: boolean }; preventDefault: () => void }, plainEnter: boolean): void => {
+  const startKey = (e: { key: string; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; keyCode: number; nativeEvent: { isComposing: boolean }; preventDefault: () => void }, plainEnter: boolean, empty = false): void => {
     if (e.nativeEvent.isComposing || e.keyCode === 229 || e.key !== 'Enter') return;
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.shiftKey) return;
     if (!mod && !plainEnter) return;
     e.preventDefault();
-    start(mod && sendKey !== 'mod-enter' && (isMacPlatform() ? e.metaKey : e.ctrlKey));
+    start(mod && sendKey !== 'mod-enter' && (isMacPlatform() ? e.metaKey : e.ctrlKey), empty);
   };
   const edit = (v: string) => { setText(v); saveDraft(draftKey, v); };
   // The sandbox row follows the engine picker (shown only when another engine than Claude is available).
@@ -153,55 +184,61 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit
       <span className="newchat-card-meta">{name} · {ago(s.lastModified, t)}</span>
     </button>
   );
-  const sendLabel = hasDraft ? '보내기 — 새 대화로 시작 (Enter)' : '빈 새 대화 열기';
+  const sendLabel = ui().chat.newChat.send;
 
   return (
     <div className="newchat">
       <div className="newchat-inner">
         <h1 className="newchat-greeting"><BrandMark className="spark" />{greeting(new Date(t).getHours())}</h1>
-        {projects.length === 0 ? (
-          <p className="muted">프로젝트가 없습니다. 사이드바의 폴더 열기로 시작하거나 ~/.config/deck/projects.json 에 고정 프로젝트를 적어두세요.</p>
-        ) : (
-          <form className="newchat-box" onSubmit={(e) => { e.preventDefault(); start(); }}
-            onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
-            onDrop={(e) => { e.preventDefault(); setDrag(false); const files = filesFrom(e.dataTransfer); if (files.length) void addFiles(files); }}>
-            <Composer
-              dragover={drag}
-              chip={(
-                <SessionChip
-                  isNew
-                  defaultPerm={defaultPerm}
-                  folder={project?.name ?? null}
-                  folderPicker={(
-                    <label className="ss-project" title={cwd ?? ''}>
-                      <span className="sr-only">프로젝트</span>
-                      <select value={cwd ?? ''} onChange={(e) => setPicked(e.target.value)} onKeyDown={(e) => startKey(e, !e.shiftKey && !e.altKey)} aria-label="프로젝트">
-                        {pinned.length > 0 && <optgroup label="고정">{pinned.map(option)}</optgroup>}
-                        {others.length > 0 && <optgroup label="최근">{others.map(option)}</optgroup>}
-                      </select>
-                    </label>
-                  )}
-                  engine={engine}
-                  engines={{ codexAvailable, gemini, grok, onEngine: (v) => { setEngine(v); onEngine?.(v); } }}
-                  sandbox={engineSelect ? { value: sandbox, onChange: (v) => { setSandbox(v); onSandbox?.(v); } } : null}
-                  models={models ?? modelChoices(engine)} model={model} effort={effort} onModel={(m) => onModel?.(m)} onEffort={(e) => onEffort?.(e)}
-                />
-              )}
-              files={(attachments.length > 0 || uploading > 0 || error)
-                ? <AttachmentBar attachments={attachments} uploading={uploading} error={error} onRemove={remove} onReplace={replace} pastedTexts={pastedTexts} />
-                : null}
-              onFiles={(f) => void addFiles(f)}
-              text={text}
-              onText={edit}
-              action={<button type="submit" className="send" disabled={!canStart} title={sendLabel} aria-label={sendLabel}><span aria-hidden="true">↑</span></button>}
-            >
-              <textarea ref={taRef} value={text} onChange={(e) => edit(e.target.value)} rows={2} placeholder="무엇을 도와드릴까요?" aria-label="첫 메시지"
-                name="deck-message" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-1p-ignore="" data-lpignore="true"
-                onPaste={onPaste}
-                onKeyDown={(e) => startKey(e, !e.shiftKey && !e.altKey && !touchEnterIsNewline())} />
-            </Composer>
-          </form>
+        {firstRun && (
+          <section className="newchat-first" aria-label={ui().chat.newChat.firstLabel} data-testid="newchat-first">
+            <p className="newchat-first-intro">{ui().chat.newChat.intro}</p>
+            {picking
+              ? <FolderPicker fetchFn={fetchFn} onOpen={(dir) => { setPicking(false); begin(dir, baseName(dir), false); }} onClose={() => setPicking(false)} />
+              : <button type="button" className="btn primary newchat-pick" data-testid="newchat-pick" onClick={() => setPicking(true)}>{ui().chat.newChat.pick}</button>}
+            <p className="newchat-first-or muted">{ui().chat.newChat.orHome}</p>
+            {homeError && <p className="error" role="alert">{homeError}</p>}
+          </section>
         )}
+        <form className="newchat-box" onSubmit={(e) => { e.preventDefault(); start(); }}
+          onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
+          onDrop={(e) => { e.preventDefault(); setDrag(false); const files = filesFrom(e.dataTransfer); if (files.length) void addFiles(files); }}>
+          <Composer
+            dragover={drag}
+            chip={(
+              <SessionChip
+                isNew
+                defaultPerm={defaultPerm}
+                folder={firstRun ? ui().chat.newChat.home : project?.name ?? null}
+                folderPicker={firstRun ? undefined : (
+                  <label className="ss-project" title={cwd ?? ''}>
+                    <span className="sr-only">프로젝트</span>
+                    <select value={cwd ?? ''} onChange={(e) => setPicked(e.target.value)} onKeyDown={(e) => startKey(e, !e.shiftKey && !e.altKey, true)} aria-label="프로젝트">
+                      {pinned.length > 0 && <optgroup label="고정">{pinned.map(option)}</optgroup>}
+                      {others.length > 0 && <optgroup label="최근">{others.map(option)}</optgroup>}
+                    </select>
+                  </label>
+                )}
+                engine={engine}
+                engines={{ codexAvailable, gemini, grok, onEngine: (v) => { setEngine(v); onEngine?.(v); } }}
+                sandbox={engineSelect ? { value: sandbox, onChange: (v) => { setSandbox(v); onSandbox?.(v); } } : null}
+                models={models ?? modelChoices(engine)} model={model} effort={effort} onModel={(m) => onModel?.(m)} onEffort={(e) => onEffort?.(e)}
+              />
+            )}
+            files={(attachments.length > 0 || uploading > 0 || error)
+              ? <AttachmentBar attachments={attachments} uploading={uploading} error={error} onRemove={remove} onReplace={replace} pastedTexts={pastedTexts} />
+              : null}
+            onFiles={(f) => void addFiles(f)}
+            text={text}
+            onText={edit}
+            action={<button type="submit" className="send" disabled={!canStart || !hasDraft} title={sendLabel} aria-label={sendLabel}><span aria-hidden="true">↑</span></button>}
+          >
+            <textarea ref={taRef} value={text} onChange={(e) => edit(e.target.value)} rows={2} placeholder="무엇을 도와드릴까요?" aria-label="첫 메시지"
+              name="deck-message" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-1p-ignore="" data-lpignore="true"
+              onPaste={onPaste}
+              onKeyDown={(e) => startKey(e, !e.shiftKey && !e.altKey && !touchEnterIsNewline())} />
+          </Composer>
+        </form>
         {pinnedCards.length > 0 && onOpenSession && (
           <section className="newchat-recent newchat-pinned" aria-label="고정된 대화">
             <h2 className="muted">고정됨</h2>

@@ -1,5 +1,5 @@
 import { loadDraft, saveDraft } from '../autoReload';
-import { Fragment, useContext, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { Fragment, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { timeDividers, timeLabel } from '../dateGroups';
 import { CLAUDE_MODELS, CODEX_MODELS, DEFAULT_SANDBOX, GEMINI_MODELS, GROK_MODELS, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../../shared/models';
 import type { Account, Seat } from '../../shared/accounts';
@@ -199,15 +199,15 @@ export function modelChoices(engine: EngineChoice): readonly ModelChoice[] {
   return engine === 'gemini' ? GEMINI_MODELS : engine === 'grok' ? GROK_MODELS : engine === 'codex' ? CODEX_MODELS : engine === 'claude' ? ['auto', ...CLAUDE_MODELS] : ['auto', ...CLAUDE_MODELS, ...CODEX_MODELS];
 }
 
-/** The send keys live on the 보내기 button's tooltip; the placeholder only names who the message goes to. */
+/** The send keys live on the 보내기 button's tooltip. */
 export const SEND_TITLE = '보내기 (Enter · Shift+Enter 줄바꿈)';
 export const SEND_TITLE_MOD = '보내기 (⌘Enter · Enter 줄바꿈)';
-const PLACEHOLDER_NAME_MAX = 30;
-/** "{세션 이름}에게 메시지 보내기", or "메시지 보내기" without a name (a new session). */
-export function composerPlaceholder(name: string | null | undefined): string {
-  const n = name?.replace(/\s+/g, ' ').trim();
-  if (!n) return '메시지 보내기';
-  return `${n.length > PLACEHOLDER_NAME_MAX ? `${n.slice(0, PLACEHOLDER_NAME_MAX - 1)}…` : n}에게 메시지 보내기`;
+/**
+ * The idle placeholder: plain "메시지 보내기". The session's name is not in it — a default name carries the folder
+ * ("deck · 새 세션"), and "{이름}에게" reads oddly for a session.
+ */
+export function composerPlaceholder(): string {
+  return ui().chat.placeholder;
 }
 
 /** Enter inserts a newline on touch screens (send with the button), as on Desktop's mobile apps. */
@@ -335,6 +335,19 @@ export function Chat(p: ChatProps) {
   useAutoGrow(taRef, text, bodyRef);
   const content = useMemo(() => ({}), [p.items, p.pending, p.questions]);
   const scroll = useStickToBottom(bodyRef, content, p.sessionId);
+  // A question / approval card waits for the user: the status line, the composer and the stop button say so (Q2).
+  const waitingFor = p.questions.length > 0 ? 'question' as const : p.pending.length > 0 ? 'permission' as const : null;
+  // Q1: a newly shown card taller than the view opens at its head, not at its bottom (scroll.revealTop decides).
+  const seenCards = useRef(new Set<string>());
+  const revealTop = scroll.revealTop;
+  useLayoutEffect(() => {
+    const ids = [...p.pending.map((r) => r.requestId), ...p.questions.map((q) => q.requestId)];
+    const fresh = ids.find((id) => !seenCards.current.has(id));
+    seenCards.current = new Set(ids);
+    if (!fresh) return;
+    const card = [...(bodyRef.current?.querySelectorAll<HTMLElement>('[data-await-card]') ?? [])].find((el) => el.dataset.awaitCard === fresh);
+    if (card) revealTop(card);
+  }, [p.pending, p.questions, revealTop]);
   // Read-only: no paste / drop / 첨부 uploads either. Long text pastes become 붙여넣은 텍스트 chips (pasted-N.txt).
   // The live attachment list for ImageEditor's 완료 (its upload may outlast this render).
   const attachmentsRef = useRef(p.attachments);
@@ -389,6 +402,7 @@ export function Chat(p: ChatProps) {
   const canSend = hasDraft && !p.readOnly && (!p.busy || queueing);
   // Mid-turn the main button becomes 보내기 only when the send can really happen; otherwise it stays 중단.
   const runSend = !!p.activeTurnId && queueing && canSend;
+  const taskReady = !!p.onStartTask && hasDraft && p.attachments.length === 0 && parseBgCommand(text) === null;
   const live = last?.kind === 'assistant' && last.streaming ? last : null;
   const agents = p.agents ?? NO_AGENTS;
   const bgLive = !!p.bg;
@@ -603,7 +617,7 @@ export function Chat(p: ChatProps) {
     if (files.length) void addFiles(files);
   };
   return (
-    <main ref={mainRef} className="chat" onKeyDown={(e) => {
+    <main ref={mainRef} className="chat" {...(waitingFor ? { 'data-waiting': waitingFor } : {})} onKeyDown={(e) => {
       if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f' && canFind) { e.preventDefault(); openFind(); }
     }} onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
       {drag && <div className={`drop-overlay ${p.readOnly ? 'blocked' : ''}`} data-testid="drop-overlay"><span>{p.readOnly || '여기에 파일을 놓으세요'}</span></div>}
@@ -657,8 +671,8 @@ export function Chat(p: ChatProps) {
         {retryPrompt !== null && <button type="button" className="btn ghost retry" onClick={() => { p.onSend(retryPrompt); scroll.attach(); }}>재시도</button>}
         {fastRefused && <button type="button" className="btn ghost retry" data-testid="fast-standard-retry" onClick={() => { p.onSendStandard?.(retryPrompt!); scroll.attach(); }}>표준으로 다시 보내기</button>}
         {lockedTurn !== null && p.onCodexHandoff && <button type="button" className="btn ghost retry" data-testid="codex-handoff" onClick={() => p.onCodexHandoff?.(lockedTurn)}>AI-MSG 에서 새 GPT 세션으로 이어가기</button>}
-        {p.pending.map((r) => <PermissionCard key={r.requestId} req={r} onDecide={p.onDecide} />)}
-        {p.questions.map((q) => <QuestionCard key={q.requestId} req={q} onAnswer={p.onAnswer} />)}
+        {p.pending.map((r) => <div key={r.requestId} className="await-card" data-await-card={r.requestId}><PermissionCard req={r} onDecide={p.onDecide} /></div>)}
+        {p.questions.map((q) => <div key={q.requestId} className="await-card" data-await-card={q.requestId}><QuestionCard req={q} onAnswer={p.onAnswer} /></div>)}
         {p.tasks && p.tasks.length > 0 && <TaskCards tasks={p.tasks} cap={p.taskCap ?? null} {...(p.onOpenTask ? { onOpen: p.onOpenTask } : {})} {...(p.onDismissTask ? { onDismiss: p.onDismissTask } : {})} {...(p.onCancelTask ? { onCancel: p.onCancelTask } : {})} />}
         {p.autoResume && !p.busy && (
           <div className="auto-resume" role="status" data-testid="auto-resume">
@@ -683,7 +697,7 @@ export function Chat(p: ChatProps) {
         )}
         {(p.busy || p.bg) && (
           <div className="activity-bar">
-            {p.busy ? <StatusRow startedAt={p.runStartedAt ?? null} started={!!p.activeTurnId} queuedBehind={p.activeTurnId ? null : p.awaitingBehind ?? null} progress={p.progress ?? null} live={live} routeAck={p.turnRoute ? { model: p.turnRoute.model, engine: p.turnRoute.engine, accountLabel: accountNames.label(p.turnRoute.account), step: conciseFirstStep(lastUserText(p.items)) } : null} onInterrupt={p.activeTurnId ? p.onInterrupt : undefined} onCancel={p.activeTurnId ? undefined : p.onCancelStart} /> : <span className="spacer" />}
+            {p.busy ? <StatusRow startedAt={p.runStartedAt ?? null} started={!!p.activeTurnId} queuedBehind={p.activeTurnId ? null : p.awaitingBehind ?? null} progress={p.progress ?? null} live={live} routeAck={p.turnRoute ? { model: p.turnRoute.model, engine: p.turnRoute.engine, accountLabel: accountNames.label(p.turnRoute.account), step: conciseFirstStep(lastUserText(p.items)) } : null} waiting={p.activeTurnId ? waitingFor : null} onInterrupt={p.activeTurnId ? p.onInterrupt : undefined} onCancel={p.activeTurnId ? undefined : p.onCancelStart} /> : <span className="spacer" />}
             {p.bg && <BackgroundPill bg={p.bg} onStopTask={p.onStopTask} onStopAll={() => p.onStopBackground?.(p.bg!.turnId)} />}
           </div>
         )}
@@ -731,18 +745,21 @@ export function Chat(p: ChatProps) {
           onFiles={(f) => void addFiles(f)}
           text={text}
           onText={setText}
+          {...(taskReady ? { menu: [{ key: 'task', label: ui().chat.taskMenu, icon: <TaskIcon />, run: () => startTask(text) }] } : {})}
+          crowded={!!p.activeTurnId && runSend}
           extra={<>
-            {p.onStartTask && hasDraft && p.attachments.length === 0 && parseBgCommand(text) === null && (
+            {/* Desktop: a 작업으로 pill; the phone keeps it in the + menu only (C-1: at most two round buttons on the right). */}
+            {taskReady && (
               <button type="button" className="task-add" data-testid="task-add" onClick={() => startTask(text)} aria-label="작업으로" title="작업으로 — 새 세션에서 따로 돌리고, 이 대화는 계속 씁니다. 끝나면 알림과 결과 카드가 옵니다 (/bg 로도 시작)">
                 <span className="task-add-text">작업으로</span><TaskIcon />
               </button>
             )}
           </>}
           action={p.activeTurnId && !runSend
-            ? <button type="button" className="send stop" onClick={p.onInterrupt} title={ui().chat.composer.stop}><i aria-hidden="true" /><span className="sr-only">{ui().chat.composer.stop}</span></button>
+            ? <button type="button" className={`send stop${waitingFor ? ' quiet' : ''}`} onClick={p.onInterrupt} title={ui().chat.composer.stop}><i aria-hidden="true" /><span className="sr-only">{ui().chat.composer.stop}</span></button>
             : p.activeTurnId
             ? <>
-                <button type="button" className="send stop stop-mini" onClick={p.onInterrupt} title={ui().chat.composer.stopEsc}><i aria-hidden="true" /><span className="sr-only">{ui().chat.composer.stop}</span></button>
+                <button type="button" className={`send stop stop-mini${waitingFor ? ' quiet' : ''}`} onClick={p.onInterrupt} title={ui().chat.composer.stopEsc}><i aria-hidden="true" /><span className="sr-only">{ui().chat.composer.stop}</span></button>
                 <button type="button" className="send" onClick={submit} title={steering ? ui().chat.composer.queueSteerTitle : ui().chat.composer.queueWaitTitle} aria-keyshortcuts={coarse ? undefined : sendKey === 'mod-enter' ? 'Meta+Enter Control+Enter' : 'Enter'}><span aria-hidden="true">↑</span><span className="sr-only">{ui().chat.composer.queueAdd}</span></button>
               </>
             : <button type="button" className="send" onClick={submit} disabled={!canSend} title={coarse ? '보내기' : sendKey === 'mod-enter' ? SEND_TITLE_MOD : SEND_TITLE} aria-keyshortcuts={coarse ? undefined : sendKey === 'mod-enter' ? 'Meta+Enter Control+Enter' : 'Enter'}><span aria-hidden="true">↑</span><span className="sr-only">보내기</span></button>}
@@ -760,7 +777,7 @@ export function Chat(p: ChatProps) {
             // letter, swaps words with autocorrect and underlines code — prompts are not prose.
             autoCorrect="off" autoCapitalize="off" spellCheck={false}
             disabled={!!p.readOnly}
-            placeholder={p.readOnly ? p.readOnly : ghost ? ghost : queueing ? (steering ? (coarse ? '실행 중 · 보내면 다음 도구 실행 뒤 전달' : '실행 중 · Enter 로 보내면 다음 도구 실행 뒤 전달 · Esc 중단') : coarse ? '실행 중 · 보내면 대기열에 추가' : '실행 중 · Enter 로 대기열에 추가 · Esc 중단') : composerPlaceholder(p.isNew ? null : p.title)}
+            placeholder={p.readOnly ? p.readOnly : ghost ? ghost : waitingFor ? (waitingFor === 'question' ? ui().chat.waiting.placeholderQuestion : ui().chat.waiting.placeholderPermission) : queueing ? (steering ? (coarse ? '실행 중 · 보내면 다음 도구 실행 뒤 전달' : '실행 중 · Enter 로 보내면 다음 도구 실행 뒤 전달 · Esc 중단') : coarse ? '실행 중 · 보내면 대기열에 추가' : '실행 중 · Enter 로 대기열에 추가 · Esc 중단') : composerPlaceholder()}
             aria-label="메시지"
             rows={1}
             // Not a form field: keeps iOS from showing its AutoFill (password/card/address) bar above the keyboard.

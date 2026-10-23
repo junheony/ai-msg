@@ -3,9 +3,10 @@ import { CONCISE_STYLE_PROMPT, conciseAck, conciseEventRole, conciseFirstStep, c
 
 describe('conciseAck', () => {
   it('names the model', () => {
-    expect(conciseAck({ model: 'gpt-6-sol', engine: 'codex' })).toBe('확인 · GPT Sol로 처리 중');
-    expect(conciseAck({ model: 'sonnet', engine: 'claude', accountLabel: 'A' })).toBe('확인 · Sonnet(A)로 처리 중');
-    expect(conciseAck({ engine: 'gemini' })).toBe('확인 · Gemini로 처리 중');
+    expect(conciseAck({ model: 'gpt-6-sol', engine: 'codex' })).toBe('GPT Sol · 작업 중');
+    expect(conciseAck({ model: 'sonnet', engine: 'claude' })).toBe('Sonnet · 작업 중');
+    expect(conciseAck({ engine: 'gemini' })).toBe('Gemini · 작업 중');
+    expect(conciseAck({ model: 'opus', engine: 'claude', step: '원인부터 찾을게요' })).toBe('Opus · 원인부터 찾을게요');
   });
 });
 
@@ -53,9 +54,9 @@ describe('conciseMilestone / shouldEmitMilestone', () => {
 
 describe('instant ack with a first step', () => {
   it('names the model and the first step when the prompt has a cue', () => {
-    expect(conciseAck({ model: 'opus', engine: 'claude', step: conciseFirstStep('로그인하면 500 에러가 나 왜 그래') })).toBe('확인 · Opus — 원인부터 찾을게요');
-    expect(conciseAck({ model: 'sonnet', engine: 'claude', accountLabel: 'A', step: '바로 답할게요' })).toBe('확인 · Sonnet(A) — 바로 답할게요');
-    expect(conciseAck({ engine: 'codex', step: null })).toBe('확인 · GPT로 처리 중');
+    expect(conciseAck({ model: 'opus', engine: 'claude', step: conciseFirstStep('로그인하면 500 에러가 나 왜 그래') })).toBe('Opus · 원인부터 찾을게요');
+    expect(conciseAck({ model: 'sonnet', engine: 'claude', step: '바로 답할게요' })).toBe('Sonnet · 바로 답할게요');
+    expect(conciseAck({ engine: 'codex', step: null })).toBe('GPT · 작업 중');
   });
   it('guesses the first step from cue words, null without one', () => {
     expect(conciseFirstStep('테스트 돌려줘')).toBe('먼저 실행해 볼게요');

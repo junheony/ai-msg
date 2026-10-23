@@ -76,14 +76,38 @@ describe('StatusRow', () => {
 
   it('concise mode: short ack naming the model instead of phase chrome', () => {
     localStorage.setItem(PREFS_KEY, JSON.stringify({ ...DEFAULT_PREFS, conciseMode: true }));
-    render(<StatusRow startedAt={Date.now()} started progress={null} live={null} routeAck={{ model: 'gpt-6-sol', engine: 'codex' }} onInterrupt={() => {}} />);
-    expect(screen.getByTestId('turn-status').textContent).toContain('확인 · GPT Sol로 처리 중');
+    render(<StatusRow startedAt={Date.now()} started progress={null} live={null} routeAck={{ model: 'gpt-6-sol', engine: 'codex', accountLabel: 'A' }} onInterrupt={() => {}} />);
+    expect(screen.getByTestId('turn-status').textContent).toContain('GPT Sol · 작업 중');
+    // The account letter is internal: tooltip only.
+    expect(screen.getByTestId('turn-status').textContent).not.toContain('(A)');
+    expect(screen.getByText('GPT Sol · 작업 중').getAttribute('title')).toContain('A');
     cleanup();
     render(<StatusRow startedAt={Date.now()} started progress={null} live={null} routeAck={{ model: 'opus', engine: 'claude', step: '원인부터 찾을게요' }} onInterrupt={() => {}} />);
-    expect(screen.getByTestId('turn-status').textContent).toContain('확인 · Opus — 원인부터 찾을게요');
+    expect(screen.getByTestId('turn-status').textContent).toContain('Opus · 원인부터 찾을게요');
     cleanup();
     render(<StatusRow startedAt={Date.now()} started={false} progress={null} live={null} />);
     expect(screen.getByTestId('turn-status').textContent).toContain('확인…');
+  });
+
+  it('waiting for the user: says so, the clock stops and the spinner rests', () => {
+    cleanup();
+    vi.useFakeTimers();
+    try {
+      const t0 = Date.now();
+      render(<StatusRow startedAt={t0 - 5_000} started progress={null} live={null} onInterrupt={() => {}} waiting="question" />);
+      const s = screen.getByTestId('turn-status');
+      expect(s.textContent).toContain('답을 기다리는 중');
+      expect(s.textContent).toContain('0:05');
+      expect(s.classList.contains('waiting')).toBe(true);
+      expect(s.querySelector('.spin')).toBeNull();
+      act(() => { vi.advanceTimersByTime(10_000); });
+      expect(screen.getByTestId('turn-status').textContent).toContain('0:05');
+      cleanup();
+      render(<StatusRow startedAt={Date.now()} started progress={null} live={null} waiting="permission" />);
+      expect(screen.getByTestId('turn-status').textContent).toContain('승인을 기다리는 중');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
 describe('AgentCard', () => {

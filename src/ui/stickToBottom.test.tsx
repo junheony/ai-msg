@@ -151,3 +151,56 @@ describe('Chat scroll lock', () => {
     expect(screen.queryByTestId('jump-bottom')).toBeNull();
   });
 });
+
+describe('a new question / approval card (Q1)', () => {
+  const question = (requestId: string) => ({ turnId: 't', sessionId: 's1', cwd: '/w', requestId, questions: [{ question: 'Which?', header: '', options: [{ label: 'a', description: '' }], multiSelect: false }] });
+  const offset = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight');
+  const rect = Element.prototype.getBoundingClientRect;
+  // jsdom has no layout: the card wrapper gets a height and a place in the content (`at` px from the top);
+  // its on-screen top follows the scroll (the transcript itself sits at 0).
+  function fakeCards(height: number, at: number, box: { top: number }) {
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, get(this: HTMLElement) { return this.dataset.awaitCard ? height : 0; } });
+    Element.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      const t = this.dataset?.awaitCard ? at - box.top : 0;
+      return { top: t, bottom: t + height, left: 0, right: 0, width: 0, height, x: 0, y: t, toJSON: () => ({}) } as DOMRect;
+    };
+  }
+  afterEach(() => {
+    cleanup();
+    if (offset) Object.defineProperty(HTMLElement.prototype, 'offsetHeight', offset);
+    Element.prototype.getBoundingClientRect = rect;
+  });
+
+  it('a card taller than the view: the view stops at the card head (detached), not at the bottom', () => {
+    const items = [user('q'), answer('a', true)];
+    const { view, box } = setup(items);
+    expect(box.top).toBe(600);
+    box.height = 1900; // the card adds 900px
+    fakeCards(900, 1000, box); // right after the old content
+    view.rerender(<Chat {...props(items, { questions: [question('q1')] })} />);
+    expect(box.top).toBe(1000 - 8);
+    expect(screen.getByTestId('jump-bottom')).toBeTruthy();
+  });
+
+  it('a card that fits: keeps following the bottom', () => {
+    const items = [user('q'), answer('a', true)];
+    const { view, box } = setup(items);
+    box.height = 1200;
+    fakeCards(200, 1000, box);
+    view.rerender(<Chat {...props(items, { questions: [question('q1')] })} />);
+    expect(box.top).toBe(800);
+    expect(screen.queryByTestId('jump-bottom')).toBeNull();
+  });
+
+  it('a reader scrolled up is left alone', () => {
+    const items = [user('q'), answer('a', true)];
+    const { view, body, box } = setup(items);
+    fireEvent.wheel(body, { deltaY: -40 });
+    box.top = 300;
+    fireEvent.scroll(body);
+    box.height = 1900;
+    fakeCards(900, 1000, box);
+    view.rerender(<Chat {...props(items, { questions: [question('q1')] })} />);
+    expect(box.top).toBe(300);
+  });
+});
