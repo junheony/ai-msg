@@ -865,6 +865,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .code-block pre.code-folded { max-height: calc(var(--s3) + 24 * 1.6em); overflow-y: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--s6)), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - var(--s6)), transparent); }
 .code-fold { display: block; width: 100%; min-height: var(--icon-btn); padding: 0 var(--s4); border-top: 1px solid var(--line); font-size: var(--fs-meta); color: var(--muted); text-align: center; transition: background var(--t-fast) ease, color var(--t-fast) ease; }
 .code-fold:hover { background: var(--hover); color: var(--fg); }
+.code-fold:focus-visible { outline: none; box-shadow: var(--focus-inset, inset 0 0 0 2px var(--accent)); } /* .code-block clips an outer ring */
 /* ```diff: whole-row tints like the diff card — added / removed lines, the @@ hunk line; the ---/+++ file lines plain.
    Each row reaches across the pre's side padding, stopping 1px short so the block's inset border stays. */
 .code-block code.language-diff .hljs-addition, .code-block code.language-diff .hljs-deletion, .code-block code.language-diff .hljs-meta { display: inline-block; min-width: calc(100% + 2 * var(--s4) - 2px); margin: 0 calc(1px - var(--s4)); padding: 0 calc(var(--s4) - 1px); }
@@ -873,11 +874,11 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .code-block code.language-diff .hljs-meta { background: var(--accent-soft); color: var(--muted); }
 .code-block code.language-diff .hljs-comment { font-style: normal; color: var(--muted); }
 
-/* Tables — rounded frame, tinted head, zebra + hover, scroll sideways when narrow. The frame (MdTable) holds the border
-   and, while columns are hidden to the right (data-more), a fade on that edge; the .md-table inside it scrolls. */
-.markdown .md-table-frame { position: relative; margin: 8px 0 16px; max-width: 100%; border: 1px solid var(--line-strong); border-radius: 12px; overflow: hidden; }
-.markdown .md-table-frame::after { content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: var(--s6); pointer-events: none; background: linear-gradient(to right, transparent, var(--bg)); opacity: 0; transition: opacity var(--t-fast) ease; }
-.markdown .md-table-frame[data-more]::after { opacity: 1; }
+/* Tables — rounded frame, tinted head, zebra + hover, scroll sideways when narrow. The frame (MdTable) holds the border;
+   the .md-table inside it scrolls and, while columns are hidden to the right (data-more), fades its right edge out (a
+   mask, so it reads right on any background: chat, side panel). */
+.markdown .md-table-frame { margin: 8px 0 16px; max-width: 100%; border: 1px solid var(--line-strong); border-radius: 12px; overflow: hidden; }
+.markdown .md-table-frame[data-more] > .md-table { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - var(--s6)), transparent); mask-image: linear-gradient(to right, #000 calc(100% - var(--s6)), transparent); }
 .markdown .md-table { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
 .markdown table { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%; font-size: var(--fs-body); line-height: 1.5; }
 .markdown th, .markdown td { padding: 8px 14px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }

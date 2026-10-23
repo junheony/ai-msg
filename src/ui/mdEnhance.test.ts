@@ -34,24 +34,46 @@ describe('mdEnhance: KaTeX options', () => {
 const html = (md: string) => renderToStaticMarkup(createElement(ReactMarkdown, { remarkPlugins: [remarkGfm, ...REMARK_ENHANCE], rehypePlugins: REHYPE_ENHANCE }, md));
 const hasMath = (md: string) => html(md).includes('class="katex"');
 
-describe('mdEnhance: inline $…$ math', () => {
-  it('prices stay text', () => {
-    for (const md of ['It costs $5 and $10.', '$5-$10 a month', 'between $5/$10', '$TSLA and $AAPL', '가격은 $5이고 할인하면 $3이에요', 'Pay $ 5 or $ 6']) {
+describe('mdEnhance: math delimiters', () => {
+  it('single $ never makes math: prices, tickers, shell variables stay text', () => {
+    const texts = [
+      'It costs $5 and $10.', '$5-$10 a month', 'between $5/$10', '$TSLA and $AAPL', '가격은 $5이고 할인하면 $3이에요', 'Pay $ 5 or $ 6',
+      '테슬라($TSLA)와 애플($AAPL)', '$TSLA/$AAPL', '$NVDA·$AMD', 'export PATH=$HOME/bin:$PATH', 'echo $a$b', '가격 $5,000~$',
+      '수식처럼 보여도 $E = mc^2$ 는 글자',
+    ];
+    for (const md of texts) {
       expect(hasMath(md), md).toBe(false);
       expect(html(md), md).toContain('$');
     }
   });
 
-  it('$…$ with tight delimiters renders, inside text and next to Korean', () => {
-    expect(hasMath('수식도 하나: $E = mc^2$')).toBe(true);
-    expect(hasMath('$x$를 구하면')).toBe(true);
-    expect(hasMath('escaped $\\{a\\}$ braces')).toBe(true);
-    expect(html('a $x^2$ b $y$ c').match(/class="katex"/g)).toHaveLength(2);
+  it('$$…$$ renders, inline and as a block', () => {
+    expect(hasMath('식 $$a+b$$ 끝')).toBe(true);
+    expect(html('$$\na^2\n$$')).toContain('katex-display');
   });
 
-  it('$$…$$ still renders; $ in code stays code', () => {
-    expect(hasMath('$$a+b$$')).toBe(true);
-    expect(hasMath('run `echo $HOME $PATH$`')).toBe(false);
-    expect(hasMath('```sh\necho $x$\n```')).toBe(false);
+  it('\\(…\\) renders inline and \\[…\\] as a block, with the formula as written', () => {
+    const inline = html('에너지는 \\(E = mc^2\\) 이고 \\(\\{x\\}\\) 집합');
+    expect(inline.match(/class="katex"/g)).toHaveLength(2);
+    expect(inline).not.toContain('katex-display');
+    expect(inline).not.toContain('katex-error');
+    expect(inline).toContain('<annotation encoding="application/x-tex">\\{x\\}</annotation>');
+    expect(html('\\[\n\\frac{a}{b}\n\\]')).toContain('katex-display');
+  });
+
+  it('an escaped backslash, an unclosed \\( and code stay text', () => {
+    expect(hasMath('\\\\(not math\\\\)')).toBe(false);
+    expect(hasMath('streaming \\(x + ')).toBe(false);
+    expect(hasMath('run `echo \\(x\\)` and `$$y$$`')).toBe(false);
+    expect(hasMath('```sh\necho \\(x\\) $$y$$\n```')).toBe(false);
+  });
+});
+
+describe('mdEnhance: diff blocks', () => {
+  it('a hunk line is marked with or without counts', () => {
+    const out = html('```diff\n@@ -1 +1 @@\n-a\n+b\n@@ -10,2 +10,3 @@\n x\n```');
+    expect(out).toContain('<span class="hljs-meta">@@ -1 +1 @@</span>');
+    expect(out).toContain('<span class="hljs-meta">@@ -10,2 +10,3 @@</span>');
+    expect(out.match(/hljs-meta/g)).toHaveLength(2);
   });
 });

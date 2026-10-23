@@ -1,4 +1,4 @@
-import { createContext, isValidElement, memo, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { createContext, isValidElement, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { splitDeckChoices, type DeckChoices } from '../../shared/choices';
 import ReactMarkdown, { type Components } from 'react-markdown';
@@ -52,9 +52,17 @@ function saveCode(text: string, lang: string) {
 /** Fenced code longer than CODE_FOLD_AT lines starts folded to CODE_FOLD_SHOW (keep in step with .code-folded in styles.css). */
 const CODE_FOLD_AT = 60;
 const CODE_FOLD_SHOW = 24;
+type FoldChoice = 'open' | 'closed' | null;
+/**
+ * An assistant reply's code-fold state. While it streams a long block stays open (new lines stay in sight); after, it
+ * folds unless the reader chose. Choices are kept per reply by the block's offset in the reply's full text (`base` = where
+ * the rendered text starts in it), so the block re-created when 간결 모드 swaps the live stretch for the whole reply, or
+ * when the highlighter loads, keeps them. Without a provider (thinking, side panel) the block keeps its own.
+ */
+export const CodeFoldContext = createContext<{ streaming: boolean; base: number; choices: Map<number, FoldChoice> | null }>({ streaming: false, base: 0, choices: null });
 
 /** Fenced code: a header strip with the language, 줄바꿈 · 저장 · copy buttons above the scrolling body. */
-function CodeBlock({ children }: { children?: ReactNode }) {
+function CodeBlock({ children, at }: { children?: ReactNode; /** Source offset of the fence in the rendered text. */ at?: number }) {
   const code = Array.isArray(children) ? children[0] : children;
   const cls = isValidElement<{ className?: string }>(code) ? (code.props.className ?? '') : '';
   const lang = /language-([\w+#.-]+)/.exec(cls)?.[1] ?? '';
@@ -66,10 +74,29 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   // ever appends and find-in-page still sees it). Copy and save always take the whole text.
   const lines = text.split('\n').length;
   const foldable = lines > CODE_FOLD_AT;
-  const [unfolded, setUnfolded] = useState(false);
-  const folded = foldable && !unfolded;
+  const fold = useContext(CodeFoldContext);
+  const key = fold.choices && at !== undefined ? fold.base + at : null;
+  const [own, setOwn] = useState<FoldChoice>(null);
+  const choice = key !== null ? (fold.choices!.get(key) ?? null) : own;
+  const folded = foldable && (choice ? choice === 'closed' : !fold.streaming);
+  // Folding a long open block: once it is short again, bring its top back if it went above the screen (no scroll
+  // anchoring on iOS Safari, so the reader would be left far below it).
+  const block = useRef<HTMLDivElement>(null);
+  const refold = useRef(false);
+  useLayoutEffect(() => {
+    if (!refold.current || !folded) return;
+    refold.current = false;
+    const el = block.current;
+    if (el && el.getBoundingClientRect().top < 0) el.scrollIntoView?.({ block: 'start' });
+  }, [folded]);
+  const toggle = () => {
+    const next: FoldChoice = folded ? 'open' : 'closed';
+    refold.current = next === 'closed';
+    if (key !== null) fold.choices!.set(key, next);
+    setOwn(next);
+  };
   return (
-    <div className="code-block">
+    <div ref={block} className="code-block">
       <div className="code-head">
         <span className="code-lang">{lang}</span>
         <span className="code-actions">
@@ -80,7 +107,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
         </span>
       </div>
       <pre className={[wrap && 'code-wrap', folded && 'code-folded'].filter(Boolean).join(' ') || undefined}>{children}</pre>
-      {foldable && <button type="button" className="code-fold" aria-expanded={!folded} onClick={(e) => { if (unfolded) e.currentTarget.parentElement?.scrollIntoView?.({ block: 'nearest' }); setUnfolded(!unfolded); }}>{folded ? ui().chat.code.more(lines - CODE_FOLD_SHOW) : ui().chat.code.less}</button>}
+      {foldable && <button type="button" className="code-fold" aria-expanded={!folded} onClick={toggle}>{folded ? ui().chat.code.more(lines - CODE_FOLD_SHOW) : ui().chat.code.less}</button>}
     </div>
   );
 }
@@ -153,7 +180,7 @@ function breakAfterSlash(text: string): ReactNode[] {
   return text.split('/').flatMap((part, i, all) => (i < all.length - 1 ? [part, '/', <wbr key={i} />] : [part]));
 }
 
-/** A GFM table scrolls sideways in its frame; while more columns sit to the right, the frame fades its right edge. */
+/** A GFM table scrolls sideways in its frame; while more columns sit to the right, its right edge fades (data-more). */
 function MdTable({ children }: { children?: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -183,7 +210,7 @@ const MD_COMPONENTS: Components = {
   },
   // GFM tables scroll sideways inside the message instead of widening the chat (phone).
   table: ({ children }) => <MdTable>{children}</MdTable>,
-  pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+  pre: ({ node, children }) => <CodeBlock at={node?.position?.start.offset}>{children}</CodeBlock>,
   // A paragraph opening with bold text reads as a small heading: it gets a little more room above it (CSS .md-lead).
   p: ({ node, children }) => {
     const first = node?.children[0];
@@ -199,8 +226,7 @@ let enhancing: Promise<void> | null = null;
 function loadEnhance(): Promise<void> {
   return (enhancing ??= import('../mdEnhance').then((m) => { enhance = m; }, () => { enhancing = null; }));
 }
-// A looser cousin of mdEnhance's INLINE_MATH: loading the chunk for a false hit costs nothing visible.
-const NEEDS_ENHANCE = /```|~~~|\$\$|\$[^\s$](?:[^$\n]*[^\s$])?\$(?!\d)/;
+const NEEDS_ENHANCE = /```|~~~|\$\$|\\[([]/;
 
 /** Memoized on its text: parsing is the expensive part, and a streaming turn re-creates its item on every delta. */
 export const Markdown = memo(function Markdown({ text, className = 'markdown' }: { text: string; className?: string }) {
@@ -676,6 +702,9 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
   const cutKey = liveCuts?.join(',') ?? '';
   // eslint-disable-next-line react-hooks/exhaustive-deps -- cutKey stands for liveCuts (a new array every render)
   const liveLead = useMemo(() => (liveCuts ? conciseLead(liveHead, liveCuts) : null), [liveHead, cutKey]);
+  const foldChoices = useRef(new Map<number, FoldChoice>()).current;
+  const streaming = item.kind === 'assistant' && item.streaming;
+  const fold = useMemo(() => ({ streaming, base: liveCut, choices: foldChoices }), [streaming, liveCut, foldChoices]);
   // Copy feedback as one toast (a status: read out once). The hover row's ✓ already says it on a desktop; on touch the
   // icon alone is easy to miss, so the row's copy toasts too.
   const feedback = useFileActions();
@@ -769,7 +798,9 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
           {item.toolCalls.length > 0 ? null : item.thinking ? '생각하는 중…' : '처리 중…'}
         </div>
       )}
-      {split ? split.live && <Markdown text={split.live} /> : shownText && <Markdown text={shownText} />}
+      <CodeFoldContext.Provider value={fold}>
+        {split ? split.live && <Markdown text={split.live} /> : shownText && <Markdown text={shownText} />}
+      </CodeFoldContext.Provider>
       {choices && !item.streaming && <ChoiceCards choices={choices} onPick={reply} />}
       {item.streaming && (!split || !!split.live) && !early && <span className="cursor">▍</span>}
       {item.error && !(!item.streaming && isAbortError(item.error, !!item.interrupted)) && <TurnError error={item.error} />}

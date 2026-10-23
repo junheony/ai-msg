@@ -326,6 +326,22 @@ describe('MessageView code blocks and turn footer', () => {
     expect(copied).toBe(body);
   });
 
+  it('while streaming a long block stays open; at the end it folds — unless the reader chose, which sticks', () => {
+    const body = Array.from({ length: 70 }, (_, i) => `line ${i}`).join('\n');
+    const item = (streaming: boolean) => ({ kind: 'assistant' as const, turnId: 't', text: `intro\n\n\`\`\`\n${body}\n\`\`\``, toolCalls: [], badge: null, streaming, error: null, notes: [], attempts: [] });
+    const a = render(<MessageView item={item(true)} />);
+    expect(a.container.querySelector('.code-folded')).toBeNull();
+    a.rerender(<MessageView item={item(false)} />);
+    expect(a.container.querySelector('.code-folded')).not.toBeNull();
+    a.unmount();
+    const b = render(<MessageView item={item(true)} />);
+    fireEvent.click(b.container.querySelector('.code-fold')!); // folded by hand mid-stream
+    expect(b.container.querySelector('.code-folded')).not.toBeNull();
+    fireEvent.click(b.container.querySelector('.code-fold')!); // and opened again
+    b.rerender(<MessageView item={item(false)} />);
+    expect(b.container.querySelector('.code-folded')).toBeNull();
+  });
+
   it('a block of 60 lines or fewer has no fold toggle', () => {
     const body = Array.from({ length: 60 }, (_, i) => `l${i}`).join('\n');
     const { container } = render(<MessageView item={{ kind: 'assistant', turnId: 't', text: `\`\`\`ts\n${body}\n\`\`\``, toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [] }} />);
@@ -430,6 +446,20 @@ describe('MessageView · 간결 모드 live text', () => {
     expect(md).toHaveLength(1);
     expect(md[0]!.textContent).toBe('원인은 오타였어요');
     expect(container.querySelector('.cursor')).not.toBeNull();
+  });
+
+  it('a code block the reader opened mid-turn stays open when the turn ends and the whole reply replaces the live stretch', () => {
+    // A block in the lead too: in the whole reply the long block is the second <pre>, so React makes it anew.
+    const before = '먼저 테스트부터 볼게요.\n\n```\nnpm test\n```';
+    const body = Array.from({ length: 70 }, (_, i) => `line ${i}`).join('\n');
+    const text = `${before}\n\n코드:\n\n\`\`\`\n${body}\n\`\`\``;
+    const { container, rerender } = render(<MessageView item={turn(text, [call('1', before.length)])} />);
+    expect(container.querySelector('.code-folded')).toBeNull(); // open while streaming
+    fireEvent.click(container.querySelector('.code-fold')!); // fold…
+    fireEvent.click(container.querySelector('.code-fold')!); // …and open by hand: the reader's choice
+    rerender(<MessageView item={turn(text, [call('1', before.length)], false)} />);
+    expect(container.querySelectorAll('.code-block')).toHaveLength(2); // re-rendered from the whole text
+    expect(container.querySelector('.code-folded')).toBeNull(); // not the after-stream default (folded)
   });
 
   it('when the turn ends: one reply with the whole text, like before (no lead line, no progress, no cursor)', () => {
