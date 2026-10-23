@@ -4,6 +4,15 @@
      연결 끊김 (빗금 친 빈 고리, with the banner) —
      and the sheet open on the 승인 대기 2 state. Taller than the default window: RENDER_HEIGHT=900. -->
 <link rel="stylesheet" href="../../src/ui/styles.css">
+<script>
+  // useIsPhone phoneMode(), as the app sets it before the first paint: a 720px-wide window, or a touch screen whose short side is 640 or less.
+  (() => {
+    const touchPhone = Math.min(screen.width, screen.height) <= 640 && matchMedia('(pointer: coarse)').matches;
+    const phone = touchPhone || matchMedia('(max-width: 720px)').matches;
+    const mode = !phone ? '' : touchPhone && (screen.orientation?.type ?? '').startsWith('landscape') ? 'landscape' : 'portrait';
+    if (mode) document.documentElement.setAttribute('data-phone', mode);
+  })();
+</script>
 <style>
   body { margin: 0; background: var(--bg); }
   .fx { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }

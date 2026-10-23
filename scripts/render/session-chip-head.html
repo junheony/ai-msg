@@ -6,6 +6,15 @@
      (a dialog in <body>, outside the top bar — as SessionChipHead portals it).
      Tall: RENDER_HEIGHT=2400. 412px needs an iframe (headless Chrome will not go below 500). -->
 <link rel="stylesheet" href="../../src/ui/styles.css">
+<script>
+  // useIsPhone phoneMode(), as the app sets it before the first paint: a 720px-wide window, or a touch screen whose short side is 640 or less.
+  (() => {
+    const touchPhone = Math.min(screen.width, screen.height) <= 640 && matchMedia('(pointer: coarse)').matches;
+    const phone = touchPhone || matchMedia('(max-width: 720px)').matches;
+    const mode = !phone ? '' : touchPhone && (screen.orientation?.type ?? '').startsWith('landscape') ? 'landscape' : 'portrait';
+    if (mode) document.documentElement.setAttribute('data-phone', mode);
+  })();
+</script>
 <style>
   /* Static capture: no fade from the UA button face while the file:// stylesheet lands. */
   *, *::before, *::after { transition: none !important; animation: none !important; }

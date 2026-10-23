@@ -3,6 +3,15 @@
      Markup generated from the components (React render, then state set by clicks), so keep it in step with them.
      Taller than the default window: RENDER_HEIGHT=1800. -->
 <link rel="stylesheet" href="../../src/ui/styles.css">
+<script>
+  // useIsPhone phoneMode(), as the app sets it before the first paint: a 720px-wide window, or a touch screen whose short side is 640 or less.
+  (() => {
+    const touchPhone = Math.min(screen.width, screen.height) <= 640 && matchMedia('(pointer: coarse)').matches;
+    const phone = touchPhone || matchMedia('(max-width: 720px)').matches;
+    const mode = !phone ? '' : touchPhone && (screen.orientation?.type ?? '').startsWith('landscape') ? 'landscape' : 'portrait';
+    if (mode) document.documentElement.setAttribute('data-phone', mode);
+  })();
+</script>
 <style>
   body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); }
   .fx-case { max-width: 760px; margin: 0 auto 28px; display: flex; flex-direction: column; gap: 6px; }

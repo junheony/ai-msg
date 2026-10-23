@@ -4,6 +4,15 @@
      pickStage; past min the strip goes to a line under the bar, mid), the same at 760px, then each stage fixed, the segment states and the phone line; dark first, then light (the page loads
      itself twice in frames, #dark and #light). Generated labels only: no real names or paths. -->
 <link rel="stylesheet" href="../../src/ui/styles.css">
+<script>
+  // useIsPhone phoneMode(), as the app sets it before the first paint: a 720px-wide window, or a touch screen whose short side is 640 or less.
+  (() => {
+    const touchPhone = Math.min(screen.width, screen.height) <= 640 && matchMedia('(pointer: coarse)').matches;
+    const phone = touchPhone || matchMedia('(max-width: 720px)').matches;
+    const mode = !phone ? '' : touchPhone && (screen.orientation?.type ?? '').startsWith('landscape') ? 'landscape' : 'portrait';
+    if (mode) document.documentElement.setAttribute('data-phone', mode);
+  })();
+</script>
 <style>
 body { margin: 0; background: var(--sidebar); color: var(--fg); }
 .theme { padding: 6px 0 10px; background: var(--sidebar); color: var(--fg); }

@@ -5,6 +5,15 @@
      new session (보내기 looks disabled), and the first-run screen (폴더 고르기; on a phone the composer pins to the bottom).
      Markup is the components' rendered output. Taller than the default window: RENDER_HEIGHT=2400. -->
 <link rel="stylesheet" href="../../src/ui/styles.css">
+<script>
+  // useIsPhone phoneMode(), as the app sets it before the first paint: a 720px-wide window, or a touch screen whose short side is 640 or less.
+  (() => {
+    const touchPhone = Math.min(screen.width, screen.height) <= 640 && matchMedia('(pointer: coarse)').matches;
+    const phone = touchPhone || matchMedia('(max-width: 720px)').matches;
+    const mode = !phone ? '' : touchPhone && (screen.orientation?.type ?? '').startsWith('landscape') ? 'landscape' : 'portrait';
+    if (mode) document.documentElement.setAttribute('data-phone', mode);
+  })();
+</script>
 <style>
   body { margin: 0; background: var(--bg); }
   .fx-row { position: relative; padding: 8px 0 4px; border-bottom: 1px dashed var(--line); }

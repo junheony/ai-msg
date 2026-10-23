@@ -2,6 +2,15 @@
 <!-- 로그인 fixture (keep in step with Login.tsx): the token screen. ?light = light theme.
        RENDER_HEIGHT=700 scripts/render-check.sh login 1440 390 -->
 <link rel="stylesheet" href="../../src/ui/styles.css">
+<script>
+  // useIsPhone phoneMode(), as the app sets it before the first paint: a 720px-wide window, or a touch screen whose short side is 640 or less.
+  (() => {
+    const touchPhone = Math.min(screen.width, screen.height) <= 640 && matchMedia('(pointer: coarse)').matches;
+    const phone = touchPhone || matchMedia('(max-width: 720px)').matches;
+    const mode = !phone ? '' : touchPhone && (screen.orientation?.type ?? '').startsWith('landscape') ? 'landscape' : 'portrait';
+    if (mode) document.documentElement.setAttribute('data-phone', mode);
+  })();
+</script>
 <style>*, *::before, *::after { transition: none !important; } html, body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font); }</style>
 <script>if (location.search.includes('light')) document.documentElement.dataset.theme = 'light';</script>
 </head><body>

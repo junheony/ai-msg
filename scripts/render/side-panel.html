@@ -3,6 +3,15 @@
      a query typed, second row highlighted), a text file with its footer, the error card (too big: 다운로드 + 다시 시도),
      loading lines, an image on the checkerboard. RENDER_HEIGHT=900. -->
 <link rel="stylesheet" href="../../src/ui/styles.css">
+<script>
+  // useIsPhone phoneMode(), as the app sets it before the first paint: a 720px-wide window, or a touch screen whose short side is 640 or less.
+  (() => {
+    const touchPhone = Math.min(screen.width, screen.height) <= 640 && matchMedia('(pointer: coarse)').matches;
+    const phone = touchPhone || matchMedia('(max-width: 720px)').matches;
+    const mode = !phone ? '' : touchPhone && (screen.orientation?.type ?? '').startsWith('landscape') ? 'landscape' : 'portrait';
+    if (mode) document.documentElement.setAttribute('data-phone', mode);
+  })();
+</script>
 <style>
   body { margin: 0; background: var(--bg); }
   .fx { display: flex; flex-wrap: wrap; gap: 12px; padding: 12px; }

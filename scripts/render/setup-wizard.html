@@ -6,6 +6,15 @@
      완료 — then the token login screen. ?light = the light theme. 412px needs an iframe (headless Chrome will not go below 500):
        RENDER_HEIGHT=2000 RENDER_OUT=/tmp/deck-render-wizard scripts/render-check.sh setup-wizard 412 1250 -->
 <link rel="stylesheet" href="../../src/ui/styles.css">
+<script>
+  // useIsPhone phoneMode(), as the app sets it before the first paint: a 720px-wide window, or a touch screen whose short side is 640 or less.
+  (() => {
+    const touchPhone = Math.min(screen.width, screen.height) <= 640 && matchMedia('(pointer: coarse)').matches;
+    const phone = touchPhone || matchMedia('(max-width: 720px)').matches;
+    const mode = !phone ? '' : touchPhone && (screen.orientation?.type ?? '').startsWith('landscape') ? 'landscape' : 'portrait';
+    if (mode) document.documentElement.setAttribute('data-phone', mode);
+  })();
+</script>
 <style>
   *, *::before, *::after { transition: none !important; animation: none !important; }
   html, body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font); }

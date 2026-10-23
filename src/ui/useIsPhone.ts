@@ -44,8 +44,12 @@ let detach: (() => void) | null = null;
 
 function refresh() {
   const next = phoneMode();
-  if (next) document.documentElement.setAttribute('data-phone', next);
-  else document.documentElement.removeAttribute('data-phone');
+  const root = document.documentElement;
+  // Written only on a change: resize fires on every keyboard rise and fall.
+  if ((root.getAttribute('data-phone') ?? '') !== next) {
+    if (next) root.setAttribute('data-phone', next);
+    else root.removeAttribute('data-phone');
+  }
   if (next === current) return;
   current = next;
   subs.forEach((cb) => cb());
