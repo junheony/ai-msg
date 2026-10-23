@@ -60,6 +60,7 @@ function More({ children }: { children: string }) {
 function ClaudeCard({ e }: { e: EngineProbe }) {
   const installed = e.bin !== null;
   const ready = installed && e.login !== 'no';
+  const details = [installed ? T.versionLine(e.version ?? T.noVersion) : '', e.note ?? ''].filter(Boolean).join(' · ');
   return (
     <div className="setup-claude">
       <div className="setup-row-main">
@@ -72,7 +73,7 @@ function ClaudeCard({ e }: { e: EngineProbe }) {
           <Command cmd={e.loginCommand} />
         </>
       )}
-      <More>{[installed ? T.versionLine(e.version ?? T.noVersion) : '', e.note ?? ''].filter(Boolean).join(' · ') || T.noDetails}</More>
+      {details && <More>{details}</More>}
     </div>
   );
 }
@@ -212,7 +213,7 @@ export function SetupWizard({ load = getSetup, onAddProfile = addProfile, onDone
           </section>
 
           <details className="setup-fold" open={profilesOpen}>
-            <summary id={`${uid}-profiles`}>{T.profilesHead}</summary>
+            <summary>{T.profilesHead}</summary>
             <ul className="setup-list">{status.claudeProfiles.map((p) => <ProfileRow key={p.id} p={p} restartNeeded={status.restartNeeded} />)}</ul>
             <form className="setup-add" onSubmit={(ev) => void submit(ev)}>
               <label className="setup-field setup-field-id">

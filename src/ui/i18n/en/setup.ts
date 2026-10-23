@@ -44,7 +44,6 @@ export const setup = {
   claudeNeedLogin: 'Login needed. Paste the command below into a terminal and run it, then press Check again.',
   claudeNeedInstall: 'Claude isn\'t installed on this computer yet. Install it, then press Check again.',
   versionLine: (v: string) => `Version ${v}`,
-  noDetails: 'Nothing more to show',
   addIdDetail: 'Each account uses its own ~/.claude-<id> folder.',
   bannerText: 'Claude setup isn\'t finished yet',
   bannerOpen: 'Check it',

@@ -415,7 +415,7 @@ export function App() {
       // Claude installed and logged in: nothing to show. Only a problem with Claude raises the small banner (it opens the wizard).
       if (msg.type === 'hello' && has('setup') && msg.setup?.needed && !setupAsked.current) {
         setupAsked.current = true;
-        getSetup().then((st) => { const c = st.engines.find((e) => e.engine === 'claude'); if (!c || c.bin === null || c.login === 'no') setSetupBanner(true); }, () => {});
+        getSetup().then((st) => { const c = st.engines.find((e) => e.engine === 'claude'); if (!c || c.bin === null || c.login === 'no') setSetupBanner(true); }, () => { setupAsked.current = false; });
       }
       // 총사령탑 켜기·끄기 changed what the server does (before the dispatch, so the render that follows sees it).
       if (msg.type === 'settings' && msg.features) setFeatures(msg.features);

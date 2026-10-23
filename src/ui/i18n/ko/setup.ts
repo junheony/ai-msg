@@ -45,7 +45,6 @@ export const setup: Widen<typeof en> = {
   claudeNeedLogin: '로그인이 필요해요. 터미널에 아래 명령을 붙여 넣고 실행한 뒤 다시 확인을 누르세요.',
   claudeNeedInstall: 'Claude 가 이 컴퓨터에 아직 설치돼 있지 않아요. 설치한 뒤 다시 확인을 누르세요.',
   versionLine: (v: string) => `버전 ${v}`,
-  noDetails: '더 알려 드릴 내용이 없어요',
   addIdDetail: '계정마다 ~/.claude-<id> 폴더를 씁니다.',
   bannerText: 'Claude 설정이 아직 끝나지 않았어요',
   bannerOpen: '확인하기',
