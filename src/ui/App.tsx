@@ -1054,7 +1054,7 @@ export function App() {
     apply({ type: 'load_layout', panes });
     for (const p of panes) {
       const id = p.session?.sessionId;
-      if (id) { catchup.current?.forget(id); send({ type: 'open_session', sessionId: id }); }
+      if (id) { catchup.current?.opened(id); send({ type: 'open_session', sessionId: id }); }
     }
     setLayouts(null);
     requestFocus(panes[0]!.id);
@@ -1136,7 +1136,7 @@ export function App() {
   };
   const openIn = (paneId: string, sessionId: string | null, cwd: string, title: string) => {
     apply({ type: 'open', sessionId, cwd, title, paneId });
-    if (sessionId) { catchup.current?.forget(sessionId); send({ type: 'open_session', sessionId }); }
+    if (sessionId) { catchup.current?.opened(sessionId); send({ type: 'open_session', sessionId }); }
     setDrawer(false); closePeek();
     requestFocus(paneId);
   };

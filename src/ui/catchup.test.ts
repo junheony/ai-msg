@@ -353,7 +353,7 @@ describe('catch-up tracker: behind the announced stream head', () => {
     c.accept(listing({ [S]: 1, s2: 5 }));
     c.accept(heads(pos(12), pos(3, 'x', 's2')));
     vi.advanceTimersByTime(10_000);
-    c.accept({ type: 'activity', sessions: [] });
+    c.accept({ type: 'activity', sessions: [{ sessionId: S, cwd: '/w', turnId: 'e1', running: false, bg: 1, forMs: 0 }], heads: [pos(12)] });
     c.accept(listing({ [S]: 2 }));
     c.accept(heads(pos(13)));
     vi.advanceTimersByTime(10_000);
@@ -420,5 +420,55 @@ describe('catch-up tracker: behind the announced stream head', () => {
     c.accept(heads(pos(30)));
     vi.advanceTimersByTime(CATCHUP_HEAL_MAX_MS);
     expect(out).toEqual([]);
+  });
+
+  it('a restarted server: the old server\'s heads are dropped, an idle session opened without a position is left alone', () => {
+    const { c, out, asked } = setup({ shown: [S] });
+    c.accept(history(pos(500, 'old')));
+    c.accept(heads(pos(500, 'old')));
+    // The server restarts: hello reopens the session, the new server has no stream for it yet.
+    c.hello();
+    expect(asked()).toEqual([{ sessionId: S, after: { epoch: 'old', seq: 500 } }]);
+    const sentSoFar = out.length;
+    c.accept(history());
+    c.accept(heads());
+    vi.advanceTimersByTime(CATCHUP_HEAL_MAX_MS * 3);
+    expect(out.length).toBe(sentSoFar);
+    // Even an activity message from before the restart that arrived late is replaced by the next one.
+    c.accept(heads(pos(500, 'old')));
+    c.accept(heads());
+    vi.advanceTimersByTime(CATCHUP_HEAL_MAX_MS * 3);
+    expect(out.length).toBe(sentSoFar);
+  });
+
+  it('a history without a position while the session streams: later events do not stand in for it, the heal opens it plainly once', () => {
+    const { c, out } = setup({ shown: [S] });
+    c.accept(heads(pos(20)));
+    c.accept(history());
+    // The next events are applied (shown) — their position is not the history's.
+    expect(c.accept(delta(21))).toBe(true);
+    expect(c.accept(delta(22))).toBe(true);
+    c.accept(heads(pos(22)));
+    vi.advanceTimersByTime(CATCHUP_HEAL_MS);
+    expect(plainOpens(out)).toEqual([S]);
+    c.accept(history(pos(22)));
+    vi.advanceTimersByTime(CATCHUP_HEAL_MAX_MS * 3);
+    expect(out.length).toBe(1);
+  });
+
+  it('a first open whose history takes long is not sent again by the heal', () => {
+    const { c, out } = setup({ shown: [S] });
+    c.opened(S);
+    c.accept(heads(pos(9)));
+    vi.advanceTimersByTime(CATCHUP_HEAL_MS * 2);
+    expect(out).toEqual([]);
+    // The same for the hello's plain opens.
+    c.hello();
+    const n = out.length;
+    vi.advanceTimersByTime(CATCHUP_HEAL_MS * 2);
+    expect(out.length).toBe(n);
+    c.accept(history(pos(9)));
+    vi.advanceTimersByTime(CATCHUP_HEAL_MAX_MS * 3);
+    expect(out.length).toBe(n);
   });
 });

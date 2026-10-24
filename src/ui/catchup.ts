@@ -12,6 +12,8 @@ export const CATCHUP_HEAL_MS = 30_000;
 /** …and again, if that brought nothing, after this long, doubling up to the maximum; back to the start once anything of it is heard. */
 export const CATCHUP_HEAL_AGAIN_MS = 60_000;
 export const CATCHUP_HEAL_MAX_MS = 10 * 60_000;
+/** A plain open (the whole history) counts as out this long: a big transcript's first read can take a while (ws.ts HISTORY_WAIT_MS). */
+export const CATCHUP_OPEN_WAIT_MS = 90_000;
 
 /**
  * Keeps each shown session's stream in order on this device ('catchup' servers number their turn events: `pos`).
@@ -50,15 +52,26 @@ export function createCatchup(opts: {
   const heads = new Map<string, StreamPos>();
   const heal = new Map<string, ReturnType<typeof setTimeout>>();
   const healWait = new Map<string, number>();
+  /** Plain opens out without an answer yet (dropped after CATCHUP_OPEN_WAIT_MS). */
+  const opening = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Sessions whose history came without a position although a head was known: only a positioned history settles them. */
+  const unpositioned = new Set<string>();
 
   const stop = (timers: Map<string, ReturnType<typeof setTimeout>>, sid: string) => {
     const t = timers.get(sid);
     if (t !== undefined) clearTimeout(t);
     timers.delete(sid);
   };
-  const settle = (sid: string) => { stop(sent, sid); stop(retry, sid); delays.delete(sid); told.delete(sid); };
-  const forget = (sid: string) => { applied.delete(sid); settle(sid); stop(heal, sid); healWait.delete(sid); };
-  const cancel = () => { for (const sid of [...sent.keys(), ...retry.keys()]) { stop(sent, sid); stop(retry, sid); } };
+  const settle = (sid: string) => { stop(sent, sid); stop(retry, sid); stop(opening, sid); delays.delete(sid); told.delete(sid); };
+  const forget = (sid: string) => { applied.delete(sid); unpositioned.delete(sid); settle(sid); stop(heal, sid); healWait.delete(sid); };
+  const cancel = () => { for (const sid of [...sent.keys(), ...retry.keys(), ...opening.keys()]) { stop(sent, sid); stop(retry, sid); stop(opening, sid); } };
+  /** Sends a plain open_session (the whole history) and counts it as out until its answer. */
+  const open = (sid: string): boolean => {
+    if (!opts.send({ type: 'open_session', sessionId: sid })) return false;
+    stop(opening, sid);
+    opening.set(sid, setTimeout(() => opening.delete(sid), CATCHUP_OPEN_WAIT_MS));
+    return true;
+  };
 
   /** True when a request for the session is (now, or already) out on this socket. */
   function ask(sid: string, stallMs = CATCHUP_STALL_MS): boolean {
@@ -75,7 +88,7 @@ export function createCatchup(opts: {
 
   const behind = (sid: string) => {
     const head = heads.get(sid);
-    return !!head && opts.enabled() && opts.shown().includes(sid) && head.seq > (applied.get(sid)?.seq ?? 0);
+    return !!head && opts.enabled() && opts.shown().includes(sid) && (unpositioned.has(sid) || head.seq > (applied.get(sid)?.seq ?? 0));
   };
   /** Starts the session's heal clock when it is behind its head (and none runs); stops it when it is not. */
   function watch(sid: string): void {
@@ -86,9 +99,10 @@ export function createCatchup(opts: {
   function mend(sid: string): void {
     if (!behind(sid)) return;
     // A request already out (or waiting to be retried) is the heal: look again later.
-    if (!sent.has(sid) && !retry.has(sid) && !ask(sid)) {
-      // No position to ask from (the history had none): the whole history.
-      if (applied.has(sid) || !opts.send({ type: 'open_session', sessionId: sid })) { watch(sid); return; }
+    if (!sent.has(sid) && !retry.has(sid) && !opening.has(sid)) {
+      // No position to ask from, or one a history without a position left standing: the whole history.
+      const plain = unpositioned.has(sid) || !applied.has(sid);
+      if (!(plain ? open(sid) : ask(sid))) { watch(sid); return; }
     }
     const wait = healWait.get(sid);
     healWait.set(sid, wait === undefined ? CATCHUP_HEAL_AGAIN_MS : Math.min(wait * 2, CATCHUP_HEAL_MAX_MS));
@@ -101,12 +115,19 @@ export function createCatchup(opts: {
     /** False: do not apply this message (a repeat, one ahead of a gap that is being filled, or a failure already shown). */
     accept(msg: ServerMessage): boolean {
       if (msg.type === 'activity') {
+        // The whole recent set every time: a session no longer in it has no head to be behind.
+        heads.clear();
         for (const h of msg.heads ?? []) heads.set(h.sid, h);
         for (const sid of new Set([...heads.keys(), ...heal.keys()])) watch(sid);
         return true;
       }
       if (msg.type === 'history' || msg.type === 'catchup') {
-        if (msg.type === 'history') { if (msg.pos) applied.set(msg.sessionId, msg.pos); else applied.delete(msg.sessionId); }
+        if (msg.type === 'history') {
+          if (msg.pos) { applied.set(msg.sessionId, msg.pos); unpositioned.delete(msg.sessionId); } else applied.delete(msg.sessionId);
+          // No position while the session streams (the server could not vouch for what it read): later events must not
+          // stand in for one — the heal opens it again.
+          if (!msg.pos && heads.has(msg.sessionId) && opts.enabled()) unpositioned.add(msg.sessionId);
+        }
         settle(msg.sessionId);
         if (heads.has(msg.sessionId)) watch(msg.sessionId);
         return true;
@@ -115,6 +136,7 @@ export function createCatchup(opts: {
       if (!pos) {
         // The answer to a request of ours: the server could not open the session.
         const sid = msg.type === 'error' && msg.turnId === null && msg.clientRef === undefined ? msg.sessionId : undefined;
+        if (sid !== undefined) stop(opening, sid);
         if (msg.type !== 'error' || sid === undefined || !sent.has(sid)) return true;
         if (msg.code === 'not_found') { forget(sid); return true; }
         stop(sent, sid);
@@ -141,7 +163,10 @@ export function createCatchup(opts: {
       delays.clear();
       told.clear();
       if (!opts.enabled()) applied.clear();
-      for (const sid of new Set(opts.shown())) if (!ask(sid)) opts.send({ type: 'open_session', sessionId: sid });
+      // A restarted server counts its streams anew: the old heads mean nothing to it (its activity brings the new ones).
+      heads.clear();
+      for (const sid of [...heal.keys()]) stop(heal, sid);
+      for (const sid of new Set(opts.shown())) if (unpositioned.has(sid) || !ask(sid)) open(sid);
     },
     /** The page is back in view (a phone's socket may have stalled without closing): ask for what the shown sessions missed, now. */
     visible(): void {
@@ -156,8 +181,13 @@ export function createCatchup(opts: {
         } else ask(sid, CATCHUP_VISIBLE_STALL_MS);
       }
     },
-    /** The session is opened afresh (its history is on the way) or closed. */
+    /** The session is closed (or opened afresh by someone else). */
     forget,
+    /** The session is opened afresh here: a plain open_session is going out (counted as out until its answer). */
+    opened(sid: string): void {
+      forget(sid);
+      opening.set(sid, setTimeout(() => opening.delete(sid), CATCHUP_OPEN_WAIT_MS));
+    },
     /** The socket closed, or the app is going away: nothing is waited for. */
     cancel,
   };
