@@ -5,7 +5,8 @@
 #   scripts/render-check.sh                       # every fixture in scripts/render/, widths 1250 1000 720 390 (below 500px: in an iframe)
 #   scripts/render-check.sh usage-strip 1250 412         # one fixture, your widths
 #
-# RENDER_HEIGHT sets the window height (default 160) for taller fixtures.
+# RENDER_HEIGHT sets the window height (default 160) for taller fixtures. RENDER_THEME=light renders with the light
+# colour scheme preferred (a fixture without its own data-theme follows it) into <fixture>-<width>-light.png.
 # PNGs land in ${RENDER_OUT:-/tmp/deck-render}/<fixture>-<width>.png (2x scale). Read them with an image viewer
 # or the Read tool. Fixtures link the real stylesheet relatively, so they render whatever is in the working tree.
 set -euo pipefail
@@ -22,13 +23,15 @@ widths=("$@")
 if [ -n "$fixture" ]; then files=("$here/render/$fixture.html"); else files=("$here"/render/*.html); fi
 
 mkdir -p "$out"
+scheme=()
+case "${RENDER_THEME:-}" in light) scheme=(--blink-settings=preferredColorScheme=1) ;; dark) scheme=(--blink-settings=preferredColorScheme=0) ;; esac
 profile="$(mktemp -d)"
 trap 'rm -rf "$profile"' EXIT
 for f in "${files[@]}"; do
   [ -f "$f" ] || { echo "no fixture: $f" >&2; exit 1; }
   name="$(basename "$f" .html)"
   for w in "${widths[@]}"; do
-    png="$out/$name-$w.png"
+    png="$out/$name-$w${RENDER_THEME:+-$RENDER_THEME}.png"
     url="file://$f"; win="$w"
     # Headless Chrome will not make a window narrower than 500px: a phone width renders the fixture in an iframe of that
     # width instead (its media queries and the data-phone check see the iframe's width), on a 500px window.
@@ -39,7 +42,7 @@ for f in "${files[@]}"; do
       url="file://$wrap"; win=500
     fi
     "$chrome" --headless=new --disable-gpu --hide-scrollbars --no-first-run --user-data-dir="$profile" \
-      --force-device-scale-factor=2 --window-size="$win,${RENDER_HEIGHT:-160}" --screenshot="$png" "$url" >/dev/null 2>&1
+      ${scheme[@]+"${scheme[@]}"} --force-device-scale-factor=2 --window-size="$win,${RENDER_HEIGHT:-160}" --screenshot="$png" "$url" >/dev/null 2>&1
     echo "$png"
   done
 done

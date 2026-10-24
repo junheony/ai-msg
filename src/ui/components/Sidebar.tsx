@@ -18,6 +18,7 @@ import { AvatarFace, assignMonograms, avatarIndex, monogram, publishSessionAvata
 import { SessionIconButton } from './SessionIconPicker';
 import { usePrefs } from '../usePrefs';
 import { ui } from '../i18n';
+import { FolderOffIcon, LockIcon, TerminalIcon } from './icons';
 // Re-exported so existing importers of these avatar helpers keep working after they moved to SessionIcon.
 export { AVATAR_COLORS, avatarIndex } from './SessionIcon';
 
@@ -312,7 +313,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   const metaLine = (p: { engine: EngineKind; tag?: string | null; text: string; title?: string; folder?: string | null }) => (
     <span className="session-meta" {...(p.title ? { title: p.title } : {})}>
       {p.engine !== 'claude' && <MetaEngine engine={p.engine} />}
-      {p.tag && <span className="meta-tag">{p.tag}</span>}
+      {p.tag && <MetaTag tag={p.tag} />}
       {p.folder && <span className="meta-folder" data-testid="meta-folder">{p.folder}</span>}
       {p.folder && <span className="meta-sep" aria-hidden="true">·</span>}
       <span className="meta-text">{p.text}</span>
@@ -681,13 +682,16 @@ const ENGINE_NAME: Partial<Record<EngineKind, string>> = { codex: 'Codex (GPT)',
 
 /** The one-word tag a row deck cannot continue carries on its second line (the tooltip says why). */
 export function rowTag(s: SessionEntry): string | null {
-  if (s.source === 'grokbot' || s.codexArchived) return '읽기 전용';
-  if (s.cwdMissing) return '폴더 없음';
+  if (s.source === 'grokbot' || s.codexArchived) return TAG_READ_ONLY;
+  if (s.cwdMissing) return TAG_NO_FOLDER;
   if (s.engine === 'grok' && s.heldBy) return SIDEBAR_HELD.tag;
   return null;
 }
 
 /** A Grok conversation a terminal grok has open (heldBy): its row tag and the tooltip's line. */
+/** Line-2 state tags that MetaTag draws as an icon (the word stays for screen readers and the tooltip). */
+const TAG_READ_ONLY = '읽기 전용';
+const TAG_NO_FOLDER = '폴더 없음';
 const SIDEBAR_HELD = {
   tag: '터미널에서 열림',
   title: '터미널에서 grok 이 열고 있어 지금은 읽기만 할 수 있어요 — 그쪽 grok 을 끝내면 AI-MSG 에서 이어 쓸 수 있어요',
@@ -723,6 +727,16 @@ export function previewLine(preview: string | undefined, title = ''): string {
 function MetaEngine({ engine }: { engine: EngineKind }) {
   if (engine === 'claude') return null;
   return <span className={`meta-engine ${engine}`} aria-hidden="true"><EngineBadge engine={engine} className="meta-engine-badge" /></span>;
+}
+
+/**
+ * Line 2's state tag as a 12px glyph: the preview gets the room (a narrow sidebar used to show "읽기 전용 ⚠ 12:09(K…").
+ * The word stays in the DOM for screen readers and as the glyph's tooltip; a tag without a glyph keeps its word.
+ */
+function MetaTag({ tag }: { tag: string }) {
+  const Icon = tag === TAG_READ_ONLY ? LockIcon : tag === TAG_NO_FOLDER ? FolderOffIcon : tag === SIDEBAR_HELD.tag ? TerminalIcon : null;
+  if (!Icon) return <span className="meta-tag">{tag}</span>;
+  return <span className="meta-tag meta-tag-icon" title={tag}><Icon /><span className="sr-only">{tag}</span></span>;
 }
 
 /** Grok Bot row tags: the app name, reply-awaited / unread / group markers, read-only. */

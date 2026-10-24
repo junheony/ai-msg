@@ -25,3 +25,9 @@ export function PinIcon({ filled }: { filled: boolean }) {
     </svg>
   );
 }
+
+/** Sidebar line-2 state tags (12px): 읽기 전용, 폴더 없음, 터미널에서 열림 — the word stays as screen-reader text. */
+const tagSvg = { ...svg, width: 12, height: 12, strokeWidth: 1.6 } as const;
+export const LockIcon = () => <svg {...tagSvg}><rect x="3.5" y="7" width="9" height="6.5" rx="1.4" /><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7" /></svg>;
+export const FolderOffIcon = () => <svg {...tagSvg}><path d="M2.5 5V12c0 .6.4 1 1 1h9c.6 0 1-.4 1-1V6.5c0-.6-.4-1-1-1H8L6.6 3.5H3.5c-.6 0-1 .4-1 1z" /><path d="M6.5 8l3 3M9.5 8l-3 3" /></svg>;
+export const TerminalIcon = () => <svg {...tagSvg}><rect x="2" y="3" width="12" height="10" rx="1.6" /><path d="M4.8 6.3L6.8 8l-2 1.7M8.5 10h2.7" /></svg>;

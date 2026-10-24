@@ -12,8 +12,10 @@ describe('AttachmentBar (D7)', () => {
     const onRemove = vi.fn();
     const onFiles = vi.fn();
     render(<AttachmentBar attachments={[{ id: '1', name: 'shot.png', size: 2048, isImage: true }, { id: '2', name: 'notes.md', size: 10, isImage: false }]} uploading={1} error="업로드 실패" onFiles={onFiles} onRemove={onRemove} />);
-    expect(screen.getByText(/shot\.png/).textContent).toContain('🖼');
-    expect(screen.getByText(/notes\.md/).textContent).toContain('📄');
+    // The kind is a line icon (an emoji page went white-on-white in the light theme): picture for images, page for files.
+    expect(document.querySelector('[title="shot.png"] svg.attach-kind circle')).not.toBeNull();
+    expect(document.querySelector('[title="notes.md"] svg.attach-kind')).not.toBeNull();
+    expect(document.querySelector('[title="notes.md"] svg.attach-kind circle')).toBeNull();
     expect(screen.getByText('업로드 중 1')).toBeTruthy();
     expect(screen.getByText('업로드 실패')).toBeTruthy();
     fireEvent.click(screen.getAllByLabelText('첨부 제거')[0]!);

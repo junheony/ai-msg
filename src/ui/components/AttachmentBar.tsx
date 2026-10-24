@@ -4,6 +4,7 @@ import { usePopoverPlacement } from './usePopoverPlacement';
 import { lineCount } from '../upload';
 import { ImageEditor } from './ImageEditor';
 import { attachmentUrl } from './Lightbox';
+import { ImageIcon } from './icons';
 
 function kb(n: number): string {
   return n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
@@ -14,7 +15,7 @@ const coarsePointer = () => typeof window !== 'undefined' && typeof window.match
 const svg = { width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true } as const;
 const PhotoIcon = () => <svg {...svg}><rect x="2" y="3" width="12" height="10" rx="1.8" /><circle cx="5.8" cy="6.5" r="1.1" /><path d="M2.5 11.5l3.3-3 2.4 2.1 2.1-1.8 3.2 2.7" /></svg>;
 const CameraIcon = () => <svg {...svg}><path d="M2.5 5.5c0-.6.4-1 1-1h1.8l1-1.5h3.4l1 1.5h1.8c.6 0 1 .4 1 1v6.5c0 .6-.4 1-1 1h-9c-.6 0-1-.4-1-1z" /><circle cx="8" cy="8.5" r="2.2" /></svg>;
-const FileIcon = () => <svg {...svg}><path d="M4 2.5h5l3 3v8H4z" /><path d="M9 2.5v3h3" /></svg>;
+const FileIcon = ({ className, size = 16 }: { className?: string; size?: number }) => <svg {...svg} width={size} height={size} className={className}><path d="M4 2.5h5l3 3v8H4z" /><path d="M9 2.5v3h3" /></svg>;
 
 /**
  * The composer's [+]: a small menu — 사진 보관함 (image picker; Android opens the system photo picker), 카메라 (touch
@@ -113,7 +114,7 @@ function PastedChip({ text, onRemove }: { text: string; onRemove: () => void }) 
   return (
     <span className="chip attachment pasted" data-testid="pasted-chip">
       <button ref={btnRef} type="button" className="pasted-open" aria-expanded={open} aria-haspopup="dialog" title="붙여넣은 내용 보기" onClick={() => setOpen((o) => !o)}>
-        📄 붙여넣은 텍스트 <span className="muted">{meta}</span>
+        <FileIcon className="attach-kind" size={13} />붙여넣은 텍스트 <span className="muted">{meta}</span>
       </button>
       <button type="button" className="chip-remove" aria-label="첨부 제거" onClick={onRemove}>✕</button>
       {open && (
@@ -161,7 +162,7 @@ export function AttachmentBar({ attachments, uploading, error, onFiles, onRemove
         if (pastedTexts?.[a.id] !== undefined) return <PastedChip key={a.id} text={pastedTexts[a.id]!} onRemove={() => onRemove(a.id)} />;
         const editable = !!onReplace && a.isImage;
         // In the editable chip the label is a flex row: the name gets its own box, or it cannot ellipsize.
-        const label = <>{a.previewUrl ? <img className="attach-preview" src={a.previewUrl} alt="" /> : a.isImage ? '🖼 ' : '📄 '}{editable ? <span className="attach-edit-name">{a.name}</span> : a.name} <span className="muted">{kb(a.size)}</span></>;
+        const label = <>{a.previewUrl ? <img className="attach-preview" src={a.previewUrl} alt="" /> : a.isImage ? <ImageIcon className="attach-kind" /> : <FileIcon className="attach-kind" size={13} />}{editable ? <span className="attach-edit-name">{a.name}</span> : a.name} <span className="muted">{kb(a.size)}</span></>;
         return (
           <span key={a.id} className={`chip attachment ${a.previewUrl ? 'has-thumb' : ''} ${editable ? 'editable' : ''}`} title={a.name} data-attachment-id={a.id}>
             {/* Touch screens have no hover: the chip says 편집 in words, or nobody finds the editor behind it. */}

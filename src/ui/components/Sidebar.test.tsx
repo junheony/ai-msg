@@ -411,11 +411,15 @@ describe('Sidebar imported Codex threads', () => {
     render(<Sidebar projects={[{ cwd: '/w', name: 'w', pinned: false, sessions: [gone, arch] }]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onArchive={noop} />);
     const goneMeta = screen.getByText('gone').closest('li')!.querySelector('.session-meta')!;
     expect(goneMeta.querySelector('.meta-tag')?.textContent).toBe('폴더 없음');
+    // The tag is a 12px glyph (the word stays for screen readers and as its tooltip): the preview keeps the room.
+    expect(goneMeta.querySelector('.meta-tag svg')).not.toBeNull();
+    expect(goneMeta.querySelector('.meta-tag')?.getAttribute('title')).toBe('폴더 없음');
     expect(goneMeta.querySelector('.meta-text')?.textContent).toBe('w');
     expect(goneMeta.getAttribute('title')).toContain('폴더가 없어 이어서 보낼 수 없음');
     fireEvent.click(screen.getByRole('button', { name: '보관됨 1' }));
     const li = screen.getByText('arch').closest('li')!;
     expect(li.querySelector('.meta-tag')?.textContent).toBe('읽기 전용');
+    expect(li.querySelector('.meta-tag.meta-tag-icon svg')).not.toBeNull();
     expect(li.getAttribute('title')).toContain('Codex 보관');
     fireEvent.click(li.querySelector('.row-more-btn')!);
     expect(screen.queryByRole('menuitem', { name: '보관 해제' })).toBeNull();
