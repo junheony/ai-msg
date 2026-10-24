@@ -811,6 +811,8 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .chip.attach-tile { height: auto; gap: 9px; padding: 5px 12px 5px 5px; border-radius: 12px; background: var(--bubble); color: var(--fg); font-size: var(--fs-label); max-width: 240px; box-shadow: inset 0 0 0 1px var(--line); }
 .attach-glyph { display: grid; place-items: center; width: 38px; height: 38px; flex-shrink: 0; border-radius: var(--r-sm); background: var(--code-bg); box-shadow: inset 0 0 0 1px var(--line); color: var(--muted); font-size: var(--fs-meta); font-weight: 700; letter-spacing: .4px; }
 .attach-tile.image .attach-glyph { font-size: var(--fs-title); background: color-mix(in srgb, var(--accent) 12%, var(--code-bg)); }
+.attach-tile.image .attach-glyph { color: var(--accent); }
+.md-image-glyph { vertical-align: -2px; margin-inline-end: 4px; flex-shrink: 0; }
 /* Images the text stood in for ("[이미지]") with no thumbnail: one small count pill above the bubble */
 .chip.attach-count { height: 26px; gap: 6px; padding: 0 10px; border-radius: var(--r-full); background: var(--bubble); color: var(--muted); font-size: var(--fs-meta); }
 .attach-count-glyph { flex-shrink: 0; color: var(--faint); }

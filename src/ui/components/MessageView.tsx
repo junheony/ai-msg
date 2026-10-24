@@ -159,10 +159,10 @@ function MdImage({ src, alt }: { src?: unknown; alt?: string }) {
   const root = useContext(FileRootContext);
   const doc = useContext(DocLinkContext);
   const s = typeof src === 'string' ? src : undefined;
-  const link = <a href={s} title={s} rel="noreferrer noopener" target="_blank">🖼 {alt || s || '이미지'}</a>;
+  const link = <a href={s} title={s} rel="noreferrer noopener" target="_blank"><ImageIcon className="md-image-glyph" />{alt || s || '이미지'}</a>;
   const path = s && root !== null && !/^[a-z][\w+.-]*:/i.test(s) && !s.startsWith('//') ? filePathIn(docRelative(doc, decodeSafe(s))) : null;
   if (!path || viewFor(path) !== 'image' || !inSessionFolder(path, root!)) return link;
-  return <FileLink path={path} fallback={link}>🖼 {alt || path}</FileLink>;
+  return <FileLink path={path} fallback={link}><ImageIcon className="md-image-glyph" />{alt || path}</FileLink>;
 }
 
 /** A markdown link's / image's target inside a document shown in the side panel: next to that document (sideView.resolveDocLink). */
@@ -346,7 +346,7 @@ function FileTile({ name, image }: { name: string; image: boolean }) {
   const ext = extOf(name);
   return (
     <span className={`chip attach-tile ${image ? 'image' : 'file'}`} title={name}>
-      <span className="attach-glyph" aria-hidden="true">{image ? '🖼' : ext || <FileIcon />}</span>
+      <span className="attach-glyph" aria-hidden="true">{image ? <ImageIcon /> : ext || <FileIcon />}</span>
       <span className="attach-name">{name}</span>
     </span>
   );
