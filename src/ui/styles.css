@@ -207,7 +207,7 @@ svg.spark { transform-box: fill-box; transform-origin: center; }
 /* …but capped at 100dvh: in that same app the fixed box has also come out a status bar TALLER than the drawn area (the
    composer's bottom edge was cut off). A cap only ever shortens, and an engine without dvh just drops it. */
 .app { max-height: 100dvh; }
-.topbar { display: flex; align-items: center; gap: 14px; height: 64px; padding: 0 12px 0 5px; border-bottom: 1px solid var(--line); background: var(--sidebar); flex-shrink: 0; }
+.topbar { display: flex; align-items: center; gap: 14px; height: 64px; padding: 0 12px 0 5px; border-bottom: 1px solid var(--line); background: var(--sidebar); box-shadow: var(--shadow-sm); flex-shrink: 0; }
 .topbar-end { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
 /* Under the header once the server has been silent for a while: since when, and a retry (the header dot is text-less on a phone). */
 .conn-down { display: flex; align-items: center; justify-content: center; flex-wrap: nowrap; gap: 4px 12px; min-height: 32px; box-sizing: border-box; padding: 7px 12px; flex-shrink: 0; font-size: var(--fs-label); color: var(--fg); background: color-mix(in srgb, var(--warn) 16%, var(--panel)); border-bottom: 1px solid var(--line); }
@@ -2781,14 +2781,14 @@ html[data-concise='on'] .note.concise-note { font-size: var(--fs-meta); color: v
    The top bar stacks just over .floats (z 6) so the chip's desktop dropdown opens over the cards; its sheets (활동, the
    phone's chip menu) render into <body>, outside this stacking context. */
 .topbar { position: relative; z-index: 7; }
-.topbar-head { order: 1; flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; }
+.topbar-head { order: 1; flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: flex-start; }
 /* The session chip grows into what the usage strip leaves, never below this (desktop / tablet); UsageStrip's barRoom
    reads this min-width to know the strip's room. */
 @media (min-width: 721px) { :where(:root:not([data-phone])) .topbar-head:not(:empty) { min-width: min(220px, 26vw); } }
 .topbar > .usage-strip-wrap { order: 2; }
 .topbar > .topbar-end { order: 3; }
 .pane-head { display: flex; align-items: center; gap: var(--s2); min-width: 0; min-height: 48px; padding: 0 var(--s2) 0 var(--s3); flex-shrink: 0; }
-.pane-head.in-topbar { min-height: 0; max-width: 100%; padding: 0; justify-content: center; }
+.pane-head.in-topbar { min-height: 0; max-width: 100%; padding: 0; justify-content: flex-start; }
 /* An empty split pane: its head (새 세션 ▾) shows nothing at rest — it comes up under the pointer or with focus in it.
    Touch-only screens (no hover) keep it shown: there is no other way to its menu. */
 @media (hover: hover) {
@@ -2810,7 +2810,7 @@ button.head-chip:hover, button.head-chip[aria-expanded="true"] { background: var
 button.head-chip:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus); }
 .head-chip[data-grip] { touch-action: none; }
 body.pane-dragging .head-chip { cursor: grabbing; }
-.head-avatar { --av-size: var(--head-av); flex: none; display: grid; place-items: center; width: var(--head-av); height: var(--head-av); border-radius: var(--r-full); background: var(--av, var(--avatar-8)); color: var(--avatar-glyph); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .12); transition: opacity var(--t-fast) var(--ease); }
+.head-avatar { --av-size: var(--head-av); flex: none; display: grid; place-items: center; width: var(--head-av); height: var(--head-av); border-radius: var(--r-full); background: var(--av, var(--avatar-8)); color: var(--avatar-glyph); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg-strong) 12%, transparent); transition: opacity var(--t-fast) var(--ease); }
 .head-avatar .row-avatar-icon { width: 64%; height: 64%; }
 /* A split pane that is not the active one: its avatar steps back with its title. */
 .pane:not(.active) > .pane-head:not(.in-topbar) .head-avatar, .pane:not(.active) .chat > .pane-head:not(.in-topbar) .head-avatar { opacity: .7; }
@@ -2828,19 +2828,21 @@ button.head-chip[aria-expanded="true"] .caret { transform: rotate(180deg); }
 .pane-head.in-topbar .head-chip { height: 36px; font-size: var(--fs-body); }
 .pane-head.in-topbar .with-folder .head-chip { height: 44px; padding-top: 4px; padding-bottom: 4px; padding-right: var(--s3); border-radius: var(--r-lg); }
 .pane-head.in-topbar .head-chip-input { height: 36px; font-size: max(16px, var(--fs-body)); text-align: center; }
-/* The top bar's identity block, polished: title 15px/600 on a tight 19px line, the folder a 12px/500 line under it with a
-   small folder glyph; at rest nothing around it, on hover a soft fill with a hairline edge, open a step firmer. The
-   warning dot and the 갈라짐 chip match the bar's 28px rhythm (☰ 32 · chip 44 · dot 28, all centred). */
-.pane-head.in-topbar { gap: 6px; }
-.pane-head.in-topbar .head-chip { letter-spacing: -.011em; }
+/* The top bar's identity block, polished: one quiet pill right after ☰ (left-aligned, not floating mid-bar) — the usage
+   strip's surface (--bg, a --line hairline, fully round), so the bar reads as ☰ · session pill … usage pill. Title
+   15px/600 --fg-strong on a tight 19px line, the folder a 12px/500 --muted line under it with a small folder glyph. Hover
+   lays --hover over the surface with a firmer edge; open, --selected and a lift. The warning dot and the 갈라짐 chip keep
+   the bar's 28px rhythm (☰ 32 · pill 44 · dot 28, all centred, 8px apart). Split panes keep their bare chip. */
+.pane-head.in-topbar { gap: var(--s2); }
+.pane-head.in-topbar .head-chip, .pane-head.in-topbar .with-folder .head-chip { padding-right: var(--s3); border-radius: var(--r-full); letter-spacing: -.011em; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); }
 .pane-head.in-topbar .with-folder .head-chip-name { line-height: 19px; }
 .pane-head.in-topbar .head-chip .caret { margin-left: 2px; }
-.pane-head.in-topbar button.head-chip:hover { box-shadow: inset 0 0 0 1px var(--line); }
-.pane-head.in-topbar button.head-chip[aria-expanded="true"] { background: var(--selected); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.pane-head.in-topbar button.head-chip:hover { background: linear-gradient(var(--hover), var(--hover)) var(--bg); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.pane-head.in-topbar button.head-chip[aria-expanded="true"] { background: linear-gradient(var(--selected), var(--selected)) var(--bg); box-shadow: inset 0 0 0 1px var(--line-strong), var(--shadow-sm); }
 .pane-head.in-topbar button.head-chip:focus-visible { box-shadow: var(--focus); }
 .with-folder > .folder-chip.head-folder { font-weight: 500; letter-spacing: .005em; }
-.with-folder > .folder-chip.head-folder::before { content: ''; display: inline-block; width: 11px; height: 11px; margin-right: 4px; vertical-align: -1px; background: currentColor; opacity: .75; -webkit-mask: var(--folder-glyph) center / contain no-repeat; mask: var(--folder-glyph) center / contain no-repeat; }
-.with-folder { --folder-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'%3E%3Cpath d='M2 4.6c0-.6.4-1.1 1-1.1h3.1l1.5 1.6H13c.6 0 1 .5 1 1.1v6.2c0 .6-.4 1.1-1 1.1H3c-.6 0-1-.5-1-1.1z'/%3E%3C/svg%3E"); }
+.pane-head.in-topbar .with-folder > .folder-chip.head-folder::before { content: ''; display: inline-block; width: 11px; height: 11px; margin-right: 4px; vertical-align: -1px; background: currentColor; opacity: .75; -webkit-mask: var(--folder-glyph) center / contain no-repeat; mask: var(--folder-glyph) center / contain no-repeat; }
+.pane-head.in-topbar .with-folder { --folder-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'%3E%3Cpath d='M2 4.6c0-.6.4-1.1 1-1.1h3.1l1.5 1.6H13c.6 0 1 .5 1 1.1v6.2c0 .6-.4 1.1-1 1.1H3c-.6 0-1-.5-1-1.1z'/%3E%3C/svg%3E"); }
 .pane-head.in-topbar .pane-head-chips > .chip.perm-badge.perm-bypassPermissions { width: 28px; height: 28px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 20%, transparent); }
 .pane-head.in-topbar .pane-head-chips > .chip.perm-badge.perm-bypassPermissions svg { width: 14px; height: 14px; margin-top: -1px; }
 .pane-head.in-topbar .pane-head-chips .fork-btn { height: 28px; padding: 0 var(--s3); }
@@ -2861,11 +2863,10 @@ button.head-chip[aria-expanded="true"] .caret { transform: rotate(180deg); }
 /* 갈라짐: a warning chip next to the session chip; its choices open under it, leftwards-anchored. */
 .pane-head-chips .fork-btn { height: 22px; padding: 0 var(--s2); border-radius: var(--r-full); color: var(--warn); font-size: var(--fs-meta); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent); }
 .pane-head-chips .fork-pop { left: 0; right: auto; }
-/* The chip's menu: under the chip (centred in the top bar), groups split by .menu-sep, shortcuts on the right. */
+/* The chip's menu: under the chip (left-aligned with it, in the top bar too), groups split by .menu-sep, shortcuts on the right. */
 .session-menu.head-menu { left: 0; right: auto; top: calc(100% + var(--s1)); z-index: 45; min-width: 240px; max-height: var(--head-menu-max, min(72vh, 600px)); overflow-y: auto; overscroll-behavior: contain; }
 /* More room above the chip than below (a card low in the window): the menu opens upward. */
 .head-chip-wrap[data-menu-up] .session-menu.head-menu:not(.as-sheet) { top: auto; bottom: calc(100% + var(--s1)); }
-.pane-head.in-topbar .session-menu.head-menu:not(.as-sheet) { left: 50%; transform: translateX(-50%); }
 .session-menu .menu-hint { float: right; margin-left: var(--s4); font-family: var(--mono); font-size: var(--fs-meta); color: var(--muted); }
 .session-menu .menu-folder { color: var(--muted); }
 .session-menu .menu-folder > span { float: right; margin-left: var(--s4); }
@@ -2909,7 +2910,8 @@ button.head-chip[aria-expanded="true"] .caret { transform: rotate(180deg); }
   .topbar { flex-wrap: nowrap; height: 44px; min-height: 44px; }
   .pane-head { min-height: 36px; }
   .pane-head.in-topbar .head-chip, .pane-head.in-topbar .head-chip-input { height: 32px; }
-  .pane-head.in-topbar .pane-head-main { --head-av: 26px; }
+  /* Both chip kinds: .with-folder sets 32px at the same specificity earlier, so it is named here too. */
+  .pane-head.in-topbar .pane-head-main, .pane-head.in-topbar .pane-head-main.with-folder { --head-av: 26px; }
   .pane-head.in-topbar .with-folder .head-chip { height: 38px; padding-top: 2px; padding-bottom: 2px; }
   /* The chip is seen at 32–38px; its touch band stays 44 (centred, whatever the chip's height). */
   .pane-head.in-topbar button.head-chip::after { top: 50%; bottom: auto; height: var(--phone-tap); transform: translateY(-50%); }

@@ -14,7 +14,8 @@ describe('tabTitle', () => {
   it('installed app: no app-name suffix (Chrome puts the name in front itself)', () => {
     expect(tabTitle('●', 'Weekly Report', true)).toBe('● Weekly Report');
     expect(tabTitle(null, 'Weekly Report', true)).toBe('Weekly Report');
-    expect(tabTitle('✓', null, true)).toBe('✓ AI-MSG');
+    expect(tabTitle('✓', null, true)).toBe('✓');
+    expect(tabTitle('●', '  ', true)).toBe('●');
     expect(tabTitle(null, '', true)).toBe('AI-MSG');
   });
 });
