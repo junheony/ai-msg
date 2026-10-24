@@ -274,8 +274,8 @@ export const CATCHUP_KEEP_EVENTS = 5000;
 export const CATCHUP_KEEP_BYTES = 4 * 1024 * 1024;
 /** A process that ended its turn and has sent nothing for this long (it is only kept open by background work) gives its kept events up: a device behind then gets the full history. */
 export const CATCHUP_IDLE_MS = 10 * 60_000;
-/** A Claude history read that turn events overtook is read again at most this many times (a busy stream never settles). */
-const HISTORY_REREADS = 3;
+/** A Claude history read that a turn segment ended (or a new process started) during is read again at most this many times; past it the history goes out without a position. */
+export const HISTORY_REREADS = 3;
 
 type Turn = RunningTurn & { /** As its turn_started said (absent until then). */ engine?: EngineKind; origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; /** 복제: the title the new session gets once it has an id. */ title?: string; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }>; retryHop?: number; /** Told the device it is going in (pendingRefs): run even if that socket closed. */ held?: true }[]; /** Refs of sends / steers handed to the process but not yet recorded as accepted (`history.pendingRefs`). */ pendingRefs: Set<string>; /** The foreign-write check a send to the held-open process waits on (shared by sends arriving together). */ outside: Promise<boolean> | null; /** Being ended because the conversation went on outside deck: sends wait in `afterRelease` for a new process. */ recycling: boolean; /** The last stream position this process stamped (0: none yet). */ seq: number; /** Its newest stamped events as sent, oldest first (see CATCHUP_KEEP_*). */ stream: { seq: number; data: string; bytes: number }[]; streamBytes: number; /** Drops `stream` once the process has sat idle (CATCHUP_IDLE_MS). */ streamIdle: ReturnType<typeof setTimeout> | null; /** ⚡ 빠르게: the process was started with fast mode (TurnRunner.fastTurn) — a send asking otherwise never joins it. */ fast: boolean; /** 다른 AI 로 이어가기: the sessions this turn moved away from, in order (Claude → GPT → Gemini: both; sends to any follow the turn). */ crossFrom?: string[]; /** …until the old turn `fromTurnId`'s result is out (the turn keeps the old session meanwhile). */ crossing?: { fromTurnId: string; from: string | null } };
 
@@ -454,13 +454,25 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   // The task names are in it too: work swapped for other work of the same count is still a change (activityFile lists them).
   let activitySig = '[[],[]]';
   const serverStartedAt = deps.serverStartedAt ?? SERVER_STARTED_AT;
-  const activityMsg = (sessions = activity()): ServerMessage => ({ type: 'activity', sessions, ...(draining ? { draining: true, drainReason } : {}), serverStartedAt });
+  /**
+   * The stream heads of the sessions with deck work now or a stream event in the last CATCHUP_IDLE_MS: a device whose
+   * shown session stays behind its head, hearing nothing, lost events and asks for them (ui/catchup.ts). Only deck's own
+   * turns move a head — a session run outside deck never has one.
+   */
+  const recentHeads = (): StreamPos[] => {
+    const now = Date.now();
+    const live = new Set(shownTurns().map((t) => t.sessionId));
+    return [...heads.values()].filter((p) => live.has(p.sid) || now - (headAt.get(p.sid) ?? 0) < (deps.catchupIdleMs ?? CATCHUP_IDLE_MS));
+  };
+  const activityMsg = (sessions = activity(), streams = recentHeads()): ServerMessage => ({ type: 'activity', sessions, heads: streams, ...(draining ? { draining: true, drainReason } : {}), serverStartedAt });
   const broadcastActivity = () => {
     const sessions = activity();
-    const sig = JSON.stringify([sessions.map(({ forMs: _f, ...rest }) => rest), shownTurns().map((t) => t.bg?.msg.tasks ?? [])]);
+    const streams = recentHeads();
+    // A head counts only at a segment's end or a new process (`ends`): every delta would be a broadcast.
+    const sig = JSON.stringify([sessions.map(({ forMs: _f, ...rest }) => rest), shownTurns().map((t) => t.bg?.msg.tasks ?? []), streams.map((p) => [p.sid, ends.get(p.sid) ?? 0])]);
     if (sig === activitySig) return;
     activitySig = sig;
-    broadcast(activityMsg(sessions));
+    broadcast(activityMsg(sessions, streams));
     if (deps.activityFile && !activityTimer && !activityClosed) activityTimer = setTimeout(writeActivity, 200);
   };
   /** `activityFile` (scripts/restart.sh reads it): what is running now, written atomically a moment after it changed. */
@@ -651,6 +663,14 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
 
   /** Each session's newest stream position since this server started (a later process of the session counts on from it). */
   const heads = new Map<string, StreamPos>();
+  /** When each session's head last moved (ms). */
+  const headAt = new Map<string, number>();
+  /**
+   * Per session, a counter of stream boundaries: a turn segment's end (turn_result, background continuations too) and a
+   * new process's first turn_started. What a history read must not have missed (deltas of the segment still streaming
+   * reach a new viewer by replay and the streamed text).
+   */
+  const ends = new Map<string, number>();
   const keepEvents = deps.catchupKeep ?? CATCHUP_KEEP_EVENTS;
   const keepBytes = deps.catchupKeepBytes ?? CATCHUP_KEEP_BYTES;
   const idleMs = deps.catchupIdleMs ?? CATCHUP_IDLE_MS;
@@ -697,11 +717,15 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (turn.sessionId) for (const [c, v] of viewing) if (v.has(turn.sessionId)) to.add(c);
     let out = msg;
     let seq = 0;
+    let boundary = false;
     if (turn.sessionId) {
-      seq = Math.max(turn.seq, heads.get(turn.sessionId)?.seq ?? 0) + 1;
+      const prev = heads.get(turn.sessionId);
+      seq = Math.max(turn.seq, prev?.seq ?? 0) + 1;
       const pos: StreamPos = { sid: turn.sessionId, epoch: turn.turnId, seq };
       turn.seq = seq;
       heads.set(turn.sessionId, pos);
+      headAt.set(turn.sessionId, Date.now());
+      if (msg.type === 'turn_result' || (msg.type === 'turn_started' && prev?.epoch !== turn.turnId)) { ends.set(turn.sessionId, (ends.get(turn.sessionId) ?? 0) + 1); boundary = true; }
       // Only turn events and a turn's errors come through here: both carry `pos`.
       out = { ...msg, pos } as ServerMessage;
     }
@@ -714,6 +738,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       idleSoon(turn);
     }
     for (const c of to) if (c.readyState === WebSocket.OPEN) c.send(data);
+    // After the event itself: a device that got it is not behind the head it hears of.
+    if (boundary) broadcastActivity();
     notify(msg);
   };
 
@@ -1385,20 +1411,25 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     const resume = deps.store.get(sid)?.pendingRetry;
     return { ...cmd, ...(pos ? { pos } : {}), ...(resume ? { autoResumeAtMs: resume.atMs } : {}), runningTurnId: current, runningPrompt: current ? (prompts.get(current) ?? null) : null, ...(t && current ? { runningForMs: Math.max(0, Date.now() - t.since) } : {}), ...(deps.acceptedRefs ? { acceptedRefs: deps.acceptedRefs.list(sid), pendingRefs: t ? [...t.pendingRefs] : [], ...(since !== undefined ? { acceptedRefsSince: since } : {}) } : {}) };
   };
-  type ClaudeHistory = { found: SessionEntry; st: ClaudeSessionState | null; at: number; messages: Awaited<ReturnType<typeof readTranscript>> };
+  /** `exact` false: segments kept ending during every read — the history must not claim a stream position. */
+  const withoutPos = <T extends { pos?: StreamPos }>(r: T, drop: boolean): T => { if (!drop) return r; const { pos: _p, ...rest } = r; return rest as T; };
+  type ClaudeHistory = { found: SessionEntry; st: ClaudeSessionState | null; at: number; messages: Awaited<ReturnType<typeof readTranscript>>; exact: boolean };
   /** A Claude session's transcript as a pane shows it. A copy that contains deck's (e.g. Claude Desktop continued the session on A) is the one read. */
   const readClaudeHistory = async (sessionId: string, found: SessionEntry, st: ClaudeSessionState | null): Promise<ClaudeHistory> => {
     const best = st ? await deps.index.bestCopy(sessionId, st.projectDir, st.account).catch(() => null) : null;
     const file = best?.file ?? (st ? `${st.projectDir}/${sessionId}.jsonl` : found.file);
     // The history goes out with the stream position as it is when it is sent (runningOf), after the events stamped during
-    // the read (they went to the viewing socket already, and the history replaces what they showed): a read the stream
-    // moved past is read again — incrementally, only what was appended — so the history has what its position claims.
+    // the read (they went to the viewing socket already, and the history replaces what they showed). A segment that ended
+    // meanwhile may be missing from what was read while the position claims it: such a read is read again (the deltas
+    // of a segment still streaming are no reason — replay and the streamed text bring those). Past HISTORY_REREADS the
+    // history goes out without a position: the device then opens it afresh on its next reconnect, not from a false one.
     for (let n = 0; ; n++) {
       // Stamped before the read: an entry written while reading is looked at again by the outside poll.
       const at = Date.now();
-      const mark = heads.get(sessionId)?.seq;
+      const mark = ends.get(sessionId) ?? 0;
       const messages = await readTranscript(file).catch(() => readTranscript(found.file));
-      if (heads.get(sessionId)?.seq === mark || n >= HISTORY_REREADS) return { found, st, at, messages };
+      const exact = (ends.get(sessionId) ?? 0) === mark;
+      if (exact || n >= HISTORY_REREADS) return { found, st, at, messages, exact };
     }
   };
   /**
@@ -1429,12 +1460,12 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (last >= 0 && (msgs[last] as { text: string }).text.trim() === text.trim()) msgs = msgs.slice(0, last);
     return redactSecrets(codexHandoffExcerpt(msgs, ROUTE_ENGINE_LABEL[engine]));
   };
-  const sendClaudeHistory = (ws: WebSocket, sessionId: string, { found, st, at, messages }: ClaudeHistory, clean?: Map<string, number>) => {
+  const sendClaudeHistory = (ws: WebSocket, sessionId: string, { found, st, at, messages, exact }: ClaudeHistory, clean?: Map<string, number>) => {
     const t = turns.get(busy.get(sessionId) ?? '');
     let seen = historyAt.get(ws);
     if (!seen) { seen = new Map(); historyAt.set(ws, seen); }
     seen.set(sessionId, { at, clean: new Map(clean) });
-    send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, accountPin: st?.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: st?.defaultModel ?? IMPORTED_DEFAULT_MODEL, messages, ...runningOf(sessionId) });
+    send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, accountPin: st?.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: st?.defaultModel ?? IMPORTED_DEFAULT_MODEL, messages, ...withoutPos(runningOf(sessionId), !exact) });
     if (t) replay(ws, t, sessionId);
     // The CLI writes a text block to the transcript only once it is finished: the one streaming now is in memory only, and
     // without it the pane's streaming item would start mid-sentence at the next delta. Claude only (a Codex delta is a

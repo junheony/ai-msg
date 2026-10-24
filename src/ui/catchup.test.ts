@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { ClientMessageSchema, type ClientMessage, type ServerMessage, type StreamPos } from '../shared/protocol';
-import { CATCHUP_RETRY_MAX_MS, CATCHUP_RETRY_MIN_MS, CATCHUP_STALL_MS, CATCHUP_VISIBLE_STALL_MS, createCatchup } from './catchup';
+import { CATCHUP_HEAL_AGAIN_MS, CATCHUP_HEAL_MAX_MS, CATCHUP_HEAL_MS, CATCHUP_RETRY_MAX_MS, CATCHUP_RETRY_MIN_MS, CATCHUP_STALL_MS, CATCHUP_VISIBLE_STALL_MS, createCatchup } from './catchup';
 import type { SessionEntry } from '../shared/session-types';
 import { initialState, nextQueued, reducer, type AppState } from './state';
 
@@ -320,81 +320,105 @@ describe('tracker and reducer together', () => {
   });
 });
 
-/** A session list where each given session's transcript was last written at the given time. */
+/** The server's activity, announcing these stream heads. */
+const heads = (...ps: StreamPos[]): ServerMessage => ({ type: 'activity', sessions: [], heads: ps });
+/** A session list where each given session's transcript was last written at the given time (what an outside run moves). */
 const listing = (mods: Record<string, number>): ServerMessage => ({
   type: 'index',
   projects: [{ cwd: '/w', name: 'w', pinned: false, sessions: Object.entries(mods).map(([sessionId, lastModified]) => ({ sessionId, lastModified, account: 'b', cwd: '/w', projectDir: '/p', file: `/p/${sessionId}.jsonl`, title: 't', sizeBytes: 1 }) as SessionEntry) }],
 });
 const plainOpens = (out: ClientMessage[]) => out.filter((m) => m.type === 'open_session' && !m.after).map((m) => (m as { sessionId: string }).sessionId);
 
-describe('catch-up tracker: the session list as a check from outside', () => {
-  it('a shown session whose transcript keeps growing while nothing of it arrives is opened afresh', () => {
-    const { c, out } = setup();
+describe('catch-up tracker: behind the announced stream head', () => {
+  it('a shown session that stays behind its head, hearing nothing, is asked for from its position after 30 s', () => {
+    const { c, asked } = setup();
     c.accept(history(pos(10)));
-    c.accept(delta(11));
-    c.accept(listing({ [S]: 1000 }));
-    // The stream goes quiet on this device; the transcript does not.
-    c.accept(listing({ [S]: 2000 }));
-    expect(plainOpens(out)).toEqual([]);
-    c.accept(listing({ [S]: 3000 }));
-    expect(plainOpens(out)).toEqual([S]);
-    // Its answer is applied as any history, from its position.
-    expect(c.accept(history(pos(30)))).toBe(true);
-    expect(c.accept(delta(31))).toBe(true);
+    c.accept(heads(pos(14)));
+    vi.advanceTimersByTime(CATCHUP_HEAL_MS - 1);
+    expect(asked()).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(asked()).toEqual([{ sessionId: S, after: { epoch: 'e1', seq: 10 } }]);
+    // The answer brings what was missed: in order, and the head is reached.
+    expect(c.accept(caughtUp())).toBe(true);
+    expect([11, 12, 13, 14].map((n) => c.accept(delta(n)))).toEqual([true, true, true, true]);
+    vi.advanceTimersByTime(CATCHUP_HEAL_MAX_MS * 2);
+    expect(asked().length).toBe(1);
   });
 
-  it('nothing is asked while the session\'s events arrive, or when its transcript stops growing', () => {
+  it('a busy session: other lists and activity in between do not restart or stop its clock', () => {
+    const { c, asked } = setup();
+    c.accept(history(pos(10)));
+    c.accept(heads(pos(12)));
+    vi.advanceTimersByTime(10_000);
+    c.accept(listing({ [S]: 1, s2: 5 }));
+    c.accept(heads(pos(12), pos(3, 'x', 's2')));
+    vi.advanceTimersByTime(10_000);
+    c.accept({ type: 'activity', sessions: [] });
+    c.accept(listing({ [S]: 2 }));
+    c.accept(heads(pos(13)));
+    vi.advanceTimersByTime(10_000);
+    // 30 s after it first fell behind (s2's own clock started 10 s later).
+    expect(asked()).toEqual([{ sessionId: S, after: { epoch: 'e1', seq: 10 } }]);
+  });
+
+  it('events that keep arriving, or a head this device has reached, ask nothing', () => {
     const { c, out } = setup();
     c.accept(history(pos(10)));
-    c.accept(listing({ [S]: 1000, s2: 500 }));
-    for (let n = 1; n <= 4; n++) { c.accept(delta(10 + n)); c.accept(listing({ [S]: 1000 + n, s2: 500 })); }
-    // One write after the stream ended (a turn's last lines), then quiet.
-    c.accept(listing({ [S]: 2000, s2: 500 }));
-    c.accept(listing({ [S]: 2000, s2: 500 }));
-    c.accept(listing({ [S]: 2000, s2: 500 }));
+    for (let n = 11; n <= 20; n++) {
+      c.accept(delta(n));
+      // The head is announced as the segment ends (after its event) — or, from another broadcast, one ahead for a moment.
+      c.accept(heads(pos(n + (n % 2))));
+      vi.advanceTimersByTime(20_000);
+    }
+    c.accept(heads(pos(20)));
+    vi.advanceTimersByTime(CATCHUP_HEAL_MAX_MS);
     expect(out).toEqual([]);
   });
 
-  it('a request already out, a reconnect\'s fresh list, or a hidden session asks nothing more', () => {
+  it('a heal that brings nothing is tried again after 60 s, doubling up to 10 min; anything heard starts it over', () => {
+    const { c, asked } = setup();
+    c.accept(history(pos(10)));
+    c.accept(heads(pos(14)));
+    const at: number[] = [];
+    let t = 0;
+    const step = (ms: number) => { vi.advanceTimersByTime(ms); t += ms; };
+    for (let i = 0; i < 9; i++) {
+      const before = asked().length;
+      for (let k = 0; asked().length === before && k < 2 * CATCHUP_HEAL_MAX_MS / 1000; k++) step(1000);
+      if (asked().length === before) break;
+      at.push(t / 1000);
+      // The server answers, with nothing later than this device has.
+      c.accept(caughtUp());
+    }
+    const gaps = at.map((x, i) => (i ? x - at[i - 1]! : x));
+    expect(gaps).toEqual([CATCHUP_HEAL_MS, CATCHUP_HEAL_AGAIN_MS, 120_000, 240_000, 480_000, CATCHUP_HEAL_MAX_MS, CATCHUP_HEAL_MAX_MS, CATCHUP_HEAL_MAX_MS, CATCHUP_HEAL_MAX_MS].map((ms) => ms / 1000));
+    // The socket is told again: one event heard, and the next time this falls behind it waits 30 s once more.
+    expect(c.accept(delta(11))).toBe(true);
+    c.accept(heads(pos(15)));
+    const before = asked().length;
+    step(CATCHUP_HEAL_MS);
+    expect(asked().length).toBe(before + 1);
+  });
+
+  it('a history without a position (one the server could not vouch for) is healed with the whole history', () => {
+    const { c, out } = setup();
+    c.accept(history());
+    c.accept(heads(pos(7)));
+    vi.advanceTimersByTime(CATCHUP_HEAL_MS);
+    expect(plainOpens(out)).toEqual([S]);
+    c.accept(history(pos(7)));
+    vi.advanceTimersByTime(CATCHUP_HEAL_MAX_MS);
+    expect(out.length).toBe(1);
+  });
+
+  it('a session run outside deck (its transcript grows, it has no head) is never asked for; nor a hidden one', () => {
     const { c, out, state } = setup();
     c.accept(history(pos(10)));
-    c.accept(listing({ [S]: 1000, s3: 1 }));
-    c.accept(delta(12));
-    expect(out.length).toBe(1);
-    c.accept(listing({ [S]: 2000, s3: 2 }));
-    c.accept(listing({ [S]: 3000, s3: 3 }));
-    expect(plainOpens(out)).toEqual([]);
-    c.accept(caughtUp());
-    // The hello's list is a new start (the hello reopens every pane anyway).
-    c.accept({ ...listing({ [S]: 4000 }), type: 'hello' } as unknown as ServerMessage);
-    c.accept(listing({ [S]: 5000 }));
-    expect(plainOpens(out)).toEqual([]);
+    c.accept(history(undefined, 's2'));
+    for (let n = 1; n <= 20; n++) { c.accept(listing({ [S]: n * 1000, s2: n * 1000 })); c.accept(heads()); vi.advanceTimersByTime(45_000); }
     state.shown = ['s2'];
-    c.accept(listing({ [S]: 6000 }));
-    c.accept(listing({ [S]: 7000 }));
-    expect(plainOpens(out)).toEqual([]);
-  });
-});
-
-describe('an open tab that lost a background continuation', () => {
-  const pane = (s: AppState) => s.panes[0]!;
-  const said = (s: AppState) => pane(s).items.flatMap((i) => (i.kind === 'assistant' ? [i.text] : []));
-  it('the existing tab misses the later segments, a fresh open has them: the session list sets the tab right', () => {
-    const { c, out } = setup({ shown: [S] });
-    let tab = reducer(initialState, { type: 'open', sessionId: S, cwd: '/w', title: 't' });
-    const play = (m: ServerMessage) => { if (c.accept(m)) tab = reducer(tab, { type: 'server', msg: m }); };
-    play({ type: 'history', sessionId: S, cwd: '/w', account: 'b', runningTurnId: null, messages: [{ kind: 'assistant', text: 'launched', model: null, toolCalls: [], ts: null }], pos: pos(5) });
-    play(listing({ [S]: 1000 }));
-    // Segments bg1, bg2 run and are written; their events never reach this tab (its socket is no longer told).
-    const later = [{ kind: 'assistant' as const, text: 'launched', model: null, toolCalls: [], ts: null }, { kind: 'assistant' as const, text: 'found it', model: null, toolCalls: [], ts: null }, { kind: 'assistant' as const, text: 'fixed it', model: null, toolCalls: [], ts: null }];
-    play(listing({ [S]: 2000 }));
-    expect(said(tab)).toEqual(['launched']);
-    let fresh = reducer(initialState, { type: 'open', sessionId: S, cwd: '/w', title: 't' });
-    fresh = reducer(fresh, { type: 'server', msg: { type: 'history', sessionId: S, cwd: '/w', account: 'b', runningTurnId: null, messages: later, pos: pos(20) } });
-    expect(said(fresh)).toEqual(['launched', 'found it', 'fixed it']);
-    play(listing({ [S]: 3000 }));
-    expect(plainOpens(out)).toEqual([S]);
-    play({ type: 'history', sessionId: S, cwd: '/w', account: 'b', runningTurnId: null, messages: later, pos: pos(20) });
-    expect(said(tab)).toEqual(said(fresh));
+    c.accept(heads(pos(30)));
+    vi.advanceTimersByTime(CATCHUP_HEAL_MAX_MS);
+    expect(out).toEqual([]);
   });
 });

@@ -17,7 +17,7 @@
 |---|---|---|
 | `sessionModel` | `history.sessionModel` 로 세션 기본 모델을 알린다 | 기록의 마지막 모델로 추정 |
 | `abortLabel` | 사용자 중지를 언제나 `중단됨` 으로 보낸다(실행이 예외로 끝난 경로 포함) | SDK 문구 "aborted by user" 도 중지로 봄 |
-| `catchup` | 턴 이벤트에 `pos` 를 붙이고 `open_session.after` 에 답한다 | 재연결 때 전체 기록을 다시 받음 |
+| `catchup` | 턴 이벤트에 `pos` 를 붙이고 `open_session.after` 에 답한다. `activity.heads` 에 최근 스트림 머리(deck 턴만 움직임)를 실어, 보이는 세션이 머리보다 뒤처진 채 30초 동안 아무것도 못 들으면 UI 가 다시 묻는다(아무것도 안 오면 60초부터 두 배, 최대 10분). 기록을 읽는 동안 구간이 끝나면 다시 읽고, 3번 넘게 겹치면 `pos` 없이 보낸다 | 재연결 때 전체 기록을 다시 받음 |
 | `accounts` | `hello.accounts` 로 Claude 계정 목록(`{ id, label, home, retired }`, 설정 순서, 뺀 계정 포함)을 알린다 | 계정은 a/b/c, A 가 Desktop |
 | `sessionSandbox` | `set_sandbox` 로 기존 GPT 세션의 샌드박스를 바꾸고, `open_session.accepts` 에 `'sandbox'` 를 넣은 소켓에만 `sandbox` 메시지로 알린다. `catchup.sandbox` 도 채운다 | 기존 GPT 세션의 샌드박스 칩은 표시만 |
 | `routePreview` | `route_preview{sessionId, cwd?, model?}` 에 `route_preview{sessionId, account, reason, asOpus?}` 로 답한다(Claude 세션만; GPT·Gemini·모르는 id·뺀 계정 세션, 새 세션의 `자동` 은 답 없음). 소켓마다 마지막 요청을 기억해 사용량이 바뀌어 답이 달라지면 다시 보낸다. `sessionId: null` 에 `cwd` 가 없으면 요청 철회 | 상단 사용량 카드에 `다음` 표시 없음(요청도 보내지 않음) |
