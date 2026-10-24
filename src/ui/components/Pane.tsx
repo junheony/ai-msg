@@ -10,7 +10,7 @@ import { tasksForPane } from '../../shared/tasks';
 import { newChatDraftKey } from '../drafts';
 import type { ProjectEntry, SessionEntry } from '../../shared/session-types';
 import { linksOf, versionsAt } from '../../shared/branches';
-import { cardsForPane, engineOf, modelFor, nextQueued, paneMode, type Action, type AppState, type PaneState, type UploadedAttachment } from '../state';
+import { cardsForPane, engineOf, modelFor, nextQueued, olderOfPane, paneMode, type Action, type AppState, type PaneState, type UploadedAttachment } from '../state';
 import type { UploadFn } from '../upload';
 import { Chat, modelChoices, type ChatProps } from './Chat';
 import { RegenerateContext, type Regenerate } from './MessageView';
@@ -404,6 +404,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   };
   const focus = () => { if (!active) dispatch({ type: 'focus_pane', paneId: pane.id }); };
   const isNew = s?.sessionId === null;
+  // 'olderHistory': paging back through the shown session (only a server that announced it gives cursors).
+  const older = has('olderHistory') ? olderOfPane(pane) : undefined;
   const model = paneModel(pane);
   const effort = paneEffort(pane, model);
   // The session chip's menu rows from the pane, by group (Chat adds the session's own: 이름 바꾸기 … 공유 … 삭제).
@@ -637,6 +639,14 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           onDismissNotice={(message) => dispatch({ type: 'dismiss_notice', paneId: pane.id, message })}
           routeFit={pane.routeFit ?? null}
           suggestion={s.sessionId ? app.suggestions?.[s.sessionId] ?? null : null}
+          older={older ? {
+            cursor: older.cursor, loading: older.reqId !== null, failed: !!older.failed,
+            onLoad: () => {
+              if (!older.cursor || older.reqId !== null) return;
+              const reqId = nextClientRef();
+              if (send({ type: 'load_older', sessionId: older.sessionId, before: older.cursor, reqId }) !== false) dispatch({ type: 'older_request', paneId: pane.id, reqId });
+            },
+          } : null}
           autoResume={s.sessionId && app.autoResumes?.[s.sessionId] !== undefined ? { atMs: app.autoResumes[s.sessionId]!, onCancel: () => { send({ type: 'cancel_auto_resume', sessionId: s.sessionId! }); } } : null}
           onRouteFit={(how) => {
             const f = pane.routeFit;

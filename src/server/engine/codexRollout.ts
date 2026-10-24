@@ -5,6 +5,7 @@ import readline from 'node:readline';
 import type { TranscriptMessage } from '../../shared/session-types';
 import type { GptCredits } from '../../shared/usage-types';
 import type { TurnWindows } from '../usage/UsageService';
+import { readByteWindow, readByteWindowBefore, type ByteWindow, type OffsetBuilder } from './lineWindow';
 
 type Rec = Record<string, unknown>;
 
@@ -168,10 +169,15 @@ function textOf(content: unknown, type: string): string {
     .join('\n');
 }
 
+/** How much of an imported rollout's end is read for its history (Codex Desktop rollouts reach gigabytes). */
+export const CODEX_TAIL_BYTES = 16 * 1024 * 1024;
+
 export type CodexTranscriptOptions = { maxMessages?: number; maxToolResultChars?: number };
 
 class CodexTranscriptBuilder {
   private out: TranscriptMessage[] = [];
+  /** Index for index with `out`: where the line that pushed each message starts (-1 = not tracked). */
+  private starts: number[] = [];
   /** The model of the turn being read (each turn's `turn_context` line names it): kept on its assistant messages. */
   private model: string | null = null;
   constructor(private readonly opts: Required<CodexTranscriptOptions>) {}
@@ -184,7 +190,18 @@ class CodexTranscriptBuilder {
     return entry;
   }
 
-  add(line: unknown): void {
+  /** `at`: the byte the line starts at (kept for the messages it pushes). */
+  add(line: unknown, at = -1): void {
+    const n = this.out.length;
+    this.apply(line);
+    for (let i = n; i < this.out.length; i++) this.starts[i] = at;
+    if (this.out.length > this.opts.maxMessages * 2 + 64) {
+      this.out = this.out.slice(-this.opts.maxMessages);
+      this.starts = this.starts.slice(-this.opts.maxMessages);
+    }
+  }
+
+  private apply(line: unknown): void {
     const r = rec(line);
     const p = r ? rec(r.payload) : null;
     if (r && p && r.type === 'turn_context' && typeof p.model === 'string' && p.model) { this.model = p.model; return; }
@@ -211,12 +228,45 @@ class CodexTranscriptBuilder {
       if (content.length > this.opts.maxToolResultChars) { content = `${content.slice(0, this.opts.maxToolResultChars)}\n…[잘림: 원래 ${content.length}자]`; truncated = true; }
       this.out.push({ kind: 'tool_result', toolUseId: String(p.call_id ?? ''), content, isError: false, ts, ...(truncated ? { truncated } : {}) });
     }
-    if (this.out.length > this.opts.maxMessages * 2 + 64) this.out = this.out.slice(-this.opts.maxMessages);
   }
 
   result(): TranscriptMessage[] {
     return this.out.slice(-this.opts.maxMessages);
   }
+
+  entries(): { messages: TranscriptMessage[]; starts: number[] } {
+    return { messages: this.out, starts: this.starts };
+  }
+}
+
+/** A Codex builder over raw lines with their offsets (lineWindow paging; nothing trimmed, the caller bounds the region). */
+function codexOffsetBuilder(maxToolResultChars: number): OffsetBuilder {
+  const b = new CodexTranscriptBuilder({ maxMessages: Infinity, maxToolResultChars });
+  return {
+    add(line, at) {
+      if (!line.trim()) return;
+      let v: unknown;
+      try { v = JSON.parse(line); } catch { return; }
+      b.add(v, at);
+    },
+    entries: () => b.entries(),
+  };
+}
+
+/**
+ * readCodexTranscript (whole rollout) or readCodexTranscriptTail (`maxBytes`), plus the cursor for the page before the
+ * window ('olderHistory'). Same messages, read in chunks so each knows the byte its line starts at.
+ */
+export function readCodexWindow(file: string, maxBytes = Infinity, opts: CodexTranscriptOptions = {}): Promise<ByteWindow> {
+  return readByteWindow(file, () => codexOffsetBuilder(opts.maxToolResultChars ?? 8192), opts.maxMessages ?? 200, maxBytes);
+}
+
+/**
+ * The page before cursor `before` (a ByteWindow.older) of a rollout; null = not a cursor of this file. The model of
+ * assistant messages before the region's first `turn_context` line is not known (null).
+ */
+export function readCodexBefore(file: string, before: number, count = 200, maxToolResultChars = 8192): Promise<ByteWindow | null> {
+  return readByteWindowBefore(file, before, () => codexOffsetBuilder(maxToolResultChars), count, true);
 }
 
 export function parseCodexTranscript(text: string, opts: CodexTranscriptOptions = {}): TranscriptMessage[] {
@@ -239,7 +289,7 @@ export async function readCodexTranscript(file: string, opts: CodexTranscriptOpt
  * Like readCodexTranscript, from the last `maxBytes` only: Codex Desktop rollouts reach gigabytes, and the
  * sidebar opens them read-only to show the recent history. The first (cut) line is skipped.
  */
-export async function readCodexTranscriptTail(file: string, maxBytes = 16 * 1024 * 1024, opts: CodexTranscriptOptions = {}): Promise<TranscriptMessage[]> {
+export async function readCodexTranscriptTail(file: string, maxBytes = CODEX_TAIL_BYTES, opts: CodexTranscriptOptions = {}): Promise<TranscriptMessage[]> {
   const b = new CodexTranscriptBuilder({ maxMessages: opts.maxMessages ?? 200, maxToolResultChars: opts.maxToolResultChars ?? 8192 });
   for (const l of await readTailLines(file, maxBytes)) b.add(l);
   return b.result();

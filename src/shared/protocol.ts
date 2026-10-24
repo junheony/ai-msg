@@ -14,6 +14,8 @@ export const MAX_ATTACHMENTS_PER_TURN = 8;
 /** D7: per-file upload size cap, shared by the server (413) and the UI (pre-flight check before the network call). */
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const CLIENT_REF_MAX = 64;
+/** 'olderHistory': the longest `load_older.before` cursor. */
+export const OLDER_CURSOR_MAX = 64;
 /** Every engine, in 자동 분배 order (settings `autoEngines` / `autoConsent`). */
 export const ENGINE_KINDS: readonly EngineKind[] = ['claude', 'codex', 'gemini', 'grok'];
 /**
@@ -111,6 +113,11 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     /** Server message kinds beyond the base set this UI understands ('sandbox'): the socket gets them from now on (rule 3). */
     accepts: z.array(z.string().max(40)).max(20).optional(),
   }),
+  /**
+   * 'olderHistory' servers: the page of the session's transcript before `before` (a `history.older` / `older_history.older`
+   * cursor, opaque to the UI). Answered with `older_history` carrying the same `sessionId`, `before` and `reqId`.
+   */
+  z.object({ type: z.literal('load_older'), sessionId: z.string().min(1), before: z.string().min(1).max(OLDER_CURSOR_MAX), reqId: z.string().min(1).max(CLIENT_REF_MAX).optional() }),
   /** D6: a pane closed this session; stop routing its turn events to this socket. */
   z.object({ type: z.literal('close_session'), sessionId: z.string().min(1) }),
   /** After a reconnect: keep receiving a running turn this tab started (e.g. a new session with no id yet). */
@@ -276,8 +283,9 @@ export type SessionActivity = { sessionId: string; cwd: string; turnId: string; 
  * - sessionIcons: hello/index carry `sessionIcons` (session id → chosen icon); POST /api/session-icon sets or clears one.
  * - heartbeat: a socket that sent `heartbeat` gets `heartbeat` every HEARTBEAT_MS; the UI drops a socket silent for HEARTBEAT_TIMEOUT_MS.
  * - historyImages: GET /api/sessions/<id>/images/<n>/<k> serves image k of user message n in a Claude transcript.
+ * - olderHistory: `history.older` says whether the transcript goes back further; `load_older` is answered with `older_history`.
  */
-export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate', 'commander', 'grok', 'tasks', 'setup', 'sessionIcons', 'heartbeat', 'historyImages'] as const;
+export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate', 'commander', 'grok', 'tasks', 'setup', 'sessionIcons', 'heartbeat', 'historyImages', 'olderHistory'] as const;
 export type Feature = (typeof FEATURES)[number];
 export type DrainReason = 'restart' | 'stop';
 
@@ -330,7 +338,13 @@ export type ServerMessage =
   | { type: 'sandbox'; sessionId: string; sandbox: CodexSandbox }
   | { type: 'usage'; usage: UsageSnapshot }
   | { type: 'index'; projects: ProjectEntry[]; pins?: string[]; sessionIcons?: Record<string, string>; desktop?: DesktopSession[] }
-  | ({ type: 'history'; sessionId: string; cwd: string; account: Seat | null; engine?: EngineKind; sandbox?: CodexSandbox | null; messages: TranscriptMessage[] } & SessionFacts)
+  | ({ type: 'history'; sessionId: string; cwd: string; account: Seat | null; engine?: EngineKind; sandbox?: CodexSandbox | null; messages: TranscriptMessage[]; /** 'olderHistory' servers: a cursor for `load_older` = more before `messages`; null = `messages` start at the beginning; absent = unknown (no paging). */ older?: string | null } & SessionFacts)
+  /**
+   * 'olderHistory' servers: the answer to `load_older` — the messages just before its cursor, oldest first (never the
+   * ones the device already has). `older` as in `history`. `error`: nothing could be read ('bad_cursor' = not a cursor
+   * of this session, 'not_found' = no such session, 'read_failed' = the transcript could not be read; asking again may help).
+   */
+  | { type: 'older_history'; sessionId: string; before: string; reqId?: string; messages: TranscriptMessage[]; older: string | null; error?: OlderHistoryError }
   /**
    * The answer to `open_session.after` when nothing has to be read again: the device keeps what it shows, and the events
    * after its position (if any) follow this message at once, in order. Never sent unasked.
@@ -441,6 +455,9 @@ export type ServerMessage =
  * the session runs in bypass mode · a commander is already active (stop it first; also: no bypass while one is) · not an
  * existing Claude session · the feature is off · the device's epoch is not the current one (its screen is out of date).
  */
+/** Why `older_history` came back empty (see ServerMessage `older_history`). */
+export type OlderHistoryError = 'bad_cursor' | 'not_found' | 'read_failed';
+
 export type RefusalCode = 'draining' | 'already_accepted' | 'in_flight' | 'not_found' | 'commander_bypass' | 'commander_active' | 'commander_engine' | 'commander_disabled' | 'commander_stale_epoch';
 
 /** How long / how many accepted refs the server keeps per session (`history.acceptedRefs`). */

@@ -7,19 +7,19 @@ import path from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
 import { isGeminiAccount, isGrokAccount, type AccountNames } from '../shared/accounts';
 import { DEFAULT_CODEX_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_GROK_MODEL, DEFAULT_SANDBOX, defaultGeminiSandbox, IMPORTED_DEFAULT_MODEL, isGrokModel, type ClaudeModel, type CodexSandbox, type EngineKind } from '../shared/models';
-import { CLIENT_REF_MAX, ClientMessageSchema, FEATURES, HEARTBEAT_MS, accountInfos, type ClientMessage, type DrainReason, type CommanderView, type StreamPos, type GeminiStatus, type GrokStatus, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
+import { CLIENT_REF_MAX, ClientMessageSchema, FEATURES, HEARTBEAT_MS, accountInfos, type ClientMessage, type DrainReason, type CommanderView, type StreamPos, type GeminiStatus, type GrokStatus, type OlderHistoryError, type RefusalCode, type RunningTurn, type ServerMessage, type SessionActivity, type TurnPrompt } from '../shared/protocol';
 import type { SessionEntry, TranscriptMessage } from '../shared/session-types';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
 import type { AcceptedRefs } from './sessions/AcceptedRefs';
 import { DirError, resolveUnderRoots } from './dirs';
 import { HANDOFF_PROMPT, codexHandoffExcerpt, handoffTitle } from '../shared/handoff';
-import { readCodexTranscript, readCodexTranscriptTail } from './engine/codexRollout';
+import { CODEX_TAIL_BYTES, readCodexBefore, readCodexTranscript, readCodexTranscriptTail, readCodexWindow } from './engine/codexRollout';
 import { sessionAllowLabel } from './engine/Engine';
 import { isGrokAutoApprovable } from './engine/GrokEngine';
 import { displayError, redactSecrets } from './engine/redact';
 import { CWD_MISSING_NOTICE, importBlockReason, liveRolloutNotice, rolloutActiveAgeMs } from './sessions/CodexImports';
-import { findGrokSessionDir, readGrokTranscriptTail } from './engine/grokHistory';
+import { findGrokSessionDir, readGrokBefore, readGrokTranscriptTail, readGrokWindow } from './engine/grokHistory';
 import { elsewhereNotice } from './sessions/elsewhereNotice';
 import { GROKBOT_READONLY_NOTICE, readGrokBotTranscript } from './sessions/GrokBotImports';
 import { grokImportBlockReason } from './sessions/GrokImports';
@@ -32,7 +32,7 @@ import type { SettingsStore } from './settings';
 import { TCC_DENIAL_NOTICE, isTccDenial } from './tccDenial';
 import type { ProcessHolders } from './sessions/ProcessHolders';
 import type { SessionIndex } from './sessions/SessionIndex';
-import { readBranchPoint, readTranscript, type BranchPoint } from './sessions/transcript';
+import { readBranchPoint, readTranscript, readTranscriptBefore, readTranscriptWindow, type BranchPoint } from './sessions/transcript';
 import { isCodexState, isGeminiState, isGrokState, isOtherEngineState, type ClaudeSessionState, type SessionStateStore } from './turn/SessionState';
 import { abortedText, RESEND_NOTICE, ROUTE_ENGINE_LABEL, SHUTDOWN_ABORT, type TurnRunner, type TurnSink } from './turn/TurnRunner';
 import type { UsageService } from './usage/UsageService';
@@ -1413,11 +1413,15 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   };
   /** `exact` false: segments kept ending during every read — the history must not claim a stream position. */
   const withoutPos = <T extends { pos?: StreamPos }>(r: T, drop: boolean): T => { if (!drop) return r; const { pos: _p, ...rest } = r; return rest as T; };
-  type ClaudeHistory = { found: SessionEntry; st: ClaudeSessionState | null; at: number; messages: Awaited<ReturnType<typeof readTranscript>>; exact: boolean };
+  type ClaudeHistory = { found: SessionEntry; st: ClaudeSessionState | null; at: number; messages: TranscriptMessage[]; exact: boolean; /** The first message's absolute index in its transcript ('olderHistory' cursor). */ start: number };
+  /** The transcript a Claude session's history is read from: a copy that contains deck's (e.g. Claude Desktop continued the session on A) wins. */
+  const claudeFile = async (sessionId: string, found: SessionEntry, st: ClaudeSessionState | null): Promise<string> => {
+    const best = st ? await deps.index.bestCopy(sessionId, st.projectDir, st.account).catch(() => null) : null;
+    return best?.file ?? (st ? `${st.projectDir}/${sessionId}.jsonl` : found.file);
+  };
   /** A Claude session's transcript as a pane shows it. A copy that contains deck's (e.g. Claude Desktop continued the session on A) is the one read. */
   const readClaudeHistory = async (sessionId: string, found: SessionEntry, st: ClaudeSessionState | null): Promise<ClaudeHistory> => {
-    const best = st ? await deps.index.bestCopy(sessionId, st.projectDir, st.account).catch(() => null) : null;
-    const file = best?.file ?? (st ? `${st.projectDir}/${sessionId}.jsonl` : found.file);
+    const file = await claudeFile(sessionId, found, st);
     // The history goes out with the stream position as it is when it is sent (runningOf), after the events stamped during
     // the read (they went to the viewing socket already, and the history replaces what they showed). A segment that ended
     // meanwhile may be missing from what was read while the position claims it: such a read is read again (the deltas
@@ -1427,9 +1431,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       // Stamped before the read: an entry written while reading is looked at again by the outside poll.
       const at = Date.now();
       const mark = ends.get(sessionId) ?? 0;
-      const messages = await readTranscript(file).catch(() => readTranscript(found.file));
+      const { messages, start } = await readTranscriptWindow(file).catch(() => readTranscriptWindow(found.file));
       const exact = (ends.get(sessionId) ?? 0) === mark;
-      if (exact || n >= HISTORY_REREADS) return { found, st, at, messages, exact };
+      if (exact || n >= HISTORY_REREADS) return { found, st, at, messages, exact, start };
     }
   };
   /**
@@ -1460,12 +1464,12 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (last >= 0 && (msgs[last] as { text: string }).text.trim() === text.trim()) msgs = msgs.slice(0, last);
     return redactSecrets(codexHandoffExcerpt(msgs, ROUTE_ENGINE_LABEL[engine]));
   };
-  const sendClaudeHistory = (ws: WebSocket, sessionId: string, { found, st, at, messages, exact }: ClaudeHistory, clean?: Map<string, number>) => {
+  const sendClaudeHistory = (ws: WebSocket, sessionId: string, { found, st, at, messages, exact, start }: ClaudeHistory, clean?: Map<string, number>) => {
     const t = turns.get(busy.get(sessionId) ?? '');
     let seen = historyAt.get(ws);
     if (!seen) { seen = new Map(); historyAt.set(ws, seen); }
     seen.set(sessionId, { at, clean: new Map(clean) });
-    send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, accountPin: st?.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: st?.defaultModel ?? IMPORTED_DEFAULT_MODEL, messages, ...withoutPos(runningOf(sessionId), !exact) });
+    send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, accountPin: st?.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: st?.defaultModel ?? IMPORTED_DEFAULT_MODEL, messages, older: start > 0 ? `i${start}` : null, ...withoutPos(runningOf(sessionId), !exact) });
     if (t) replay(ws, t, sessionId);
     // The CLI writes a text block to the transcript only once it is finished: the one streaming now is in memory only, and
     // without it the pane's streaming item would start mid-sentence at the next delta. Claude only (a Codex delta is a
@@ -1515,14 +1519,81 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (ws !== t.origin) t.watchers.add(ws);
     for (const h of t.log.handoffs) send(ws, h);
   };
+  /** 'olderHistory': a byte cursor as `history.older` / `older_history.older` carry it (`b<offset>`). */
+  const byteCursor = (n: number | null) => (n === null ? null : `b${n}`);
+  type HistoryRead = { messages: TranscriptMessage[]; older: { older?: string | null } };
+  /** A Codex rollout's history and its older cursor; a reader injected by tests is used as is, without one. */
+  const codexHistory = async (file: string | null, injected: ((f: string) => Promise<TranscriptMessage[]>) | undefined, read: (f: string) => ReturnType<typeof readCodexWindow>): Promise<HistoryRead> => {
+    if (!file) return { messages: [], older: {} };
+    if (injected) return { messages: await injected(file).catch(() => []), older: {} };
+    const w = await read(file).catch(() => null);
+    return w ? { messages: w.messages, older: { older: byteCursor(w.older) } } : { messages: [], older: {} };
+  };
+  const grokHistory = async (file: string | null): Promise<HistoryRead> => {
+    const w = file ? await readGrokWindow(file).catch(() => null) : null;
+    return w ? { messages: w.messages, older: { older: byteCursor(w.older) } } : { messages: [], older: {} };
+  };
+  type OlderPage = { messages: TranscriptMessage[]; older: string | null };
+  /**
+   * 'olderHistory': where `load_older` reads a session's earlier pages from — the transcript its history came from, and
+   * how a cursor is read there (null = not a cursor of it). Null: no such session; `page` null: it has no pages.
+   */
+  const olderSource = async (sessionId: string): Promise<{ page: ((before: string) => Promise<OlderPage | null>) | null } | null> => {
+    const byte = (file: string, read: (f: string, before: number) => Promise<{ messages: TranscriptMessage[]; older: number | null } | null>) => async (before: string): Promise<OlderPage | null> => {
+      const m = /^b(\d{1,15})$/.exec(before);
+      const w = m ? await read(file, Number(m[1])) : null;
+      return w && { messages: w.messages, older: byteCursor(w.older) };
+    };
+    const st = deps.store.get(sessionId);
+    if (st && isCodexState(st)) return { page: st.rolloutFile && !deps.readCodexHistory ? byte(st.rolloutFile, readCodexBefore) : null };
+    if (st && isGeminiState(st)) return { page: null };
+    if (st && isGrokState(st)) {
+      const dir = deps.grokHome ? await findGrokSessionDir(deps.grokHome, st.grokSessionId ?? sessionId).catch(() => null) : null;
+      return { page: dir ? byte(path.join(dir, 'chat_history.jsonl'), readGrokBefore) : null };
+    }
+    const entry = deps.index.lookup(sessionId);
+    const imported = entry ? null : await deps.index.freshImport(sessionId);
+    if (imported) {
+      if (imported.source === 'grokbot' || imported.engine === 'gemini') return { page: null };
+      if (imported.engine === 'grok') return { page: byte(imported.file, readGrokBefore) };
+      return { page: deps.readCodexImportHistory ? null : byte(imported.file, readCodexBefore) };
+    }
+    if (!entry) return turns.get(busy.get(sessionId) ?? '') ? { page: null } : null;
+    const file = await claudeFile(sessionId, entry, st ?? null);
+    return {
+      page: async (before) => {
+        const m = /^i(\d{1,15})$/.exec(before);
+        const n = m ? Number(m[1]) : 0;
+        if (n <= 0) return null;
+        const w = await readTranscriptBefore(file, n).catch(() => readTranscriptBefore(entry.file, n));
+        // Nothing before a cursor past the start: not a cursor of this transcript (it was rewritten, or made up).
+        if (!w.messages.length) return null;
+        return { messages: w.messages, older: w.start > 0 ? `i${w.start}` : null };
+      },
+    };
+  };
+  const loadOlder = async (ws: WebSocket, sessionId: string, before: string, reqId: string | undefined) => {
+    const answer = (messages: TranscriptMessage[], older: string | null, error?: OlderHistoryError) =>
+      send(ws, { type: 'older_history', sessionId, before, ...(reqId ? { reqId } : {}), messages, older, ...(error ? { error } : {}) });
+    const src = await olderSource(sessionId).catch(() => null);
+    if (!src) return answer([], null, 'not_found');
+    if (!src.page) return answer([], null, 'bad_cursor');
+    try {
+      const page = await src.page(before);
+      if (page) answer(page.messages, page.older);
+      else answer([], null, 'bad_cursor');
+    } catch {
+      answer([], null, 'read_failed');
+    }
+  };
   const openSession = (ws: WebSocket, sessionId: string) => {
     void (async () => {
       // D4: Codex sessions live only in the state store; history comes from the CLI's rollout file.
       const st = deps.store.get(sessionId);
       if (st && isCodexState(st)) {
         view(ws, sessionId);
-        const messages = st.rolloutFile ? await (deps.readCodexHistory ?? readCodexTranscript)(st.rolloutFile).catch(() => []) : [];
-        send(ws, { type: 'history', sessionId, cwd: st.cwd, account: 'gpt', engine: 'codex', sandbox: st.sandbox, sessionModel: st.defaultModel, messages, ...runningOf(sessionId) });
+        const { messages, older } = await codexHistory(st.rolloutFile ?? null, deps.readCodexHistory, (f) => readCodexWindow(f));
+        send(ws, { type: 'history', sessionId, cwd: st.cwd, account: 'gpt', engine: 'codex', sandbox: st.sandbox, sessionModel: st.defaultModel, messages, ...older, ...runningOf(sessionId) });
         return;
       }
       // Gemini sessions: no transcript reader yet (the CLI's chat files are not read) — the pane starts empty.
@@ -1535,8 +1606,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       if (st && isGrokState(st)) {
         view(ws, sessionId);
         const dir = deps.grokHome ? await findGrokSessionDir(deps.grokHome, st.grokSessionId ?? sessionId).catch(() => null) : null;
-        const messages = dir ? await readGrokTranscriptTail(path.join(dir, 'chat_history.jsonl')).catch(() => []) : [];
-        send(ws, { type: 'history', sessionId, cwd: st.cwd, account: st.account, engine: 'grok', sandbox: null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: isGrokModel(st.model) ? st.model : DEFAULT_GROK_MODEL, sessionEffort: st.effort, messages, ...runningOf(sessionId) });
+        const { messages, older } = await grokHistory(dir ? path.join(dir, 'chat_history.jsonl') : null);
+        send(ws, { type: 'history', sessionId, cwd: st.cwd, account: st.account, engine: 'grok', sandbox: null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: isGrokModel(st.model) ? st.model : DEFAULT_GROK_MODEL, sessionEffort: st.effort, messages, ...older, ...runningOf(sessionId) });
         const t = turns.get(busy.get(sessionId) ?? '');
         if (t && messages.length) replay(ws, t, sessionId);
         return;
@@ -1565,8 +1636,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       // A Grok CLI session deck has not run yet: its chat_history, read-only; the first turn resumes it (session/load).
       if (imported && imported.engine === 'grok') {
         view(ws, sessionId);
-        const messages = await readGrokTranscriptTail(imported.file).catch(() => []);
-        send(ws, { type: 'history', sessionId, cwd: imported.cwd, account: 'x1', engine: 'grok', sandbox: null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: isGrokModel(imported.grokModel) ? imported.grokModel : DEFAULT_GROK_MODEL, ...(imported.grokEffort ? { sessionEffort: imported.grokEffort } : {}), messages, ...runningOf(sessionId) });
+        const { messages, older } = await grokHistory(imported.file);
+        send(ws, { type: 'history', sessionId, cwd: imported.cwd, account: 'x1', engine: 'grok', sandbox: null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: isGrokModel(imported.grokModel) ? imported.grokModel : DEFAULT_GROK_MODEL, ...(imported.grokEffort ? { sessionEffort: imported.grokEffort } : {}), messages, ...older, ...runningOf(sessionId) });
         const t = turns.get(busy.get(sessionId) ?? '');
         if (t) replay(ws, t, sessionId);
         const age = await deps.index.importActiveAgeMs(sessionId);
@@ -1590,8 +1661,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       }
       if (imported) {
         view(ws, sessionId);
-        const messages = await (deps.readCodexImportHistory ?? readCodexTranscriptTail)(imported.file).catch(() => []);
-        send(ws, { type: 'history', sessionId, cwd: imported.cwd, account: 'gpt', engine: 'codex', sandbox: deps.runner.importSandboxOf(sessionId) ?? DEFAULT_SANDBOX, messages, ...runningOf(sessionId) });
+        const { messages, older } = await codexHistory(imported.file, deps.readCodexImportHistory, (f) => readCodexWindow(f, CODEX_TAIL_BYTES));
+        send(ws, { type: 'history', sessionId, cwd: imported.cwd, account: 'gpt', engine: 'codex', sandbox: deps.runner.importSandboxOf(sessionId) ?? DEFAULT_SANDBOX, messages, ...older, ...runningOf(sessionId) });
         const t = turns.get(busy.get(sessionId) ?? '');
         if (t) replay(ws, t, sessionId);
         const age = await rolloutActiveAgeMs(imported.file);
@@ -1739,6 +1810,9 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           break;
         case 'close_session':
           viewing.get(ws)?.delete(msg.sessionId);
+          break;
+        case 'load_older':
+          void loadOlder(ws, msg.sessionId, msg.before, msg.reqId);
           break;
         case 'heartbeat':
           beating.add(ws);

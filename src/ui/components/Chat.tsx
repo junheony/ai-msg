@@ -174,6 +174,11 @@ export type ChatProps = {
   nextSession?: { title: string; open: () => void } | null;
   /** 한도가 풀리면 자동으로 이어가기: the booked resume (epoch ms) and its 취소. Absent/null = none booked. */
   autoResume?: { atMs: number; onCancel: () => void } | null;
+  /**
+   * 'olderHistory': paging back. `cursor` null = the items start at the conversation's beginning (the end marker);
+   * `loading` = a page is on its way; `failed` = the last one could not be read. Absent: no paging (nothing shown).
+   */
+  older?: { cursor: string | null; loading: boolean; failed: boolean; onLoad: () => void } | null;
   /** Notes / errors about this session no turn owns (e.g. it was just written outside deck): dismissible bars above the transcript. */
   notices?: { message: string; level: 'notice' | 'error' }[];
   onDismissNotice?: (message: string) => void;
@@ -286,6 +291,9 @@ export function lastUserText(items: ChatItem[]): string | null {
   return null;
 }
 
+/** 'olderHistory': scrolled up to within this many px of the top, the page before is asked for. */
+const OLDER_NEAR_TOP = 240;
+
 export function messageKeys(items: ChatItem[]): string[] {
   const used = new Set<string>();
   let anchor = '^';
@@ -340,6 +348,34 @@ export function Chat(p: ChatProps) {
   // going away or a catchup rebuild does not skew it; a reply growing while it streams is not new).
   const turnKeys = useMemo(() => keys.filter((_, i) => shown[i]!.kind === 'user' || shown[i]!.kind === 'assistant'), [keys, shown]);
   const scroll = useStickToBottom(bodyRef, content, p.sessionId, turnKeys);
+  // 'olderHistory': scrolling up to near the top asks for the page before (the button at the top is the fallback).
+  const older = p.older;
+  const olderLoad = useRef<(() => void) | null>(null);
+  olderLoad.current = older && older.cursor !== null && !older.loading && !older.failed && p.items.length > 0 ? older.onLoad : null;
+  // Where the view stood (scrollHeight, scrollTop) and the first item, as of the last commit or scroll: a page put in
+  // front keeps what the user reads in place (the distance from the bottom stays), with or without native anchoring.
+  const olderView = useRef<{ height: number; top: number; first: ChatItem | undefined } | null>(null);
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      if (olderView.current) { olderView.current.height = el.scrollHeight; olderView.current.top = el.scrollTop; }
+      if (el.scrollTop < OLDER_NEAR_TOP && el.scrollHeight > el.clientHeight) olderLoad.current?.();
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const was = olderView.current;
+    const first = p.items[0];
+    if (was && was.first !== undefined && first !== was.first && p.items.indexOf(was.first) > 0) {
+      const top = el.scrollHeight - (was.height - was.top);
+      if (Math.abs(el.scrollTop - top) > 1) el.scrollTop = top;
+    }
+    olderView.current = { height: el.scrollHeight, top: el.scrollTop, first };
+  }, [p.items]);
   // A question / approval card waits for the user: the status line, the composer and the stop button say so (Q2).
   const waitingFor = p.questions.length > 0 ? 'question' as const : p.pending.length > 0 ? 'permission' as const : null;
   // Q1: a newly shown card taller than the view opens at its head, not at its bottom (scroll.revealTop decides).
@@ -666,6 +702,11 @@ export function Chat(p: ChatProps) {
         )}
         {/* Reopened from the recent cache: the kept transcript shows while the fresh history is on its way. */}
         {p.loading && p.items.length > 0 && <div className="chat-refreshing" role="status" data-testid="chat-refreshing">불러오는 중…</div>}
+        {older && !p.loading && p.items.length > 0 && (older.cursor === null
+          ? <div className="older-line older-start" data-testid="older-start">{ui().chat.older.start}</div>
+          : older.loading
+            ? <div className="older-line" role="status" data-testid="older-loading">{ui().chat.older.loading}</div>
+            : <button type="button" className="older-more" data-testid="older-more" onClick={older.onLoad}>{older.failed ? ui().chat.older.retry : ui().chat.older.more}</button>)}
         <AgentContext.Provider value={agentCtx}>
           <MessageActionsContext.Provider value={msgActions}>
             <RegenerateContext.Provider value={regen}>

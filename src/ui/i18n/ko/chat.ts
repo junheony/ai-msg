@@ -42,6 +42,8 @@ export const chat: Widen<typeof en> = {
   viewImage: (name: string) => `${name} 크게 보기`,
   image: (i: number) => `이미지 ${i}`,
   jump: { bottom: '맨 아래로', unread: (n: number) => `새 메시지 ${n}` },
+  /** 'olderHistory': the line at the top of the transcript — load earlier messages, loading, or the start reached. */
+  older: { more: '이전 대화 더 보기', loading: '이전 대화를 불러오는 중…', start: '대화의 처음', retry: '이전 대화를 불러오지 못했어요 · 다시 시도' },
   composer: {
     stop: '중단',
     stopEsc: '중단 (Esc)',

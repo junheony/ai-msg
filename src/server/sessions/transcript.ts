@@ -283,7 +283,7 @@ function parseLine(line: string): Rec | null {
 }
 
 /** Everything a `TranscriptBuilder` carries from one line to the next: resuming from it reads on as if from the start. */
-type BuilderState = { out: TranscriptMessage[]; lastAssistantId: string | null; userCount: number; seen: string[] };
+type BuilderState = { out: TranscriptMessage[]; lastAssistantId: string | null; userCount: number; seen: string[]; dropped: number };
 
 /** Incremental jsonl → TranscriptMessage[] (assistant chunks with the same message id merge). */
 class TranscriptBuilder {
@@ -292,6 +292,8 @@ class TranscriptBuilder {
   /** User messages seen so far (their ordinal `n`; must count exactly as `promptText` does). */
   private userCount = 0;
   private seen = new SeenPrompts();
+  /** Entries dropped from the front of `out` so far: `out[i]` is entry `dropped + i` of the whole transcript. */
+  private dropped = 0;
   private readonly max: number;
   private readonly maxChars: number;
 
@@ -303,18 +305,32 @@ class TranscriptBuilder {
       this.lastAssistantId = state.lastAssistantId;
       this.userCount = state.userCount;
       this.seen = new SeenPrompts(state.seen);
+      this.dropped = state.dropped;
     }
   }
 
   /** Shares `out` with the builder (only its last entry is ever changed again). */
   state(): BuilderState {
-    return { out: this.out, lastAssistantId: this.lastAssistantId, userCount: this.userCount, seen: this.seen.list() };
+    return { out: this.out, lastAssistantId: this.lastAssistantId, userCount: this.userCount, seen: this.seen.list(), dropped: this.dropped };
+  }
+
+  /** Entries pushed so far (the next one's absolute index). */
+  total(): number {
+    return this.dropped + this.out.length;
+  }
+
+  /** Forgets entries before absolute index `i`, always keeping the last (later lines may still merge into it). */
+  dropBefore(i: number): void {
+    const n = Math.min(i - this.dropped, this.out.length - 1);
+    if (n <= 0) return;
+    this.out = this.out.slice(n);
+    this.dropped += n;
   }
 
   private push(m: TranscriptMessage): void {
     this.out.push(m);
     // Only the last entry is ever merged into, so dropping from the front is safe.
-    if (this.out.length > this.max * 2 + 64) this.out = this.out.slice(-this.max);
+    if (this.out.length > this.max * 2 + 64) this.dropBefore(this.total() - this.max);
   }
 
   add(r: Rec): void {
@@ -485,7 +501,7 @@ async function loadSnapshot(key: string): Promise<CacheEntry | null> {
     const ok = e.key === key && typeof e.file === 'string' && typeof e.dev === 'string' && typeof e.ino === 'string' && Number.isSafeInteger(e.offset) && e.offset >= 0
       && Number.isSafeInteger(e.headLen) && Number.isSafeInteger(e.tailLen) && typeof e.headHash === 'string' && typeof e.tailHash === 'string'
       && e.headLen <= e.offset && e.tailLen <= e.offset
-      && s && Array.isArray(s.out) && s.out.every((m) => m && typeof m === 'object' && typeof (m as Rec).kind === 'string') && Array.isArray(s.seen) && Number.isSafeInteger(s.userCount) && (s.lastAssistantId === null || typeof s.lastAssistantId === 'string');
+      && s && Array.isArray(s.out) && s.out.every((m) => m && typeof m === 'object' && typeof (m as Rec).kind === 'string') && Array.isArray(s.seen) && Number.isSafeInteger(s.userCount) && Number.isSafeInteger(s.dropped) && s.dropped >= 0 && (s.lastAssistantId === null || typeof s.lastAssistantId === 'string');
     return ok ? e : null;
   } catch {
     return null; // missing or damaged: rebuilt from the jsonl
@@ -499,7 +515,8 @@ function saveSnapshot(e: CacheEntry, max: number): void {
   // Serialized now: the builder keeps changing the window's last entry after this.
   // `file` first: pruning reads only the head of each snapshot to find its source.
   const { file, ...rest } = e;
-  const json = JSON.stringify({ file, ...rest, state: { ...e.state, out: e.state.out.slice(-max) } });
+  const out = e.state.out.slice(-max);
+  const json = JSON.stringify({ file, ...rest, state: { ...e.state, out, dropped: e.state.dropped + e.state.out.length - out.length } });
   if (Buffer.byteLength(json, 'utf8') > SNAPSHOT_MAX_BYTES) return;
   writing = writing.then(async () => {
     const tmp = `${f}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
@@ -605,7 +622,7 @@ function feed(b: TranscriptBuilder, text: string): void {
 }
 
 /** A snapshot that passes the checks but still breaks the read is dropped, and the file read once more from the start. */
-async function readCached(file: string, opts: Required<TranscriptOptions>, key: string): Promise<TranscriptMessage[]> {
+async function readCached(file: string, opts: Required<TranscriptOptions>, key: string): Promise<TranscriptWindow> {
   try {
     return await readCachedFrom(file, opts, key, true);
   } catch {
@@ -616,7 +633,7 @@ async function readCached(file: string, opts: Required<TranscriptOptions>, key: 
   }
 }
 
-async function readCachedFrom(file: string, opts: Required<TranscriptOptions>, key: string, useCache: boolean): Promise<TranscriptMessage[]> {
+async function readCachedFrom(file: string, opts: Required<TranscriptOptions>, key: string, useCache: boolean): Promise<TranscriptWindow> {
   const fh = await fs.open(file, 'r');
   try {
     const st = await fh.stat({ bigint: true });
@@ -668,7 +685,7 @@ async function readCachedFrom(file: string, opts: Required<TranscriptOptions>, k
     // The window's last entry may still grow on a later read; callers get their own copy.
     const shared = res.lastIndexOf(state.out[state.out.length - 1]!);
     if (shared >= 0) res[shared] = structuredClone(res[shared]!);
-    return res;
+    return { messages: res, start: state.dropped + out.length - res.length };
   } finally {
     await fh.close();
   }
@@ -683,6 +700,16 @@ export async function readTranscript(file: string, opts: TranscriptOptions = {})
   const o = { maxMessages: opts.maxMessages ?? 200, maxToolResultChars: opts.maxToolResultChars ?? 8192 };
   // An unbounded window (search) is not kept: it would hold the whole session. (`slice(-0)` makes 0 unbounded too.)
   if (!Number.isFinite(o.maxMessages) || o.maxMessages < 1) return readTranscriptUncached(file, o);
+  return (await readTranscriptWindow(file, o)).messages;
+}
+
+/** The last messages and where they start in the whole transcript: `start` = the first one's absolute index (0 = nothing earlier). */
+export type TranscriptWindow = { messages: TranscriptMessage[]; start: number };
+
+/** `readTranscript` (bounded windows only), plus the window's absolute start: what `readTranscriptBefore` pages back from. */
+export async function readTranscriptWindow(file: string, opts: TranscriptOptions = {}): Promise<TranscriptWindow> {
+  const o = { maxMessages: opts.maxMessages ?? 200, maxToolResultChars: opts.maxToolResultChars ?? 8192 };
+  if (!Number.isFinite(o.maxMessages) || o.maxMessages < 1) throw new Error('unbounded window');
   const key = `${CODE_VERSION}\0${o.maxMessages}\0${o.maxToolResultChars}\0${path.resolve(file)}`;
   const prev = locks.get(key) ?? Promise.resolve();
   const run = prev.catch(() => {}).then(() => readCached(file, o, key));
@@ -692,6 +719,97 @@ export async function readTranscript(file: string, opts: TranscriptOptions = {})
   };
   run.then(done, done);
   return run;
+}
+
+/**
+ * Where an older-page scan of one file can resume: at each `MARK_CHUNK`-ish line boundary the builder state there (only
+ * the last entry kept: later lines may still merge into it). `offset`/`tailHash` = how far the scan got and the bytes
+ * before it, checked like a cache entry: an append-only file keeps its marks, a rewritten one starts over.
+ */
+type MarkIndex = { dev: string; ino: string; offset: number; headLen: number; headHash: string; tailLen: number; tailHash: string; marks: { offset: number; state: BuilderState }[] };
+const MARK_CHUNK = 1024 * 1024;
+const MARK_FILES = 8;
+const markIndex = new Map<string, MarkIndex>();
+
+/** Tests: forgets the older-page marks (as a restart would). */
+export function clearTranscriptMarks(): void {
+  markIndex.clear();
+}
+
+/**
+ * The (up to) `count` messages before absolute index `before` (`TranscriptWindow.start` of a later window), and the
+ * absolute index of the first one returned. The first call on a file scans it up to `before` once, leaving marks; later
+ * pages read on from the nearest mark. `before` past the transcript's end (or ≤ 0) gives an empty page.
+ */
+export async function readTranscriptBefore(file: string, before: number, count = 200, maxToolResultChars = 8192): Promise<TranscriptWindow> {
+  const key = `before\0${path.resolve(file)}`;
+  const prev = locks.get(key) ?? Promise.resolve();
+  const run = prev.catch(() => {}).then(() => readBefore(file, key, before, count, maxToolResultChars));
+  locks.set(key, run);
+  const done = () => {
+    if (locks.get(key) === run) locks.delete(key);
+  };
+  run.then(done, done);
+  return run;
+}
+
+async function readBefore(file: string, key: string, before: number, count: number, maxChars: number): Promise<TranscriptWindow> {
+  if (before <= 0 || count < 1) return { messages: [], start: 0 };
+  const from = Math.max(0, before - count);
+  const fh = await fs.open(file, 'r');
+  try {
+    const st = await fh.stat({ bigint: true });
+    const size = Number(st.size);
+    const dev = String(st.dev);
+    const ino = String(st.ino);
+    let idx = markIndex.get(key) ?? null;
+    markIndex.delete(key);
+    if (idx && !(idx.dev === dev && idx.ino === ino && size >= idx.offset
+      && sha1(await readAt(fh, 0, idx.headLen)) === idx.headHash
+      && sha1(await readAt(fh, idx.offset - idx.tailLen, idx.tailLen)) === idx.tailHash)) idx = null;
+    if (!idx) idx = { dev, ino, offset: 0, headLen: 0, headHash: sha1(Buffer.alloc(0)), tailLen: 0, tailHash: sha1(Buffer.alloc(0)), marks: [] };
+    let mark: MarkIndex['marks'][number] | undefined;
+    for (const m of idx.marks) if (m.state.dropped + m.state.out.length <= from) mark = m;
+    const b = new TranscriptBuilder({ maxToolResultChars: maxChars }, mark ? structuredClone(mark.state) : undefined);
+    let pos = mark?.offset ?? 0;
+    let carry: Buffer = Buffer.alloc(0);
+    while (pos < size && b.total() <= before) {
+      const chunk = await readAt(fh, pos, Math.min(MARK_CHUNK, size - pos));
+      if (chunk.length === 0) break;
+      pos += chunk.length;
+      const buf = carry.length ? Buffer.concat([carry, chunk]) : chunk;
+      const nl = buf.lastIndexOf(10);
+      if (nl < 0) {
+        carry = buf;
+        continue;
+      }
+      feed(b, buf.toString('utf8', 0, nl + 1));
+      carry = buf.subarray(nl + 1);
+      const at = pos - carry.length;
+      if (at > idx.offset && b.total() > 0) {
+        const s = b.state();
+        idx.marks.push({ offset: at, state: structuredClone({ ...s, out: s.out.slice(-1), dropped: s.dropped + s.out.length - 1 }) });
+        idx.offset = at;
+      }
+      b.dropBefore(from);
+    }
+    // The last line without its `\n` (the file's end): read as readline does, never marked.
+    if (pos >= size && b.total() <= before) feed(b, carry.toString('utf8'));
+    if (idx.offset > 0) {
+      idx.headLen = Math.min(FINGERPRINT_BYTES, idx.offset);
+      idx.headHash = sha1(await readAt(fh, 0, idx.headLen));
+      idx.tailLen = Math.min(FINGERPRINT_BYTES, idx.offset);
+      idx.tailHash = sha1(await readAt(fh, idx.offset - idx.tailLen, idx.tailLen));
+    }
+    markIndex.set(key, idx);
+    while (markIndex.size > MARK_FILES) markIndex.delete(markIndex.keys().next().value!);
+    const s = b.state();
+    if (before > s.dropped + s.out.length) return { messages: [], start: 0 }; // not a window of this transcript
+    const lo = Math.max(from, s.dropped);
+    return { messages: s.out.slice(lo - s.dropped, before - s.dropped), start: lo };
+  } finally {
+    await fh.close();
+  }
 }
 
 /** The text of a user prompt record or folded steer (what the transcript shows as a user message, counted by `n`), else null. */

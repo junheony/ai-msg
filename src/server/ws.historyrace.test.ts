@@ -34,8 +34,9 @@ vi.mock('./sessions/transcript', async (orig) => {
   const m = await orig<typeof import('./sessions/transcript')>();
   return {
     ...m,
-    readTranscript: async (...args: Parameters<typeof m.readTranscript>) => {
-      const out = await m.readTranscript(...args);
+    // The history read (readTranscript's window, with its start for 'olderHistory').
+    readTranscriptWindow: async (...args: Parameters<typeof m.readTranscriptWindow>) => {
+      const out = await m.readTranscriptWindow(...args);
       const name = path.basename(args[0]);
       const n = hook.reads.get(name) ?? 0;
       hook.reads.set(name, n + 1);

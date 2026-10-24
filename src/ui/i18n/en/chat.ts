@@ -44,6 +44,8 @@ export const chat = {
   image: (i: number) => `Image ${i}`,
   /** The pill over a transcript scrolled up: back to the end, or how many messages came in meanwhile. */
   jump: { bottom: 'Jump to bottom', unread: (n: number) => (n === 1 ? '1 new message' : `${n} new messages`) },
+  /** 'olderHistory': the line at the top of the transcript — load earlier messages, loading, or the start reached. */
+  older: { more: 'Show earlier messages', loading: 'Loading earlier messages…', start: 'Start of the conversation', retry: 'Couldn’t load earlier messages · Try again' },
   /** 한도가 풀리면 자동으로 이어가기: the session's one line (`time` = local H:MM) and its cancel button. */
   composer: {
     stop: 'Stop',

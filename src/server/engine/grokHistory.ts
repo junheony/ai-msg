@@ -5,6 +5,7 @@ import readline from 'node:readline';
 import type { TranscriptMessage } from '../../shared/session-types';
 import { stripSystemReminders } from '../../shared/choices';
 import { GROK_SESSION_ID_RE } from './GrokEngine';
+import { readByteWindow, readByteWindowBefore, type ByteWindow, type OffsetBuilder } from './lineWindow';
 
 type Rec = Record<string, unknown>;
 const rec = (v: unknown): Rec | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Rec) : null);
@@ -71,34 +72,67 @@ export async function readGrokTranscriptTail(file: string, maxBytes = 16 * 1024 
   }
   const out: TranscriptMessage[] = [];
   for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    let r: Rec | null;
-    try { r = rec(JSON.parse(line)); } catch { continue; }
-    if (!r) continue;
-    if (r.type === 'user') {
-      const t = grokUserText(r.content);
-      if (t) out.push({ kind: 'user', text: t, ts: null });
-    } else if (r.type === 'assistant') {
-      const toolCalls = (Array.isArray(r.tool_calls) ? r.tool_calls : []).flatMap((c) => {
-        const tc = rec(c);
-        const fn = rec(tc?.function);
-        const name = typeof tc?.name === 'string' ? tc.name : typeof fn?.name === 'string' ? fn.name : null;
-        if (!tc || typeof tc.id !== 'string' || !name) return [];
-        const raw = tc.arguments ?? fn?.arguments;
-        let input: unknown = raw ?? {};
-        if (typeof raw === 'string') { try { input = JSON.parse(raw); } catch { input = raw; } }
-        return [{ id: tc.id, name, input }];
-      });
-      const body = textOf(r.content);
-      if (body || toolCalls.length) out.push({ kind: 'assistant', text: body, model: typeof r.model_id === 'string' ? r.model_id : null, toolCalls, ts: null });
-    } else if (r.type === 'tool' || r.type === 'tool_result') {
-      const id = typeof r.tool_call_id === 'string' ? r.tool_call_id : null;
-      if (!id) continue;
-      const content = textOf(r.content);
-      out.push({ kind: 'tool_result', toolUseId: id, content: content.slice(0, maxTool), isError: false, ts: null, ...(content.length > maxTool ? { truncated: true } : {}) });
-    }
+    const m = grokLine(line, maxTool);
+    if (m) out.push(m);
   }
   return out.slice(-maxMessages);
+}
+
+/** One `chat_history.jsonl` line as a transcript message (each line stands alone), or null. */
+function grokLine(line: string, maxTool: number): TranscriptMessage | null {
+  if (!line.trim()) return null;
+  let r: Rec | null;
+  try { r = rec(JSON.parse(line)); } catch { return null; }
+  if (!r) return null;
+  if (r.type === 'user') {
+    const t = grokUserText(r.content);
+    if (t) return { kind: 'user', text: t, ts: null };
+  } else if (r.type === 'assistant') {
+    const toolCalls = (Array.isArray(r.tool_calls) ? r.tool_calls : []).flatMap((c) => {
+      const tc = rec(c);
+      const fn = rec(tc?.function);
+      const name = typeof tc?.name === 'string' ? tc.name : typeof fn?.name === 'string' ? fn.name : null;
+      if (!tc || typeof tc.id !== 'string' || !name) return [];
+      const raw = tc.arguments ?? fn?.arguments;
+      let input: unknown = raw ?? {};
+      if (typeof raw === 'string') { try { input = JSON.parse(raw); } catch { input = raw; } }
+      return [{ id: tc.id, name, input }];
+    });
+    const body = textOf(r.content);
+    if (body || toolCalls.length) return { kind: 'assistant', text: body, model: typeof r.model_id === 'string' ? r.model_id : null, toolCalls, ts: null };
+  } else if (r.type === 'tool' || r.type === 'tool_result') {
+    const id = typeof r.tool_call_id === 'string' ? r.tool_call_id : null;
+    if (!id) return null;
+    const content = textOf(r.content);
+    return { kind: 'tool_result', toolUseId: id, content: content.slice(0, maxTool), isError: false, ts: null, ...(content.length > maxTool ? { truncated: true } : {}) };
+  }
+  return null;
+}
+
+function grokOffsetBuilder(maxTool: number): OffsetBuilder {
+  const messages: TranscriptMessage[] = [];
+  const starts: number[] = [];
+  return {
+    add(line, at) {
+      const m = grokLine(line, maxTool);
+      if (!m) return;
+      messages.push(m);
+      starts.push(at);
+    },
+    entries: () => ({ messages, starts }),
+  };
+}
+
+/** readGrokTranscriptTail, plus the cursor for the page before the window ('olderHistory'). */
+export async function readGrokWindow(file: string, maxBytes = 16 * 1024 * 1024, opts: GrokTranscriptOptions = {}): Promise<ByteWindow> {
+  await regularFile(file);
+  return readByteWindow(file, () => grokOffsetBuilder(opts.maxToolResultChars ?? 8192), opts.maxMessages ?? 200, maxBytes);
+}
+
+/** The page before cursor `before` (a ByteWindow.older) of a chat_history.jsonl; null = not a cursor of this file. */
+export async function readGrokBefore(file: string, before: number, count = 200, maxToolResultChars = 8192): Promise<ByteWindow | null> {
+  await regularFile(file);
+  return readByteWindowBefore(file, before, () => grokOffsetBuilder(maxToolResultChars), count);
 }
 
 /** The first user prompt's first line (80 chars) in the first `maxBytes` of a `chat_history.jsonl`: a title fallback. */

@@ -506,6 +506,14 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 @keyframes skeleton-pulse { 50% { opacity: .45; } }
 /* Cached transcript shown while the fresh history is on its way: a quiet line instead of the skeleton. */
 .chat-refreshing { text-align: center; font-size: var(--fs-meta); color: var(--muted); padding: 6px 0; animation: skeleton-pulse 1.4s ease-in-out infinite; }
+/* 'olderHistory': the line at the transcript's top — earlier messages on their way, the conversation's start, or the button that asks for them. */
+.older-line { text-align: center; font-size: var(--fs-meta); color: var(--muted); padding: 8px 0; }
+.older-line[role="status"] { animation: skeleton-pulse 1.4s ease-in-out infinite; }
+.older-start { display: flex; align-items: center; gap: 10px; }
+.older-start::before, .older-start::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
+.older-more { display: block; margin: 8px auto; padding: 4px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-meta); cursor: pointer; }
+.older-more:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 6%, transparent); }
+@media (pointer: coarse) { .older-more { min-height: 44px; padding: 0 16px; } }
 .composer textarea { display: block; width: 100%; min-height: 46px; max-height: 40vh; padding: 12px 14px 4px; border: 0; background: transparent; resize: none; outline: none; line-height: 1.5; font-size: var(--fs-body); }
 .composer textarea::placeholder { color: var(--faint); }
 .composer textarea:placeholder-shown { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

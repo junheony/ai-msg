@@ -31,6 +31,7 @@
 | `sessionIcons` | 사이드바·머리 칩의 세션 아이콘을 직접 고른다. `hello`·`index` 에 `sessionIcons: Record<세션 id, 아이콘>`(아이콘은 `src/shared/sessionIcons.ts` 의 이모지 또는 `glyph:<이름>`)을 싣고, `POST /api/session-icon {sessionId, icon}` 이 하나를 정한다(`icon: null` 은 지움) → `{ sessionIcons }` 로 답하고 바뀌었으면 `index` 를 방송한다. 잘못된 값 `400`, 저장 상한(2000개) `409` `{ error }`. 세션을 휴지통에 넣으면 그 아이콘도 지운다. 저장은 `<configDir>/session-icons.json`. 쿠키·Origin 검사는 다른 `/api/*` 와 같다 | 아바타는 첫 글자 모노그램만, 누를 수 없음 |
 | `heartbeat` | 클라이언트가 `hello` 를 받은 뒤 `{type:'heartbeat'}` 를 보내면 그 소켓에만 `HEARTBEAT_MS`(10초)마다 `{type:'heartbeat'}` 를 보낸다(규칙 3). UI 는 아무 메시지 없이 `HEARTBEAT_TIMEOUT_MS`(25초)가 지나면 소켓을 닫고 다시 연결한다(`open_session` 의 답 — history·catchup·그 세션의 error — 을 기다리는 동안은 기한 4배·보낸 뒤 최대 90초, 얼었던 탭이 늦게 깨어나면 5초 유예, 감시로 새로 연 소켓은 첫 메시지(hello)까지 감시 안 함, 열렸는데 hello 가 15초 안에 안 오면 다시 연결). drain 중 `activity` 에는 `drainReason: 'restart' \| 'stop'` 도 싣는다(SIGUSR2·`지금 재시작` = restart, SIGTERM·SIGINT = stop — stop 이면 거절 문구도 "꺼지는 중". install-launchd.sh·`ai-msg service restart` 도 SIGTERM 이라 stop 으로 분류된다: 다시 켜진다는 약속이 없다는 뜻일 뿐이라 문구는 "꺼지는 중 — 다시 켜지면 이어서 보냄" 으로 중립) | 하트비트 감시 없음(조용한 소켓은 브라우저 close 까지 그대로), 끊김 막대는 "다시 연결하는 중…" 으로만 |
 | `historyImages` | `GET /api/sessions/<세션 id>/images/<n>/<k>` 가 Claude 세션 기록의 `n` 번째 사용자 메시지(기록의 `n` 과 같은 셈)에 든 `k` 번째 이미지(base64 PNG·JPEG·GIF·WebP)를 준다. 파일은 세션 색인에서만 찾고(요청 경로를 쓰지 않음), 형식은 바이트로 판별, 그 밖은 `404`. 쿠키·Origin 검사는 다른 `/api/*` 와 같다 | 대화 기록 속 이미지는 `이미지 N장` 알약으로만 |
+| `olderHistory` | `history.older` 에 더 앞쪽 기록의 커서를 싣고(`null` = 처음부터 다 보냄), `load_older{sessionId, before, reqId?}` 에 `older_history` 로 답한다(아래 "앞쪽 기록 이어 불러오기") | 처음 열 때 받은 최근 200개만, 위로 올려도 더 없음 |
 
 기능을 더할 때: `FEATURES` 에 이름을 더하고, UI 는 `has()` 로 갈라 쓰고, 이 표에 한 줄 더한다. 배포된 이름은 지우지 않는다.
 
@@ -100,6 +101,16 @@ HTTP 는 새 경로·쿼리만 더하고 기존 응답 모양은 바꾸지 않�
 - 요청에 오류가 오면 1초 뒤 다시 묻고, 실패할 때마다 두 배로 늘려 30초까지 간다. 답을 받거나 재연결·화면 복귀 때 1초로 돌아간다. 같은 오류는 한 번만 보여 준다. `code: 'not_found'`(없는 세션)는 다시 묻지 않는다.
 - 답이 아예 없으면 같은 소켓에 다시 보내지 않는다. 30초 동안 답이 없으면 그 소켓을 버리고 새로 연결한다(새 `hello` 에서 다시 묻는다).
 - `history.acceptedRefs` 에 이 패널이 보내고 기다리던 `clientRef` 가 있으면, 그 `turn_started` 는 이미 지나간 것이다(순번이 건너뛰어 적용되지 않았을 수 있다). 패널은 기다림을 풀고 실행 중인 턴을 자기 것으로 삼는다.
+
+## 앞쪽 기록 이어 불러오기 (`olderHistory`)
+
+- `history` 는 지금처럼 기록의 마지막 200개(`messages`)를 보낸다. `older` 는 선택 필드다. 문자열이면 그 앞이 더 있고 그 값이 다음 요청의 커서다. `null` 이면 `messages` 가 기록의 처음부터다. 없으면 모름(옛 서버, Gemini·Grok Bot 처럼 앞쪽을 읽을 수 없는 세션, 테스트가 주입한 읽기 함수) — UI 는 버튼도 끝 표시도 내지 않는다.
+- 커서는 UI 에게 불투명한 문자열이다(최대 `OLDER_CURSOR_MAX` = 64자). 서버 안에서는 Claude 가 `i<절대 순번>`(그 창 첫 메시지가 기록 전체에서 몇 번째인지), Codex·Grok 이 `b<바이트 오프셋>`(첫 메시지를 만든 줄이 시작하는 바이트)이다.
+- 클라이언트: `load_older { sessionId, before, reqId? }`. 서버: `older_history { sessionId, before, reqId?, messages, older, error? }` — `messages` 는 `before` 바로 앞의 최대 200개(오래된 것 먼저, 이미 가진 것과 겹치지 않음), `older` 는 `history.older` 와 같은 뜻. 요청한 소켓에만 답한다(규칙 3: 요청이 있을 때만).
+- `error`(빈 `messages`, `older: null`): `'not_found'` 없는 세션, `'bad_cursor'` 이 세션의 커서가 아님(앞쪽을 읽을 수 없는 세션 포함 — 기록이 다시 쓰였거나 만든 값), `'read_failed'` 파일을 읽지 못함(다시 시도 가능). 사람이 읽을 문장은 싣지 않는다 — UI 가 자기 언어로 보인다.
+- 앞쪽 페이지는 머리(최근 창)·`pos`·`catchup` 과 따로 논다. 서버는 `load_older` 를 받아도 보기 상태·스트림 위치를 건드리지 않고, UI 는 받은 페이지를 항목 앞에 붙이기만 한다. 새 `history`(다시 열기·밖에서 바뀐 기록)가 오면 앞쪽 상태는 처음부터 다시 시작한다(불러온 앞쪽 페이지도 그 `history` 로 바뀐다).
+- UI 는 패널마다 진행 중 요청 하나(`reqId`)만 둔다. 답의 `sessionId`·`reqId`·`before` 가 그 패널이 지금 보는 세션·진행 중 요청·커서와 모두 같을 때만 붙인다 — 세션을 바꾸거나 다시 연 뒤 늦게 온 답은 버린다. 재연결(`hello`)하면 진행 중 요청을 잊고 다시 물을 수 있게 한다. 페이지 경계에서 호출이 앞 페이지에 있는 도구 결과는 들고 있다가 그 페이지가 오면 붙인다.
+- 서버 비용: Claude 는 첫 요청 때 기록을 `before` 까지 한 번 훑으며 약 1MB 마다 표시(빌더 상태)를 남기고(메모리, 파일 8개까지, 파일이 커지기만 하면 유지), 다음 페이지부터는 가까운 표시에서 이어 읽는다. Codex·Grok 은 커서 앞 1MB 부터 읽어 페이지가 찰 때까지 두 배씩(최대 64MB) 넓힌다. Codex 는 구간 첫 메시지가 더 앞에서 시작된 것일 수 있어 다음 페이지로 넘기고, 구간 안 첫 `turn_context` 이전 assistant 의 `model` 은 알 수 없어 `null` 이다.
 
 ## 잠긴 GPT 스레드 (`turn_result.errorCode`)
 

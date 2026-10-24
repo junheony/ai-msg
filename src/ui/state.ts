@@ -263,6 +263,8 @@ export type PaneState = {
   notices?: PaneNotice[];
   /** The opened session's history has not arrived yet (the pane shows a loading placeholder instead of a blank). */
   loading?: boolean;
+  /** 'olderHistory': paging back through the shown session's transcript; absent = the server gave no cursor (no paging). */
+  older?: OlderHistory;
   /** Split-view column weight (`fr`; absent = 1): the splitter between two panes trades it between them. */
   size?: number;
   /** A card floating over the split view (pulled off the rail); absent = docked in the grid. A phone shows it as a tab. */
@@ -281,6 +283,49 @@ export type PaneState = {
    */
   routeFit?: { engine: EngineKind; need: string; text: string; attachments: SentFile[] } | null;
 };
+
+/**
+ * Where a pane stands paging back ('olderHistory'). `sessionId`: the session the cursor is of (a pane that moved on
+ * ignores it). `cursor`: what `load_older.before` asks for next, null = the items start at the transcript's beginning.
+ * `reqId`: the request in flight (its answer is the only one applied). `failed`: the last one came back empty with an
+ * error (the button offers it again). `orphans`: tool results at the front whose call is on a page not loaded yet —
+ * they join it when it comes.
+ */
+export type OlderHistory = { sessionId: string; cursor: string | null; reqId: string | null; failed?: boolean; orphans: TranscriptMessage[] };
+
+/** Tool results in `messages` whose call is not before them in it (fromTranscript leaves them out). */
+function orphanResults(messages: TranscriptMessage[]): TranscriptMessage[] {
+  const calls = new Set<string>();
+  const out: TranscriptMessage[] = [];
+  for (const m of messages) {
+    if (m.kind === 'assistant') for (const t of m.toolCalls) calls.add(t.id);
+    else if (m.kind === 'tool_result' && !calls.has(m.toolUseId)) out.push(m);
+  }
+  return out;
+}
+
+/** A history's paging state: fresh with each history (absent when the server sent no cursor). */
+function olderOf(msg: { sessionId: string; messages: TranscriptMessage[]; older?: string | null }): OlderHistory | undefined {
+  return msg.older === undefined ? undefined : { sessionId: msg.sessionId, cursor: msg.older, reqId: null, orphans: orphanResults(msg.messages) };
+}
+
+/** The pane's paging state when it is about the session the pane shows (else none). */
+export function olderOfPane(pane: PaneState): OlderHistory | undefined {
+  return pane.older && pane.session?.sessionId === pane.older.sessionId ? pane.older : undefined;
+}
+
+/**
+ * An `older_history` answer on one pane: applied only when it answers the pane's request in flight for the session it
+ * shows (a late answer after a switch, a reopen or a newer history is dropped). The page goes in front of the items;
+ * tool results waiting for their call (orphans) join it.
+ */
+function paneOnOlder(pane: PaneState, msg: Extract<ServerMessage, { type: 'older_history' }>): PaneState {
+  const o = olderOfPane(pane);
+  if (!o || o.sessionId !== msg.sessionId || o.reqId === null || o.reqId !== (msg.reqId ?? null) || o.cursor !== msg.before) return pane;
+  if (msg.error) return { ...pane, older: { ...o, reqId: null, failed: true } };
+  const page = [...msg.messages, ...o.orphans];
+  return { ...pane, items: [...fromTranscript(page), ...pane.items], older: { sessionId: o.sessionId, cursor: msg.older, reqId: null, orphans: orphanResults(page) } };
+}
 
 /** How many body sizes a card remembers its box for. */
 export const FLOAT_SIZES = 4;
@@ -433,6 +478,8 @@ export type Action =
   | { type: 'server'; msg: ServerMessage; /** with a `history`: files sent earlier in that session (persist.ts), matched back onto its user items */ sentFiles?: SentRecord[] }
   | { type: 'connected'; value: boolean; /** When `value` is false: the time (ms) it was noticed; the first one of an outage is kept. */ at?: number }
   | { type: 'open'; sessionId: string | null; cwd: string; title: string; paneId?: string }
+  /** 'olderHistory': `load_older` went out for the pane's session with this reqId (its older_history is the one applied). */
+  | { type: 'older_request'; paneId: string; reqId: string }
   /** 메시지 편집 갈래: the pane becomes a new session holding its history before user message `n`, then `text` (the send is under way). */
   | { type: 'branch_edit'; n: number; text: string; paneId?: string; clientRef?: string }
   /** A refused edit goes back to its original session: the new pane's whole queue (the edited text first) goes with it. */
@@ -721,7 +768,9 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       const adopt = pane.session && sid === null && live?.sessionId ? { session: { ...pane.session, sessionId: live.sessionId }, loading: true } : {};
       // A turn that ended meanwhile (or one restored by hydrate that the server no longer runs) is not this pane's to wait on.
       const ended = !live && pane.activeTurnId ? { myTurns: base.myTurns.filter((t) => t !== pane.activeTurnId) } : {};
-      const next: PaneState = { ...base, activeTurnId, awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, bg, ...run, queue: release(held, (q) => q.restart === 'hold'), ...adopt, ...ended };
+      // An older page asked for on the old socket is not coming: it can be asked for again.
+      const older = pane.older?.reqId ? { older: { ...pane.older, reqId: null } } : {};
+      const next: PaneState = { ...base, activeTurnId, awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, bg, ...run, queue: release(held, (q) => q.restart === 'hold'), ...adopt, ...ended, ...older };
       // Steers in flight across a reconnect: their answer went to the old socket, so they may have gone in — queued again, paused.
       return unsteer(next, () => true);
     }
@@ -757,7 +806,7 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       const started = mine ? { awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, ...(msg.runningTurnId && !pane.myTurns.includes(msg.runningTurnId) ? { myTurns: [...pane.myTurns, msg.runningTurnId] } : {}) } : {};
       // A route_fit card up (a reconnect): its message goes back to the queue, paused, as its ✕ would — never lost.
       const kept = routeFitBack(pane);
-      return { ...kept, ...started, ...settleQueue(kept, msg, items), session: { sessionId: msg.sessionId, cwd: msg.cwd, account: msg.account, title, engine, sandbox: msg.sandbox ?? null, accountPin: msg.accountPin ?? null, ...(msg.permissionMode ? { permissionMode: msg.permissionMode } : {}) }, items, activeTurnId: msg.runningTurnId, model, ...efforts, ...ACTIVITY_RESET, runStartedAt, ...notice };
+      return { ...kept, ...started, ...settleQueue(kept, msg, items), session: { sessionId: msg.sessionId, cwd: msg.cwd, account: msg.account, title, engine, sandbox: msg.sandbox ?? null, accountPin: msg.accountPin ?? null, ...(msg.permissionMode ? { permissionMode: msg.permissionMode } : {}) }, items, activeTurnId: msg.runningTurnId, model, ...efforts, ...ACTIVITY_RESET, runStartedAt, ...notice, older: olderOf(msg) };
     }
     case 'catchup': {
       // The device was not behind, or what it missed follows as ordinary events: the transcript stays as it is. Only what a
@@ -1286,6 +1335,10 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       const doubted = state.panes.filter((p) => p.session?.sessionId === msg.sessionId).flatMap((p) => p.queue.filter(doubt).map((q) => q.text || '첨부만'));
       return { ...state, ...(doubted.length ? { error: `이미 들어갔을 수 있어 멈춰 둔 메시지: ${doubted.join(' / ')}` } : {}), panes: state.panes.map((p) => (p.session?.sessionId === msg.sessionId ? { ...paneOnServer(p, msg, false, state.accounts), loading: false } : p)) };
     }
+    case 'older_history': {
+      const panes = state.panes.map((p) => paneOnOlder(p, msg));
+      return panes.some((p, i) => p !== state.panes[i]) ? { ...state, panes } : state;
+    }
     case 'permission_request': {
       // Prompts from every session are shown (any device may answer); replays on reconnect are deduped (review M10).
       if (state.pending.some((p) => p.requestId === msg.requestId)) return state;
@@ -1429,8 +1482,14 @@ export function reducer(state: AppState, action: Action): AppState {
               // Another session: its model is its own again (history shows it); a new one starts on the default unless picked.
               // The 자동 engine: 자동 model again (a model 자동 routed to is never sent with engine 자동).
               modelPicked: false, ...(action.sessionId === null && !p.modelPicked ? (p.engine === 'auto' ? { model: 'auto' as const } : engineOf(p.model) === 'claude' ? { model: DEFAULT_MODEL } : {}) : {}) }),
-        handoff: null, handoffFrom: null, prefill: null, notices: [],
+        handoff: null, handoffFrom: null, prefill: null, notices: [], older: undefined,
       }));
+    }
+    case 'older_request': {
+      const o = state.panes.find((x) => x.id === action.paneId);
+      const older = o && olderOfPane(o);
+      if (!older?.cursor || older.reqId) return state;
+      return updatePane(state, action.paneId, (p) => ({ ...p, older: { ...older, reqId: action.reqId, failed: false } }));
     }
     case 'branch_undo': {
       const p = state.panes.find((x) => x.id === (action.paneId ?? state.activePaneId));
@@ -1520,7 +1579,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'reattach': return updatePane(state, action.paneId, (p) => ({ ...p, attachments: p.attachments.map((a) => (a.id === action.id ? action.attachment : a)) }));
     case 'clear_pane': return updatePane({ ...park(state, action.paneId), recent: remember(state.recent, state.panes.find((x) => x.id === (action.paneId ?? state.activePaneId))) }, action.paneId, (p) => ({
       ...p, session: null, items: [], activeTurnId: null, myTurns: [], awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, attachments: [], queue: [], queuePaused: false, queueSendNow: null, ...ACTIVITY_RESET, loading: false,
-      handoff: null, handoffFrom: null, prefill: null, notices: [],
+      handoff: null, handoffFrom: null, prefill: null, notices: [], older: undefined,
     }));
     case 'add_pane': {
       if (state.panes.length >= PANE_LIMIT) return state;
