@@ -126,7 +126,7 @@ describe('Grok chat_history paging', () => {
 });
 
 describe('open_session.from on byte cursors (readCodexFrom / readGrokFrom)', () => {
-  it('Codex: from a page cursor to the end = that page plus the window; more than max → null; not a position in the file → null', async () => {
+  it('Codex: from a page cursor to the end = that page plus the window; more than max → its last 200 from the same read; not a position in the file → null', async () => {
     const f = await write('r.jsonl', codexLines(120, 10));
     const w = await readCodexWindow(f);
     const page = await readCodexBefore(f, w.older!);
@@ -134,7 +134,9 @@ describe('open_session.from on byte cursors (readCodexFrom / readGrokFrom)', () 
     // Models before the region's first turn_context are not known there (as on an older page).
     expect(from!.older).toBe(page!.older);
     expect(noModel(from!.messages)).toEqual(noModel([...page!.messages, ...w.messages]));
-    expect(await readCodexFrom(f, page!.older!, 300)).toBeNull();
+    const over = await readCodexFrom(f, page!.older!, 300);
+    expect(noModel(over!.messages)).toEqual(noModel(w.messages));
+    expect(over!.older).toBe(w.older);
     expect(await readCodexFrom(f, (await fs.stat(f)).size, 2000)).toBeNull();
     expect(await readCodexFrom(f, -1, 2000)).toBeNull();
     // From the start: everything, older null.
@@ -146,7 +148,7 @@ describe('open_session.from on byte cursors (readCodexFrom / readGrokFrom)', () 
     const w = await readGrokWindow(f);
     const page = await readGrokBefore(f, w.older!);
     expect(await readGrokFrom(f, page!.older!, 2000)).toEqual({ messages: [...page!.messages, ...w.messages], older: page!.older });
-    expect(await readGrokFrom(f, page!.older!, 399)).toBeNull();
+    expect(await readGrokFrom(f, page!.older!, 399)).toEqual(w);
   });
 
   it('the window builder keeps memory bounded: a rollout of many messages still gives the last 200', async () => {

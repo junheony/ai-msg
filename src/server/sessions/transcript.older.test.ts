@@ -148,6 +148,25 @@ describe('readTranscriptBefore', () => {
     for (const at of [150, 1200, full.length - 10]) expect((await readTranscriptBefore(f, at, 100)).messages).toEqual(full.slice(at - 100, at));
   });
 
+  it('maxScanBytes: a scan that would read further gives an empty page; the marks it left stay, so later scans go on from them', async () => {
+    setTranscriptMarkLimits({ chunk: 4096, max: 1000 });
+    const f = await file(records(3000, 100));
+    const full = await readTranscriptUncached(f, { maxMessages: Infinity });
+    const at = full.length - 10;
+    expect(await readTranscriptBefore(f, at, 10, undefined, 16 * 1024)).toEqual({ messages: [], start: 0 });
+    const marks = transcriptMarkCount(f);
+    expect(marks).toBeGreaterThan(0);
+    let tries = 1;
+    let p = await readTranscriptBefore(f, at, 10, undefined, 16 * 1024);
+    while (!p.messages.length && tries < 1000) {
+      p = await readTranscriptBefore(f, at, 10, undefined, 16 * 1024);
+      tries++;
+    }
+    expect(transcriptMarkCount(f)).toBeGreaterThan(marks);
+    expect(tries).toBeGreaterThan(2);
+    expect(p).toEqual({ messages: full.slice(at - 10, at), start: at - 10 });
+  });
+
   it('invalid before: ≤ 0 or past the end gives an empty page', async () => {
     const f = await file(records(30));
     expect(await readTranscriptBefore(f, 0)).toEqual({ messages: [], start: 0 });

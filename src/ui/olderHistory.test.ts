@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ServerMessage } from '../shared/protocol';
 import type { TranscriptMessage } from '../shared/session-types';
-import { initialState, olderOfPane, reducer, withOlderFrom, type AppState, type ChatItem } from './state';
+import { initialState, olderOfPane, reducer, reopenForOlder, withOlderFrom, type AppState, type ChatItem } from './state';
 
 const pane = (s: AppState) => s.panes[0]!;
 const play = (msgs: ServerMessage[], start: AppState): AppState => msgs.reduce((s, msg) => reducer(s, { type: 'server', msg }), start);
@@ -77,6 +77,23 @@ describe('older history (pane state)', () => {
     s = reducer(s, { type: 'clear_pane' });
     expect(pane(s).older).toBeUndefined();
     expect(play([page('s1', 'i2', 'r1', [user('a')], null)], s)).toBe(s);
+  });
+
+  it('bad_cursor: no retry that fails again — the paging state goes and the session is opened afresh (without from)', () => {
+    let s = play([history('s1', [user('c')], 'i2.aaaaaaaa', 'i3.aaaaaaaa')], opened('s1'));
+    s = ask(s, 'r1');
+    const refused = page('s1', 'i2.aaaaaaaa', 'r1', [], null, 'bad_cursor');
+    expect(reopenForOlder(s.panes, refused)).toBe('s1');
+    // Only for the pane's own request: a late or foreign answer reopens nothing; other errors keep the retry.
+    expect(reopenForOlder(s.panes, page('s1', 'i2.aaaaaaaa', 'r9', [], null, 'bad_cursor'))).toBeNull();
+    expect(reopenForOlder(s.panes, page('s1', 'i2.aaaaaaaa', 'r1', [], null, 'read_failed'))).toBeNull();
+    s = play([refused], s);
+    expect(olderOfPane(pane(s))).toBeUndefined();
+    expect(texts(pane(s).items)).toEqual(['c']);
+    expect(withOlderFrom({ type: 'open_session', sessionId: 's1' }, s.panes)).toEqual({ type: 'open_session', sessionId: 's1' });
+    // The reopened history brings paging back.
+    s = play([history('s1', [user('b'), user('c')], 'i1.bbbbbbbb', 'i1.bbbbbbbb')], s);
+    expect(olderOfPane(pane(s))).toMatchObject({ cursor: 'i1.bbbbbbbb', reqId: null });
   });
 
   it('an error marks the request failed and keeps the cursor for a retry', () => {

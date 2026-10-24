@@ -325,14 +325,30 @@ export function olderOfPane(pane: PaneState): OlderHistory | undefined {
   return pane.older && pane.session?.sessionId === pane.older.sessionId ? pane.older : undefined;
 }
 
+/** Whether `msg` answers the pane's `load_older` in flight for the session it shows (else it is late or someone else's). */
+function answersOlder(pane: PaneState, msg: Extract<ServerMessage, { type: 'older_history' }>): boolean {
+  const o = olderOfPane(pane);
+  return !!o && o.sessionId === msg.sessionId && o.reqId !== null && o.reqId === (msg.reqId ?? null) && o.cursor === msg.before;
+}
+
+/**
+ * The session to open afresh for an `older_history` that refused a pane's cursor (bad_cursor: the transcript was
+ * rewritten or replaced, so asking again fails the same way): its id, else null. Asked before the answer is applied.
+ */
+export function reopenForOlder(panes: PaneState[], msg: ServerMessage): string | null {
+  return msg.type === 'older_history' && msg.error === 'bad_cursor' && panes.some((p) => answersOlder(p, msg)) ? msg.sessionId : null;
+}
+
 /**
  * An `older_history` answer on one pane: applied only when it answers the pane's request in flight for the session it
  * shows (a late answer after a switch, a reopen or a newer history is dropped). The page goes in front of the items;
- * tool results waiting for their call (orphans) join it.
+ * tool results waiting for their call (orphans) join it. bad_cursor drops the paging state (no retry that fails again,
+ * no `from` of the old file): the session is opened afresh (reopenForOlder) and its history brings a new one.
  */
 function paneOnOlder(pane: PaneState, msg: Extract<ServerMessage, { type: 'older_history' }>): PaneState {
   const o = olderOfPane(pane);
-  if (!o || o.sessionId !== msg.sessionId || o.reqId === null || o.reqId !== (msg.reqId ?? null) || o.cursor !== msg.before) return pane;
+  if (!o || !answersOlder(pane, msg)) return pane;
+  if (msg.error === 'bad_cursor') return { ...pane, older: undefined };
   if (msg.error) return { ...pane, older: { ...o, reqId: null, failed: true } };
   const page = [...msg.messages, ...o.orphans];
   return { ...pane, items: [...fromTranscript(page), ...pane.items], older: { sessionId: o.sessionId, cursor: msg.older, reqId: null, orphans: orphanResults(page), from: msg.at ?? o.from } };

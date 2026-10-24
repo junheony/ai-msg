@@ -359,19 +359,36 @@ export function Chat(p: ChatProps) {
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
-  // Scrolled up, the items change (a page put in front, a history replacing them — the same messageKeys keep their DOM
-  // nodes): the item at the view's top, read off the DOM while it still shows the old items, is put back where it was.
-  // Only how far that item moved goes into scrollTop, so growth below it, and native scroll anchoring having moved it
-  // already, change nothing.
-  const itemsAnchor = useRef<{ items: ChatItem[]; at: { el: Element; offset: number } | null }>({ items: p.items, at: null });
+  // The items change while scrolled up; read off the DOM during render, while it still shows the old items:
+  // - a page put in front (the old items are the new ones' tail, the same objects): what is below the page stays put,
+  //   so scrollTop grows by exactly how much the content grew (its keys may be positional, e.g. Codex / Grok items or
+  //   ones before the first prompt, so the DOM nodes are no anchor). Whether detached or not: the user is at the top.
+  // - else (a history replacing them — the same messageKeys keep their DOM nodes): the item at the view's top is put
+  //   back where it was. Lines that come and go with the change (loading, time stamps) are no anchor. Only how far
+  //   that item moved goes into scrollTop, so growth below it and native scroll anchoring having moved it change nothing.
+  const itemsAnchor = useRef<{ items: ChatItem[]; at: { el: Element; offset: number } | null; grew: { height: number; top: number } | null }>({ items: p.items, at: null, grew: null });
   if (itemsAnchor.current.items !== p.items) {
-    itemsAnchor.current = { items: p.items, at: scroll.detached && bodyRef.current ? viewAnchor(bodyRef.current) : null };
+    const prev = itemsAnchor.current.items;
+    const el = bodyRef.current;
+    const tail = p.items.length - prev.length;
+    const prepended = !!el && prev.length > 0 && tail > 0 && p.items[tail] === prev[0] && p.items[p.items.length - 1] === prev[prev.length - 1];
+    itemsAnchor.current = {
+      items: p.items,
+      grew: prepended ? { height: el.scrollHeight, top: el.scrollTop } : null,
+      at: !prepended && scroll.detached && el ? viewAnchor(el, (e) => e.matches('.older-line, .older-more, .msg-time, .chat-refreshing')) : null,
+    };
   }
   useLayoutEffect(() => {
     const el = bodyRef.current;
-    const a = itemsAnchor.current.at;
+    const { at: a, grew } = itemsAnchor.current;
     itemsAnchor.current.at = null;
-    if (!el || !a || !a.el.isConnected) return;
+    itemsAnchor.current.grew = null;
+    if (!el) return;
+    if (grew) {
+      el.scrollTop = grew.top + (el.scrollHeight - grew.height);
+      return;
+    }
+    if (!a || !a.el.isConnected) return;
     const moved = a.el.getBoundingClientRect().top - el.getBoundingClientRect().top - a.offset;
     if (Math.abs(moved) > 0.5) el.scrollTop += moved;
   }, [p.items]);

@@ -44,8 +44,11 @@ const nativeAnchoring = () => typeof CSS !== 'undefined' && typeof CSS.supports 
  * (0 = only scrolled away — growth of a message already there, e.g. a streaming reply, is not new — or that message is
  * gone, e.g. the list was rebuilt: the count is unknown, so none is shown).
  */
-/** The first child of `el` crossing its top edge, and how far below that edge its top is (negative: above it). */
-export function viewAnchor(el: HTMLElement): { el: Element; offset: number } | null {
+/**
+ * The first child of `el` crossing its top edge, and how far below that edge its top is (negative: above it). `skip`:
+ * children not to anchor to (ones that come and go with the change, e.g. a loading line): the next one after them.
+ */
+export function viewAnchor(el: HTMLElement, skip?: (e: Element) => boolean): { el: Element; offset: number } | null {
   const top = el.getBoundingClientRect().top;
   const kids = el.children;
   let lo = 0, hi = kids.length - 1, found: Element | null = null;
@@ -54,6 +57,7 @@ export function viewAnchor(el: HTMLElement): { el: Element; offset: number } | n
     const kid = kids[mid]!;
     if (kid.getBoundingClientRect().bottom > top) { found = kid; hi = mid - 1; } else lo = mid + 1;
   }
+  while (found && skip?.(found)) found = found.nextElementSibling;
   return found ? { el: found, offset: found.getBoundingClientRect().top - top } : null;
 }
 

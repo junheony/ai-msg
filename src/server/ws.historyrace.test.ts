@@ -28,6 +28,9 @@ import { rootsOf, testRegistry } from '../shared/accounts.testkit';
 const hook = vi.hoisted(() => ({
   hold: null as null | { file: string; reached: () => void; until: Promise<void> },
   during: null as null | { file: string; run: (n: number) => Promise<void> },
+  /** The same after every readTranscriptBefore of the file named (open_session.from's reach back). */
+  duringBefore: null as null | { file: string; run: (n: number) => Promise<void> },
+  befores: 0,
   reads: new Map<string, number>(),
 }));
 vi.mock('./sessions/transcript', async (orig) => {
@@ -43,6 +46,12 @@ vi.mock('./sessions/transcript', async (orig) => {
       if (hook.during && args[0].endsWith(hook.during.file)) await hook.during.run(n);
       const h = hook.hold;
       if (h && args[0].endsWith(h.file)) { hook.hold = null; h.reached(); await h.until; }
+      return out;
+    },
+    readTranscriptBefore: async (...args: Parameters<typeof m.readTranscriptBefore>) => {
+      const out = await m.readTranscriptBefore(...args);
+      const n = hook.befores++;
+      if (hook.duringBefore && args[0].endsWith(hook.duringBefore.file)) await hook.duringBefore.run(n);
       return out;
     },
   };
@@ -247,6 +256,35 @@ describe('history read while the session streams', () => {
     c.hello();
     expect(out).toEqual([{ type: 'open_session', sessionId: sid }]);
     for (const x of [a, b]) x.close();
+  });
+
+  it('open_session.from: a segment that ends while the read reaches back to `from` is read again too', async () => {
+    const sid = 'b9b9b9b9-0000-4000-8000-000000000005';
+    const { a, line, segment } = await parkedSession(sid);
+    // More than a window, so the reach back to `from` really reads the file before the window.
+    for (let i = 0; i < 150; i++) {
+      await line({ type: 'user', message: { role: 'user', content: `q${i}` } });
+      await line({ type: 'assistant', message: { id: `old${i}`, model: 'claude-opus-5-5', content: [{ type: 'text', text: `a${i}` }] } });
+    }
+    const b = await client();
+    b.send({ type: 'open_session', sessionId: sid });
+    const plain = await b.next('history');
+    expect(plain.older).toBeTruthy();
+    b.send({ type: 'load_older', sessionId: sid, before: plain.older });
+    const page = await b.next('older_history');
+    expect(page.at).toBeDefined();
+    const reads = hook.reads.get(`${sid}.jsonl`) ?? 0;
+    hook.befores = 0;
+    hook.duringBefore = { file: `${sid}.jsonl`, run: async (n) => { if (n === 0) await segment('ended meanwhile'); } };
+    const c = await client();
+    c.send({ type: 'open_session', sessionId: sid, from: page.at });
+    const h = await c.next('history');
+    hook.duringBefore = null;
+    expect(hook.reads.get(`${sid}.jsonl`)).toBe(reads + 2);
+    expect(h.at).toBe(page.at);
+    expect(h.pos).toBeDefined();
+    expect(texts(h)).toContain('ended meanwhile');
+    for (const x of [a, b, c]) x.close();
   });
 
   it('a tab the server stopped telling about the session is healed through the real catch-up path within 30 s of the head', async () => {

@@ -21,7 +21,7 @@ import { displayError, redactSecrets } from './engine/redact';
 import { CWD_MISSING_NOTICE, importBlockReason, liveRolloutNotice, rolloutActiveAgeMs } from './sessions/CodexImports';
 import { findGrokSessionDir, readGrokBefore, readGrokFrom, readGrokTranscriptTail, readGrokWindow } from './engine/grokHistory';
 import type { ByteWindow } from './engine/lineWindow';
-import { cursorOf, fileTag, HISTORY_FROM_MAX, parseCursor } from './historyCursor';
+import { cursorOf, fileTag, HISTORY_FROM_MAX, HISTORY_FROM_SCAN_BYTES, parseCursor } from './historyCursor';
 import { elsewhereNotice } from './sessions/elsewhereNotice';
 import { GROKBOT_READONLY_NOTICE, readGrokBotTranscript } from './sessions/GrokBotImports';
 import { grokImportBlockReason } from './sessions/GrokImports';
@@ -542,10 +542,11 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
    * Per socket and Claude session it views: when its history was last sent (entries another process wrote after that are
    * not on its screen yet) and, per transcript copy, the offset the outside poll found clean up to — a tick reads only
    * what was appended since the last one. Per socket: one device opening a session must not hide from another what
-   * came in between. `from`: the earliest page ('olderHistory' cursor) the pane loaded — a history sent again reaches
-   * back to it, so the pages it scrolled up to stay.
+   * came in between. `top`: where what the socket was sent starts ('olderHistory' cursor: the history's `at`, then each
+   * page that went on from it). `from`: the same once the pane holds more than the plain window (pages, or a history
+   * that reached back) — a history sent again reaches back to it, so the pages it scrolled up to stay.
    */
-  const historyAt = new Map<WebSocket, Map<string, { at: number; clean: Map<string, number>; from?: string }>>();
+  const historyAt = new Map<WebSocket, Map<string, { at: number; clean: Map<string, number>; top?: string; from?: string }>>();
   /**
    * The open panes follow the other side: a viewed, idle Claude session whose transcript (any profile's copy) gained
    * entries deck did not write since a socket's history was sent gets that history again — read once per session and
@@ -1448,16 +1449,17 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       const mark = ends.get(sessionId) ?? 0;
       used = file;
       let { messages, start } = await readTranscriptWindow(file).catch(() => { used = found.file; return readTranscriptWindow(found.file); });
-      const exact = (ends.get(sessionId) ?? 0) === mark;
-      if (!exact && n < HISTORY_REREADS) continue;
+      // The tag and the reach back to `from` are part of the read: a segment ending while they run is read again too.
       const tag = await fileTag(used).catch(() => null);
       const c = from && tag ? parseCursor(from, 'i') : null;
       let extended = false;
       if (c && c.tag === tag && c.n <= start && start - c.n + messages.length <= HISTORY_FROM_MAX) {
-        const before = c.n < start ? await readTranscriptBefore(used, start, start - c.n).catch(() => null) : { messages: [], start };
-        if (before?.start === c.n) { messages = [...before.messages, ...messages]; start = c.n; extended = true; }
+        // Without marks (a restart) the scan runs from the file's start: past HISTORY_FROM_SCAN_BYTES the window goes as is.
+        const before = c.n < start ? await readTranscriptBefore(used, start, start - c.n, undefined, HISTORY_FROM_SCAN_BYTES).catch(() => null) : { messages: [], start };
+        if (before?.start === c.n && (before.messages.length || c.n === start)) { messages = [...before.messages, ...messages]; start = c.n; extended = true; }
       }
-      return { found, st, at, messages, exact, start, tag, extended };
+      const exact = (ends.get(sessionId) ?? 0) === mark;
+      if (exact || n >= HISTORY_REREADS) return { found, st, at, messages, exact, start, tag, extended };
     }
   };
   /**
@@ -1493,7 +1495,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     let seen = historyAt.get(ws);
     if (!seen) { seen = new Map(); historyAt.set(ws, seen); }
     const cursors = tag ? { older: start > 0 ? cursorOf('i', start, tag) : null, at: cursorOf('i', start, tag) } : {};
-    seen.set(sessionId, { at, clean: new Map(clean), ...(extended && cursors.at ? { from: cursors.at } : {}) });
+    seen.set(sessionId, { at, clean: new Map(clean), ...(cursors.at ? { top: cursors.at } : {}), ...(extended && cursors.at ? { from: cursors.at } : {}) });
     send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, accountPin: st?.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: st?.defaultModel ?? IMPORTED_DEFAULT_MODEL, messages, ...cursors, ...withoutPos(runningOf(sessionId), !exact) });
     if (t) replay(ws, t, sessionId);
     // The CLI writes a text block to the transcript only once it is finished: the one streaming now is in memory only, and
@@ -1527,7 +1529,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (!seen) { seen = new Map(); historyAt.set(ws, seen); }
     const rec = seen.get(sessionId) ?? { at: Date.now(), clean: new Map<string, number>() };
     // The pane keeps what it shows: a history sent again later reaches back to its earliest page.
-    if (from) rec.from = from;
+    if (from) { rec.from = from; rec.top = from; }
     seen.set(sessionId, rec);
     const st = deps.store.get(sessionId);
     const claude = st && !isOtherEngineState(st) ? { accountPin: st.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: st.defaultModel }
@@ -1552,7 +1554,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   const byteCursors = (w: ByteWindow, tag: string) => ({ older: w.older === null ? null : cursorOf('b', w.older, tag), at: cursorOf('b', w.older ?? 0, tag) });
   /**
    * A rollout / chat_history window and its cursors. `from` (open_session.from), a cursor of this file: the file from
-   * there to its end instead when that holds a window's worth up to HISTORY_FROM_MAX messages (fewer: the window has them all).
+   * there to its end instead when that holds a window's worth up to HISTORY_FROM_MAX messages (more: its last window,
+   * from the same read; fewer: the plain window, which has them all).
    */
   const byteHistory = async (file: string, from: string | undefined, readWindow: (f: string) => Promise<ByteWindow>, readFrom: (f: string, from: number, max: number) => Promise<ByteWindow | null>): Promise<HistoryRead> => {
     const tag = await fileTag(file).catch(() => null);
@@ -1624,9 +1627,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       const page = await src.page(before);
       if (!page) return answer([], null, 'bad_cursor');
       answer(page.messages, page.older, undefined, page.at);
-      // The pane shows this page now: a history the outside poll sends it again reaches back here.
+      // The pane shows this page now: a history the outside poll sends it again reaches back here. Only a page that goes
+      // on from what the socket was sent (a pane that moved on drops the answer, and its `top` is another).
       const rec = historyAt.get(ws)?.get(sessionId);
-      if (rec) rec.from = page.at;
+      if (rec && rec.top === before) { rec.top = page.at; rec.from = page.at; }
     } catch {
       answer([], null, 'read_failed');
     }

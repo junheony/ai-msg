@@ -11,6 +11,12 @@ export type CursorKind = 'i' | 'b';
 /** open_session.from: a history reaches back to the cursor when it has at most this many messages from there to the end. */
 export const HISTORY_FROM_MAX = 2000;
 
+/**
+ * open_session.from on a Claude transcript: the scan back to the cursor (from the nearest older-page mark, or the file's
+ * start when there is none, e.g. after a restart) reads at most this many bytes; past it the plain window is sent.
+ */
+export const HISTORY_FROM_SCAN_BYTES = 32 * 1024 * 1024;
+
 const TAG_HEAD_BYTES = 1024;
 
 /** What identifies a transcript file: its dev:ino and its first bytes, hashed to 8 hex characters. */

@@ -34,7 +34,7 @@ import { claimReload, hasDraftText, hasOpenModal, isNewBuild, shouldAutoReload }
 import { paneColumns, paneSize, resizePair } from './paneResize';
 import { hydrate, loadQueues, loadSent, loadUi, saveQueues, saveSent, saveUi, snapshotQueues, snapshotUi } from './persist';
 import { findSession } from './push';
-import { dockedPanes, initialState, openPanes, reducer, sessionsToClose, withOlderFrom, type Action, type AppState, type UploadedAttachment } from './state';
+import { dockedPanes, initialState, openPanes, reducer, reopenForOlder, sessionsToClose, withOlderFrom, type Action, type AppState, type UploadedAttachment } from './state';
 import { arrangeFloats, clampFloat, dockSlot, EDGE_PX, FLOAT_MIN_H, FLOAT_MIN_W, floatRectAt, onRail, reorderSlot, SCROLL_STEP, slotX, snapFloat, shownBox, COLLAPSED_H, useTabReorder, type FloatRect } from './paneDrag';
 import { isMacPlatform, isTypingTarget, matchPaneShortcut, matchPinShortcut, matchShortcut, type ShortcutId } from './shortcuts';
 import { useIsPhone } from './useIsPhone';
@@ -433,6 +433,9 @@ export function App() {
       if (msg.type === 'settings') settingsAck.current?.();
       // A repeat of an event already applied, one ahead of a gap (what is missing was just asked for), or a retry's same failure: not applied.
       if (!tracker.accept(msg)) return;
+      // A page cursor the server no longer knows (the transcript changed): reopen the session plainly, without `from`.
+      const reopen = reopenForOlder(latest.current.panes, msg);
+      if (reopen) sock.current?.send({ type: 'open_session', sessionId: reopen });
       dispatch(msg.type === 'history' ? { type: 'server', msg, sentFiles: loadSent(msg.sessionId) } : { type: 'server', msg });
       if (msg.type === 'turn_result') refreshIndex.current?.afterTurn();
       // ⚡ Usage credits ran out: the session's switch goes off here too (the turn's notice says so).

@@ -244,8 +244,12 @@ describe('older pages: what the reader looks at stays put', () => {
   const css = (globalThis as { CSS?: unknown }).CSS;
   const q = (n: number): ChatItem => ({ kind: 'user', text: `q${n}`, n });
   // jsdom has no layout: each item (a direct child of the transcript) is 100px tall, stacked in DOM order; its on-screen
-  // top follows the scroll (the transcript sits at 0). Native anchoring is claimed, so only Chat's own keeping moves the view.
+  // top follows the scroll (the transcript sits at 0), and the transcript is as tall as its children (read off the DOM, so
+  // during a render it is still the old height). Native anchoring is claimed, so only Chat's own keeping moves the view.
   function fakeItems(body: HTMLElement, box: { top: number }) {
+    const height = () => body.children.length * 100;
+    Object.defineProperty(body, 'scrollHeight', { configurable: true, get: height });
+    Object.defineProperty(body, 'scrollTop', { configurable: true, get: () => box.top, set: (v: number) => { box.top = Math.max(0, Math.min(v, height() - 400)); } });
     Element.prototype.getBoundingClientRect = function (this: HTMLElement) {
       const i = this.parentElement === body ? [...body.children].indexOf(this) : -1;
       const t = i < 0 ? 0 : i * 100 - box.top;
@@ -266,13 +270,57 @@ describe('older pages: what the reader looks at stays put', () => {
     fireEvent.wheel(body, { deltaY: -40 });
     box.top = 250; // q12 at the top, 50px of it above the edge
     fireEvent.scroll(body);
-    box.height = 1500;
     const paged = [q(5), q(6), q(7), q(8), q(9), ...items];
     view.rerender(<Chat {...props(paged)} />);
     expect(box.top).toBe(750);
     // The same messages again as new objects (a history sent again, with a new one at the end): the view stays.
-    box.height = 1600;
     view.rerender(<Chat {...props([...paged.map((i) => ({ ...i })), q(20)])} />);
     expect(box.top).toBe(750);
+  });
+
+  /** Scrolled up to `top` (detached), the transcript `height` px tall. */
+  function scrolledUp(items: ChatItem[], height: number, top: number, extra: Partial<ChatProps> = {}) {
+    const view = render(<Chat {...props(items, extra)} />);
+    const body = view.container.querySelector('.chat-body') as HTMLElement;
+    const box = fakeBox(body, { height, client: 400, top: 0 });
+    view.rerender(<Chat {...props([...items], extra)} />);
+    fakeItems(body, box);
+    fireEvent.wheel(body, { deltaY: -40 });
+    box.top = top;
+    fireEvent.scroll(body);
+    return { view, body, box };
+  }
+  const plain = (text: string): ChatItem => ({ kind: 'user', text });
+
+  it('Codex / Grok items (no prompt numbers, positional keys): a page in front keeps the view on what it showed', () => {
+    const items = [plain('q10'), answer('a10'), plain('q11'), answer('a11'), plain('q12'), answer('a12'), plain('q13'), answer('a13'), plain('q14'), answer('a14')];
+    const { view, box } = scrolledUp(items, 1000, 250);
+    view.rerender(<Chat {...props([plain('q8'), answer('a8'), plain('q9'), answer('a9'), answer('a9b'), ...items])} />);
+    expect(box.top).toBe(750);
+  });
+
+  it('a Claude window starting mid-turn (replies before its first prompt): a page in front keeps the view', () => {
+    const items = [answer('r0'), answer('r1'), q(10), answer('a10'), q(11), answer('a11'), q(12), answer('a12'), q(13), answer('a13')];
+    const { view, box } = scrolledUp(items, 1000, 50);
+    view.rerender(<Chat {...props([answer('p0'), q(9), answer('p1'), ...items])} />);
+    expect(box.top).toBe(350);
+  });
+
+  it('at the very top with the loading line in view: the page comes in above and the view stays on what it showed', () => {
+    const loading = { cursor: 'i10', loading: true, failed: false, onLoad: () => {} };
+    const items = [plain('q10'), answer('a10'), plain('q11'), answer('a11'), plain('q12'), answer('a12'), plain('q13'), answer('a13'), plain('q14'), answer('a14')];
+    // The loading line plus ten items.
+    const { view, box } = scrolledUp(items, 1100, 0, { older: loading });
+    view.rerender(<Chat {...props([plain('q8'), answer('a8'), plain('q9'), answer('a9'), answer('a9b'), ...items], { older: { ...loading, cursor: 'i5', loading: false } })} />);
+    expect(box.top).toBe(500);
+  });
+
+  it('a history replacing the items: a loading line or time stamp at the top is no anchor, the first message under it is', () => {
+    const items = [q(10), q(11), q(12), q(13), q(14), q(15), q(16), q(17), q(18), q(19)];
+    const loading = { cursor: 'i10', loading: true, failed: false, onLoad: () => {} };
+    const { view, box } = scrolledUp(items, 1100, 50, { older: loading });
+    // The history reaches back further (new objects, two more in front, the loading line gone): q10 moved from 100 to 300.
+    view.rerender(<Chat {...props([q(8), q(9), ...items.map((i) => ({ ...i }))], { older: { ...loading, cursor: 'i8', loading: false } })} />);
+    expect(box.top).toBe(250);
   });
 });

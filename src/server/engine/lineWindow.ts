@@ -107,10 +107,10 @@ const FROM_MAX_BYTES = 64 * 1024 * 1024;
 
 /**
  * The messages made by the lines from byte `from` (a cursor: a line's start) to the end, and the cursor before them —
- * when there are at most `max` of them. Null: `from` is not inside the file, the region is past FROM_MAX_BYTES, or it
- * holds more than `max` messages (`make` should keep at least max + 1 so that shows).
+ * when there are at most `max` of them; more: the last `count` of them (as readByteWindow, from the same read; `make`
+ * should keep at least max + 1 so that shows). Null: `from` is not inside the file, or the region is past FROM_MAX_BYTES.
  */
-export async function readByteWindowFrom(file: string, from: number, make: () => OffsetBuilder, max: number): Promise<ByteWindow | null> {
+export async function readByteWindowFrom(file: string, from: number, make: () => OffsetBuilder, max: number, count = 200): Promise<ByteWindow | null> {
   const fh = await fs.open(file, 'r');
   try {
     const { size } = await fh.stat();
@@ -118,7 +118,7 @@ export async function readByteWindowFrom(file: string, from: number, make: () =>
     const b = make();
     for await (const { at, line } of linesOf(fh, from, size)) b.add(line, at);
     const { messages } = b.entries();
-    if (messages.length > max) return null;
+    if (messages.length > max) return windowOf(b, count, from, null);
     return { messages: [...messages], older: from === 0 ? null : from };
   } finally {
     await fh.close();

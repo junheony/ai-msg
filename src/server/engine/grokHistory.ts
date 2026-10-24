@@ -135,7 +135,7 @@ export async function readGrokWindow(file: string, maxBytes = 16 * 1024 * 1024, 
   return readByteWindow(file, () => grokOffsetBuilder(opts.maxToolResultChars ?? 8192, count), count, maxBytes);
 }
 
-/** open_session.from: the chat_history from cursor `from` to its end when that is at most `max` messages, else null. */
+/** open_session.from: the chat_history from cursor `from` to its end when that is at most `max` messages, else its last 200 (readByteWindowFrom). */
 export async function readGrokFrom(file: string, from: number, max: number, maxToolResultChars = 8192): Promise<ByteWindow | null> {
   await regularFile(file);
   return readByteWindowFrom(file, from, () => grokOffsetBuilder(maxToolResultChars, max + 1), max);

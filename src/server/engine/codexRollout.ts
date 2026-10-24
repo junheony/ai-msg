@@ -265,7 +265,7 @@ export function readCodexWindow(file: string, maxBytes = Infinity, opts: CodexTr
   return readByteWindow(file, () => codexOffsetBuilder(opts.maxToolResultChars ?? 8192, count), count, maxBytes);
 }
 
-/** open_session.from: the rollout from cursor `from` to its end when that is at most `max` messages (readByteWindowFrom), else null. */
+/** open_session.from: the rollout from cursor `from` to its end when that is at most `max` messages, else its last 200 (readByteWindowFrom). */
 export function readCodexFrom(file: string, from: number, max: number, maxToolResultChars = 8192): Promise<ByteWindow | null> {
   return readByteWindowFrom(file, from, () => codexOffsetBuilder(maxToolResultChars, max + 1), max);
 }

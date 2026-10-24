@@ -756,12 +756,13 @@ export function transcriptMarkCount(file: string): number {
 /**
  * The (up to) `count` messages before absolute index `before` (`TranscriptWindow.start` of a later window), and the
  * absolute index of the first one returned. The first call on a file scans it up to `before` once, leaving marks; later
- * pages read on from the nearest mark. `before` past the transcript's end (or ≤ 0) gives an empty page.
+ * pages read on from the nearest mark. `before` past the transcript's end (or ≤ 0) gives an empty page, and so does a
+ * scan that would read more than `maxScanBytes` (the marks it left stay).
  */
-export async function readTranscriptBefore(file: string, before: number, count = 200, maxToolResultChars = 8192): Promise<TranscriptWindow> {
+export async function readTranscriptBefore(file: string, before: number, count = 200, maxToolResultChars = 8192, maxScanBytes = Infinity): Promise<TranscriptWindow> {
   const key = `before\0${path.resolve(file)}`;
   const prev = locks.get(key) ?? Promise.resolve();
-  const run = prev.catch(() => {}).then(() => readBefore(file, key, before, count, maxToolResultChars));
+  const run = prev.catch(() => {}).then(() => readBefore(file, key, before, count, maxToolResultChars, maxScanBytes));
   locks.set(key, run);
   const done = () => {
     if (locks.get(key) === run) locks.delete(key);
@@ -770,7 +771,7 @@ export async function readTranscriptBefore(file: string, before: number, count =
   return run;
 }
 
-async function readBefore(file: string, key: string, before: number, count: number, maxChars: number): Promise<TranscriptWindow> {
+async function readBefore(file: string, key: string, before: number, count: number, maxChars: number, maxScan: number): Promise<TranscriptWindow> {
   if (before <= 0 || count < 1) return { messages: [], start: 0 };
   const from = Math.max(0, before - count);
   const fh = await fs.open(file, 'r');
@@ -789,8 +790,11 @@ async function readBefore(file: string, key: string, before: number, count: numb
     for (const m of idx.marks) if (m.state.dropped + m.state.out.length <= from) mark = m;
     const b = new TranscriptBuilder({ maxToolResultChars: maxChars }, mark ? structuredClone(mark.state) : undefined);
     let pos = mark?.offset ?? 0;
+    const scanFrom = pos;
+    let gaveUp = false;
     let carry: Buffer = Buffer.alloc(0);
     while (pos < size && b.total() <= before) {
+      if (pos - scanFrom >= maxScan) { gaveUp = true; break; }
       const chunk = await readAt(fh, pos, Math.min(markChunk, size - pos));
       if (chunk.length === 0) break;
       pos += chunk.length;
@@ -817,7 +821,7 @@ async function readBefore(file: string, key: string, before: number, count: numb
       b.dropBefore(from);
     }
     // The last line without its `\n` (the file's end): read as readline does, never marked.
-    if (pos >= size && b.total() <= before) feed(b, carry.toString('utf8'));
+    if (!gaveUp && pos >= size && b.total() <= before) feed(b, carry.toString('utf8'));
     if (idx.offset > 0) {
       idx.headLen = Math.min(FINGERPRINT_BYTES, idx.offset);
       idx.headHash = sha1(await readAt(fh, 0, idx.headLen));
@@ -826,6 +830,7 @@ async function readBefore(file: string, key: string, before: number, count: numb
     }
     markIndex.set(key, idx);
     while (markIndex.size > MARK_FILES) markIndex.delete(markIndex.keys().next().value!);
+    if (gaveUp) return { messages: [], start: 0 };
     const s = b.state();
     if (before > s.dropped + s.out.length) return { messages: [], start: 0 }; // not a window of this transcript
     const lo = Math.max(from, s.dropped);
