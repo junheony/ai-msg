@@ -100,14 +100,15 @@ export function TurnMeta({ item, turnEnd, repeatModel, notices, last, stopped, f
   }
 
   // A question still waiting on its card is not work done: it is left out of the count (and of the item when it is alone).
+  // Only while the turn is live: a turn that ended without an answer keeps the question listed.
   const all = foldedCalls(item, concise);
-  const calls = all.filter((c) => !awaitsAnswer(c));
+  const calls = streaming ? all.filter((c) => !awaitsAnswer(c)) : all;
   if (calls.length) {
     const { running, waiting } = toolsState(all, streaming);
     const errors = calls.filter((c) => c.isError).length;
     // Waiting on the person (a question card is up): the line stops saying 계속 작업 중 and reads like a finished step.
     const liveLabel = conciseLive && !waiting;
-    const label = liveLabel ? `${T.meta.live} · ${T.meta.step(item.toolCalls.filter((c) => !awaitsAnswer(c)).length)}` : groupLabel(calls);
+    const label = liveLabel ? `${T.meta.live} · ${T.meta.step(item.toolCalls.filter((c) => !streaming || !awaitsAnswer(c)).length)}` : groupLabel(calls);
     const states = <>
       {running && <span className="tool-state running">{T.meta.running}</span>}
       {errors > 0 && <span className="tool-state error">{T.meta.errors(errors)}</span>}
