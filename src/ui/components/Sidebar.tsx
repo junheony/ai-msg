@@ -688,10 +688,10 @@ export function rowTag(s: SessionEntry): string | null {
   return null;
 }
 
-/** A Grok conversation a terminal grok has open (heldBy): its row tag and the tooltip's line. */
 /** Line-2 state tags that MetaTag draws as an icon (the word stays for screen readers and the tooltip). */
 const TAG_READ_ONLY = '읽기 전용';
 const TAG_NO_FOLDER = '폴더 없음';
+/** A Grok conversation a terminal grok has open (heldBy): its row tag and the tooltip's line. */
 const SIDEBAR_HELD = {
   tag: '터미널에서 열림',
   title: '터미널에서 grok 이 열고 있어 지금은 읽기만 할 수 있어요 — 그쪽 grok 을 끝내면 AI-MSG 에서 이어 쓸 수 있어요',

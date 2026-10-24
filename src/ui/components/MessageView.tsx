@@ -19,7 +19,7 @@ import { MODEL_INFO, type ModelChoice } from '../../shared/models';
 import type { ReplyTurn } from '../replyTurn';
 import { usePopoverPlacement } from './usePopoverPlacement';
 import { CopyButton } from './CopyButton';
-import { CopyIcon, EditIcon, ImageIcon, RetryIcon } from './icons';
+import { CopyIcon, EditIcon, FileIcon, ImageIcon, RetryIcon } from './icons';
 import { Lightbox, attachmentUrl } from './Lightbox';
 import { ToolCalls, isAgentCall, isQuestionCall, isSoloCall } from './ToolCallView';
 import { isAbortError, isFailedTurn, isStoppedTurn } from './TurnBadge';
@@ -346,7 +346,7 @@ function FileTile({ name, image }: { name: string; image: boolean }) {
   const ext = extOf(name);
   return (
     <span className={`chip attach-tile ${image ? 'image' : 'file'}`} title={name}>
-      <span className="attach-glyph" aria-hidden="true">{image ? '🖼' : ext || '📄'}</span>
+      <span className="attach-glyph" aria-hidden="true">{image ? '🖼' : ext || <FileIcon />}</span>
       <span className="attach-name">{name}</span>
     </span>
   );

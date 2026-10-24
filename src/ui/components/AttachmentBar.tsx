@@ -4,7 +4,7 @@ import { usePopoverPlacement } from './usePopoverPlacement';
 import { lineCount } from '../upload';
 import { ImageEditor } from './ImageEditor';
 import { attachmentUrl } from './Lightbox';
-import { ImageIcon } from './icons';
+import { FileIcon, ImageIcon } from './icons';
 
 function kb(n: number): string {
   return n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
@@ -15,7 +15,6 @@ const coarsePointer = () => typeof window !== 'undefined' && typeof window.match
 const svg = { width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true } as const;
 const PhotoIcon = () => <svg {...svg}><rect x="2" y="3" width="12" height="10" rx="1.8" /><circle cx="5.8" cy="6.5" r="1.1" /><path d="M2.5 11.5l3.3-3 2.4 2.1 2.1-1.8 3.2 2.7" /></svg>;
 const CameraIcon = () => <svg {...svg}><path d="M2.5 5.5c0-.6.4-1 1-1h1.8l1-1.5h3.4l1 1.5h1.8c.6 0 1 .4 1 1v6.5c0 .6-.4 1-1 1h-9c-.6 0-1-.4-1-1z" /><circle cx="8" cy="8.5" r="2.2" /></svg>;
-const FileIcon = ({ className, size = 16 }: { className?: string; size?: number }) => <svg {...svg} width={size} height={size} className={className}><path d="M4 2.5h5l3 3v8H4z" /><path d="M9 2.5v3h3" /></svg>;
 
 /**
  * The composer's [+]: a small menu — 사진 보관함 (image picker; Android opens the system photo picker), 카메라 (touch

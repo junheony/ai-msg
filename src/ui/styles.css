@@ -1137,6 +1137,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 /* Fingers: every attachment chip at least a tap tall, its ✕ a full tap target. */
 @media (pointer: coarse) {
   .attachment-bar .chip.attachment { padding-right: 0; }
+  .attachment-bar .chip.attachment.has-thumb { padding-block: 0; } /* 48px chip: the 44px ✕ must fit inside, not overflow the 4px padding */
   .chip.attachment .chip-remove { align-self: stretch; display: inline-grid; place-items: center; min-width: var(--tap); min-height: var(--tap); padding: 0; }
   .chip.attachment.editable .attach-edit { align-self: stretch; }
   .chip.attachment.editable .attach-edit-cue { line-height: 22px; padding: 0 8px; }

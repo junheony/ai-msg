@@ -8,6 +8,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { setLocale } from '../../src/shared/locale';
 import { Sidebar } from '../../src/ui/components/Sidebar';
 import type { ProjectEntry, SessionEntry } from '../../src/shared/session-types';
@@ -72,7 +73,7 @@ const aside = renderToStaticMarkup(createElement(Sidebar, {
 }));
 if (!aside.startsWith('<aside class="sidebar"')) throw new Error('Sidebar no longer renders <aside class="sidebar">');
 
-const dir = new URL('.', import.meta.url).pathname;
+const dir = fileURLToPath(new URL('.', import.meta.url));
 for (const f of files) {
   const path = join(dir, `${f}.html`);
   const html = readFileSync(path, 'utf8');
