@@ -2827,7 +2827,7 @@ button.head-chip[aria-expanded="true"] .caret { transform: rotate(180deg); }
 /* Desktop top bar: the block is the bar's first read — 15px title, the folder a quiet line under it. */
 .pane-head.in-topbar .head-chip { height: 36px; font-size: var(--fs-body); }
 .pane-head.in-topbar .with-folder .head-chip { height: 44px; padding-top: 4px; padding-bottom: 4px; padding-right: var(--s3); border-radius: var(--r-lg); }
-.pane-head.in-topbar .head-chip-input { height: 36px; font-size: max(16px, var(--fs-body)); text-align: center; }
+.pane-head.in-topbar .head-chip-input { height: 36px; font-size: max(16px, var(--fs-body)); text-align: start; }
 /* The top bar's identity block, polished: one quiet pill right after ☰ (left-aligned, not floating mid-bar) — the usage
    strip's surface (--bg, a --line hairline, fully round), so the bar reads as ☰ · session pill … usage pill. Title
    15px/600 --fg-strong on a tight 19px line, the folder a 12px/500 --muted line under it with a small folder glyph. Hover
@@ -2837,7 +2837,7 @@ button.head-chip[aria-expanded="true"] .caret { transform: rotate(180deg); }
 .pane-head.in-topbar .head-chip, .pane-head.in-topbar .with-folder .head-chip { padding-right: var(--s3); border-radius: var(--r-full); letter-spacing: -.011em; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); }
 .pane-head.in-topbar .with-folder .head-chip-name { line-height: 19px; }
 .pane-head.in-topbar .head-chip .caret { margin-left: 2px; }
-.pane-head.in-topbar button.head-chip:hover { background: linear-gradient(var(--hover), var(--hover)) var(--bg); box-shadow: inset 0 0 0 1px var(--line-strong); }
+@media (hover: hover) { .pane-head.in-topbar button.head-chip:hover { background: linear-gradient(var(--hover), var(--hover)) var(--bg); box-shadow: inset 0 0 0 1px var(--line-strong); } }
 .pane-head.in-topbar button.head-chip[aria-expanded="true"] { background: linear-gradient(var(--selected), var(--selected)) var(--bg); box-shadow: inset 0 0 0 1px var(--line-strong), var(--shadow-sm); }
 .pane-head.in-topbar button.head-chip:focus-visible { box-shadow: var(--focus); }
 .with-folder > .folder-chip.head-folder { font-weight: 500; letter-spacing: .005em; }
