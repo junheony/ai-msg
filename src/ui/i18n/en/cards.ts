@@ -3,7 +3,6 @@
 export const cards = {
   question: {
     cardLabel: 'Question',
-    title: 'Claude is waiting for your choice',
     step: (n: number, total: number) => `${n}/${total}`,
     prev: 'Previous question',
     next: 'Next question',

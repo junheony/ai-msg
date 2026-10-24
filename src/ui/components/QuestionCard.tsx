@@ -94,12 +94,7 @@ export function QuestionCard({ req, onAnswer }: { req: PendingQuestion; onAnswer
     const choiceRole = q.multiSelect ? undefined : 'radio';
     return (
       <section key={q.question} className="question" data-testid="question-open">
-        {(q.header || q.multiSelect) && (
-          <div className="question-meta">
-            {q.header && <span className="chip header">{q.header}</span>}
-            {q.multiSelect && <span className="question-multi" id={`${textId}-multi`}>{T.multi}</span>}
-          </div>
-        )}
+        {/* A focus target for screen readers after ‹ › (not a control): the stylesheet never draws a ring on it. */}
         <div className="question-text" id={textId} tabIndex={-1}>{q.question}</div>
         <div className={q.multiSelect ? 'question-options multi' : 'question-options'} role={q.multiSelect ? 'group' : 'radiogroup'} aria-labelledby={textId} aria-describedby={q.multiSelect ? `${textId}-multi` : undefined}>
           {q.options.map((o) => {
@@ -140,9 +135,12 @@ export function QuestionCard({ req, onAnswer }: { req: PendingQuestion; onAnswer
   const showActions = !instant || !!otherOn[qs[0]!.question];
   return (
     <div className={pending ? 'question-card sending' : 'question-card'} role="group" aria-label={T.cardLabel}>
+      {/* One quiet line: the open question's header (or 질문) and 여러 개 선택, then ‹ 1/3 ›. "Waiting for you" is said
+          once, by the status line above the composer. */}
       <div className="question-head">
         <span className="dot" aria-hidden="true" />
-        <span className="question-title">{T.title}</span>
+        <span className="question-label" data-testid="question-label">{qs[cur]!.header || T.cardLabel}</span>
+        {qs[cur]!.multiSelect && <span className="question-multi" id={`${idBase}-q${cur}-multi`}>{T.multi}</span>}
         {total > 1 && (
           <span className="question-nav">
             <button type="button" className="question-nav-btn" aria-label={T.prev} disabled={cur === 0} onClick={() => go(cur - 1)}>‹</button>

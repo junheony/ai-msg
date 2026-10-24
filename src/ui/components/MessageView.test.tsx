@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { MessageView, errorSummary } from './MessageView';
 import { codeFileName } from '../codeWrap';
+import { toolsState } from './TurnMeta';
 import { DEFAULT_PREFS, PREFS_KEY } from '../prefs';
 import { initialState, reducer, type AppState, type ChatItem } from '../state';
 import type { ServerMessage } from '../../shared/protocol';
@@ -685,6 +686,28 @@ describe('MessageView · concise progress is announced', () => {
     const label = getByTestId('work-log').querySelector('.tool-label')!;
     expect(label.textContent).toBe('계속 작업 중 · 단계 1');
     expect(label.getAttribute('aria-live')).toBe('polite');
+  });
+
+  it('a pending AskUserQuestion is waiting, not running: no 계속 작업 중, no 실행 중… while its card is up', () => {
+    const bash = { toolUseId: '1', name: 'Bash', input: { command: 'ls' }, result: 'ok', isError: false };
+    const ask = { toolUseId: '2', name: 'AskUserQuestion', input: { questions: [{ question: 'Q?', header: 'H', options: [], multiSelect: false }] }, result: null, isError: false };
+    const item = { kind: 'assistant' as const, turnId: 't', text: '', toolCalls: [bash, ask], badge: null, streaming: true, error: null, notes: [], attempts: [] };
+    const { getByTestId } = render(<MessageView item={item} />);
+    const log = getByTestId('work-log');
+    expect(log.textContent).not.toContain('계속 작업 중');
+    expect(log.textContent).not.toContain('실행 중');
+    expect(log.classList.contains('running')).toBe(false);
+    expect(log.querySelector('.tool-label')!.getAttribute('aria-live')).toBeNull();
+  });
+});
+
+describe('toolsState', () => {
+  const c = (name: string, result: string | null) => ({ toolUseId: name, name, input: {}, result, isError: false });
+  it('running while any non-question call is open; waiting when only a question is open; neither once streaming ends', () => {
+    expect(toolsState([c('Bash', null), c('AskUserQuestion', null)], true)).toEqual({ running: true, waiting: false });
+    expect(toolsState([c('Bash', 'ok'), c('AskUserQuestion', null)], true)).toEqual({ running: false, waiting: true });
+    expect(toolsState([c('Bash', 'ok')], true)).toEqual({ running: false, waiting: false });
+    expect(toolsState([c('Bash', null)], false)).toEqual({ running: false, waiting: false });
   });
 });
 

@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { QuestionCard, splitRecommended } from './QuestionCard';
 import type { PendingQuestion } from '../state';
 
@@ -26,7 +28,9 @@ describe('QuestionCard (D8)', () => {
   it('a stepper: one question at a time, a single-select pick moves on, answered ones fold to a ✓ line; sends when all are answered', () => {
     const onAnswer = vi.fn();
     render(<QuestionCard req={req} onAnswer={onAnswer} />);
-    expect(screen.getByText('Claude가 선택을 기다려요')).toBeTruthy();
+    // One quiet header line: the open question's header; "waiting" is said by the status line, not here.
+    expect(screen.queryByText('Claude가 선택을 기다려요')).toBeNull();
+    expect(screen.getByTestId('question-label').textContent).toBe('Color');
     expect(screen.getByTestId('question-progress').textContent).toBe('1/2');
     expect(openQuestion()).toBe('Which color?');
     expect(screen.queryByText('Which features?')).toBeNull();
@@ -34,6 +38,8 @@ describe('QuestionCard (D8)', () => {
     expect(sendBtn().disabled).toBe(true);
     expect(sendBtn().textContent).toBe('2개 남음');
     fireEvent.click(screen.getByText('blue'));
+    expect(screen.getByTestId('question-label').textContent).toBe('Features');
+    expect(screen.getByText('여러 개 선택').id).toBe('qc-q1-q1-multi');
     // Moved on by itself; the answered question is one line with its pick and a ✓.
     expect(openQuestion()).toBe('Which features?');
     expect(screen.getByTestId('question-progress').textContent).toBe('2/2');
@@ -268,5 +274,17 @@ describe('splitRecommended', () => {
     expect(splitRecommended('x(Recommended) ')).toEqual({ text: 'x', recommended: true });
     expect(splitRecommended('x (Recommended) y')).toEqual({ text: 'x (Recommended) y', recommended: false });
     expect(splitRecommended('x (추천)')).toEqual({ text: 'x', recommended: true });
+  });
+
+  it('a question with no header is labelled 질문; the question text is a focus target (tabIndex -1), not a control', () => {
+    render(<QuestionCard req={{ ...single, questions: [{ ...single.questions[0]!, header: '' }] }} onAnswer={vi.fn()} />);
+    expect(screen.getByTestId('question-label').textContent).toBe('질문');
+    const text = screen.getByTestId('question-open').querySelector('.question-text')!;
+    expect(text.getAttribute('tabindex')).toBe('-1');
+  });
+
+  it('the stylesheet never draws a focus ring on the question text', () => {
+    const css = readFileSync(path.resolve(__dirname, '../styles.css'), 'utf8');
+    expect(css).toMatch(/\.question-text:focus, \.question-text:focus-visible \{ outline: none; box-shadow: none; \}/);
   });
 });

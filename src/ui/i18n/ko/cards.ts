@@ -4,7 +4,6 @@ import type { cards as en } from '../en/cards';
 export const cards: Widen<typeof en> = {
   question: {
     cardLabel: '질문',
-    title: 'Claude가 선택을 기다려요',
     step: (n: number, total: number) => `${n}/${total}`,
     prev: '이전 질문',
     next: '다음 질문',

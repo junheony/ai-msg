@@ -28,6 +28,20 @@ export function foldedCalls(item: Assistant, concise: boolean) {
   return item.toolCalls.filter((c) => !(concise ? isQuestionCall(c) : isSoloCall(c)));
 }
 
+/** An AskUserQuestion with no result yet is waiting on the person (its card is up), not running. */
+const awaitsAnswer = (c: Assistant['toolCalls'][number]) => c.name === 'AskUserQuestion' && c.result === null;
+
+/**
+ * The tools item's state while a reply streams: `running` when a call other than a pending question has no result yet,
+ * `waiting` when the only open calls are questions waiting on the person (the turn is paused on its card).
+ */
+export function toolsState(calls: Assistant['toolCalls'], streaming: boolean): { running: boolean; waiting: boolean } {
+  if (!streaming) return { running: false, waiting: false };
+  const open = calls.filter((c) => c.result === null);
+  const running = open.some((c) => !awaitsAnswer(c));
+  return { running, waiting: !running && open.length > 0 };
+}
+
 /**
  * A reply's meta as one quiet line under it: model (or the turn pill) · thinking › · tools › · subagents › · background ✓ ›,
  * then the reply's actions. Each › item opens its detail under the line (thinking text, one row per call, the role chips,
@@ -90,16 +104,18 @@ export function TurnMeta({ item, turnEnd, repeatModel, notices, last, stopped, f
 
   const calls = foldedCalls(item, concise);
   if (calls.length) {
-    const running = streaming && calls.some((c) => c.result === null);
+    const { running, waiting } = toolsState(calls, streaming);
     const errors = calls.filter((c) => c.isError).length;
-    const label = conciseLive ? `${T.meta.live} · ${T.meta.step(item.toolCalls.length)}` : groupLabel(calls);
+    // Waiting on the person (a question card is up): the line stops saying 계속 작업 중 and reads like a finished step.
+    const liveLabel = conciseLive && !waiting;
+    const label = liveLabel ? `${T.meta.live} · ${T.meta.step(item.toolCalls.length)}` : groupLabel(calls);
     const states = <>
       {running && <span className="tool-state running">{T.meta.running}</span>}
       {errors > 0 && <span className="tool-state error">{T.meta.errors(errors)}</span>}
     </>;
     cells.push({
       key: 'tools',
-      node: opener('tools', <span className="tool-label" {...(conciseLive ? { 'aria-live': 'polite' as const } : {})}>{label}</span>, { testId: 'work-log', cls: running ? 'running' : '', after: states }),
+      node: opener('tools', <span className="tool-label" {...(liveLabel ? { 'aria-live': 'polite' as const } : {})}>{label}</span>, { testId: 'work-log', cls: running ? 'running' : '', after: states }),
       panel: panel('tools', 'work-log-body', <ToolCalls calls={calls} live={streaming} cwd={cwd} flat />),
     });
   }
