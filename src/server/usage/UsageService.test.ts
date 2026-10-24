@@ -558,12 +558,26 @@ describe('UsageService · cli mode (DECK_USAGE_SOURCE=cli: no usage-deck)', () =
     s.applyTurn('a', { fiveHour: FIVE, weekly: WEEK }); // turns keep 5h/weekly fresh, never Fable
     expect(s.cliObservedAt('a')).toBe(T0);
     s.applyTurn('b', { fiveHour: FIVE, weekly: WEEK, fable: { usedPct: 100, resetsAt: fable.resetsAt } });
-    expect(s.cliObservedAt('b')).toBe(T0 + 60_000);
+    expect(s.cliObservedAt('b')).toBeNull(); // turns only, never polled: due (its real Fable is still unread)
     clock.ms = T0 + CLI_TRUST_MAX_MS - 1;
     s.applyTurn('a', { fiveHour: FIVE, weekly: { ...WEEK, resetsAt: new Date(T0 + 5 * 86_400_000).toISOString() } });
     expect(usageOf(s.routingSnapshot(), 'a').fable).toEqual(fable);
     clock.ms = T0 + CLI_TRUST_MAX_MS + 1;
     expect(usageOf(s.routingSnapshot(), 'a').fable).toBeNull();
+  });
+
+  it('cliObservedAt: an account kept fresh by its own turns but never polled is due; after a poll (with or without a Fable line) the poll time counts', () => {
+    const clock = { ms: T0 };
+    const s = make({ clock });
+    // The account in use: a turn every few minutes keeps 5h/weekly fresh, so "the oldest window" never ages.
+    for (let i = 0; i < 5; i++) { clock.ms = T0 + i * 3 * 60_000; s.applyTurn('c', { fiveHour: FIVE, weekly: WEEK }); }
+    expect(s.cliObservedAt('c')).toBeNull();
+    // A `/usage` without a Fable/Opus line (another plan): the poll time itself still counts, so it is not polled every round.
+    s.applyCliPoll('c', { fiveHour: FIVE, weekly: WEEK }, clock.ms);
+    const polledAt = clock.ms;
+    clock.ms += 3 * 60_000;
+    s.applyTurn('c', { fiveHour: FIVE, weekly: WEEK });
+    expect(s.cliObservedAt('c')).toBe(polledAt);
   });
 
   it('applyCliPoll outside cli mode goes in as a turn observation (usage-deck mode)', () => {
@@ -756,6 +770,18 @@ describe('UsageService · usage-deck 모드의 /usage 폴', () => {
   const svc = (fetchFn: any, now: () => Date) => new UsageService({ mode: 'usage-deck', accounts: testRegistry(), deckUrl: 'http://deck.test:9310/', fetchFn, intervalMs: 60_000, now });
   const POLLED = { fiveHour: { usedPct: 30, resetsAt: '2026-09-30T15:00:00.000Z' }, weekly: { usedPct: 40, resetsAt: '2026-10-06T22:00:00.000Z' }, fable: { usedPct: 12, resetsAt: '2026-10-06T23:00:00.000Z' } };
 
+  it('claudePoll: the snapshot says the server reads Claude limits by itself, through every kind of poll; absent without it', async () => {
+    const nowMs = Date.parse('2026-09-30T12:30:00Z');
+    const s = new UsageService({ mode: 'usage-deck', accounts: testRegistry(), deckUrl: 'http://deck.test:9310/', fetchFn: async () => ({ ok: true, json: async () => LIVE }), now: () => new Date(nowMs), claudePoll: true });
+    expect(s.snapshot().claudePoll).toBe(true);
+    await s.pollOnce();
+    expect(s.snapshot().claudePoll).toBe(true);
+    const cli = new UsageService({ mode: 'cli', accounts: testRegistry(), deckUrl: 'http://usage-deck.invalid', now: () => new Date(nowMs), claudePoll: true });
+    await cli.pollOnce();
+    expect(cli.snapshot().claudePoll).toBe(true);
+    expect(svc(async () => ({ ok: true, json: async () => LIVE }), () => new Date(nowMs)).snapshot()).not.toHaveProperty('claudePoll');
+  });
+
   it('폴 대상: ok 카드는 아님, down/stale/카드 없음/대시보드 불통은 폴', async () => {
     const nowMs = Date.parse('2026-09-30T12:30:00Z');
     let reach = true;
@@ -814,6 +840,28 @@ describe('UsageService · usage-deck 모드의 /usage 폴', () => {
     nowMs += 30_000;
     s.applyCliPoll('c', { fiveHour: POLLED.fiveHour }, nowMs);
     expect(s.snapshot().accounts.c).toMatchObject({ status: 'ok', observedBy: 'poll' });
+  });
+
+  it('지금 쓰는 계정(턴만 계속 옴, 폴한 적 없음)도 폴 대상: 4일 전 down 카드 위 턴 값은 "불명"으로 남고, 폴 한 번이면 ok · 새 시각 · 새 Fable', async () => {
+    const nowMs = Date.parse('2026-09-30T12:30:00Z');
+    const old = (ms: number) => new Date(nowMs - ms).toISOString();
+    // usage-deck's own token for C expired 4 days ago: setup_needed, back-filled with the last good rows (Fable reset passed).
+    const state = { cards: [{ id: 'claude:third', status: 'setup_needed', fetchedAt: old(4 * 86_400_000), rows: [
+      { label: 'Session (5h)', used: 40, cap: 100, unit: '%', resetsAt: old(4 * 86_400_000 - 3_600_000) },
+      { label: 'Weekly (7d)', used: 50, cap: 100, unit: '%', resetsAt: old(-86_400_000) },
+      { label: 'Fable (7d)', used: 100, cap: 100, unit: '%', resetsAt: old(86_400_000) },
+    ] }] };
+    const s = svc(async () => ({ ok: true, json: async () => state }), () => new Date(nowMs));
+    await s.pollOnce();
+    s.applyTurn('c', { fiveHour: { usedPct: 25, resetsAt: new Date(nowMs + 158 * 60_000).toISOString() }, weekly: { usedPct: 29, resetsAt: new Date(nowMs + 134 * 3_600_000).toISOString() } }, nowMs - 60_000);
+    await s.pollOnce();
+    // The symptom: fresh turn numbers under the card's 'down' and its 4-day-old time (no poll has read this account yet).
+    expect(s.snapshot().accounts.c).toMatchObject({ status: 'down', fetchedAt: old(4 * 86_400_000), fiveHour: { usedPct: 25 } });
+    // Its turns keep 5h/weekly fresh, but Fable is never told by a turn: the poller must still read it.
+    expect(s.cliObservedAt('c')).toBeNull();
+    s.applyCliPoll('c', POLLED, nowMs);
+    expect(s.snapshot().accounts.c).toMatchObject({ status: 'ok', observedBy: 'poll', fetchedAt: new Date(nowMs).toISOString(), fable: { usedPct: 12 } });
+    expect(s.cliObservedAt('c')).toBe(nowMs); // the poll's windows are the newest
   });
 
   it('턴보다 먼저 시작해 늦게 끝난 폴: 5h/주간은 턴이 이기고 Fable 은 들어간다', async () => {

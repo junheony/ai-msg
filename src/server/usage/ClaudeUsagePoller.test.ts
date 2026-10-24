@@ -321,6 +321,20 @@ describe('ClaudeUsagePoller', () => {
     expect(b).toMatchObject({ fiveHour: { usedPct: 5 }, weekly: { usedPct: 91 } });
     expect(b).not.toHaveProperty('observedBy');
   });
+
+  it('with a real UsageService (usage-deck): the account in use, kept fresh by its turns but never polled, is still polled in the round', async () => {
+    const reg = testRegistry();
+    const state = { cards: [{ id: 'claude:third', status: 'setup_needed', fetchedAt: new Date(NOW - 4 * 86_400_000).toISOString(), rows: [] }] };
+    const usage = new UsageService({ mode: 'usage-deck', deckUrl: 'http://deck.test:9310/', fetchFn: async () => ({ ok: true, json: async () => state }), now: () => new Date(NOW), accounts: reg });
+    await usage.pollOnce();
+    usage.applyTurn('c', { fiveHour: { usedPct: 25, resetsAt: null }, weekly: { usedPct: 29, resetsAt: null } }, NOW - 60_000);
+    const spawned: string[] = [];
+    const spawnFn: SpawnFn = (_b, _a, so) => { spawned.push(so.env.CLAUDE_CONFIG_DIR ?? '~'); const f = fakeChild(); setTimeout(() => answer(SAMPLE)(f), 0); return f.child; };
+    const p = new ClaudeUsagePoller({ bin: '/x/claude', accounts: reg, usage, spawnFn, now: () => NOW, log: () => {} });
+    await p.sweep();
+    expect(spawned).toContain('/h/.claude-c');
+    expect(usageOf(usage.snapshot(), 'c')).toMatchObject({ status: 'ok', observedBy: 'poll', fetchedAt: new Date(NOW).toISOString(), fable: { usedPct: 87 } });
+  });
 });
 
 describe('claudePollBin', () => {

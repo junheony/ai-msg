@@ -131,10 +131,11 @@ const BACKOFF_MAX_MS = 2 * 3_600_000;
 
 /**
  * Claude usage without a turn (`cli` usage mode): shortly after start, then every `intervalMs` (5 min), each active
- * account whose last observation (a turn's rate_limit_event or an earlier poll; a polled Fable value too) is older than
- * `maxAgeMs` (STALE_MAX_MS − 2 min, so the card never turns 오래됨 between checks) gets one `claude -p /usage` in its own
- * profile (the registry's CLAUDE_CONFIG_DIR), one at a time. A failure is logged when it changes (a new error, or the
- * account recovering) and the account backs off exponentially, up to BACKOFF_MAX_MS. Reads the CLI's text only — never
+ * account whose last observation (a turn's rate_limit_event or an earlier poll; the last poll too, so the account in use
+ * — fresh from its own turns, which never tell Fable — is still read; never polled = due) is older than `maxAgeMs`
+ * (STALE_MAX_MS − 2 min, so the card never turns 오래됨 between checks) gets one `claude -p /usage` in its own profile
+ * (the registry's CLAUDE_CONFIG_DIR), one at a time. A failure is logged when it changes (a new error, or the account
+ * recovering) and the account backs off exponentially, up to BACKOFF_MAX_MS. Reads the CLI's text only — never
  * credentials.
  */
 export class ClaudeUsagePoller {

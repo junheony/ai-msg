@@ -153,7 +153,7 @@ const BASELINE: Record<string, number> = {
   'src/ui/components/UsageStrip.tsx': 20,
   'src/ui/components/UsageView.tsx': 39,
   'src/ui/components/highlightSections.ts': 11,
-  'src/ui/components/usageSeats.tsx': 114,
+  'src/ui/components/usageSeats.tsx': 113,
   'src/ui/context.ts': 10,
   'src/ui/dateGroups.ts': 16,
   'src/ui/diff.ts': 4,

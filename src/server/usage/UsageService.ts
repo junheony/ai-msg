@@ -127,10 +127,14 @@ export class UsageService {
   private recordBroken = false;
   private firstAttemptDone = false;
   private readonly mode: UsageMode;
+  /** A ClaudeUsagePoller runs (said in the snapshot, so an old card says it is read again by itself, not "run a turn"). */
+  private readonly claudePoll: boolean;
   /** `cli` mode: `<configDir>/claude-usage-observed.json`; null = kept in memory only. */
   private readonly observedFile: string | null;
   /** `cli` mode: per Claude account, the last observed 5h/weekly windows (loaded from `observedFile`). */
   private cliObs = new Map<Account, CliAccountObs>();
+  /** `cli` mode: when ClaudeUsagePoller last read each account (this run; see cliObservedAt). */
+  private cliPollAt = new Map<Account, number>();
 
   /**
    * `accounts`: the registry.
@@ -141,7 +145,8 @@ export class UsageService {
    * `mode` 'cli' (`DECK_USAGE_SOURCE`, default 'cli' here too; config picks the real default): usage-deck is never
    * asked — Claude accounts carry only what deck's own turns observed (`observedFile`, kept across restarts).
    */
-  constructor(opts: { mode?: UsageMode; observedFile?: string; deckUrl: string; fetchFn?: FetchLike; intervalMs?: number; timeoutMs?: number; now?: () => Date; accounts: AccountNames; usageSourceFile?: string; strict?: boolean | null; deckConfigured?: boolean; log?: (line: string) => void }) {
+  constructor(opts: { mode?: UsageMode; observedFile?: string; deckUrl: string; fetchFn?: FetchLike; intervalMs?: number; timeoutMs?: number; now?: () => Date; accounts: AccountNames; usageSourceFile?: string; strict?: boolean | null; deckConfigured?: boolean; log?: (line: string) => void; claudePoll?: boolean }) {
+    this.claudePoll = opts.claudePoll ?? false;
     this.url = opts.deckUrl.replace(/\/+$/, '') + '/api/state';
     this.fetchFn = opts.fetchFn ?? ((url, init) => fetch(url, init));
     this.intervalMs = opts.intervalMs ?? 60_000;
@@ -299,6 +304,7 @@ export class UsageService {
 
   private withSource(s: UsageSnapshot): UsageSnapshot {
     const usageSource = this.source();
+    if (this.claudePoll) s = { ...s, claudePoll: true };
     if (usageSource === null) return s;
     return { ...s, usageSource };
   }
@@ -534,26 +540,33 @@ export class UsageService {
    */
   applyCliPoll(account: Account, w: TurnWindows, observedAtMs: number): void {
     if (!this.reg.has(account)) return;
-    if (this.mode === 'cli') this.applyCliTurn(account, w, observedAtMs, 'poll');
+    if (this.mode === 'cli') {
+      this.cliPollAt.set(account, Math.max(observedAtMs, this.cliPollAt.get(account) ?? 0));
+      this.applyCliTurn(account, w, observedAtMs, 'poll');
+    }
     else this.applyTurn(account, w, observedAtMs, 'poll'); // usage-deck: as a turn's observation; a newer ok card wins (overlay)
   }
 
   /**
-   * ClaudeUsagePoller's "is it time": when the account was last observed — the oldest of its 5h/weekly windows and of a
-   * polled Fable value (turns keep 5h/weekly fresh but never tell Fable, so only a poll does). null = never.
+   * ClaudeUsagePoller's "is it time": when the account was last observed — the oldest of its 5h/weekly windows and of
+   * the last `/usage` poll (turns keep 5h/weekly fresh but never tell Fable, so only a poll does). null = never, and
+   * also an account no poll has read yet: the account in use gets a turn every few minutes, so judged by its windows
+   * alone it would never be due and its Fable never read (usage-deck: its 'down' card would never turn ok either).
    */
   cliObservedAt(account: Account): number | null {
     if (this.mode !== 'cli') {
       // usage-deck: a card from the dashboard that is ok needs no poll (overlay or not); anything else is judged by the observation.
       if (this.snap.deckReachable && this.cardOk.has(account)) return this.now().getTime();
       const t = this.turnObs.get(account);
-      const ats = t ? [t.fiveAt, t.weekAt, t.fable?.at].filter((x): x is number => x !== undefined) : [];
-      return ats.length ? Math.min(...ats) : null;
+      if (!t || t.pollAt === undefined) return null;
+      return Math.min(...[t.fiveAt, t.weekAt, t.pollAt].filter((x): x is number => x !== undefined));
     }
     const o = this.cliObs.get(account);
     if (!o || (!o.fiveHour && !o.weekly)) return null;
-    const ats = [o.fiveHour, o.weekly, o.fable?.by === 'poll' ? o.fable : undefined].filter((x): x is CliWindowObs => x !== undefined).map((x) => x.at);
-    return Math.min(...ats);
+    // The last poll: this run's, or a polled value kept on disk (a later turn replaces 5h/weekly, a polled Fable stays).
+    const polls = [this.cliPollAt.get(account), ...CLI_WINDOWS.map((k) => (o[k]?.by === 'poll' ? o[k]!.at : undefined))].filter((x): x is number => x !== undefined);
+    if (polls.length === 0) return null;
+    return Math.min(...[o.fiveHour?.at, o.weekly?.at, Math.max(...polls)].filter((x): x is number => x !== undefined));
   }
 
   /** deck just completed a turn on `account` (result ok): affects `routingSnapshot` only (see `lift`); nothing is published. */

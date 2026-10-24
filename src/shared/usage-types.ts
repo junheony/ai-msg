@@ -111,6 +111,8 @@ export type UsageSnapshot = {
    * turns (no usage-deck): an account's `fetchedAt` is when that was last observed. Absent = 'usage-deck'.
    */
   usageMode?: UsageMode;
+  /** true = the server reads each Claude account's limits by itself (ClaudeUsagePoller, `claude -p /usage`); absent = only turns do. */
+  claudePoll?: boolean;
 };
 
 export type UsageMode = 'cli' | 'usage-deck';

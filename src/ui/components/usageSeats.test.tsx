@@ -218,15 +218,17 @@ describe('short countdowns and the fullest window', () => {
 });
 
 describe('usage sheet · old numbers per window', () => {
-  it('an old seat: a row past its reset says 리셋됨 with a refresh icon on an empty bar; the window not reset yet keeps its % (dimmed); one refresh line', () => {
+  it('an old seat: a row past its reset says 리셋됨 · 100% 추정 with a refresh icon on a full estimated bar; the window not reset yet keeps its % (dimmed); one refresh line', () => {
     const iso = (ms: number) => new Date(NOW + ms).toISOString();
     const old: UsageSnapshot = { ...usage, accounts: { a: { status: 'stale', fetchedAt: iso(-3 * 86_400_000), fiveHour: { usedPct: 95, resetsAt: iso(-3_600_000) }, weekly: { usedPct: 30, resetsAt: iso(2 * 86_400_000) }, fable: null } } };
     sheet(old, 'a');
     const five = screen.getByTestId('a-fiveHour');
-    expect(five.querySelector('.usage-value')!.textContent).toBe('리셋됨');
+    expect(five.querySelector('.usage-value')!.textContent).toBe('리셋됨 · 100% 추정');
     expect(five.querySelector('.usage-value svg')).not.toBeNull();
-    expect((five.querySelector('.usage-bar > i') as HTMLElement).style.width).toBe('0%');
-    expect(five.title).toBe('5h · 리셋 시각이 지나 지금 값은 모름. 이 계정으로 한 턴 돌리면 갱신됨');
+    // A reset window is (about) full again: the bar says so, striped as every estimate is — never an empty 0 % look.
+    expect((five.querySelector('.usage-bar > i') as HTMLElement).style.width).toBe('100%');
+    expect(five.className).toContain('estimated');
+    expect(five.title).toBe('5h · 추정 — 관측한 리셋 시각이 지나 0%로 봄');
     const weekly = screen.getByTestId('a-weekly');
     expect(weekly.querySelector('.usage-value')!.textContent).toBe('70% 남음');
     expect(weekly.className).toContain('old');
@@ -241,6 +243,21 @@ describe('usage sheet · old numbers per window', () => {
     expect(screen.getByTestId('a-fiveHour').querySelector('.usage-value')!.textContent).toBe('5% 남음');
     expect(screen.queryByTestId('a-refresh')).toBeNull();
     expect(screen.getByTestId('account-a').className).not.toContain('old');
+  });
+
+  it('the server reads Claude limits by itself (claudePoll): an old seat — the current one too — never says "한 턴 돌리면"', () => {
+    const iso = (ms: number) => new Date(NOW + ms).toISOString();
+    // The reported C card: usage-deck 'down' (불명) under turn numbers, the card's time 4 days ago, its Fable reset passed.
+    const c = { status: 'down' as const, fetchedAt: iso(-4 * 86_400_000), fiveHour: { usedPct: 25, resetsAt: iso(158 * 60_000) }, weekly: { usedPct: 29, resetsAt: iso(134 * 3_600_000) }, fable: { usedPct: 100, resetsAt: iso(-86_400_000) } };
+    sheet({ ...usage, deckReachable: true, claudePoll: true, accounts: { c } }, 'c');
+    expect(screen.getByTestId('c-refresh').textContent).toBe('4일 전 마지막 턴 기준 값 · 지금은 이보다 적게 남았을 수 있어요 · AI-MSG 가 자동으로 다시 확인해요');
+    const fable = screen.getByTestId('c-fable');
+    expect((fable.querySelector('.usage-bar > i') as HTMLElement).style.width).toBe('100%');
+    expect(fable.querySelector('.usage-value')!.textContent).toBe('리셋됨 · 100% 추정');
+    cleanup();
+    // Without the poller (DECK_CLAUDE_USAGE_POLL=0): a turn is still what reads it anew.
+    sheet({ ...usage, deckReachable: true, accounts: { c } }, 'c');
+    expect(screen.getByTestId('c-refresh').textContent).toContain('이 계정으로 한 턴 돌리면 갱신돼요');
   });
 });
 

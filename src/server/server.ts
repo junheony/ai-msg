@@ -161,7 +161,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     const tokenCreated = !(await fs.readFile(cfg.tokenFile, 'utf8').then((t) => /^[0-9a-f]{64}$/.test(t.trim()), () => false));
     const token = await loadOrCreateToken(cfg.tokenFile);
     const accounts = cfg.accounts;
-    const usage = new UsageService({ mode: cfg.usageMode, observedFile: cfg.claudeUsageFile, deckUrl: cfg.deckUrl, accounts, usageSourceFile: cfg.usageSourceFile, strict: cfg.usageStrict, deckConfigured: cfg.deckUrlConfigured, log: (line) => console.error(line) });
+    const usage = new UsageService({ mode: cfg.usageMode, observedFile: cfg.claudeUsageFile, deckUrl: cfg.deckUrl, accounts, usageSourceFile: cfg.usageSourceFile, strict: cfg.usageStrict, deckConfigured: cfg.deckUrlConfigured, log: (line) => console.error(line), claudePoll: claudePollBin(cfg) !== null });
     // Session rename / 보관 live in deck's own config (never in the Claude jsonl); loaded before the first scan.
     const meta = new SessionMetaStore(path.join(cfg.configDir, 'session-meta.json'));
     await meta.load();

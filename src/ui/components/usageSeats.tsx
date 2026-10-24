@@ -3,6 +3,7 @@ import { GEMINI_ACCOUNTS, GROK_ACCOUNTS, type Account, type GeminiAccount, type 
 import type { GrokStatus } from '../../shared/protocol';
 import { EngineBadge } from './EngineMark';
 import { RefreshIcon } from './icons';
+import { ui } from '../i18n';
 import { emptyAccountUsage, grokBillingWindow, leftPct, localDay, parseIsoUtc, remainingPct, trusted, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type GrokBotUsage, type GrokUsage, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 
 export function countdown(resetsAt: string | null, now: number): string {
@@ -294,12 +295,13 @@ export function shownPct(w: UsageWindow | null): number | null {
  * buckets, Grok) says the share left, like the strip: the bar is as full as what is left (a battery).
  */
 export function PopRow({ seat, name, k, w, now, empty, stale, polled }: { seat: Seat; name: string; k: string; w: UsageWindow | null; now: number; empty?: string; stale?: boolean; polled?: boolean }) {
+  // Past its reset the window is (about) full again: a full striped bar, as every estimate (never an empty, 0 %-looking one).
   if (stale && windowPassed(w, now)) {
     return (
-      <div data-testid={`${seat}-${k}`} className="usage-row old passed" title={`${name} · ${RESET_PASSED_NOTE}`}>
+      <div data-testid={`${seat}-${k}`} className="usage-row old passed estimated" title={`${name} · ${ESTIMATED}`}>
         <span className="usage-label">{name}</span>
-        <span className="usage-bar" aria-hidden="true"><i style={{ width: '0%' }} /></span>
-        <span className="usage-value"><RefreshIcon className="usage-icon" />리셋됨</span>
+        <span className="usage-bar" aria-hidden="true"><i style={{ width: '100%' }} /></span>
+        <span className="usage-value"><RefreshIcon className="usage-icon" />{ui().common.usageResetEstimated}</span>
       </div>
     );
   }

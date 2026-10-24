@@ -699,7 +699,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-seat.current { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
 /* An old seat (cli stale, usage-deck out of reach, down / unknown with values): the same language as the strip — a clock
    on its status tag, a line saying one turn reads it anew; green rows dim to --muted, amber / red / spent keep their colour
-   (an upper bound of what is left); a row past its reset is grey with a refresh. */
+   (an upper bound of what is left); a row past its reset is a full grey striped bar (estimated) with a refresh. */
 .usage-seat.old .usage-seat-name { color: var(--fg); }
 .usage-row.old:not(.warn, .danger) .usage-value, .usage-row.old .usage-value small { color: var(--muted); }
 .usage-row.old:not(.warn, .danger) .usage-bar > i { --lvl: color-mix(in srgb, var(--muted) 70%, var(--track)); }

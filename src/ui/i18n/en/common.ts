@@ -6,6 +6,8 @@ export const common = {
   periodFiveHour: '5h',
   periodWeek: 'Wk',
   periodMonth: 'Mo',
+  /** A usage sheet row whose old reading's reset time has passed: assumed full again (striped bar), not read yet. */
+  usageResetEstimated: 'Reset · ~100% (est.)',
   /** The connection bar (App): a short drop, the server restarting (it announced a drain), and a long drop since `since` (HH:MM). */
   connReconnecting: 'Reconnecting…',
   connRestarting: 'The server is restarting… picks up by itself once connected',

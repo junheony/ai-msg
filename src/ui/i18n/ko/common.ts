@@ -7,6 +7,7 @@ export const common: Widen<typeof en> = {
   periodFiveHour: '5시간',
   periodWeek: '주',
   periodMonth: '월',
+  usageResetEstimated: '리셋됨 · 100% 추정',
   connReconnecting: '다시 연결하는 중…',
   connRestarting: '서버를 다시 시작하는 중… 연결되면 자동으로 이어집니다',
   connDown: (since: string) => `서버에 연결할 수 없어요 · ${since}부터 — 연결되면 자동으로 이어집니다`,
