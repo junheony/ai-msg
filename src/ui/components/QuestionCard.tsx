@@ -139,7 +139,8 @@ export function QuestionCard({ req, onAnswer }: { req: PendingQuestion; onAnswer
           once, by the status line above the composer. */}
       <div className="question-head">
         <span className="dot" aria-hidden="true" />
-        <span className="question-label" data-testid="question-label">{qs[cur]!.header || T.cardLabel}</span>
+        {/* With no header the fallback 질문 is the card's own name (aria-label): shown, not read a second time. */}
+        <span className="question-label" data-testid="question-label" {...(qs[cur]!.header ? {} : { 'aria-hidden': true })}>{qs[cur]!.header || T.cardLabel}</span>
         {qs[cur]!.multiSelect && <span className="question-multi" id={`${idBase}-q${cur}-multi`}>{T.multi}</span>}
         {total > 1 && (
           <span className="question-nav">

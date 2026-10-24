@@ -701,6 +701,63 @@ describe('MessageView · concise progress is announced', () => {
   });
 });
 
+describe('MessageView · a question waiting on its card', () => {
+  const call = (id: string, name: string, result: string | null, input: unknown = { command: 'ls' }) => ({ toolUseId: id, name, input, result, isError: false });
+  const ask = (id: string) => call(id, 'AskUserQuestion', null, { questions: [{ question: `Q${id}?`, header: 'H', options: [], multiSelect: false }] });
+  const turnOf = (toolCalls: ReturnType<typeof call>[]) => ({ kind: 'assistant' as const, turnId: 't', text: '', toolCalls, badge: null, streaming: true, error: null, notes: [], attempts: [] });
+  const setConcise = (on: boolean) => localStorage.setItem(PREFS_KEY, JSON.stringify({ ...DEFAULT_PREFS, conciseMode: on }));
+  afterEach(() => { cleanup(); localStorage.removeItem(PREFS_KEY); });
+
+  it('compact: the open question is left out of the count; the expanded row says 답을 기다림, not 실행 중…', () => {
+    setConcise(true);
+    const { getByTestId } = render(<MessageView item={turnOf([call('1', 'Bash', 'ok'), ask('2')])} />);
+    const log = getByTestId('work-log');
+    expect(log.querySelector('.tool-label')!.textContent).toBe('실행된 명령 1개');
+    expect(log.querySelector('.tool-state')).toBeNull();
+    fireEvent.click(log);
+    const rows = [...document.querySelectorAll('.work-log-body [data-testid="tool-call"]')];
+    const waitingRow = rows.find((r) => r.classList.contains('waiting'))!;
+    expect(waitingRow.querySelector('.tool-state')!.textContent).toBe('답을 기다림');
+    expect(document.querySelector('.work-log-body')!.textContent).not.toContain('실행 중');
+  });
+
+  it('a turn whose only open actions are questions shows no tools item at all', () => {
+    setConcise(true);
+    const { queryByTestId } = render(<MessageView item={turnOf([ask('1'), ask('2')])} />);
+    expect(queryByTestId('work-log')).toBeNull();
+  });
+
+  it('two open questions after finished work: still reads finished (no 계속 작업 중, no 실행 중…)', () => {
+    setConcise(true);
+    const { getByTestId } = render(<MessageView item={turnOf([call('1', 'Bash', 'ok'), call('2', 'Bash', 'ok'), ask('3'), ask('4')])} />);
+    const log = getByTestId('work-log');
+    expect(log.querySelector('.tool-label')!.textContent).toBe('실행된 명령 2개');
+    expect(log.classList.contains('running')).toBe(false);
+  });
+
+  it('an open Bash or Agent next to an open question still reads running', () => {
+    setConcise(true);
+    const bash = render(<MessageView item={turnOf([call('1', 'Bash', null), ask('2')])} />);
+    let log = bash.getByTestId('work-log');
+    expect(log.querySelector('.tool-label')!.textContent).toBe('계속 작업 중 · 단계 1');
+    expect(log.querySelector('.tool-state.running')!.textContent).toBe('실행 중…');
+    cleanup();
+    const agent = render(<MessageView item={turnOf([call('1', 'Agent', null, { description: 'look' }), ask('2')])} />);
+    log = agent.getByTestId('work-log');
+    expect(log.querySelector('.tool-label')!.textContent).toBe('계속 작업 중 · 단계 1');
+    expect(log.classList.contains('running')).toBe(true);
+  });
+
+  it('non-compact: finished commands plus an open question drop 실행 중…', () => {
+    setConcise(false);
+    const { getByTestId } = render(<MessageView item={turnOf([call('1', 'Bash', 'ok'), ask('2')])} />);
+    const log = getByTestId('work-log');
+    expect(log.querySelector('.tool-label')!.textContent).toBe('실행된 명령 1개');
+    expect(log.querySelector('.tool-state')).toBeNull();
+    expect(log.classList.contains('running')).toBe(false);
+  });
+});
+
 describe('toolsState', () => {
   const c = (name: string, result: string | null) => ({ toolUseId: name, name, input: {}, result, isError: false });
   it('running while any non-question call is open; waiting when only a question is open; neither once streaming ends', () => {

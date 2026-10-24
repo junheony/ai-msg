@@ -31,6 +31,7 @@ describe('QuestionCard (D8)', () => {
     // One quiet header line: the open question's header; "waiting" is said by the status line, not here.
     expect(screen.queryByText('Claude가 선택을 기다려요')).toBeNull();
     expect(screen.getByTestId('question-label').textContent).toBe('Color');
+    expect(screen.getByTestId('question-label').getAttribute('aria-hidden')).toBeNull();
     expect(screen.getByTestId('question-progress').textContent).toBe('1/2');
     expect(openQuestion()).toBe('Which color?');
     expect(screen.queryByText('Which features?')).toBeNull();
@@ -279,12 +280,18 @@ describe('splitRecommended', () => {
   it('a question with no header is labelled 질문; the question text is a focus target (tabIndex -1), not a control', () => {
     render(<QuestionCard req={{ ...single, questions: [{ ...single.questions[0]!, header: '' }] }} onAnswer={vi.fn()} />);
     expect(screen.getByTestId('question-label').textContent).toBe('질문');
+    // The card is already named 질문: the visual fallback is not read twice.
+    expect(screen.getByTestId('question-label').getAttribute('aria-hidden')).toBe('true');
     const text = screen.getByTestId('question-open').querySelector('.question-text')!;
     expect(text.getAttribute('tabindex')).toBe('-1');
   });
 
   it('the stylesheet never draws a focus ring on the question text', () => {
     const css = readFileSync(path.resolve(__dirname, '../styles.css'), 'utf8');
-    expect(css).toMatch(/\.question-text:focus, \.question-text:focus-visible \{ outline: none; box-shadow: none; \}/);
+    expect(css).toMatch(/\.question-text:focus \{ outline: none; box-shadow: none; \}/);
+    // A keyboard move gets a soft wash (accent-soft), never the --focus ring.
+    const visible = css.match(/\.question-text:focus-visible \{([^}]*)\}/)![1]!;
+    expect(visible).toContain('var(--accent-soft)');
+    expect(visible).not.toContain('var(--focus)');
   });
 });

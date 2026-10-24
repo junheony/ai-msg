@@ -4,6 +4,7 @@ import type { tool as en } from '../en/tool';
 export const tool: Widen<typeof en> = {
   error: '오류',
   running: '실행 중…',
+  waiting: '답을 기다림',
   exitCode: (n: number) => `종료 코드 ${n}`,
   command: '명령',
   input: '입력',

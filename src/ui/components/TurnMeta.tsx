@@ -7,7 +7,7 @@ import type { ChatItem } from '../state';
 import { groupLabel } from '../toolLabel';
 import { modelLabelOf } from '../../shared/models';
 import { RoleBadge, roleCountLabel } from './RoleBadge';
-import { ToolCalls, isQuestionCall, isSoloCall } from './ToolCallView';
+import { ToolCalls, awaitsAnswer, isQuestionCall, isSoloCall } from './ToolCallView';
 import { useTurnBadge } from './TurnBadge';
 
 type Assistant = Extract<ChatItem, { kind: 'assistant' }>;
@@ -27,9 +27,6 @@ const NOTICE_MARK: Record<ReturnType<typeof noticeTone>, string> = { completed: 
 export function foldedCalls(item: Assistant, concise: boolean) {
   return item.toolCalls.filter((c) => !(concise ? isQuestionCall(c) : isSoloCall(c)));
 }
-
-/** An AskUserQuestion with no result yet is waiting on the person (its card is up), not running. */
-const awaitsAnswer = (c: Assistant['toolCalls'][number]) => c.name === 'AskUserQuestion' && c.result === null;
 
 /**
  * The tools item's state while a reply streams: `running` when a call other than a pending question has no result yet,
@@ -102,13 +99,15 @@ export function TurnMeta({ item, turnEnd, repeatModel, notices, last, stopped, f
       : { key: 'thinking', node: <span className={`turn-meta-text${conciseLive ? ' concise' : ''}`} data-testid="thinking">{label}</span> });
   }
 
-  const calls = foldedCalls(item, concise);
+  // A question still waiting on its card is not work done: it is left out of the count (and of the item when it is alone).
+  const all = foldedCalls(item, concise);
+  const calls = all.filter((c) => !awaitsAnswer(c));
   if (calls.length) {
-    const { running, waiting } = toolsState(calls, streaming);
+    const { running, waiting } = toolsState(all, streaming);
     const errors = calls.filter((c) => c.isError).length;
     // Waiting on the person (a question card is up): the line stops saying 계속 작업 중 and reads like a finished step.
     const liveLabel = conciseLive && !waiting;
-    const label = liveLabel ? `${T.meta.live} · ${T.meta.step(item.toolCalls.length)}` : groupLabel(calls);
+    const label = liveLabel ? `${T.meta.live} · ${T.meta.step(item.toolCalls.filter((c) => !awaitsAnswer(c)).length)}` : groupLabel(calls);
     const states = <>
       {running && <span className="tool-state running">{T.meta.running}</span>}
       {errors > 0 && <span className="tool-state error">{T.meta.errors(errors)}</span>}
@@ -116,7 +115,7 @@ export function TurnMeta({ item, turnEnd, repeatModel, notices, last, stopped, f
     cells.push({
       key: 'tools',
       node: opener('tools', <span className="tool-label" {...(liveLabel ? { 'aria-live': 'polite' as const } : {})}>{label}</span>, { testId: 'work-log', cls: running ? 'running' : '', after: states }),
-      panel: panel('tools', 'work-log-body', <ToolCalls calls={calls} live={streaming} cwd={cwd} flat />),
+      panel: panel('tools', 'work-log-body', <ToolCalls calls={all} live={streaming} cwd={cwd} flat />),
     });
   }
 

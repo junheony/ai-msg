@@ -424,10 +424,12 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .question-nav-btn:disabled { opacity: .35; }
 .question-progress { min-width: 30px; text-align: center; color: var(--muted); font-size: var(--fs-meta); font-weight: 600; font-variant-numeric: tabular-nums; }
 .question { margin: var(--s1) 0 0; }
-/* The question: readable, not shouting — body size, never larger than a reply's headings. It takes focus after ‹ › for
-   screen readers only (tabindex=-1), so it never draws a ring. */
-.question-text { margin: 0 0 var(--s3); font-size: var(--fs-body); line-height: var(--lh-title); font-weight: 600; color: var(--fg-strong); }
-.question-text:focus, .question-text:focus-visible { outline: none; box-shadow: none; }
+/* The question: readable, not shouting — body size, never larger than a reply's headings. It takes focus after ‹ ›
+   (tabindex=-1, a target, not a control), so no ring: a keyboard move gets a soft accent wash to show where focus went;
+   a move by mouse or touch shows nothing. */
+.question-text { margin: 0 0 var(--s3); border-radius: var(--r-sm); font-size: var(--fs-body); line-height: var(--lh-title); font-weight: 600; color: var(--fg-strong); transition: background-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease); }
+.question-text:focus { outline: none; box-shadow: none; }
+.question-text:focus-visible { outline: none; background: var(--accent-soft); box-shadow: 0 0 0 var(--s1) var(--accent-soft); }
 /* An answered question, folded: "2  인증 · OAuth  ✓"; tap to open it again. */
 .question-done { display: flex; align-items: center; gap: var(--s2); width: 100%; min-height: var(--ctl); margin: 0 0 var(--s2); padding: 0 var(--s3); border-radius: var(--r-md); background: transparent; box-shadow: inset 0 0 0 1px var(--line); text-align: left; font-size: var(--fs-label); color: var(--muted); }
 .question-done:hover:not(:disabled) { background: var(--hover); }

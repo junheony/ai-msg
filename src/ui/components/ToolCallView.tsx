@@ -20,8 +20,12 @@ function copyable(v: unknown): string {
   return json(v);
 }
 
+/** An AskUserQuestion with no result yet is waiting on the person (its card is up), not running. */
+export const awaitsAnswer = (c: Pick<ToolCallItem, 'name' | 'result'>) => c.name === 'AskUserQuestion' && c.result === null;
+
 function stateOf(call: ToolCallItem, live: boolean): { cls: string; text: string } {
   if (call.isError) return { cls: 'error', text: ui().tool.error };
+  if (live && awaitsAnswer(call)) return { cls: 'waiting', text: ui().tool.waiting };
   if (call.result === null && live) return { cls: 'running', text: ui().tool.running };
   return { cls: '', text: '' };
 }

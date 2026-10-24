@@ -3,6 +3,7 @@
 export const tool = {
   error: 'Failed',
   running: 'Running…',
+  waiting: 'Waiting for your answer',
   exitCode: (n: number) => `Exit code ${n}`,
   command: 'Command',
   input: 'Input',
