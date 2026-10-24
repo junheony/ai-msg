@@ -1,4 +1,5 @@
 import type { ClientMessage, ServerMessage, StreamPos } from '../shared/protocol';
+import type { ProjectEntry } from '../shared/session-types';
 
 /** A catch-up the server answered with an error is asked again after this long, doubling up to the maximum; back to the minimum on an answer, a reconnect and coming back into view. */
 export const CATCHUP_RETRY_MIN_MS = 1000;
@@ -7,6 +8,8 @@ export const CATCHUP_RETRY_MAX_MS = 30_000;
 export const CATCHUP_STALL_MS = 30_000;
 /** A request made when the page comes back into view: a phone's socket that died in the background answers nothing — give it this long, not the usual 30 s. */
 export const CATCHUP_VISIBLE_STALL_MS = 5_000;
+/** A shown session whose transcript the session lists saw grow this many lists in a row while this device heard nothing of it is opened afresh. */
+export const CATCHUP_SILENT_LISTS = 2;
 
 /**
  * Keeps each shown session's stream in order on this device ('catchup' servers number their turn events: `pos`).
@@ -17,6 +20,9 @@ export const CATCHUP_VISIBLE_STALL_MS = 5_000;
  *
  * One request per session and socket: while it is unanswered nothing is sent again, and after CATCHUP_STALL_MS the
  * socket is reported as `stalled`. An error answer is retried with a growing delay (and shown once); 'not_found' is final.
+ *
+ * The session lists ('index') are the check from outside: a shown session whose transcript grew over
+ * CATCHUP_SILENT_LISTS lists in a row while nothing of it reached this device is opened afresh (the whole history).
  */
 export function createCatchup(opts: {
   /** false = not connected, nothing sent. */
@@ -37,6 +43,14 @@ export function createCatchup(opts: {
   const delays = new Map<string, number>();
   /** Sessions whose failure the user has been shown (until an answer comes). */
   const told = new Set<string>();
+  /**
+   * The self-heal: each shown session's newest transcript time in the last session list, whether anything of it was
+   * heard since, and how many lists in a row saw it grow unheard. A tab whose stream went quiet while the transcript
+   * keeps growing (the sidebar shows newer text than the pane) has lost the session's events: it reopens it.
+   */
+  const listed = new Map<string, number>();
+  const heard = new Set<string>();
+  const silent = new Map<string, number>();
 
   const stop = (timers: Map<string, ReturnType<typeof setTimeout>>, sid: string) => {
     const t = timers.get(sid);
@@ -46,6 +60,26 @@ export function createCatchup(opts: {
   const settle = (sid: string) => { stop(sent, sid); stop(retry, sid); delays.delete(sid); told.delete(sid); };
   const forget = (sid: string) => { applied.delete(sid); settle(sid); };
   const cancel = () => { for (const sid of [...sent.keys(), ...retry.keys()]) { stop(sent, sid); stop(retry, sid); } };
+
+  function indexed(projects: ProjectEntry[], reopen: boolean): void {
+    const newest = new Map<string, number>();
+    for (const p of projects) for (const e of p.sessions) newest.set(e.sessionId, Math.max(newest.get(e.sessionId) ?? 0, e.lastModified));
+    const shown = new Set(opts.shown());
+    for (const sid of [...listed.keys()]) if (!shown.has(sid)) { listed.delete(sid); silent.delete(sid); }
+    for (const sid of shown) {
+      const now = newest.get(sid);
+      if (now === undefined) continue;
+      const was = listed.get(sid);
+      listed.set(sid, now);
+      if (!reopen || was === undefined || now <= was || heard.has(sid) || sent.has(sid) || retry.has(sid)) { silent.delete(sid); continue; }
+      const n = (silent.get(sid) ?? 0) + 1;
+      if (n < CATCHUP_SILENT_LISTS || !opts.enabled()) { silent.set(sid, n); continue; }
+      silent.delete(sid);
+      forget(sid);
+      opts.send({ type: 'open_session', sessionId: sid });
+    }
+    heard.clear();
+  }
 
   /** True when a request for the session is (now, or already) out on this socket. */
   function ask(sid: string, stallMs = CATCHUP_STALL_MS): boolean {
@@ -63,7 +97,9 @@ export function createCatchup(opts: {
   return {
     /** False: do not apply this message (a repeat, one ahead of a gap that is being filled, or a failure already shown). */
     accept(msg: ServerMessage): boolean {
+      if (msg.type === 'index' || msg.type === 'hello') { indexed(msg.projects, msg.type === 'index'); return true; }
       if (msg.type === 'history' || msg.type === 'catchup') {
+        heard.add(msg.sessionId);
         if (msg.type === 'history') { if (msg.pos) applied.set(msg.sessionId, msg.pos); else applied.delete(msg.sessionId); }
         settle(msg.sessionId);
         return true;
@@ -83,6 +119,7 @@ export function createCatchup(opts: {
         return true;
       }
       if (!opts.shown().includes(pos.sid)) { forget(pos.sid); return true; }
+      heard.add(pos.sid);
       const at = applied.get(pos.sid);
       if (!at || pos.seq === at.seq + 1) { applied.set(pos.sid, pos); return true; }
       if (pos.epoch === at.epoch && pos.seq <= at.seq) return false;

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { ClientMessageSchema, type ClientMessage, type ServerMessage, type StreamPos } from '../shared/protocol';
 import { CATCHUP_RETRY_MAX_MS, CATCHUP_RETRY_MIN_MS, CATCHUP_STALL_MS, CATCHUP_VISIBLE_STALL_MS, createCatchup } from './catchup';
+import type { SessionEntry } from '../shared/session-types';
 import { initialState, nextQueued, reducer, type AppState } from './state';
 
 const S = 's1';
@@ -316,5 +317,84 @@ describe('tracker and reducer together', () => {
     expect(asked().length).toBe(1);
     vi.advanceTimersByTime(CATCHUP_VISIBLE_STALL_MS);
     expect(state.stalled).toBe(1);
+  });
+});
+
+/** A session list where each given session's transcript was last written at the given time. */
+const listing = (mods: Record<string, number>): ServerMessage => ({
+  type: 'index',
+  projects: [{ cwd: '/w', name: 'w', pinned: false, sessions: Object.entries(mods).map(([sessionId, lastModified]) => ({ sessionId, lastModified, account: 'b', cwd: '/w', projectDir: '/p', file: `/p/${sessionId}.jsonl`, title: 't', sizeBytes: 1 }) as SessionEntry) }],
+});
+const plainOpens = (out: ClientMessage[]) => out.filter((m) => m.type === 'open_session' && !m.after).map((m) => (m as { sessionId: string }).sessionId);
+
+describe('catch-up tracker: the session list as a check from outside', () => {
+  it('a shown session whose transcript keeps growing while nothing of it arrives is opened afresh', () => {
+    const { c, out } = setup();
+    c.accept(history(pos(10)));
+    c.accept(delta(11));
+    c.accept(listing({ [S]: 1000 }));
+    // The stream goes quiet on this device; the transcript does not.
+    c.accept(listing({ [S]: 2000 }));
+    expect(plainOpens(out)).toEqual([]);
+    c.accept(listing({ [S]: 3000 }));
+    expect(plainOpens(out)).toEqual([S]);
+    // Its answer is applied as any history, from its position.
+    expect(c.accept(history(pos(30)))).toBe(true);
+    expect(c.accept(delta(31))).toBe(true);
+  });
+
+  it('nothing is asked while the session\'s events arrive, or when its transcript stops growing', () => {
+    const { c, out } = setup();
+    c.accept(history(pos(10)));
+    c.accept(listing({ [S]: 1000, s2: 500 }));
+    for (let n = 1; n <= 4; n++) { c.accept(delta(10 + n)); c.accept(listing({ [S]: 1000 + n, s2: 500 })); }
+    // One write after the stream ended (a turn's last lines), then quiet.
+    c.accept(listing({ [S]: 2000, s2: 500 }));
+    c.accept(listing({ [S]: 2000, s2: 500 }));
+    c.accept(listing({ [S]: 2000, s2: 500 }));
+    expect(out).toEqual([]);
+  });
+
+  it('a request already out, a reconnect\'s fresh list, or a hidden session asks nothing more', () => {
+    const { c, out, state } = setup();
+    c.accept(history(pos(10)));
+    c.accept(listing({ [S]: 1000, s3: 1 }));
+    c.accept(delta(12));
+    expect(out.length).toBe(1);
+    c.accept(listing({ [S]: 2000, s3: 2 }));
+    c.accept(listing({ [S]: 3000, s3: 3 }));
+    expect(plainOpens(out)).toEqual([]);
+    c.accept(caughtUp());
+    // The hello's list is a new start (the hello reopens every pane anyway).
+    c.accept({ ...listing({ [S]: 4000 }), type: 'hello' } as unknown as ServerMessage);
+    c.accept(listing({ [S]: 5000 }));
+    expect(plainOpens(out)).toEqual([]);
+    state.shown = ['s2'];
+    c.accept(listing({ [S]: 6000 }));
+    c.accept(listing({ [S]: 7000 }));
+    expect(plainOpens(out)).toEqual([]);
+  });
+});
+
+describe('an open tab that lost a background continuation', () => {
+  const pane = (s: AppState) => s.panes[0]!;
+  const said = (s: AppState) => pane(s).items.flatMap((i) => (i.kind === 'assistant' ? [i.text] : []));
+  it('the existing tab misses the later segments, a fresh open has them: the session list sets the tab right', () => {
+    const { c, out } = setup({ shown: [S] });
+    let tab = reducer(initialState, { type: 'open', sessionId: S, cwd: '/w', title: 't' });
+    const play = (m: ServerMessage) => { if (c.accept(m)) tab = reducer(tab, { type: 'server', msg: m }); };
+    play({ type: 'history', sessionId: S, cwd: '/w', account: 'b', runningTurnId: null, messages: [{ kind: 'assistant', text: 'launched', model: null, toolCalls: [], ts: null }], pos: pos(5) });
+    play(listing({ [S]: 1000 }));
+    // Segments bg1, bg2 run and are written; their events never reach this tab (its socket is no longer told).
+    const later = [{ kind: 'assistant' as const, text: 'launched', model: null, toolCalls: [], ts: null }, { kind: 'assistant' as const, text: 'found it', model: null, toolCalls: [], ts: null }, { kind: 'assistant' as const, text: 'fixed it', model: null, toolCalls: [], ts: null }];
+    play(listing({ [S]: 2000 }));
+    expect(said(tab)).toEqual(['launched']);
+    let fresh = reducer(initialState, { type: 'open', sessionId: S, cwd: '/w', title: 't' });
+    fresh = reducer(fresh, { type: 'server', msg: { type: 'history', sessionId: S, cwd: '/w', account: 'b', runningTurnId: null, messages: later, pos: pos(20) } });
+    expect(said(fresh)).toEqual(['launched', 'found it', 'fixed it']);
+    play(listing({ [S]: 3000 }));
+    expect(plainOpens(out)).toEqual([S]);
+    play({ type: 'history', sessionId: S, cwd: '/w', account: 'b', runningTurnId: null, messages: later, pos: pos(20) });
+    expect(said(tab)).toEqual(said(fresh));
   });
 });

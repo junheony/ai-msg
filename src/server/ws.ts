@@ -274,6 +274,8 @@ export const CATCHUP_KEEP_EVENTS = 5000;
 export const CATCHUP_KEEP_BYTES = 4 * 1024 * 1024;
 /** A process that ended its turn and has sent nothing for this long (it is only kept open by background work) gives its kept events up: a device behind then gets the full history. */
 export const CATCHUP_IDLE_MS = 10 * 60_000;
+/** A Claude history read that turn events overtook is read again at most this many times (a busy stream never settles). */
+const HISTORY_REREADS = 3;
 
 type Turn = RunningTurn & { /** As its turn_started said (absent until then). */ engine?: EngineKind; origin: WebSocket; watchers: Set<WebSocket>; ac: AbortController; current: string | null; /** When `current` started (ms). */ since: number; bg: { msg: TurnMsg<'turn_background'>; at: number } | null; log: ReplayLog; /** Started without a session id: the sidebar is refreshed once the CLI reports one. */ fresh: boolean; /** 새 세션으로 이어가기: the session this new one continues. */ handoffFrom: string | null; /** 메시지 편집 갈래: recorded in session meta once the new session has an id. */ branch: { parent: string; n: number } | null; /** 복제: the title the new session gets once it has an id. */ title?: string; afterRelease: { ws: WebSocket; msg: Extract<ClientMessage, { type: 'send' }>; retryHop?: number; /** Told the device it is going in (pendingRefs): run even if that socket closed. */ held?: true }[]; /** Refs of sends / steers handed to the process but not yet recorded as accepted (`history.pendingRefs`). */ pendingRefs: Set<string>; /** The foreign-write check a send to the held-open process waits on (shared by sends arriving together). */ outside: Promise<boolean> | null; /** Being ended because the conversation went on outside deck: sends wait in `afterRelease` for a new process. */ recycling: boolean; /** The last stream position this process stamped (0: none yet). */ seq: number; /** Its newest stamped events as sent, oldest first (see CATCHUP_KEEP_*). */ stream: { seq: number; data: string; bytes: number }[]; streamBytes: number; /** Drops `stream` once the process has sat idle (CATCHUP_IDLE_MS). */ streamIdle: ReturnType<typeof setTimeout> | null; /** ⚡ 빠르게: the process was started with fast mode (TurnRunner.fastTurn) — a send asking otherwise never joins it. */ fast: boolean; /** 다른 AI 로 이어가기: the sessions this turn moved away from, in order (Claude → GPT → Gemini: both; sends to any follow the turn). */ crossFrom?: string[]; /** …until the old turn `fromTurnId`'s result is out (the turn keeps the old session meanwhile). */ crossing?: { fromTurnId: string; from: string | null } };
 
@@ -1387,10 +1389,17 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   /** A Claude session's transcript as a pane shows it. A copy that contains deck's (e.g. Claude Desktop continued the session on A) is the one read. */
   const readClaudeHistory = async (sessionId: string, found: SessionEntry, st: ClaudeSessionState | null): Promise<ClaudeHistory> => {
     const best = st ? await deps.index.bestCopy(sessionId, st.projectDir, st.account).catch(() => null) : null;
-    // Stamped before the read: an entry written while reading is looked at again by the outside poll.
-    const at = Date.now();
-    const messages = await readTranscript(best?.file ?? (st ? `${st.projectDir}/${sessionId}.jsonl` : found.file)).catch(() => readTranscript(found.file));
-    return { found, st, at, messages };
+    const file = best?.file ?? (st ? `${st.projectDir}/${sessionId}.jsonl` : found.file);
+    // The history goes out with the stream position as it is when it is sent (runningOf), after the events stamped during
+    // the read (they went to the viewing socket already, and the history replaces what they showed): a read the stream
+    // moved past is read again — incrementally, only what was appended — so the history has what its position claims.
+    for (let n = 0; ; n++) {
+      // Stamped before the read: an entry written while reading is looked at again by the outside poll.
+      const at = Date.now();
+      const mark = heads.get(sessionId)?.seq;
+      const messages = await readTranscript(file).catch(() => readTranscript(found.file));
+      if (heads.get(sessionId)?.seq === mark || n >= HISTORY_REREADS) return { found, st, at, messages };
+    }
   };
   /**
    * 다른 AI 로 이어가기: what the new session is told of `from`'s conversation (engine `engine`) — user / assistant text
