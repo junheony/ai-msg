@@ -10,7 +10,7 @@ import type { AgentInfo, ChatItem, PaneBackground, PendingPermission, PendingQue
 import { latestContext } from '../context';
 import { has } from '../features';
 import { latestTodos } from '../todos';
-import { useStickToBottom } from '../stickToBottom';
+import { useStickToBottom, viewAnchor } from '../stickToBottom';
 import { mergeToolRuns } from '../toolRuns';
 import { turnMetaProps } from '../turnMeta';
 import { ATTACHMENT_ONLY_TEXT, filesFrom, replaceAttachment, uploadFile, usePasteUploads, type UploadFn } from '../upload';
@@ -352,29 +352,28 @@ export function Chat(p: ChatProps) {
   const older = p.older;
   const olderLoad = useRef<(() => void) | null>(null);
   olderLoad.current = older && older.cursor !== null && !older.loading && !older.failed && p.items.length > 0 ? older.onLoad : null;
-  // Where the view stood (scrollHeight, scrollTop) and the first item, as of the last commit or scroll: a page put in
-  // front keeps what the user reads in place (the distance from the bottom stays), with or without native anchoring.
-  const olderView = useRef<{ height: number; top: number; first: ChatItem | undefined } | null>(null);
   useEffect(() => {
     const el = bodyRef.current;
     if (!el) return;
-    const onScroll = () => {
-      if (olderView.current) { olderView.current.height = el.scrollHeight; olderView.current.top = el.scrollTop; }
-      if (el.scrollTop < OLDER_NEAR_TOP && el.scrollHeight > el.clientHeight) olderLoad.current?.();
-    };
+    const onScroll = () => { if (el.scrollTop < OLDER_NEAR_TOP && el.scrollHeight > el.clientHeight) olderLoad.current?.(); };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
+  // Scrolled up, the items change (a page put in front, a history replacing them — the same messageKeys keep their DOM
+  // nodes): the item at the view's top, read off the DOM while it still shows the old items, is put back where it was.
+  // Only how far that item moved goes into scrollTop, so growth below it, and native scroll anchoring having moved it
+  // already, change nothing.
+  const itemsAnchor = useRef<{ items: ChatItem[]; at: { el: Element; offset: number } | null }>({ items: p.items, at: null });
+  if (itemsAnchor.current.items !== p.items) {
+    itemsAnchor.current = { items: p.items, at: scroll.detached && bodyRef.current ? viewAnchor(bodyRef.current) : null };
+  }
   useLayoutEffect(() => {
     const el = bodyRef.current;
-    if (!el) return;
-    const was = olderView.current;
-    const first = p.items[0];
-    if (was && was.first !== undefined && first !== was.first && p.items.indexOf(was.first) > 0) {
-      const top = el.scrollHeight - (was.height - was.top);
-      if (Math.abs(el.scrollTop - top) > 1) el.scrollTop = top;
-    }
-    olderView.current = { height: el.scrollHeight, top: el.scrollTop, first };
+    const a = itemsAnchor.current.at;
+    itemsAnchor.current.at = null;
+    if (!el || !a || !a.el.isConnected) return;
+    const moved = a.el.getBoundingClientRect().top - el.getBoundingClientRect().top - a.offset;
+    if (Math.abs(moved) > 0.5) el.scrollTop += moved;
   }, [p.items]);
   // A question / approval card waits for the user: the status line, the composer and the stop button say so (Q2).
   const waitingFor = p.questions.length > 0 ? 'question' as const : p.pending.length > 0 ? 'permission' as const : null;

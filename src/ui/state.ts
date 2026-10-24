@@ -1,7 +1,7 @@
 import type { TaskInfo } from '../shared/tasks';
 import type { Account, Seat } from '../shared/accounts';
 import { contextWindowOf, DEFAULT_CODEX_MODEL, DEFAULT_EFFORT, DEFAULT_GEMINI_MODEL, DEFAULT_GROK_MODEL, DEFAULT_MODEL, DEFAULT_SANDBOX, defaultGeminiSandbox, IMPORTED_DEFAULT_MODEL, isClaudeModel, isCodexModel, isGeminiModel, isGrokModel, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../shared/models';
-import { ACCEPTED_REFS_TTL_MS, type AccountInfo, type CommanderView, type DeckSettings, type DrainReason, type ExperimentalSettings, type RefusalCode, type SessionFacts, type GeminiStatus, type GrokStatus, type RoutingPolicy, type ServerMessage, type SessionActivity, type TurnBadge, type TurnPrompt } from '../shared/protocol';
+import { ACCEPTED_REFS_TTL_MS, type AccountInfo, type ClientMessage, type CommanderView, type DeckSettings, type DrainReason, type ExperimentalSettings, type RefusalCode, type SessionFacts, type GeminiStatus, type GrokStatus, type RoutingPolicy, type ServerMessage, type SessionActivity, type TurnBadge, type TurnPrompt } from '../shared/protocol';
 import type { BgTaskInfo, TaskStatus, TaskUsage, TurnPhase } from '../shared/turn-types';
 import type { DesktopSession, ProjectEntry, TranscriptMessage } from '../shared/session-types';
 import type { UsageSnapshot } from '../shared/usage-types';
@@ -289,9 +289,10 @@ export type PaneState = {
  * ignores it). `cursor`: what `load_older.before` asks for next, null = the items start at the transcript's beginning.
  * `reqId`: the request in flight (its answer is the only one applied). `failed`: the last one came back empty with an
  * error (the button offers it again). `orphans`: tool results at the front whose call is on a page not loaded yet —
- * they join it when it comes.
+ * they join it when it comes. `from`: where the items start, as a cursor (`at`) — what `open_session.from` sends so a
+ * history sent again (reconnect, outside writes) keeps the pages loaded.
  */
-export type OlderHistory = { sessionId: string; cursor: string | null; reqId: string | null; failed?: boolean; orphans: TranscriptMessage[] };
+export type OlderHistory = { sessionId: string; cursor: string | null; reqId: string | null; failed?: boolean; orphans: TranscriptMessage[]; from: string | null };
 
 /** Tool results in `messages` whose call is not before them in it (fromTranscript leaves them out). */
 function orphanResults(messages: TranscriptMessage[]): TranscriptMessage[] {
@@ -305,8 +306,18 @@ function orphanResults(messages: TranscriptMessage[]): TranscriptMessage[] {
 }
 
 /** A history's paging state: fresh with each history (absent when the server sent no cursor). */
-function olderOf(msg: { sessionId: string; messages: TranscriptMessage[]; older?: string | null }): OlderHistory | undefined {
-  return msg.older === undefined ? undefined : { sessionId: msg.sessionId, cursor: msg.older, reqId: null, orphans: orphanResults(msg.messages) };
+function olderOf(msg: { sessionId: string; messages: TranscriptMessage[]; older?: string | null; at?: string }): OlderHistory | undefined {
+  return msg.older === undefined ? undefined : { sessionId: msg.sessionId, cursor: msg.older, reqId: null, orphans: orphanResults(msg.messages), from: msg.at ?? null };
+}
+
+/**
+ * An `open_session` for a session a pane shows with its paging state: `from` = where that pane's items start, so the
+ * history that answers reaches back there (the server ignores a cursor it cannot serve and sends its usual window).
+ */
+export function withOlderFrom(m: ClientMessage, panes: PaneState[]): ClientMessage {
+  if (m.type !== 'open_session' || m.from) return m;
+  const from = panes.map((p) => (p.session?.sessionId === m.sessionId ? olderOfPane(p)?.from : null)).find((f): f is string => !!f);
+  return from ? { ...m, from } : m;
 }
 
 /** The pane's paging state when it is about the session the pane shows (else none). */
@@ -324,7 +335,7 @@ function paneOnOlder(pane: PaneState, msg: Extract<ServerMessage, { type: 'older
   if (!o || o.sessionId !== msg.sessionId || o.reqId === null || o.reqId !== (msg.reqId ?? null) || o.cursor !== msg.before) return pane;
   if (msg.error) return { ...pane, older: { ...o, reqId: null, failed: true } };
   const page = [...msg.messages, ...o.orphans];
-  return { ...pane, items: [...fromTranscript(page), ...pane.items], older: { sessionId: o.sessionId, cursor: msg.older, reqId: null, orphans: orphanResults(page) } };
+  return { ...pane, items: [...fromTranscript(page), ...pane.items], older: { sessionId: o.sessionId, cursor: msg.older, reqId: null, orphans: orphanResults(page), from: msg.at ?? o.from } };
 }
 
 /** How many body sizes a card remembers its box for. */

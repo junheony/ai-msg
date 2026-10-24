@@ -5,7 +5,7 @@ import readline from 'node:readline';
 import type { TranscriptMessage } from '../../shared/session-types';
 import { stripSystemReminders } from '../../shared/choices';
 import { GROK_SESSION_ID_RE } from './GrokEngine';
-import { readByteWindow, readByteWindowBefore, type ByteWindow, type OffsetBuilder } from './lineWindow';
+import { readByteWindow, readByteWindowBefore, readByteWindowFrom, type ByteWindow, type OffsetBuilder } from './lineWindow';
 
 type Rec = Record<string, unknown>;
 const rec = (v: unknown): Rec | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Rec) : null);
@@ -109,15 +109,20 @@ function grokLine(line: string, maxTool: number): TranscriptMessage | null {
   return null;
 }
 
-function grokOffsetBuilder(maxTool: number): OffsetBuilder {
-  const messages: TranscriptMessage[] = [];
-  const starts: number[] = [];
+/** Lines with their offsets as messages (lineWindow paging). `max` finite: only (at least) the last `max` are kept as it goes. */
+function grokOffsetBuilder(maxTool: number, max = Infinity): OffsetBuilder {
+  let messages: TranscriptMessage[] = [];
+  let starts: number[] = [];
   return {
     add(line, at) {
       const m = grokLine(line, maxTool);
       if (!m) return;
       messages.push(m);
       starts.push(at);
+      if (messages.length > max * 2 + 64) {
+        messages = messages.slice(-max);
+        starts = starts.slice(-max);
+      }
     },
     entries: () => ({ messages, starts }),
   };
@@ -126,7 +131,14 @@ function grokOffsetBuilder(maxTool: number): OffsetBuilder {
 /** readGrokTranscriptTail, plus the cursor for the page before the window ('olderHistory'). */
 export async function readGrokWindow(file: string, maxBytes = 16 * 1024 * 1024, opts: GrokTranscriptOptions = {}): Promise<ByteWindow> {
   await regularFile(file);
-  return readByteWindow(file, () => grokOffsetBuilder(opts.maxToolResultChars ?? 8192), opts.maxMessages ?? 200, maxBytes);
+  const count = opts.maxMessages ?? 200;
+  return readByteWindow(file, () => grokOffsetBuilder(opts.maxToolResultChars ?? 8192, count), count, maxBytes);
+}
+
+/** open_session.from: the chat_history from cursor `from` to its end when that is at most `max` messages, else null. */
+export async function readGrokFrom(file: string, from: number, max: number, maxToolResultChars = 8192): Promise<ByteWindow | null> {
+  await regularFile(file);
+  return readByteWindowFrom(file, from, () => grokOffsetBuilder(maxToolResultChars, max + 1), max);
 }
 
 /** The page before cursor `before` (a ByteWindow.older) of a chat_history.jsonl; null = not a cursor of this file. */

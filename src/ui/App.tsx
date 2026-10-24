@@ -34,7 +34,7 @@ import { claimReload, hasDraftText, hasOpenModal, isNewBuild, shouldAutoReload }
 import { paneColumns, paneSize, resizePair } from './paneResize';
 import { hydrate, loadQueues, loadSent, loadUi, saveQueues, saveSent, saveUi, snapshotQueues, snapshotUi } from './persist';
 import { findSession } from './push';
-import { dockedPanes, initialState, openPanes, reducer, sessionsToClose, type Action, type AppState, type UploadedAttachment } from './state';
+import { dockedPanes, initialState, openPanes, reducer, sessionsToClose, withOlderFrom, type Action, type AppState, type UploadedAttachment } from './state';
 import { arrangeFloats, clampFloat, dockSlot, EDGE_PX, FLOAT_MIN_H, FLOAT_MIN_W, floatRectAt, onRail, reorderSlot, SCROLL_STEP, slotX, snapFloat, shownBox, COLLAPSED_H, useTabReorder, type FloatRect } from './paneDrag';
 import { isMacPlatform, isTypingTarget, matchPaneShortcut, matchPinShortcut, matchShortcut, type ShortcutId } from './shortcuts';
 import { useIsPhone } from './useIsPhone';
@@ -414,7 +414,8 @@ export function App() {
   useEffect(() => {
     if (!authed) return;
     const tracker = createCatchup({
-      send: (m) => !!sock.current?.send(m),
+      // A reopen keeps the pages a pane loaded (open_session.from).
+      send: (m) => !!sock.current?.send(withOlderFrom(m, latest.current.panes)),
       enabled: () => has('catchup'),
       shown: () => latest.current.panes.map((p) => p.session?.sessionId).filter((x): x is string => !!x),
       stalled: () => sock.current?.reconnect(),
@@ -745,7 +746,8 @@ export function App() {
 
   // No socket yet counts as not connected; otherwise the socket's own answer (`false` = not connected).
   // 간결 모드: every send carries `concise` so the server appends the results-first style note (Claude turns).
-  const send = (m: ClientMessage) => (sock.current ? sock.current.send(withLang(withConcise(m, prefs.conciseMode))) : false);
+  // open_session: `from` keeps the pages a pane already loaded when the session is opened again (withOlderFrom).
+  const send = (m: ClientMessage) => (sock.current ? sock.current.send(withLang(withConcise(withOlderFrom(m, latest.current.panes), prefs.conciseMode))) : false);
   /**
    * Pane-changing actions (open / close): the server's per-socket view set must shrink too, so every session
    * no pane views after the action gets a close_session (T9 prerequisite b; duplicate-session panes keep it).

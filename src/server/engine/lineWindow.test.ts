@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { readCodexBefore, readCodexTranscript, readCodexWindow } from './codexRollout';
-import { readGrokBefore, readGrokTranscriptTail, readGrokWindow } from './grokHistory';
+import { readCodexBefore, readCodexFrom, readCodexTranscript, readCodexWindow } from './codexRollout';
+import { readGrokBefore, readGrokFrom, readGrokTranscriptTail, readGrokWindow } from './grokHistory';
 import type { ByteWindow } from './lineWindow';
 import type { TranscriptMessage } from '../../shared/session-types';
 
@@ -122,5 +122,46 @@ describe('Grok chat_history paging', () => {
     await fs.symlink(f, link);
     await expect(readGrokBefore(link, 10)).rejects.toThrow();
     await expect(readGrokWindow(link)).rejects.toThrow();
+  });
+});
+
+describe('open_session.from on byte cursors (readCodexFrom / readGrokFrom)', () => {
+  it('Codex: from a page cursor to the end = that page plus the window; more than max → null; not a position in the file → null', async () => {
+    const f = await write('r.jsonl', codexLines(120, 10));
+    const w = await readCodexWindow(f);
+    const page = await readCodexBefore(f, w.older!);
+    const from = await readCodexFrom(f, page!.older!, 2000);
+    // Models before the region's first turn_context are not known there (as on an older page).
+    expect(from!.older).toBe(page!.older);
+    expect(noModel(from!.messages)).toEqual(noModel([...page!.messages, ...w.messages]));
+    expect(await readCodexFrom(f, page!.older!, 300)).toBeNull();
+    expect(await readCodexFrom(f, (await fs.stat(f)).size, 2000)).toBeNull();
+    expect(await readCodexFrom(f, -1, 2000)).toBeNull();
+    // From the start: everything, older null.
+    expect((await readCodexFrom(f, 0, 2000))!.older).toBeNull();
+  });
+
+  it('Grok: the same', async () => {
+    const f = await write('chat_history.jsonl', grokLines(900, 10));
+    const w = await readGrokWindow(f);
+    const page = await readGrokBefore(f, w.older!);
+    expect(await readGrokFrom(f, page!.older!, 2000)).toEqual({ messages: [...page!.messages, ...w.messages], older: page!.older });
+    expect(await readGrokFrom(f, page!.older!, 399)).toBeNull();
+  });
+
+  it('the window builder keeps memory bounded: a rollout of many messages still gives the last 200', async () => {
+    const f = await write('r.jsonl', codexLines(3000, 1));
+    const w = await readCodexWindow(f);
+    expect(w.messages).toEqual((await readCodexTranscript(f, { maxMessages: 200 })));
+    expect(w.older).not.toBeNull();
+  });
+
+  it('a tail inside one line longer than the region: a cursor that goes on, not older null', async () => {
+    const f = await write('chat_history.jsonl', [...grokLines(30, 10), { type: 'tool', tool_call_id: 'x', content: 'z'.repeat(300_000) }]);
+    const w = await readGrokWindow(f, 100_000);
+    expect(w.messages).toEqual([]);
+    expect(w.older).not.toBeNull();
+    const { all } = await pageAll(w, (b) => readGrokBefore(f, b));
+    expect(all.length).toBeGreaterThan(0);
   });
 });

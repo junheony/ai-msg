@@ -154,6 +154,29 @@ describe('ws: sessions another Claude process holds', () => {
   });
 });
 
+describe('ws: outside poll keeps the pages a pane loaded (olderHistory)', () => {
+  it('after load_older, the history the poll sends again starts at that page, not at the default window', async () => {
+    const S = '53535353-5353-4535-8535-535353535353';
+    const cwd = await seed(S, 'follow-older');
+    await fs.appendFile(fileOf(cwd, S), Array.from({ length: 449 }, (_, i) => line('cli', `m${i}`)).join(''));
+    const a = await client();
+    await a.next('hello');
+    a.send({ type: 'open_session', sessionId: S });
+    const h = await a.next('history', (m) => m.sessionId === S);
+    expect(h.messages).toHaveLength(200);
+    a.send({ type: 'load_older', sessionId: S, before: h.older, reqId: 'o1' });
+    const page = await a.next('older_history', (m) => m.reqId === 'o1');
+    expect(page.messages).toHaveLength(200);
+    expect(page.at).toBe(page.older);
+    await fs.appendFile(fileOf(cwd, S), line('claude-desktop', 'from desktop'));
+    const again = await a.next('history', (m) => m.sessionId === S);
+    expect(again.at).toBe(page.at);
+    expect(again.messages).toHaveLength(401);
+    expect(JSON.stringify(again.messages.at(-1))).toContain('from desktop');
+    a.close();
+  });
+});
+
 describe('ws: outside poll, per socket', () => {
   it('a pane that closed is not sent anything, nor re-registered, by the poll — and its transcript is not read for it', async () => {
     const S = '5a5a5a5a-5a5a-45a5-85a5-5a5a5a5a5a5a';

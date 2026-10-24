@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   clearTranscriptCache, clearTranscriptMarks, readTranscriptBefore, readTranscriptUncached, readTranscriptWindow, setTranscriptCacheDir,
+  setTranscriptMarkLimits, transcriptMarkCount,
 } from './transcript';
 import type { TranscriptMessage } from '../../shared/session-types';
 
@@ -50,6 +51,7 @@ afterEach(() => {
   setTranscriptCacheDir(null);
   clearTranscriptCache();
   clearTranscriptMarks();
+  setTranscriptMarkLimits(null);
 });
 
 describe('readTranscriptWindow', () => {
@@ -133,6 +135,18 @@ describe('readTranscriptBefore', () => {
     const other = await readTranscriptUncached(f, { maxMessages: Infinity });
     expect((await readTranscriptBefore(f, 1000, 200)).messages).toEqual(other.slice(800, 1000));
   }, 60_000);
+
+  it('marks per file are capped: past the cap every other one goes (stride doubles) and pages stay exact', async () => {
+    setTranscriptMarkLimits({ chunk: 4096, max: 8 });
+    const f = await file(records(3000, 100));
+    expect((await fs.stat(f)).size / 4096).toBeGreaterThan(50);
+    const full = await readTranscriptUncached(f, { maxMessages: Infinity });
+    const { all } = await pageAll(f, 200);
+    expect(all).toEqual(full);
+    expect(transcriptMarkCount(f)).toBeGreaterThan(0);
+    expect(transcriptMarkCount(f)).toBeLessThanOrEqual(8);
+    for (const at of [150, 1200, full.length - 10]) expect((await readTranscriptBefore(f, at, 100)).messages).toEqual(full.slice(at - 100, at));
+  });
 
   it('invalid before: ≤ 0 or past the end gives an empty page', async () => {
     const f = await file(records(30));

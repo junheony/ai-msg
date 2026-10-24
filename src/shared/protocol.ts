@@ -112,6 +112,11 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     type: z.literal('open_session'), sessionId: z.string().min(1), after: z.object({ epoch: z.string().min(1).max(200), seq: z.number().int().min(0) }).optional(),
     /** Server message kinds beyond the base set this UI understands ('sandbox'): the socket gets them from now on (rule 3). */
     accepts: z.array(z.string().max(40)).max(20).optional(),
+    /**
+     * 'olderHistory': the `at` of the earliest page the pane shows. A history then reaches back to it (the pages loaded
+     * stay on screen) when that is not too many messages; a cursor of another file (or none of this session) is ignored.
+     */
+    from: z.string().min(1).max(OLDER_CURSOR_MAX).optional(),
   }),
   /**
    * 'olderHistory' servers: the page of the session's transcript before `before` (a `history.older` / `older_history.older`
@@ -338,13 +343,13 @@ export type ServerMessage =
   | { type: 'sandbox'; sessionId: string; sandbox: CodexSandbox }
   | { type: 'usage'; usage: UsageSnapshot }
   | { type: 'index'; projects: ProjectEntry[]; pins?: string[]; sessionIcons?: Record<string, string>; desktop?: DesktopSession[] }
-  | ({ type: 'history'; sessionId: string; cwd: string; account: Seat | null; engine?: EngineKind; sandbox?: CodexSandbox | null; messages: TranscriptMessage[]; /** 'olderHistory' servers: a cursor for `load_older` = more before `messages`; null = `messages` start at the beginning; absent = unknown (no paging). */ older?: string | null } & SessionFacts)
+  | ({ type: 'history'; sessionId: string; cwd: string; account: Seat | null; engine?: EngineKind; sandbox?: CodexSandbox | null; messages: TranscriptMessage[]; /** 'olderHistory' servers: a cursor for `load_older` = more before `messages`; null = `messages` start at the beginning; absent = unknown (no paging). */ older?: string | null; /** 'olderHistory' servers: where `messages` start, as a cursor (what `open_session.from` takes); absent when `older` is. */ at?: string } & SessionFacts)
   /**
    * 'olderHistory' servers: the answer to `load_older` — the messages just before its cursor, oldest first (never the
-   * ones the device already has). `older` as in `history`. `error`: nothing could be read ('bad_cursor' = not a cursor
+   * ones the device already has). `older` and `at` as in `history`. `error`: nothing could be read ('bad_cursor' = not a cursor
    * of this session, 'not_found' = no such session, 'read_failed' = the transcript could not be read; asking again may help).
    */
-  | { type: 'older_history'; sessionId: string; before: string; reqId?: string; messages: TranscriptMessage[]; older: string | null; error?: OlderHistoryError }
+  | { type: 'older_history'; sessionId: string; before: string; reqId?: string; messages: TranscriptMessage[]; older: string | null; at?: string; error?: OlderHistoryError }
   /**
    * The answer to `open_session.after` when nothing has to be read again: the device keeps what it shows, and the events
    * after its position (if any) follow this message at once, in order. Never sent unasked.
@@ -455,10 +460,10 @@ export type ServerMessage =
  * the session runs in bypass mode · a commander is already active (stop it first; also: no bypass while one is) · not an
  * existing Claude session · the feature is off · the device's epoch is not the current one (its screen is out of date).
  */
+export type RefusalCode = 'draining' | 'already_accepted' | 'in_flight' | 'not_found' | 'commander_bypass' | 'commander_active' | 'commander_engine' | 'commander_disabled' | 'commander_stale_epoch';
+
 /** Why `older_history` came back empty (see ServerMessage `older_history`). */
 export type OlderHistoryError = 'bad_cursor' | 'not_found' | 'read_failed';
-
-export type RefusalCode = 'draining' | 'already_accepted' | 'in_flight' | 'not_found' | 'commander_bypass' | 'commander_active' | 'commander_engine' | 'commander_disabled' | 'commander_stale_epoch';
 
 /** How long / how many accepted refs the server keeps per session (`history.acceptedRefs`). */
 export const ACCEPTED_REFS_TTL_MS = 7 * 24 * 60 * 60 * 1000;

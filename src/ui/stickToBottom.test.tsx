@@ -238,3 +238,41 @@ describe('a new question / approval card (Q1)', () => {
     expect(box.top).toBe(300);
   });
 });
+
+describe('older pages: what the reader looks at stays put', () => {
+  const rect = Element.prototype.getBoundingClientRect;
+  const css = (globalThis as { CSS?: unknown }).CSS;
+  const q = (n: number): ChatItem => ({ kind: 'user', text: `q${n}`, n });
+  // jsdom has no layout: each item (a direct child of the transcript) is 100px tall, stacked in DOM order; its on-screen
+  // top follows the scroll (the transcript sits at 0). Native anchoring is claimed, so only Chat's own keeping moves the view.
+  function fakeItems(body: HTMLElement, box: { top: number }) {
+    Element.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      const i = this.parentElement === body ? [...body.children].indexOf(this) : -1;
+      const t = i < 0 ? 0 : i * 100 - box.top;
+      return { top: t, bottom: t + 100, left: 0, right: 0, width: 0, height: 100, x: 0, y: t, toJSON: () => ({}) } as DOMRect;
+    };
+    (globalThis as { CSS?: unknown }).CSS = { supports: () => true };
+  }
+  afterEach(() => {
+    cleanup();
+    Element.prototype.getBoundingClientRect = rect;
+    (globalThis as { CSS?: unknown }).CSS = css;
+  });
+
+  it('a page put in front, then a history replacing the items: scrollTop moves by how far the item at the top moved', () => {
+    const items = [q(10), q(11), q(12), q(13), q(14), q(15), q(16), q(17), q(18), q(19)];
+    const { view, body, box } = setup(items);
+    fakeItems(body, box);
+    fireEvent.wheel(body, { deltaY: -40 });
+    box.top = 250; // q12 at the top, 50px of it above the edge
+    fireEvent.scroll(body);
+    box.height = 1500;
+    const paged = [q(5), q(6), q(7), q(8), q(9), ...items];
+    view.rerender(<Chat {...props(paged)} />);
+    expect(box.top).toBe(750);
+    // The same messages again as new objects (a history sent again, with a new one at the end): the view stays.
+    box.height = 1600;
+    view.rerender(<Chat {...props([...paged.map((i) => ({ ...i })), q(20)])} />);
+    expect(box.top).toBe(750);
+  });
+});

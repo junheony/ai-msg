@@ -5,7 +5,7 @@ import readline from 'node:readline';
 import type { TranscriptMessage } from '../../shared/session-types';
 import type { GptCredits } from '../../shared/usage-types';
 import type { TurnWindows } from '../usage/UsageService';
-import { readByteWindow, readByteWindowBefore, type ByteWindow, type OffsetBuilder } from './lineWindow';
+import { readByteWindow, readByteWindowBefore, readByteWindowFrom, type ByteWindow, type OffsetBuilder } from './lineWindow';
 
 type Rec = Record<string, unknown>;
 
@@ -239,9 +239,12 @@ class CodexTranscriptBuilder {
   }
 }
 
-/** A Codex builder over raw lines with their offsets (lineWindow paging; nothing trimmed, the caller bounds the region). */
-function codexOffsetBuilder(maxToolResultChars: number): OffsetBuilder {
-  const b = new CodexTranscriptBuilder({ maxMessages: Infinity, maxToolResultChars });
+/**
+ * A Codex builder over raw lines with their offsets (lineWindow paging). `maxMessages` finite: it keeps the last ones
+ * as it goes (at least that many; readByteWindow / readByteWindowFrom); Infinity: all (readByteWindowBefore bounds the region).
+ */
+function codexOffsetBuilder(maxToolResultChars: number, maxMessages = Infinity): OffsetBuilder {
+  const b = new CodexTranscriptBuilder({ maxMessages, maxToolResultChars });
   return {
     add(line, at) {
       if (!line.trim()) return;
@@ -258,7 +261,13 @@ function codexOffsetBuilder(maxToolResultChars: number): OffsetBuilder {
  * window ('olderHistory'). Same messages, read in chunks so each knows the byte its line starts at.
  */
 export function readCodexWindow(file: string, maxBytes = Infinity, opts: CodexTranscriptOptions = {}): Promise<ByteWindow> {
-  return readByteWindow(file, () => codexOffsetBuilder(opts.maxToolResultChars ?? 8192), opts.maxMessages ?? 200, maxBytes);
+  const count = opts.maxMessages ?? 200;
+  return readByteWindow(file, () => codexOffsetBuilder(opts.maxToolResultChars ?? 8192, count), count, maxBytes);
+}
+
+/** open_session.from: the rollout from cursor `from` to its end when that is at most `max` messages (readByteWindowFrom), else null. */
+export function readCodexFrom(file: string, from: number, max: number, maxToolResultChars = 8192): Promise<ByteWindow | null> {
+  return readByteWindowFrom(file, from, () => codexOffsetBuilder(maxToolResultChars, max + 1), max);
 }
 
 /**

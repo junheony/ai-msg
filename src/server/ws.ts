@@ -14,12 +14,14 @@ import { checkUpgrade } from './auth';
 import type { AcceptedRefs } from './sessions/AcceptedRefs';
 import { DirError, resolveUnderRoots } from './dirs';
 import { HANDOFF_PROMPT, codexHandoffExcerpt, handoffTitle } from '../shared/handoff';
-import { CODEX_TAIL_BYTES, readCodexBefore, readCodexTranscript, readCodexTranscriptTail, readCodexWindow } from './engine/codexRollout';
+import { CODEX_TAIL_BYTES, readCodexBefore, readCodexFrom, readCodexTranscript, readCodexTranscriptTail, readCodexWindow } from './engine/codexRollout';
 import { sessionAllowLabel } from './engine/Engine';
 import { isGrokAutoApprovable } from './engine/GrokEngine';
 import { displayError, redactSecrets } from './engine/redact';
 import { CWD_MISSING_NOTICE, importBlockReason, liveRolloutNotice, rolloutActiveAgeMs } from './sessions/CodexImports';
-import { findGrokSessionDir, readGrokBefore, readGrokTranscriptTail, readGrokWindow } from './engine/grokHistory';
+import { findGrokSessionDir, readGrokBefore, readGrokFrom, readGrokTranscriptTail, readGrokWindow } from './engine/grokHistory';
+import type { ByteWindow } from './engine/lineWindow';
+import { cursorOf, fileTag, HISTORY_FROM_MAX, parseCursor } from './historyCursor';
 import { elsewhereNotice } from './sessions/elsewhereNotice';
 import { GROKBOT_READONLY_NOTICE, readGrokBotTranscript } from './sessions/GrokBotImports';
 import { grokImportBlockReason } from './sessions/GrokImports';
@@ -540,17 +542,18 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
    * Per socket and Claude session it views: when its history was last sent (entries another process wrote after that are
    * not on its screen yet) and, per transcript copy, the offset the outside poll found clean up to — a tick reads only
    * what was appended since the last one. Per socket: one device opening a session must not hide from another what
-   * came in between.
+   * came in between. `from`: the earliest page ('olderHistory' cursor) the pane loaded — a history sent again reaches
+   * back to it, so the pages it scrolled up to stay.
    */
-  const historyAt = new Map<WebSocket, Map<string, { at: number; clean: Map<string, number> }>>();
+  const historyAt = new Map<WebSocket, Map<string, { at: number; clean: Map<string, number>; from?: string }>>();
   /**
    * The open panes follow the other side: a viewed, idle Claude session whose transcript (any profile's copy) gained
-   * entries deck did not write since a socket's history was sent gets that history again — read once per session, sent
-   * to each socket that lacks it. Sessions with a deck turn are left alone: their pane is fed by the turn's own stream.
+   * entries deck did not write since a socket's history was sent gets that history again — read once per session and
+   * `from`, sent to each socket that lacks it. Sessions with a deck turn are left alone: their pane is fed by the turn's own stream.
    */
   const followOutside = async () => {
     const files = new Map<string, string[]>();
-    const stale = new Map<string, WebSocket[]>();
+    const stale = new Map<string, Map<string, WebSocket[]>>();
     for (const [ws, seen] of historyAt) {
       for (const [id, rec] of [...seen]) {
         if (!viewing.get(ws)?.has(id)) { seen.delete(id); continue; }
@@ -559,23 +562,30 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         for (const file of files.get(id)!) {
           const r = await scanForeign(file, rec.at - OUTSIDE_SLACK_MS, rec.clean.get(file) ?? 0, { isOwn: (u, id) => deckWrites.has(u, id), lagMs: OWN_LAG_MS }).catch(() => null);
           if (!r) continue;
-          if (r.foreign) { stale.set(id, [...(stale.get(id) ?? []), ws]); break; }
+          if (r.foreign) {
+            const byFrom = stale.get(id) ?? new Map<string, WebSocket[]>();
+            stale.set(id, byFrom);
+            byFrom.set(rec.from ?? '', [...(byFrom.get(rec.from ?? '') ?? []), ws]);
+            break;
+          }
           rec.clean.set(file, r.end);
         }
       }
     }
-    for (const [id, sockets] of stale) {
+    for (const [id, byFrom] of stale) {
       const st = deps.store.get(id);
       const entry = deps.index.lookup(id);
       if (!entry || busy.has(id) || (st && (isOtherEngineState(st)))) continue;
       // What is in the files now is in the history read next: the poll goes on from these sizes, so this write is not found again.
       const clean = new Map<string, number>();
       for (const file of files.get(id) ?? []) { const s = await fs.stat(file).catch(() => null); if (s) clean.set(file, s.size); }
-      const read = await readClaudeHistory(id, entry, st ?? null).catch(() => null);
-      // A turn that started during the read streams into the pane already: a history now would wipe what it showed.
-      if (!read || busy.has(id)) continue;
-      // No view() here: a pane closed during the read stays closed.
-      for (const ws of sockets) if (viewing.get(ws)?.has(id)) sendClaudeHistory(ws, id, read, clean);
+      for (const [from, sockets] of byFrom) {
+        const read = await readClaudeHistory(id, entry, st ?? null, from || undefined).catch(() => null);
+        // A turn that started during the read streams into the pane already: a history now would wipe what it showed.
+        if (!read || busy.has(id)) continue;
+        // No view() here: a pane closed during the read stays closed.
+        for (const ws of sockets) if (viewing.get(ws)?.has(id)) sendClaudeHistory(ws, id, read, clean);
+      }
     }
   };
   // 'heartbeat': an app-level beat, so a device can tell a half-dead socket (phone asleep, network switched) from a quiet one.
@@ -1413,15 +1423,20 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   };
   /** `exact` false: segments kept ending during every read — the history must not claim a stream position. */
   const withoutPos = <T extends { pos?: StreamPos }>(r: T, drop: boolean): T => { if (!drop) return r; const { pos: _p, ...rest } = r; return rest as T; };
-  type ClaudeHistory = { found: SessionEntry; st: ClaudeSessionState | null; at: number; messages: TranscriptMessage[]; exact: boolean; /** The first message's absolute index in its transcript ('olderHistory' cursor). */ start: number };
+  type ClaudeHistory = { found: SessionEntry; st: ClaudeSessionState | null; at: number; messages: TranscriptMessage[]; exact: boolean; /** The first message's absolute index in its transcript ('olderHistory' cursor). */ start: number; /** The transcript's fileTag (null: unreadable — no cursors). */ tag: string | null; /** It reaches back to the asked `from`. */ extended: boolean };
   /** The transcript a Claude session's history is read from: a copy that contains deck's (e.g. Claude Desktop continued the session on A) wins. */
   const claudeFile = async (sessionId: string, found: SessionEntry, st: ClaudeSessionState | null): Promise<string> => {
     const best = st ? await deps.index.bestCopy(sessionId, st.projectDir, st.account).catch(() => null) : null;
     return best?.file ?? (st ? `${st.projectDir}/${sessionId}.jsonl` : found.file);
   };
-  /** A Claude session's transcript as a pane shows it. A copy that contains deck's (e.g. Claude Desktop continued the session on A) is the one read. */
-  const readClaudeHistory = async (sessionId: string, found: SessionEntry, st: ClaudeSessionState | null): Promise<ClaudeHistory> => {
+  /**
+   * A Claude session's transcript as a pane shows it. A copy that contains deck's (e.g. Claude Desktop continued the
+   * session on A) is the one read. `from` (open_session.from): a cursor of that copy before the window reaches it back
+   * there when that makes at most HISTORY_FROM_MAX messages.
+   */
+  const readClaudeHistory = async (sessionId: string, found: SessionEntry, st: ClaudeSessionState | null, from?: string): Promise<ClaudeHistory> => {
     const file = await claudeFile(sessionId, found, st);
+    let used = file;
     // The history goes out with the stream position as it is when it is sent (runningOf), after the events stamped during
     // the read (they went to the viewing socket already, and the history replaces what they showed). A segment that ended
     // meanwhile may be missing from what was read while the position claims it: such a read is read again (the deltas
@@ -1431,9 +1446,18 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       // Stamped before the read: an entry written while reading is looked at again by the outside poll.
       const at = Date.now();
       const mark = ends.get(sessionId) ?? 0;
-      const { messages, start } = await readTranscriptWindow(file).catch(() => readTranscriptWindow(found.file));
+      used = file;
+      let { messages, start } = await readTranscriptWindow(file).catch(() => { used = found.file; return readTranscriptWindow(found.file); });
       const exact = (ends.get(sessionId) ?? 0) === mark;
-      if (exact || n >= HISTORY_REREADS) return { found, st, at, messages, exact, start };
+      if (!exact && n < HISTORY_REREADS) continue;
+      const tag = await fileTag(used).catch(() => null);
+      const c = from && tag ? parseCursor(from, 'i') : null;
+      let extended = false;
+      if (c && c.tag === tag && c.n <= start && start - c.n + messages.length <= HISTORY_FROM_MAX) {
+        const before = c.n < start ? await readTranscriptBefore(used, start, start - c.n).catch(() => null) : { messages: [], start };
+        if (before?.start === c.n) { messages = [...before.messages, ...messages]; start = c.n; extended = true; }
+      }
+      return { found, st, at, messages, exact, start, tag, extended };
     }
   };
   /**
@@ -1464,12 +1488,13 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (last >= 0 && (msgs[last] as { text: string }).text.trim() === text.trim()) msgs = msgs.slice(0, last);
     return redactSecrets(codexHandoffExcerpt(msgs, ROUTE_ENGINE_LABEL[engine]));
   };
-  const sendClaudeHistory = (ws: WebSocket, sessionId: string, { found, st, at, messages, exact, start }: ClaudeHistory, clean?: Map<string, number>) => {
+  const sendClaudeHistory = (ws: WebSocket, sessionId: string, { found, st, at, messages, exact, start, tag, extended }: ClaudeHistory, clean?: Map<string, number>) => {
     const t = turns.get(busy.get(sessionId) ?? '');
     let seen = historyAt.get(ws);
     if (!seen) { seen = new Map(); historyAt.set(ws, seen); }
-    seen.set(sessionId, { at, clean: new Map(clean) });
-    send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, accountPin: st?.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: st?.defaultModel ?? IMPORTED_DEFAULT_MODEL, messages, older: start > 0 ? `i${start}` : null, ...withoutPos(runningOf(sessionId), !exact) });
+    const cursors = tag ? { older: start > 0 ? cursorOf('i', start, tag) : null, at: cursorOf('i', start, tag) } : {};
+    seen.set(sessionId, { at, clean: new Map(clean), ...(extended && cursors.at ? { from: cursors.at } : {}) });
+    send(ws, { type: 'history', sessionId, cwd: found.cwd, account: st?.account ?? found.account, engine: 'claude', sandbox: null, accountPin: st?.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: st?.defaultModel ?? IMPORTED_DEFAULT_MODEL, messages, ...cursors, ...withoutPos(runningOf(sessionId), !exact) });
     if (t) replay(ws, t, sessionId);
     // The CLI writes a text block to the transcript only once it is finished: the one streaming now is in memory only, and
     // without it the pane's streaming item would start mid-sentence at the next delta. Claude only (a Codex delta is a
@@ -1483,7 +1508,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
    * new socket on an idle session may have missed what was written outside deck). Anything else: false, and the caller
    * sends the full history.
    */
-  const catchUp = (ws: WebSocket, sessionId: string, after: { epoch: string; seq: number }): boolean => {
+  const catchUp = (ws: WebSocket, sessionId: string, after: { epoch: string; seq: number }, from?: string): boolean => {
     // The header's acceptedRefs are what release a device's held messages (as a history's do).
     if (!deps.acceptedRefs || !clients.has(ws)) return false;
     const head = heads.get(sessionId);
@@ -1500,7 +1525,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     // The outside poll follows this socket's view of the session from here on, as after a history.
     let seen = historyAt.get(ws);
     if (!seen) { seen = new Map(); historyAt.set(ws, seen); }
-    if (!seen.has(sessionId)) seen.set(sessionId, { at: Date.now(), clean: new Map() });
+    const rec = seen.get(sessionId) ?? { at: Date.now(), clean: new Map<string, number>() };
+    // The pane keeps what it shows: a history sent again later reaches back to its earliest page.
+    if (from) rec.from = from;
+    seen.set(sessionId, rec);
     const st = deps.store.get(sessionId);
     const claude = st && !isOtherEngineState(st) ? { accountPin: st.accountPin ?? null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: st.defaultModel }
       : st && isGrokState(st) ? { permissionMode: deps.runner.permissionModeOf(sessionId) } : {};
@@ -1519,30 +1547,41 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (ws !== t.origin) t.watchers.add(ws);
     for (const h of t.log.handoffs) send(ws, h);
   };
-  /** 'olderHistory': a byte cursor as `history.older` / `older_history.older` carry it (`b<offset>`). */
-  const byteCursor = (n: number | null) => (n === null ? null : `b${n}`);
-  type HistoryRead = { messages: TranscriptMessage[]; older: { older?: string | null } };
+  type HistoryRead = { messages: TranscriptMessage[]; older: { older?: string | null; at?: string } };
+  /** 'olderHistory': a byte window's cursors as `history` / `older_history` carry them (`b<offset>.<tag>`). */
+  const byteCursors = (w: ByteWindow, tag: string) => ({ older: w.older === null ? null : cursorOf('b', w.older, tag), at: cursorOf('b', w.older ?? 0, tag) });
+  /**
+   * A rollout / chat_history window and its cursors. `from` (open_session.from), a cursor of this file: the file from
+   * there to its end instead when that holds a window's worth up to HISTORY_FROM_MAX messages (fewer: the window has them all).
+   */
+  const byteHistory = async (file: string, from: string | undefined, readWindow: (f: string) => Promise<ByteWindow>, readFrom: (f: string, from: number, max: number) => Promise<ByteWindow | null>): Promise<HistoryRead> => {
+    const tag = await fileTag(file).catch(() => null);
+    const c = from && tag ? parseCursor(from, 'b') : null;
+    const ext = c && c.tag === tag ? await readFrom(file, c.n, HISTORY_FROM_MAX).catch(() => null) : null;
+    const w = ext && ext.messages.length >= 200 ? ext : await readWindow(file).catch(() => null);
+    if (!w) return { messages: [], older: {} };
+    return { messages: w.messages, older: tag ? byteCursors(w, tag) : {} };
+  };
   /** A Codex rollout's history and its older cursor; a reader injected by tests is used as is, without one. */
-  const codexHistory = async (file: string | null, injected: ((f: string) => Promise<TranscriptMessage[]>) | undefined, read: (f: string) => ReturnType<typeof readCodexWindow>): Promise<HistoryRead> => {
+  const codexHistory = async (file: string | null, injected: ((f: string) => Promise<TranscriptMessage[]>) | undefined, read: (f: string) => ReturnType<typeof readCodexWindow>, from?: string): Promise<HistoryRead> => {
     if (!file) return { messages: [], older: {} };
     if (injected) return { messages: await injected(file).catch(() => []), older: {} };
-    const w = await read(file).catch(() => null);
-    return w ? { messages: w.messages, older: { older: byteCursor(w.older) } } : { messages: [], older: {} };
+    return byteHistory(file, from, read, (f, n, max) => readCodexFrom(f, n, max));
   };
-  const grokHistory = async (file: string | null): Promise<HistoryRead> => {
-    const w = file ? await readGrokWindow(file).catch(() => null) : null;
-    return w ? { messages: w.messages, older: { older: byteCursor(w.older) } } : { messages: [], older: {} };
-  };
-  type OlderPage = { messages: TranscriptMessage[]; older: string | null };
+  const grokHistory = async (file: string | null, from?: string): Promise<HistoryRead> =>
+    file ? byteHistory(file, from, (f) => readGrokWindow(f), (f, n, max) => readGrokFrom(f, n, max)) : { messages: [], older: {} };
+  type OlderPage = { messages: TranscriptMessage[]; older: string | null; at: string };
   /**
    * 'olderHistory': where `load_older` reads a session's earlier pages from — the transcript its history came from, and
-   * how a cursor is read there (null = not a cursor of it). Null: no such session; `page` null: it has no pages.
+   * how a cursor is read there (null = not a cursor of it: another kind, or the tag of another file). Null: no such
+   * session; `page` null: it has no pages.
    */
   const olderSource = async (sessionId: string): Promise<{ page: ((before: string) => Promise<OlderPage | null>) | null } | null> => {
     const byte = (file: string, read: (f: string, before: number) => Promise<{ messages: TranscriptMessage[]; older: number | null } | null>) => async (before: string): Promise<OlderPage | null> => {
-      const m = /^b(\d{1,15})$/.exec(before);
-      const w = m ? await read(file, Number(m[1])) : null;
-      return w && { messages: w.messages, older: byteCursor(w.older) };
+      const c = parseCursor(before, 'b');
+      const tag = c ? await fileTag(file) : null;
+      const w = c && c.tag === tag ? await read(file, c.n) : null;
+      return w && tag ? { messages: w.messages, ...byteCursors(w, tag) } : null;
     };
     const st = deps.store.get(sessionId);
     if (st && isCodexState(st)) return { page: st.rolloutFile && !deps.readCodexHistory ? byte(st.rolloutFile, readCodexBefore) : null };
@@ -1562,37 +1601,43 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     const file = await claudeFile(sessionId, entry, st ?? null);
     return {
       page: async (before) => {
-        const m = /^i(\d{1,15})$/.exec(before);
-        const n = m ? Number(m[1]) : 0;
-        if (n <= 0) return null;
-        const w = await readTranscriptBefore(file, n).catch(() => readTranscriptBefore(entry.file, n));
-        // Nothing before a cursor past the start: not a cursor of this transcript (it was rewritten, or made up).
+        const c = parseCursor(before, 'i');
+        if (!c || c.n <= 0) return null;
+        // The copy the cursor was taken from: deck's best copy, else the indexed one.
+        let read: string | null = null;
+        for (const f of new Set([file, entry.file])) if (!read && (await fileTag(f).catch(() => null)) === c.tag) read = f;
+        if (!read) return null;
+        const w = await readTranscriptBefore(read, c.n);
+        // Nothing before a cursor past the start: not a cursor of this transcript (made up).
         if (!w.messages.length) return null;
-        return { messages: w.messages, older: w.start > 0 ? `i${w.start}` : null };
+        return { messages: w.messages, older: w.start > 0 ? cursorOf('i', w.start, c.tag) : null, at: cursorOf('i', w.start, c.tag) };
       },
     };
   };
   const loadOlder = async (ws: WebSocket, sessionId: string, before: string, reqId: string | undefined) => {
-    const answer = (messages: TranscriptMessage[], older: string | null, error?: OlderHistoryError) =>
-      send(ws, { type: 'older_history', sessionId, before, ...(reqId ? { reqId } : {}), messages, older, ...(error ? { error } : {}) });
+    const answer = (messages: TranscriptMessage[], older: string | null, error?: OlderHistoryError, at?: string) =>
+      send(ws, { type: 'older_history', sessionId, before, ...(reqId ? { reqId } : {}), messages, older, ...(at ? { at } : {}), ...(error ? { error } : {}) });
     const src = await olderSource(sessionId).catch(() => null);
     if (!src) return answer([], null, 'not_found');
     if (!src.page) return answer([], null, 'bad_cursor');
     try {
       const page = await src.page(before);
-      if (page) answer(page.messages, page.older);
-      else answer([], null, 'bad_cursor');
+      if (!page) return answer([], null, 'bad_cursor');
+      answer(page.messages, page.older, undefined, page.at);
+      // The pane shows this page now: a history the outside poll sends it again reaches back here.
+      const rec = historyAt.get(ws)?.get(sessionId);
+      if (rec) rec.from = page.at;
     } catch {
       answer([], null, 'read_failed');
     }
   };
-  const openSession = (ws: WebSocket, sessionId: string) => {
+  const openSession = (ws: WebSocket, sessionId: string, from?: string) => {
     void (async () => {
       // D4: Codex sessions live only in the state store; history comes from the CLI's rollout file.
       const st = deps.store.get(sessionId);
       if (st && isCodexState(st)) {
         view(ws, sessionId);
-        const { messages, older } = await codexHistory(st.rolloutFile ?? null, deps.readCodexHistory, (f) => readCodexWindow(f));
+        const { messages, older } = await codexHistory(st.rolloutFile ?? null, deps.readCodexHistory, (f) => readCodexWindow(f), from);
         send(ws, { type: 'history', sessionId, cwd: st.cwd, account: 'gpt', engine: 'codex', sandbox: st.sandbox, sessionModel: st.defaultModel, messages, ...older, ...runningOf(sessionId) });
         return;
       }
@@ -1606,7 +1651,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       if (st && isGrokState(st)) {
         view(ws, sessionId);
         const dir = deps.grokHome ? await findGrokSessionDir(deps.grokHome, st.grokSessionId ?? sessionId).catch(() => null) : null;
-        const { messages, older } = await grokHistory(dir ? path.join(dir, 'chat_history.jsonl') : null);
+        const { messages, older } = await grokHistory(dir ? path.join(dir, 'chat_history.jsonl') : null, from);
         send(ws, { type: 'history', sessionId, cwd: st.cwd, account: st.account, engine: 'grok', sandbox: null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: isGrokModel(st.model) ? st.model : DEFAULT_GROK_MODEL, sessionEffort: st.effort, messages, ...older, ...runningOf(sessionId) });
         const t = turns.get(busy.get(sessionId) ?? '');
         if (t && messages.length) replay(ws, t, sessionId);
@@ -1636,7 +1681,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       // A Grok CLI session deck has not run yet: its chat_history, read-only; the first turn resumes it (session/load).
       if (imported && imported.engine === 'grok') {
         view(ws, sessionId);
-        const { messages, older } = await grokHistory(imported.file);
+        const { messages, older } = await grokHistory(imported.file, from);
         send(ws, { type: 'history', sessionId, cwd: imported.cwd, account: 'x1', engine: 'grok', sandbox: null, permissionMode: deps.runner.permissionModeOf(sessionId), sessionModel: isGrokModel(imported.grokModel) ? imported.grokModel : DEFAULT_GROK_MODEL, ...(imported.grokEffort ? { sessionEffort: imported.grokEffort } : {}), messages, ...older, ...runningOf(sessionId) });
         const t = turns.get(busy.get(sessionId) ?? '');
         if (t) replay(ws, t, sessionId);
@@ -1661,7 +1706,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       }
       if (imported) {
         view(ws, sessionId);
-        const { messages, older } = await codexHistory(imported.file, deps.readCodexImportHistory, (f) => readCodexWindow(f, CODEX_TAIL_BYTES));
+        const { messages, older } = await codexHistory(imported.file, deps.readCodexImportHistory, (f) => readCodexWindow(f, CODEX_TAIL_BYTES), from);
         send(ws, { type: 'history', sessionId, cwd: imported.cwd, account: 'gpt', engine: 'codex', sandbox: deps.runner.importSandboxOf(sessionId) ?? DEFAULT_SANDBOX, messages, ...older, ...runningOf(sessionId) });
         const t = turns.get(busy.get(sessionId) ?? '');
         if (t) replay(ws, t, sessionId);
@@ -1686,7 +1731,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       view(ws, sessionId);
       // PF5: `st` is narrowed to a Claude state (or null) by the Codex return above.
       const found = entry;
-      await readClaudeHistory(sessionId, found, st ?? null)
+      await readClaudeHistory(sessionId, found, st ?? null, from)
         .then((read) => {
           sendClaudeHistory(ws, sessionId, read);
           // deck's copy and Desktop's (home profile) went separate ways: say so on open, not only after a turn.
@@ -1805,7 +1850,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           if (msg.accepts?.includes('sandbox')) sandboxAware.add(ws);
           if (msg.accepts?.includes('turn_queued')) queuedAware.add(ws);
           syncHolders();
-          if (!(msg.after && catchUp(ws, msg.sessionId, msg.after))) openSession(ws, msg.sessionId);
+          if (!(msg.after && catchUp(ws, msg.sessionId, msg.after, msg.from))) openSession(ws, msg.sessionId, msg.from);
           followHandoffs(ws, msg.sessionId);
           break;
         case 'close_session':

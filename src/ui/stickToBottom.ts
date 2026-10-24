@@ -44,6 +44,19 @@ const nativeAnchoring = () => typeof CSS !== 'undefined' && typeof CSS.supports 
  * (0 = only scrolled away — growth of a message already there, e.g. a streaming reply, is not new — or that message is
  * gone, e.g. the list was rebuilt: the count is unknown, so none is shown).
  */
+/** The first child of `el` crossing its top edge, and how far below that edge its top is (negative: above it). */
+export function viewAnchor(el: HTMLElement): { el: Element; offset: number } | null {
+  const top = el.getBoundingClientRect().top;
+  const kids = el.children;
+  let lo = 0, hi = kids.length - 1, found: Element | null = null;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const kid = kids[mid]!;
+    if (kid.getBoundingClientRect().bottom > top) { found = kid; hi = mid - 1; } else lo = mid + 1;
+  }
+  return found ? { el: found, offset: found.getBoundingClientRect().top - top } : null;
+}
+
 export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey: unknown, resetKey: unknown, turns: readonly string[] = []) {
   const stick = useRef(true);
   const lastTop = useRef(0);
@@ -68,15 +81,7 @@ export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey:
 
   const recordAnchor = useCallback((el: HTMLElement) => {
     if (nativeAnchoring()) return;
-    const top = el.getBoundingClientRect().top;
-    const kids = el.children;
-    let lo = 0, hi = kids.length - 1, found: Element | null = null;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      const kid = kids[mid]!;
-      if (kid.getBoundingClientRect().bottom > top) { found = kid; hi = mid - 1; } else lo = mid + 1;
-    }
-    anchor.current = found ? { el: found, offset: found.getBoundingClientRect().top - top } : null;
+    anchor.current = viewAnchor(el);
   }, []);
 
   const toBottom = useCallback((el: HTMLElement) => {

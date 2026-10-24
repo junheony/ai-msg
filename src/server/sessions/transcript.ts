@@ -722,18 +722,35 @@ export async function readTranscriptWindow(file: string, opts: TranscriptOptions
 }
 
 /**
- * Where an older-page scan of one file can resume: at each `MARK_CHUNK`-ish line boundary the builder state there (only
- * the last entry kept: later lines may still merge into it). `offset`/`tailHash` = how far the scan got and the bytes
- * before it, checked like a cache entry: an append-only file keeps its marks, a rewritten one starts over.
+ * Where an older-page scan of one file can resume: at line boundaries at least `stride` bytes apart (MARK_CHUNK at
+ * first), the builder state there (only the last entry kept: later lines may still merge into it). Past MARK_MAX marks
+ * every other one goes and the stride doubles, so a file holds at most MARK_MAX whatever its size. `offset`/`tailHash`
+ * = how far the scan got and the bytes before it, checked like a cache entry: an append-only file keeps its marks, a
+ * rewritten one starts over.
  */
-type MarkIndex = { dev: string; ino: string; offset: number; headLen: number; headHash: string; tailLen: number; tailHash: string; marks: { offset: number; state: BuilderState }[] };
+type MarkIndex = { dev: string; ino: string; offset: number; headLen: number; headHash: string; tailLen: number; tailHash: string; stride: number; marks: { offset: number; state: BuilderState }[] };
 const MARK_CHUNK = 1024 * 1024;
+const MARK_MAX = 64;
 const MARK_FILES = 8;
+let markChunk = MARK_CHUNK;
+let markMax = MARK_MAX;
 const markIndex = new Map<string, MarkIndex>();
 
 /** Tests: forgets the older-page marks (as a restart would). */
 export function clearTranscriptMarks(): void {
   markIndex.clear();
+}
+
+/** Tests: smaller mark spacing / cap (null = the defaults); clears the marks. */
+export function setTranscriptMarkLimits(limits: { chunk: number; max: number } | null): void {
+  markChunk = limits?.chunk ?? MARK_CHUNK;
+  markMax = limits?.max ?? MARK_MAX;
+  markIndex.clear();
+}
+
+/** Tests: how many older-page marks a file holds now (0 = none). */
+export function transcriptMarkCount(file: string): number {
+  return markIndex.get(`before\0${path.resolve(file)}`)?.marks.length ?? 0;
 }
 
 /**
@@ -767,14 +784,14 @@ async function readBefore(file: string, key: string, before: number, count: numb
     if (idx && !(idx.dev === dev && idx.ino === ino && size >= idx.offset
       && sha1(await readAt(fh, 0, idx.headLen)) === idx.headHash
       && sha1(await readAt(fh, idx.offset - idx.tailLen, idx.tailLen)) === idx.tailHash)) idx = null;
-    if (!idx) idx = { dev, ino, offset: 0, headLen: 0, headHash: sha1(Buffer.alloc(0)), tailLen: 0, tailHash: sha1(Buffer.alloc(0)), marks: [] };
+    if (!idx) idx = { dev, ino, offset: 0, headLen: 0, headHash: sha1(Buffer.alloc(0)), tailLen: 0, tailHash: sha1(Buffer.alloc(0)), stride: markChunk, marks: [] };
     let mark: MarkIndex['marks'][number] | undefined;
     for (const m of idx.marks) if (m.state.dropped + m.state.out.length <= from) mark = m;
     const b = new TranscriptBuilder({ maxToolResultChars: maxChars }, mark ? structuredClone(mark.state) : undefined);
     let pos = mark?.offset ?? 0;
     let carry: Buffer = Buffer.alloc(0);
     while (pos < size && b.total() <= before) {
-      const chunk = await readAt(fh, pos, Math.min(MARK_CHUNK, size - pos));
+      const chunk = await readAt(fh, pos, Math.min(markChunk, size - pos));
       if (chunk.length === 0) break;
       pos += chunk.length;
       const buf = carry.length ? Buffer.concat([carry, chunk]) : chunk;
@@ -787,8 +804,14 @@ async function readBefore(file: string, key: string, before: number, count: numb
       carry = buf.subarray(nl + 1);
       const at = pos - carry.length;
       if (at > idx.offset && b.total() > 0) {
-        const s = b.state();
-        idx.marks.push({ offset: at, state: structuredClone({ ...s, out: s.out.slice(-1), dropped: s.dropped + s.out.length - 1 }) });
+        if (at - (idx.marks.at(-1)?.offset ?? 0) >= idx.stride) {
+          const s = b.state();
+          idx.marks.push({ offset: at, state: structuredClone({ ...s, out: s.out.slice(-1), dropped: s.dropped + s.out.length - 1 }) });
+          if (idx.marks.length > markMax) {
+            idx.marks = idx.marks.filter((_, i) => i % 2 === 1);
+            idx.stride *= 2;
+          }
+        }
         idx.offset = at;
       }
       b.dropBefore(from);

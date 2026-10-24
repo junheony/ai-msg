@@ -6,7 +6,10 @@ import type { TranscriptMessage } from '../../shared/session-types';
  * line that made its first message starts, and the page before it is read from the lines before that byte only.
  */
 
-/** Turns lines into messages, remembering where the line that pushed each one starts. */
+/**
+ * Turns lines into messages, remembering where the line that pushed each one starts. readByteWindow's builder may drop
+ * the oldest messages as it goes (with their starts: the two stay index for index); readByteWindowBefore's keeps all.
+ */
 export interface OffsetBuilder {
   add(line: string, at: number): void;
   /** The messages so far and, index for index, the byte offset of the line that pushed each. */
@@ -68,10 +71,16 @@ export async function* linesOf(fh: fs.FileHandle, start: number, end: number): A
   if (!skip && carry.length) yield { at: carryAt, line: carry.toString('utf8') };
 }
 
-function windowOf(b: OffsetBuilder, count: number, fromStart: boolean, firstLine: number | null): ByteWindow {
+/**
+ * The last `count` messages a region `[start, …)` made and the cursor before them. A region with no message that does
+ * not start at the file's start still has a cursor (its first line, or — inside one line longer than the region — the
+ * region's start): there is more before it, the next page goes on from there.
+ */
+function windowOf(b: OffsetBuilder, count: number, start: number, firstLine: number | null): ByteWindow {
   const { messages, starts } = b.entries();
+  const fromStart = start === 0;
   const lo = Math.max(0, messages.length - count);
-  if (messages.length === 0) return { messages: [], older: fromStart || firstLine === null ? null : firstLine };
+  if (messages.length === 0) return { messages: [], older: fromStart ? null : (firstLine ?? start) };
   return { messages: messages.slice(lo), older: lo === 0 && fromStart ? null : starts[lo]! };
 }
 
@@ -87,7 +96,30 @@ export async function readByteWindow(file: string, make: () => OffsetBuilder, co
       firstLine ??= at;
       b.add(line, at);
     }
-    return windowOf(b, count, start === 0, firstLine);
+    return windowOf(b, count, start, firstLine);
+  } finally {
+    await fh.close();
+  }
+}
+
+/** open_session.from on a byte cursor: reads past this many bytes from it are not done (the plain window is sent). */
+const FROM_MAX_BYTES = 64 * 1024 * 1024;
+
+/**
+ * The messages made by the lines from byte `from` (a cursor: a line's start) to the end, and the cursor before them —
+ * when there are at most `max` of them. Null: `from` is not inside the file, the region is past FROM_MAX_BYTES, or it
+ * holds more than `max` messages (`make` should keep at least max + 1 so that shows).
+ */
+export async function readByteWindowFrom(file: string, from: number, make: () => OffsetBuilder, max: number): Promise<ByteWindow | null> {
+  const fh = await fs.open(file, 'r');
+  try {
+    const { size } = await fh.stat();
+    if (!Number.isSafeInteger(from) || from < 0 || from >= size || size - from > FROM_MAX_BYTES) return null;
+    const b = make();
+    for await (const { at, line } of linesOf(fh, from, size)) b.add(line, at);
+    const { messages } = b.entries();
+    if (messages.length > max) return null;
+    return { messages: [...messages], older: from === 0 ? null : from };
   } finally {
     await fh.close();
   }
@@ -120,7 +152,7 @@ export async function readByteWindowBefore(file: string, before: number, make: (
           const lo = Math.max(1, messages.length - count);
           return { messages: messages.slice(lo), older: messages.length > 1 ? starts[lo]! : starts[0]! };
         }
-        return windowOf(b, count, start === 0, firstLine);
+        return windowOf(b, count, start, firstLine);
       }
     }
   } finally {

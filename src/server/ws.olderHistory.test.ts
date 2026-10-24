@@ -16,6 +16,7 @@ import { SessionStateStore } from './turn/SessionState';
 import { TurnRunner } from './turn/TurnRunner';
 import { UsageService } from './usage/UsageService';
 import { attachWebSocket } from './ws';
+import { fileTag } from './historyCursor';
 import { rootsOf, testRegistry } from '../shared/accounts.testkit';
 
 const TOKEN = 'o'.repeat(64);
@@ -92,6 +93,9 @@ async function session(sid: string, n: number): Promise<void> {
   await fs.writeFile(path.join(dir, `${sid}.jsonl`), lines.join('\n') + '\n');
   await index.refresh();
 }
+const fileOf = (sid: string) => path.join(base, 'b', path.join(work, sid.slice(-4)).replace(/[^a-zA-Z0-9]/g, '-'), `${sid}.jsonl`);
+/** Session `sid`'s cursor at `n` (kind i): what the server hands out for its transcript. */
+const cur = async (sid: string, n: number) => `i${n}.${await fileTag(fileOf(sid))}`;
 
 const texts = (ms: { kind: string; text?: string }[]) => ms.map((m) => m.text);
 const LONG = 'b0b0b0b0-0000-4000-8000-000000000001';
@@ -109,17 +113,19 @@ describe('load_older', () => {
     c.send({ type: 'open_session', sessionId: LONG });
     const h = await c.next('history', (m) => m.sessionId === LONG);
     expect(texts(h.messages)).toEqual(Array.from({ length: 200 }, (_, i) => `p${250 + i}`));
-    expect(h.older).toBe('i250');
+    expect(h.older).toBe(await cur(LONG, 250));
+    expect(h.at).toBe(h.older);
 
     c.send({ type: 'load_older', sessionId: LONG, before: h.older, reqId: 'r1' });
     const p1 = await c.next('older_history', (m) => m.reqId === 'r1');
-    expect(p1).toMatchObject({ sessionId: LONG, before: 'i250', older: 'i50' });
+    expect(p1).toMatchObject({ sessionId: LONG, before: await cur(LONG, 250), older: await cur(LONG, 50), at: await cur(LONG, 50) });
     expect(p1.error).toBeUndefined();
     expect(texts(p1.messages)).toEqual(Array.from({ length: 200 }, (_, i) => `p${50 + i}`));
 
     c.send({ type: 'load_older', sessionId: LONG, before: p1.older, reqId: 'r2' });
     const p2 = await c.next('older_history', (m) => m.reqId === 'r2');
     expect(p2.older).toBeNull();
+    expect(p2.at).toBe(await cur(LONG, 0));
     expect(texts(p2.messages)).toEqual(Array.from({ length: 50 }, (_, i) => `p${i}`));
 
     // A session that fits in one history: null = it is the start.
@@ -127,6 +133,7 @@ describe('load_older', () => {
     const s = await c.next('history', (m) => m.sessionId === SHORT);
     expect(s.messages).toHaveLength(20);
     expect(s.older).toBeNull();
+    expect(s.at).toBe(await cur(SHORT, 0));
     c.close();
   });
 
@@ -136,35 +143,67 @@ describe('load_older', () => {
       c.send({ type: 'load_older', sessionId, before, reqId });
       return c.next('older_history', (m) => m.reqId === reqId);
     };
-    for (const [i, before] of ['x250', 'i', 'i0', 'b10', 'i-3'].entries()) {
+    const tag = (await cur(LONG, 0)).slice(3);
+    for (const [i, before] of ['x250', 'i', 'i0', 'b10', 'i-3', 'i250', `i0.${tag}`, `b10.${tag}`, 'i250.00000000'].entries()) {
       expect(await ask(LONG, before, `m${i}`)).toMatchObject({ sessionId: LONG, before, messages: [], older: null, error: 'bad_cursor' });
     }
-    // LONG's cursor asked of SHORT (20 messages): nothing before it there.
-    expect(await ask(SHORT, 'i250', 'x1')).toMatchObject({ messages: [], older: null, error: 'bad_cursor' });
-    expect(await ask('b0b0b0b0-0000-4000-8000-0000000000ff', 'i10', 'x2')).toMatchObject({ messages: [], older: null, error: 'not_found' });
+    // LONG's cursor asked of SHORT: the tag is another file's — refused, not read.
+    expect(await ask(SHORT, await cur(LONG, 10), 'x1')).toMatchObject({ messages: [], older: null, error: 'bad_cursor' });
+    expect(await ask('b0b0b0b0-0000-4000-8000-0000000000ff', await cur(LONG, 10), 'x2')).toMatchObject({ messages: [], older: null, error: 'not_found' });
     c.close();
   });
 
   it('a page while the transcript grows is unchanged (absolute indexes count from the start)', async () => {
     const c = await client();
-    const file = path.join(base, 'b', path.join(work, LONG.slice(-4)).replace(/[^a-zA-Z0-9]/g, '-'), `${LONG}.jsonl`);
-    await fs.appendFile(file, Array.from({ length: 30 }, (_, i) => JSON.stringify({ type: 'user', uuid: `v${i}`, message: { role: 'user', content: `late${i}` } })).join('\n') + '\n');
-    c.send({ type: 'load_older', sessionId: LONG, before: 'i250', reqId: 'g1' });
+    await fs.appendFile(fileOf(LONG), Array.from({ length: 30 }, (_, i) => JSON.stringify({ type: 'user', uuid: `v${i}`, message: { role: 'user', content: `late${i}` } })).join('\n') + '\n');
+    c.send({ type: 'load_older', sessionId: LONG, before: await cur(LONG, 250), reqId: 'g1' });
     const p = await c.next('older_history', (m) => m.reqId === 'g1');
     expect(texts(p.messages)).toEqual(Array.from({ length: 200 }, (_, i) => `p${50 + i}`));
-    expect(p.older).toBe('i50');
+    expect(p.older).toBe(await cur(LONG, 50));
     c.close();
   });
 
   it('a request without reqId is answered without one; a malformed request is rejected by the schema', async () => {
     const c = await client();
-    c.send({ type: 'load_older', sessionId: LONG, before: 'i5' });
-    const p = await c.next('older_history', (m) => m.before === 'i5');
+    const before = await cur(LONG, 5);
+    c.send({ type: 'load_older', sessionId: LONG, before });
+    const p = await c.next('older_history', (m) => m.before === before);
     expect(p.reqId).toBeUndefined();
     expect(texts(p.messages)).toEqual(['p0', 'p1', 'p2', 'p3', 'p4']);
     expect(p.older).toBeNull();
     c.send({ type: 'load_older', sessionId: LONG, before: 'i'.repeat(100), reqId: 'too-long' });
     await c.next('error');
+    c.close();
+  });
+
+  it('open_session.from: the history reaches back to the pane\'s earliest page, not past HISTORY_FROM_MAX; another file\'s cursor is ignored', async () => {
+    const c = await client();
+    // LONG has 480 messages now (450 + 30 appended above).
+    c.send({ type: 'open_session', sessionId: LONG, from: await cur(LONG, 50) });
+    const h = await c.next('history', (m) => m.sessionId === LONG);
+    expect(texts(h.messages)).toEqual([...Array.from({ length: 400 }, (_, i) => `p${50 + i}`), ...Array.from({ length: 30 }, (_, i) => `late${i}`)]);
+    expect(h).toMatchObject({ older: await cur(LONG, 50), at: await cur(LONG, 50) });
+    // A cursor inside the default window: the window as is.
+    c.send({ type: 'open_session', sessionId: LONG, from: await cur(LONG, 400) });
+    expect((await c.next('history', (m) => m.sessionId === LONG)).at).toBe(await cur(LONG, 280));
+    // Another file's tag (SHORT's), or a malformed one: the default window.
+    for (const from of [await cur(SHORT, 0), 'i50.00000000', 'b50']) {
+      c.send({ type: 'open_session', sessionId: LONG, from });
+      const d = await c.next('history', (m) => m.sessionId === LONG);
+      expect(d.messages).toHaveLength(200);
+      expect(d.at).toBe(await cur(LONG, 280));
+    }
+    // More than HISTORY_FROM_MAX (2000) from the cursor to the end: the default window.
+    const HUGE = 'b0b0b0b0-0000-4000-8000-000000000003';
+    await session(HUGE, 2300);
+    c.send({ type: 'open_session', sessionId: HUGE, from: await cur(HUGE, 200) });
+    const big = await c.next('history', (m) => m.sessionId === HUGE);
+    expect(big.messages).toHaveLength(200);
+    expect(big.at).toBe(await cur(HUGE, 2100));
+    c.send({ type: 'open_session', sessionId: HUGE, from: await cur(HUGE, 300) });
+    const fits = await c.next('history', (m) => m.sessionId === HUGE);
+    expect(fits.messages).toHaveLength(2000);
+    expect(fits.at).toBe(await cur(HUGE, 300));
     c.close();
   });
 });
