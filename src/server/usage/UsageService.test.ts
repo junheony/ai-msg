@@ -782,6 +782,15 @@ describe('UsageService · usage-deck 모드의 /usage 폴', () => {
     expect(svc(async () => ({ ok: true, json: async () => LIVE }), () => new Date(nowMs)).snapshot()).not.toHaveProperty('claudePoll');
   });
 
+  it('a poll stamped in the future (the clock went back) is clamped to now: the account still comes due', () => {
+    let nowMs = Date.parse('2026-09-30T12:30:00Z');
+    const s = svc(async () => ({ ok: true, json: async () => LIVE }), () => new Date(nowMs));
+    s.applyCliPoll('a', POLLED, nowMs + 3_600_000);
+    expect(s.cliObservedAt('a')!).toBeLessThanOrEqual(nowMs);
+    nowMs += 10 * 60_000;
+    expect(s.cliObservedAt('a')!).toBeLessThanOrEqual(nowMs - 10 * 60_000);
+  });
+
   it('폴 대상: ok 카드는 아님, down/stale/카드 없음/대시보드 불통은 폴', async () => {
     const nowMs = Date.parse('2026-09-30T12:30:00Z');
     let reach = true;

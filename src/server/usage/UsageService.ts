@@ -498,7 +498,7 @@ export class UsageService {
     if (prev && observedAtMs < prev.atMs) {
       // A poll that started before a turn and ended after it: the turn's numbers stay, the polled Fable still counts.
       if (by) {
-        this.turnObs.set(seat, { ...prev, ...(fable ? { fable } : {}), pollAt: Math.max(observedAtMs, prev.pollAt ?? 0) });
+        this.turnObs.set(seat, { ...prev, ...(fable ? { fable } : {}), pollAt: Math.max(Math.min(observedAtMs, this.now().getTime()), prev.pollAt ?? 0) });
         this.publish({ ...this.snap, generatedAt: this.now().toISOString(), accounts: { ...this.snap.accounts, [seat]: this.overlay(seat, this.seatOf(this.snap, seat)) } });
       }
       return;
@@ -506,7 +506,7 @@ export class UsageService {
     if (seat === 'gpt' && w.credits && (!this.gptCredits || observedAtMs >= this.gptCredits.atMs)) this.gptCredits = { c: w.credits, atMs: observedAtMs };
     const merged: TurnWindows = { ...prev?.w, ...(w.fiveHour ? { fiveHour: w.fiveHour } : {}), ...(w.weekly ? { weekly: w.weekly } : {}) };
     const atMs = Math.max(observedAtMs, prev?.atMs ?? 0);
-    this.turnObs.set(seat, { w: merged, atMs, fiveAt: w.fiveHour ? observedAtMs : prev?.fiveAt, weekAt: w.weekly ? observedAtMs : prev?.weekAt, ...(by ? { by } : {}), ...(by || prev?.pollAt !== undefined ? { pollAt: Math.max(by ? observedAtMs : 0, prev?.pollAt ?? 0) } : {}), ...(fable ? { fable } : {}) });
+    this.turnObs.set(seat, { w: merged, atMs, fiveAt: w.fiveHour ? observedAtMs : prev?.fiveAt, weekAt: w.weekly ? observedAtMs : prev?.weekAt, ...(by ? { by } : {}), ...(by || prev?.pollAt !== undefined ? { pollAt: Math.max(by ? Math.min(observedAtMs, this.now().getTime()) : 0, prev?.pollAt ?? 0) } : {}), ...(fable ? { fable } : {}) });
     const cur = this.seatOf(this.snap, seat);
     let next: AccountUsage = seat === 'gpt' ? { ...cur, fiveHour: w.fiveHour ?? cur.fiveHour, weekly: w.weekly ?? cur.weekly } : this.overlay(seat, cur);
     if (seat === 'gpt') next = this.withCredits({ ...next, status: this.obsStatus(merged), fetchedAt: new Date(atMs).toISOString() });
@@ -541,7 +541,7 @@ export class UsageService {
   applyCliPoll(account: Account, w: TurnWindows, observedAtMs: number): void {
     if (!this.reg.has(account)) return;
     if (this.mode === 'cli') {
-      this.cliPollAt.set(account, Math.max(observedAtMs, this.cliPollAt.get(account) ?? 0));
+      this.cliPollAt.set(account, Math.max(Math.min(observedAtMs, this.now().getTime()), this.cliPollAt.get(account) ?? 0));
       this.applyCliTurn(account, w, observedAtMs, 'poll');
     }
     else this.applyTurn(account, w, observedAtMs, 'poll'); // usage-deck: as a turn's observation; a newer ok card wins (overlay)
@@ -559,7 +559,7 @@ export class UsageService {
       if (this.snap.deckReachable && this.cardOk.has(account)) return this.now().getTime();
       const t = this.turnObs.get(account);
       if (!t || t.pollAt === undefined) return null;
-      return Math.min(...[t.fiveAt, t.weekAt, t.pollAt].filter((x): x is number => x !== undefined));
+      return Math.min(...[t.fiveAt, t.weekAt, t.pollAt].filter((x): x is number => x !== undefined), this.now().getTime());
     }
     const o = this.cliObs.get(account);
     if (!o || (!o.fiveHour && !o.weekly)) return null;

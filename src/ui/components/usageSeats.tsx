@@ -149,6 +149,8 @@ export type SeatData = {
   fetchedAt?: string | null;
   /** Claude, `cli` mode: those numbers came from deck's `/usage` poll, not a turn (old ones are said "확인한 값"). */
   polled?: boolean;
+  /** Claude seat while the server re-reads Claude limits by itself (`claudePoll`). */
+  autoPoll?: boolean;
   /** Appended to the sheet below the rows (Grok's "오늘 · deck 기준" block). */
   extraPopover?: ReactNode;
 };
@@ -272,6 +274,8 @@ function grokSeatData(seat: Seat, snap: GrokUsage, now: number, bot?: GrokBotUsa
 /** A window past its reset since its last reading, in words (titles; the aria says it with a comma). */
 export const RESET_PASSED_NOTE = '리셋 시각이 지나 지금 값은 모름. 이 계정으로 한 턴 돌리면 갱신됨';
 export const RESET_PASSED_SAID = RESET_PASSED_NOTE.replace('. ', ', ');
+/** The chip's words past a reset: the sheet's rule (a Claude seat the server re-reads says so and gives the estimate). */
+export const resetPassedNote = (d: Pick<SeatData, 'autoPoll'>): string => d.autoPoll ? ui().common.usageResetPassedAuto : RESET_PASSED_NOTE;
 /**
  * Old numbers not reset yet, in words: when they were read, and that less can be left now (nothing is given back before
  * the reset, while the account may have been used since): the old % left is an upper bound.
@@ -298,7 +302,7 @@ export function PopRow({ seat, name, k, w, now, empty, stale, polled }: { seat: 
   // Past its reset the window is (about) full again: a full striped bar, as every estimate (never an empty, 0 %-looking one).
   if (stale && windowPassed(w, now)) {
     return (
-      <div data-testid={`${seat}-${k}`} className="usage-row old passed estimated" title={`${name} · ${ESTIMATED}`}>
+      <div data-testid={`${seat}-${k}`} className="usage-row old passed estimated" title={`${name} · ${ESTIMATED} · ${ui().common.usageResetEstimatedTitle}`}>
         <span className="usage-label">{name}</span>
         <span className="usage-bar" aria-hidden="true"><i style={{ width: '100%' }} /></span>
         <span className="usage-value"><RefreshIcon className="usage-icon" />{ui().common.usageResetEstimated}</span>
@@ -389,6 +393,7 @@ export function buildSeats(usage: UsageSnapshot, active: readonly { id: Account 
         status: (kept ? 'kept' : u.status) as SeatData['status'], dim, fetchedAt: u.fetchedAt,
         ...(cli || u.observedBy === 'poll' ? { observed: observedText(u, now) } : {}),
         ...(u.observedBy === 'poll' ? { polled: true } : {}),
+        ...(usage.claudePoll ? { autoPoll: true } : {}),
       };
     }),
     {
@@ -507,7 +512,7 @@ export function chipState({ seats, current, next, stale: snapshotStale, now, lab
   if (d.status === 'cooldown') {
     kind = 'cooldown'; text = '쿨다운'; compactText = '쿨다운'; spoken = '쿨다운 중';
   } else if (resetPassed) {
-    kind = 'stale'; text = '리셋됨'; compactText = text; spoken = RESET_PASSED_SAID;
+    kind = 'stale'; text = '리셋됨'; compactText = text; spoken = d.autoPoll ? resetPassedNote(d).replace(' · ', ', ') : RESET_PASSED_SAID;
   } else if (main && main.rem === 0) {
     kind = 'spent'; text = reset ? `소진 · ${reset}` : '소진'; compactText = '✕';
     spoken = `소진${reset ? `, ${spokenCountdown(reset)} 뒤 초기화` : ''}`;
@@ -526,6 +531,6 @@ export function chipState({ seats, current, next, stale: snapshotStale, now, lab
   return {
     target: d.seat, nextSeat, onlyNext, kind, stale: stale && !!known && d.status !== 'cooldown', left, resetPassed, ago, reset: resetPassed ? '' : reset, text, compactText, otherDanger,
     aria: `${onlyNext ? `다음 턴 ${name}${next!.asOpus ? '(Opus)' : ''}` : name} 계정 사용량 ${spoken}${nextAria}${dangerAria}`,
-    title: [`${name} 계정${resetPassed ? ` · ${RESET_PASSED_NOTE}` : left !== null ? ` · ${main!.row.name} ${left}% 남음${stale ? ` (${staleNote(ago, d.polled)})` : ''}` : ''}`, d.reasonLine ?? '', nextTitle].filter(Boolean).join(' · '),
+    title: [`${name} 계정${resetPassed ? ` · ${resetPassedNote(d)}` : left !== null ? ` · ${main!.row.name} ${left}% 남음${stale ? ` (${staleNote(ago, d.polled)})` : ''}` : ''}`, d.reasonLine ?? '', nextTitle].filter(Boolean).join(' · '),
   };
 }

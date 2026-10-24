@@ -218,17 +218,17 @@ describe('short countdowns and the fullest window', () => {
 });
 
 describe('usage sheet · old numbers per window', () => {
-  it('an old seat: a row past its reset says 리셋됨 · 100% 추정 with a refresh icon on a full estimated bar; the window not reset yet keeps its % (dimmed); one refresh line', () => {
+  it('an old seat: a row past its reset says 리셋됨 · 최대 100% 남음(추정) with a refresh icon on a full estimated bar; the window not reset yet keeps its % (dimmed); one refresh line', () => {
     const iso = (ms: number) => new Date(NOW + ms).toISOString();
     const old: UsageSnapshot = { ...usage, accounts: { a: { status: 'stale', fetchedAt: iso(-3 * 86_400_000), fiveHour: { usedPct: 95, resetsAt: iso(-3_600_000) }, weekly: { usedPct: 30, resetsAt: iso(2 * 86_400_000) }, fable: null } } };
     sheet(old, 'a');
     const five = screen.getByTestId('a-fiveHour');
-    expect(five.querySelector('.usage-value')!.textContent).toBe('리셋됨 · 100% 추정');
+    expect(five.querySelector('.usage-value')!.textContent).toBe('리셋됨 · 최대 100% 남음(추정)');
     expect(five.querySelector('.usage-value svg')).not.toBeNull();
     // A reset window is (about) full again: the bar says so, striped as every estimate is — never an empty 0 % look.
     expect((five.querySelector('.usage-bar > i') as HTMLElement).style.width).toBe('100%');
     expect(five.className).toContain('estimated');
-    expect(five.title).toBe('5h · 추정 — 관측한 리셋 시각이 지나 0%로 봄');
+    expect(five.title).toBe('5h · 추정 — 관측한 리셋 시각이 지나 0%로 봄 · 리셋 뒤 쓴 양은 몰라요');
     const weekly = screen.getByTestId('a-weekly');
     expect(weekly.querySelector('.usage-value')!.textContent).toBe('70% 남음');
     expect(weekly.className).toContain('old');
@@ -253,7 +253,15 @@ describe('usage sheet · old numbers per window', () => {
     expect(screen.getByTestId('c-refresh').textContent).toBe('4일 전 마지막 턴 기준 값 · 지금은 이보다 적게 남았을 수 있어요 · AI-MSG 가 자동으로 다시 확인해요');
     const fable = screen.getByTestId('c-fable');
     expect((fable.querySelector('.usage-bar > i') as HTMLElement).style.width).toBe('100%');
-    expect(fable.querySelector('.usage-value')!.textContent).toBe('리셋됨 · 100% 추정');
+    expect(fable.querySelector('.usage-value')!.textContent).toBe('리셋됨 · 최대 100% 남음(추정)');
+    cleanup();
+    expect(fable.getAttribute('title')).toContain('리셋 뒤 쓴 양은 몰라요');
+    cleanup();
+    // GPT seat: claudePoll does not apply, the old wording stays.
+    const g = { status: 'stale' as const, fetchedAt: iso(-4 * 86_400_000), fiveHour: { usedPct: 25, resetsAt: iso(158 * 60_000) }, weekly: { usedPct: 29, resetsAt: iso(134 * 3_600_000) } };
+    sheet({ ...usage, deckReachable: true, claudePoll: true, gpt: g, accounts: {} } as UsageSnapshot, 'gpt');
+    expect(screen.getByTestId('gpt-refresh').textContent).toContain('한 턴 돌리면');
+    expect(screen.getByTestId('gpt-refresh').textContent).not.toContain('자동으로');
     cleanup();
     // Without the poller (DECK_CLAUDE_USAGE_POLL=0): a turn is still what reads it anew.
     sheet({ ...usage, deckReachable: true, accounts: { c } }, 'c');

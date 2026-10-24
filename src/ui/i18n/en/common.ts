@@ -7,7 +7,11 @@ export const common = {
   periodWeek: 'Wk',
   periodMonth: 'Mo',
   /** A usage sheet row whose old reading's reset time has passed: assumed full again (striped bar), not read yet. */
-  usageResetEstimated: 'Reset · ~100% (est.)',
+  usageResetEstimated: 'Reset · up to 100% left (est.)',
+  /** Tooltip addition on that row. */
+  usageResetEstimatedTitle: 'usage since reset unknown',
+  /** Strip chip of a Claude account the server re-reads by itself, past its reset. */
+  usageResetPassedAuto: 'Past its reset, current value unknown · up to 100% left (est.) · AI-MSG re-checks it automatically',
   /** The connection bar (App): a short drop, the server restarting (it announced a drain), and a long drop since `since` (HH:MM). */
   connReconnecting: 'Reconnecting…',
   connRestarting: 'The server is restarting… picks up by itself once connected',
