@@ -2,7 +2,7 @@
 # Render a UI fixture with headless Chrome at several widths, so CSS changes can be checked by eye
 # (jsdom runs the tests but cannot lay anything out).
 #
-#   scripts/render-check.sh                       # every fixture in scripts/render/, widths 1250 1000 720 390
+#   scripts/render-check.sh                       # every fixture in scripts/render/, widths 1250 1000 720 390 (below 500px: in an iframe)
 #   scripts/render-check.sh usage-strip 1250 412         # one fixture, your widths
 #
 # RENDER_HEIGHT sets the window height (default 160) for taller fixtures.
@@ -29,8 +29,17 @@ for f in "${files[@]}"; do
   name="$(basename "$f" .html)"
   for w in "${widths[@]}"; do
     png="$out/$name-$w.png"
+    url="file://$f"; win="$w"
+    # Headless Chrome will not make a window narrower than 500px: a phone width renders the fixture in an iframe of that
+    # width instead (its media queries and the data-phone check see the iframe's width), on a 500px window.
+    if [ "$w" -lt 500 ]; then
+      wrap="$profile/wrap-$name-$w.html"
+      printf '<!doctype html><body style="margin:0;background:#777"><iframe src="file://%s" style="display:block;width:%spx;height:%spx;border:0"></iframe>' \
+        "$f" "$w" "${RENDER_HEIGHT:-160}" >"$wrap"
+      url="file://$wrap"; win=500
+    fi
     "$chrome" --headless=new --disable-gpu --hide-scrollbars --no-first-run --user-data-dir="$profile" \
-      --force-device-scale-factor=2 --window-size="$w,${RENDER_HEIGHT:-160}" --screenshot="$png" "file://$f" >/dev/null 2>&1
+      --force-device-scale-factor=2 --window-size="$win,${RENDER_HEIGHT:-160}" --screenshot="$png" "$url" >/dev/null 2>&1
     echo "$png"
   done
 done
