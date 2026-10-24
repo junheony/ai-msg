@@ -176,9 +176,10 @@ export type ChatProps = {
   autoResume?: { atMs: number; onCancel: () => void } | null;
   /**
    * 'olderHistory': paging back. `cursor` null = the items start at the conversation's beginning (the end marker);
-   * `loading` = a page is on its way; `failed` = the last one could not be read. Absent: no paging (nothing shown).
+   * `loading` = a page is on its way; `failed` = the last one could not be read; `manual` = only the button loads (no
+   * loading by scrolling up). Absent: no paging (nothing shown).
    */
-  older?: { cursor: string | null; loading: boolean; failed: boolean; onLoad: () => void } | null;
+  older?: { cursor: string | null; loading: boolean; failed: boolean; manual?: boolean; onLoad: () => void } | null;
   /** Notes / errors about this session no turn owns (e.g. it was just written outside deck): dismissible bars above the transcript. */
   notices?: { message: string; level: 'notice' | 'error' }[];
   onDismissNotice?: (message: string) => void;
@@ -351,7 +352,7 @@ export function Chat(p: ChatProps) {
   // 'olderHistory': scrolling up to near the top asks for the page before (the button at the top is the fallback).
   const older = p.older;
   const olderLoad = useRef<(() => void) | null>(null);
-  olderLoad.current = older && older.cursor !== null && !older.loading && !older.failed && p.items.length > 0 ? older.onLoad : null;
+  olderLoad.current = older && older.cursor !== null && !older.loading && !older.failed && !older.manual && p.items.length > 0 ? older.onLoad : null;
   useEffect(() => {
     const el = bodyRef.current;
     if (!el) return;
@@ -360,7 +361,8 @@ export function Chat(p: ChatProps) {
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
   // The items change while scrolled up; read off the DOM during render, while it still shows the old items:
-  // - a page put in front (the old items are the new ones' tail, the same objects): what is below the page stays put,
+  // - a page put in front (the old first items, the same objects, follow it — not the last: a streamed delta batched
+  //   into the same render replaces that one): what is below the page stays put,
   //   so scrollTop grows by exactly how much the content grew (its keys may be positional, e.g. Codex / Grok items or
   //   ones before the first prompt, so the DOM nodes are no anchor). Whether detached or not: the user is at the top.
   // - else (a history replacing them — the same messageKeys keep their DOM nodes): the item at the view's top is put
@@ -371,7 +373,7 @@ export function Chat(p: ChatProps) {
     const prev = itemsAnchor.current.items;
     const el = bodyRef.current;
     const tail = p.items.length - prev.length;
-    const prepended = !!el && prev.length > 0 && tail > 0 && p.items[tail] === prev[0] && p.items[p.items.length - 1] === prev[prev.length - 1];
+    const prepended = !!el && prev.length > 0 && tail > 0 && p.items[tail] === prev[0] && (prev.length < 2 || p.items[tail + 1] === prev[1]);
     itemsAnchor.current = {
       items: p.items,
       grew: prepended ? { height: el.scrollHeight, top: el.scrollTop } : null,

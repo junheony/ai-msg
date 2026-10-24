@@ -265,6 +265,8 @@ export type PaneState = {
   loading?: boolean;
   /** 'olderHistory': paging back through the shown session's transcript; absent = the server gave no cursor (no paging). */
   older?: OlderHistory;
+  /** 'olderHistory': bad_cursor dropped this session's paging and reopened it — its next history pages back only by the button. */
+  olderReopened?: string;
   /** Split-view column weight (`fr`; absent = 1): the splitter between two panes trades it between them. */
   size?: number;
   /** A card floating over the split view (pulled off the rail); absent = docked in the grid. A phone shows it as a tab. */
@@ -290,9 +292,10 @@ export type PaneState = {
  * `reqId`: the request in flight (its answer is the only one applied). `failed`: the last one came back empty with an
  * error (the button offers it again). `orphans`: tool results at the front whose call is on a page not loaded yet —
  * they join it when it comes. `from`: where the items start, as a cursor (`at`) — what `open_session.from` sends so a
- * history sent again (reconnect, outside writes) keeps the pages loaded.
+ * history sent again (reconnect, outside writes) keeps the pages loaded. `manual`: the history after a bad_cursor reopen —
+ * no paging by scrolling up until the button has loaded a page (a transcript that keeps changing cannot loop).
  */
-export type OlderHistory = { sessionId: string; cursor: string | null; reqId: string | null; failed?: boolean; orphans: TranscriptMessage[]; from: string | null };
+export type OlderHistory = { sessionId: string; cursor: string | null; reqId: string | null; failed?: boolean; orphans: TranscriptMessage[]; from: string | null; manual?: boolean };
 
 /** Tool results in `messages` whose call is not before them in it (fromTranscript leaves them out). */
 function orphanResults(messages: TranscriptMessage[]): TranscriptMessage[] {
@@ -306,8 +309,8 @@ function orphanResults(messages: TranscriptMessage[]): TranscriptMessage[] {
 }
 
 /** A history's paging state: fresh with each history (absent when the server sent no cursor). */
-function olderOf(msg: { sessionId: string; messages: TranscriptMessage[]; older?: string | null; at?: string }): OlderHistory | undefined {
-  return msg.older === undefined ? undefined : { sessionId: msg.sessionId, cursor: msg.older, reqId: null, orphans: orphanResults(msg.messages), from: msg.at ?? null };
+function olderOf(msg: { sessionId: string; messages: TranscriptMessage[]; older?: string | null; at?: string }, manual: boolean): OlderHistory | undefined {
+  return msg.older === undefined ? undefined : { sessionId: msg.sessionId, cursor: msg.older, reqId: null, orphans: orphanResults(msg.messages), from: msg.at ?? null, ...(manual ? { manual } : {}) };
 }
 
 /**
@@ -331,12 +334,20 @@ function answersOlder(pane: PaneState, msg: Extract<ServerMessage, { type: 'olde
   return !!o && o.sessionId === msg.sessionId && o.reqId !== null && o.reqId === (msg.reqId ?? null) && o.cursor === msg.before;
 }
 
+/** How often bad_cursor may reopen one session (reopenForOlder). */
+export const OLDER_REOPEN_MS = 10_000;
+
 /**
  * The session to open afresh for an `older_history` that refused a pane's cursor (bad_cursor: the transcript was
  * rewritten or replaced, so asking again fails the same way): its id, else null. Asked before the answer is applied.
+ * At most once per OLDER_REOPEN_MS per session (`last`: when each was last reopened, updated here).
  */
-export function reopenForOlder(panes: PaneState[], msg: ServerMessage): string | null {
-  return msg.type === 'older_history' && msg.error === 'bad_cursor' && panes.some((p) => answersOlder(p, msg)) ? msg.sessionId : null;
+export function reopenForOlder(panes: PaneState[], msg: ServerMessage, last: Map<string, number>, now: number): string | null {
+  if (msg.type !== 'older_history' || msg.error !== 'bad_cursor' || !panes.some((p) => answersOlder(p, msg))) return null;
+  const prev = last.get(msg.sessionId);
+  if (prev !== undefined && now - prev < OLDER_REOPEN_MS) return null;
+  last.set(msg.sessionId, now);
+  return msg.sessionId;
 }
 
 /**
@@ -348,7 +359,7 @@ export function reopenForOlder(panes: PaneState[], msg: ServerMessage): string |
 function paneOnOlder(pane: PaneState, msg: Extract<ServerMessage, { type: 'older_history' }>): PaneState {
   const o = olderOfPane(pane);
   if (!o || !answersOlder(pane, msg)) return pane;
-  if (msg.error === 'bad_cursor') return { ...pane, older: undefined };
+  if (msg.error === 'bad_cursor') return { ...pane, older: undefined, olderReopened: o.sessionId };
   if (msg.error) return { ...pane, older: { ...o, reqId: null, failed: true } };
   const page = [...msg.messages, ...o.orphans];
   return { ...pane, items: [...fromTranscript(page), ...pane.items], older: { sessionId: o.sessionId, cursor: msg.older, reqId: null, orphans: orphanResults(page), from: msg.at ?? o.from } };
@@ -833,7 +844,7 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       const started = mine ? { awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, ...(msg.runningTurnId && !pane.myTurns.includes(msg.runningTurnId) ? { myTurns: [...pane.myTurns, msg.runningTurnId] } : {}) } : {};
       // A route_fit card up (a reconnect): its message goes back to the queue, paused, as its ✕ would — never lost.
       const kept = routeFitBack(pane);
-      return { ...kept, ...started, ...settleQueue(kept, msg, items), session: { sessionId: msg.sessionId, cwd: msg.cwd, account: msg.account, title, engine, sandbox: msg.sandbox ?? null, accountPin: msg.accountPin ?? null, ...(msg.permissionMode ? { permissionMode: msg.permissionMode } : {}) }, items, activeTurnId: msg.runningTurnId, model, ...efforts, ...ACTIVITY_RESET, runStartedAt, ...notice, older: olderOf(msg) };
+      return { ...kept, ...started, ...settleQueue(kept, msg, items), session: { sessionId: msg.sessionId, cwd: msg.cwd, account: msg.account, title, engine, sandbox: msg.sandbox ?? null, accountPin: msg.accountPin ?? null, ...(msg.permissionMode ? { permissionMode: msg.permissionMode } : {}) }, items, activeTurnId: msg.runningTurnId, model, ...efforts, ...ACTIVITY_RESET, runStartedAt, ...notice, older: olderOf(msg, pane.olderReopened === msg.sessionId), olderReopened: undefined };
     }
     case 'catchup': {
       // The device was not behind, or what it missed follows as ordinary events: the transcript stays as it is. Only what a

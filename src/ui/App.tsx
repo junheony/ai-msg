@@ -410,6 +410,8 @@ export function App() {
   const refreshIndex = useRef<IndexRefresh | null>(null);
   /** Keeps each shown session's turn events in order and asks for what a reconnect or a stalled socket missed (catchup.ts). */
   const catchup = useRef<Catchup | null>(null);
+  /** When bad_cursor last reopened each session (reopenForOlder: once per 10 s). */
+  const olderReopens = useRef(new Map<string, number>());
   refreshIndex.current = useIndexRefresh(!!authed, () => sock.current?.send({ type: 'refresh_index' }));
   useEffect(() => {
     if (!authed) return;
@@ -434,7 +436,7 @@ export function App() {
       // A repeat of an event already applied, one ahead of a gap (what is missing was just asked for), or a retry's same failure: not applied.
       if (!tracker.accept(msg)) return;
       // A page cursor the server no longer knows (the transcript changed): reopen the session plainly, without `from`.
-      const reopen = reopenForOlder(latest.current.panes, msg);
+      const reopen = reopenForOlder(latest.current.panes, msg, olderReopens.current, Date.now());
       if (reopen) sock.current?.send({ type: 'open_session', sessionId: reopen });
       dispatch(msg.type === 'history' ? { type: 'server', msg, sentFiles: loadSent(msg.sessionId) } : { type: 'server', msg });
       if (msg.type === 'turn_result') refreshIndex.current?.afterTurn();

@@ -640,7 +640,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           routeFit={pane.routeFit ?? null}
           suggestion={s.sessionId ? app.suggestions?.[s.sessionId] ?? null : null}
           older={older ? {
-            cursor: older.cursor, loading: older.reqId !== null, failed: !!older.failed,
+            cursor: older.cursor, loading: older.reqId !== null, failed: !!older.failed, manual: !!older.manual,
             onLoad: () => {
               if (!older.cursor || older.reqId !== null) return;
               const reqId = nextClientRef();

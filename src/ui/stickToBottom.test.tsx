@@ -315,6 +315,27 @@ describe('older pages: what the reader looks at stays put', () => {
     expect(box.top).toBe(500);
   });
 
+  it('a page in front in the same render as a streamed delta replacing the last item: still kept as a page', () => {
+    const items = [plain('q10'), answer('a10'), plain('q11'), answer('a11'), plain('q12'), answer('a12'), plain('q13'), answer('a13'), plain('q14'), answer('a14', true)];
+    const { view, box } = scrolledUp(items, 1000, 250);
+    view.rerender(<Chat {...props([plain('q8'), answer('a8'), plain('q9'), answer('a9'), answer('a9b'), ...items.slice(0, -1), answer('a14 more', true)])} />);
+    expect(box.top).toBe(750);
+  });
+
+  it('manual paging (after a bad_cursor reopen): scrolling to the top does not load; otherwise it does', () => {
+    const items = [plain('q10'), answer('a10'), plain('q11'), answer('a11'), plain('q12'), answer('a12'), plain('q13'), answer('a13'), plain('q14'), answer('a14')];
+    const onLoad = vi.fn();
+    const older = { cursor: 'b100.aaaaaaaa', loading: false, failed: false, manual: true, onLoad };
+    const { view, body, box } = scrolledUp(items, 1100, 300, { older });
+    box.top = 0;
+    fireEvent.scroll(body);
+    expect(onLoad).not.toHaveBeenCalled();
+    view.rerender(<Chat {...props(items, { older: { ...older, manual: false } })} />);
+    box.top = 0;
+    fireEvent.scroll(body);
+    expect(onLoad).toHaveBeenCalledTimes(1);
+  });
+
   it('a history replacing the items: a loading line or time stamp at the top is no anchor, the first message under it is', () => {
     const items = [q(10), q(11), q(12), q(13), q(14), q(15), q(16), q(17), q(18), q(19)];
     const loading = { cursor: 'i10', loading: true, failed: false, onLoad: () => {} };

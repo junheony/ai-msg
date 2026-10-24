@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ServerMessage } from '../shared/protocol';
 import type { TranscriptMessage } from '../shared/session-types';
-import { initialState, olderOfPane, reducer, reopenForOlder, withOlderFrom, type AppState, type ChatItem } from './state';
+import { OLDER_REOPEN_MS, initialState, olderOfPane, reducer, reopenForOlder, withOlderFrom, type AppState, type ChatItem } from './state';
 
 const pane = (s: AppState) => s.panes[0]!;
 const play = (msgs: ServerMessage[], start: AppState): AppState => msgs.reduce((s, msg) => reducer(s, { type: 'server', msg }), start);
@@ -83,10 +83,10 @@ describe('older history (pane state)', () => {
     let s = play([history('s1', [user('c')], 'i2.aaaaaaaa', 'i3.aaaaaaaa')], opened('s1'));
     s = ask(s, 'r1');
     const refused = page('s1', 'i2.aaaaaaaa', 'r1', [], null, 'bad_cursor');
-    expect(reopenForOlder(s.panes, refused)).toBe('s1');
     // Only for the pane's own request: a late or foreign answer reopens nothing; other errors keep the retry.
-    expect(reopenForOlder(s.panes, page('s1', 'i2.aaaaaaaa', 'r9', [], null, 'bad_cursor'))).toBeNull();
-    expect(reopenForOlder(s.panes, page('s1', 'i2.aaaaaaaa', 'r1', [], null, 'read_failed'))).toBeNull();
+    expect(reopenForOlder(s.panes, page('s1', 'i2.aaaaaaaa', 'r9', [], null, 'bad_cursor'), new Map(), 0)).toBeNull();
+    expect(reopenForOlder(s.panes, page('s1', 'i2.aaaaaaaa', 'r1', [], null, 'read_failed'), new Map(), 0)).toBeNull();
+    expect(reopenForOlder(s.panes, refused, new Map(), 0)).toBe('s1');
     s = play([refused], s);
     expect(olderOfPane(pane(s))).toBeUndefined();
     expect(texts(pane(s).items)).toEqual(['c']);
@@ -94,6 +94,26 @@ describe('older history (pane state)', () => {
     // The reopened history brings paging back.
     s = play([history('s1', [user('b'), user('c')], 'i1.bbbbbbbb', 'i1.bbbbbbbb')], s);
     expect(olderOfPane(pane(s))).toMatchObject({ cursor: 'i1.bbbbbbbb', reqId: null });
+  });
+
+  it('bad_cursor reopens a session at most once per 10 s; the history after it pages back only by the button, once', () => {
+    let s = play([history('s1', [user('c')], 'i2.aaaaaaaa', 'i2.aaaaaaaa')], opened('s1'));
+    const last = new Map<string, number>();
+    s = ask(s, 'r1');
+    expect(reopenForOlder(s.panes, page('s1', 'i2.aaaaaaaa', 'r1', [], null, 'bad_cursor'), last, 1_000)).toBe('s1');
+    s = play([page('s1', 'i2.aaaaaaaa', 'r1', [], null, 'bad_cursor')], s);
+    // The reopened history: paging is there, but not by scrolling up.
+    s = play([history('s1', [user('c')], 'i2.bbbbbbbb', 'i2.bbbbbbbb')], s);
+    expect(olderOfPane(pane(s))).toMatchObject({ cursor: 'i2.bbbbbbbb', manual: true });
+    // Refused again within 10 s: no second reopen.
+    s = ask(s, 'r2');
+    expect(reopenForOlder(s.panes, page('s1', 'i2.bbbbbbbb', 'r2', [], null, 'bad_cursor'), last, 1_000 + OLDER_REOPEN_MS - 1)).toBeNull();
+    expect(reopenForOlder(s.panes, page('s1', 'i2.bbbbbbbb', 'r2', [], null, 'bad_cursor'), last, 1_000 + OLDER_REOPEN_MS)).toBe('s1');
+    // A page the button loaded: scrolling up pages again; a later history is plain too.
+    s = play([page('s1', 'i2.bbbbbbbb', 'r2', [user('a'), user('b')], null)], s);
+    expect(olderOfPane(pane(s))?.manual).toBeUndefined();
+    s = play([history('s1', [user('c')], 'i2.cccccccc', 'i2.cccccccc')], s);
+    expect(olderOfPane(pane(s))?.manual).toBeUndefined();
   });
 
   it('an error marks the request failed and keeps the cursor for a retry', () => {
