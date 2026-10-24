@@ -65,6 +65,10 @@
   font-size: var(--fs-body);
   line-height: var(--lh-body);
   -webkit-font-smoothing: antialiased;
+  /* iOS WebKit inflates paragraph text on wide or rotated screens but never the composer textarea,
+     so replies read a size up from what you type. The 글자 크기 setting is the only scaler. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 @media (max-width: 720px) {
   :root {

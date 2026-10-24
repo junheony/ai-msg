@@ -48,12 +48,32 @@ export function pastedFileName(n: number): string {
   return `pasted-${n}.txt`;
 }
 
-/** Files of a paste/drop; null-safe. */
+/** Files of a paste/drop; null-safe. iOS WebKit can hand a pasted photo over as a file item only, with `files` empty. */
 export function filesFrom(dt: DataTransfer | null): File[] {
   if (!dt) return [];
   const out: File[] = [];
   if (dt.files) for (const f of Array.from(dt.files)) out.push(f);
+  if (out.length || !dt.items) return out;
+  for (const it of Array.from(dt.items)) {
+    const f = it.kind === 'file' ? it.getAsFile() : null;
+    if (f) out.push(f);
+  }
   return out;
+}
+
+/** Images on the clipboard via the async Clipboard API (the paste event's data had none); [] when missing or refused. */
+export async function clipboardImages(clipboard: Clipboard | undefined = globalThis.navigator?.clipboard): Promise<File[]> {
+  if (typeof clipboard?.read !== 'function') return [];
+  try {
+    const out: File[] = [];
+    for (const item of await clipboard.read()) {
+      const type = item.types.find((t) => t.startsWith('image/'));
+      if (type) out.push(new File([await item.getType(type)], `image-${out.length + 1}.${type.slice(6)}`, { type }));
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 export function useUploads({ uploadFn, current, onUploaded }: { uploadFn: UploadFn; current: number; onUploaded: (a: UploadedAttachment) => void }) {
@@ -161,6 +181,13 @@ export function usePasteUploads({ uploadFn, attachments, onUploaded, onUploadFai
     if (files.length) { e.preventDefault(); void addFiles(files); return; }
     // iOS Safari too: plain getData.
     const pasted = e.clipboardData?.getData?.('text/plain') ?? '';
+    // An image the event carried no file for (iOS): fetch it through the Clipboard API instead.
+    const types = Array.from(e.clipboardData?.types ?? []);
+    if (!pasted && !disabled && types.some((t) => t === 'Files' || t.startsWith('image/'))) {
+      e.preventDefault();
+      void clipboardImages().then((fs) => { if (fs.length) void addFiles(fs); });
+      return;
+    }
     if (!pasted || !isLongPaste(pasted) || disabled) return;
     // No room for another attachment: it pastes as plain text instead. Uploads still in flight (or queued behind one)
     // count, so a paste made while uploading joins the queue as a chip only when it will fit.

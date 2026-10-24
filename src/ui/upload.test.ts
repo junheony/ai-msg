@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
-import { filesFrom, uploadFile, useUploads } from './upload';
+import { clipboardImages, filesFrom, uploadFile, useUploads } from './upload';
 import { MAX_ATTACHMENT_BYTES } from '../shared/protocol';
 
 describe('uploadFile', () => {
@@ -76,5 +76,25 @@ describe('filesFrom', () => {
     const f = new File(['x'], 'x.png', { type: 'image/png' });
     expect(filesFrom({ files: [f] as unknown as FileList, items: undefined as unknown as DataTransferItemList } as unknown as DataTransfer)).toEqual([f]);
     expect(filesFrom(null)).toEqual([]);
+  });
+  it('falls back to file items when files is empty (iOS WebKit paste of a photo)', () => {
+    const f = new File(['x'], 'image.png', { type: 'image/png' });
+    const items = [{ kind: 'string', getAsFile: () => null }, { kind: 'file', getAsFile: () => f }, { kind: 'file', getAsFile: () => null }];
+    expect(filesFrom({ files: [] as unknown as FileList, items: items as unknown as DataTransferItemList } as unknown as DataTransfer)).toEqual([f]);
+  });
+});
+
+describe('clipboardImages', () => {
+  it('reads image types from the async Clipboard API and skips text', async () => {
+    const blob = new Blob(['x'], { type: 'image/jpeg' });
+    const read = async () => [{ types: ['text/plain'], getType: async () => new Blob(['t']) }, { types: ['image/jpeg'], getType: async () => blob }];
+    const out = await clipboardImages({ read } as unknown as Clipboard);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.type).toBe('image/jpeg');
+    expect(out[0]?.name).toBe('image-1.jpeg');
+  });
+  it('returns [] when the API is missing or the read is refused', async () => {
+    expect(await clipboardImages(undefined)).toEqual([]);
+    expect(await clipboardImages({ read: async () => { throw new Error('NotAllowedError'); } } as unknown as Clipboard)).toEqual([]);
   });
 });
