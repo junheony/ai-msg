@@ -207,7 +207,7 @@ svg.spark { transform-box: fill-box; transform-origin: center; }
 /* …but capped at 100dvh: in that same app the fixed box has also come out a status bar TALLER than the drawn area (the
    composer's bottom edge was cut off). A cap only ever shortens, and an engine without dvh just drops it. */
 .app { max-height: 100dvh; }
-.topbar { display: flex; align-items: center; gap: 14px; height: 64px; padding: 0 12px 0 14px; border-bottom: 1px solid var(--line); background: var(--sidebar); flex-shrink: 0; }
+.topbar { display: flex; align-items: center; gap: 14px; height: 64px; padding: 0 12px 0 5px; border-bottom: 1px solid var(--line); background: var(--sidebar); flex-shrink: 0; }
 .topbar-end { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
 /* Under the header once the server has been silent for a while: since when, and a retry (the header dot is text-less on a phone). */
 .conn-down { display: flex; align-items: center; justify-content: center; flex-wrap: nowrap; gap: 4px 12px; min-height: 32px; box-sizing: border-box; padding: 7px 12px; flex-shrink: 0; font-size: var(--fs-label); color: var(--fg); background: color-mix(in srgb, var(--warn) 16%, var(--panel)); border-bottom: 1px solid var(--line); }
@@ -569,7 +569,8 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 /* ───────── Phone ───────── */
 :where(:root[data-phone]) {
   .topbar { height: 54px; gap: 4px; padding: 0 4px; }
-  .menu { display: inline-flex; align-items: center; justify-content: center; width: var(--phone-tap); height: var(--phone-tap); font-size: var(--fs-title); color: var(--fg); flex-shrink: 0; }
+  .menu { display: inline-flex; align-items: center; justify-content: center; width: var(--phone-tap); height: var(--phone-tap); border-radius: var(--r-md); color: var(--fg); flex-shrink: 0; transition: background-color var(--t-fast) var(--ease); }
+  .menu:active, .menu[aria-expanded="true"] { background: var(--hover); }
   .topbar-end { margin-left: 0; }
   .sidebar-wrap.drawer { position: fixed; top: 0; left: 0; bottom: 0; width: 85vw; max-width: 320px; z-index: 30; transform: translateX(-100%); transition: transform .22s cubic-bezier(.2, .8, .2, 1); }
   .sidebar-wrap.drawer.open { transform: none; box-shadow: var(--shadow); }
@@ -2081,8 +2082,10 @@ button.hl-row-main:hover { background: var(--hover); }
 
 /* === fold layout: Galaxy Z Fold cover (phone) and unfolded inner screen (tablet, 721–1100px) === */
 /* Everywhere, only when something overflows: header chips shrink before the title. */
-.sidebar-toggle { display: inline-flex; width: var(--icon-btn); height: var(--icon-btn); font-size: var(--fs-body); color: var(--fg); }
+.sidebar-toggle { display: inline-flex; width: var(--icon-btn); height: var(--icon-btn); border-radius: var(--r-sm); color: var(--fg); transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease); }
 .sidebar-toggle[aria-pressed="false"] { color: var(--muted); }
+/* The top bar's ☰ glyphs (SidebarIcon / MenuIcon): drawn line icons, the sidebar head's stroke weight. */
+.bar-icon { display: block; flex: none; }
 
 
 
@@ -2090,8 +2093,8 @@ button.hl-row-main:hover { background: var(--hover); }
 /* Tablet / unfolded inner screen: menu · logo · usage strip · actions in the top bar (wrapping only if they overflow),
    a font-scale-aware sidebar that can be folded away (☰). */
 @media (min-width: 721px) and (max-width: 1099.98px) {
-  .topbar { column-gap: 8px; padding: 0 10px 0 8px; }
-  .sidebar-toggle { display: inline-flex; order: 0; width: var(--icon-btn); height: var(--icon-btn); font-size: var(--fs-body); color: var(--fg); }
+  .topbar { column-gap: 8px; padding: 0 10px 0 5px; }
+  .sidebar-toggle { display: inline-flex; order: 0; }
   /* The top row has the room: the actions never shrink away here. */
   .topbar-end { flex-shrink: 0; }
   .sidebar { width: min(380px, max(280px, 32vw, calc(255px * var(--font-scale, 1)))); }
@@ -2461,9 +2464,9 @@ button.hl-row-main:hover { background: var(--hover); }
   .row-status.running::before { animation: none; }
 }
 /* Head: the brand, then 검색 and + (새 세션 · 폴더 열기 · 지금 / 최근 폴더 · 다시 읽기); the search box opens under it. */
-.sidebar-brand { display: inline-flex; align-items: center; gap: 6px; padding: 0 var(--s1); color: var(--fg); font-size: var(--fs-label); font-weight: 600; letter-spacing: -.005em; }
-.sidebar-brand-mark { width: 18px; height: 18px; }
-.sidebar-brand .brand-wordmark { font-size: var(--fs-label); }
+.sidebar-brand { display: inline-flex; align-items: center; gap: 7px; padding: 0 var(--s1); color: var(--fg-strong); font-size: var(--fs-body); font-weight: 600; letter-spacing: -.01em; }
+.sidebar-brand-mark { width: 20px; height: 20px; flex: none; }
+.sidebar-brand .brand-wordmark { font-size: var(--fs-body); line-height: 1; }
 .new-menu .menu-tag { margin-left: auto; color: var(--muted); font-size: var(--fs-meta); }
 .new-menu-wrap { position: relative; display: inline-flex; }
 .session-menu.new-menu { right: 0; top: calc(100% + 4px); min-width: 220px; max-height: min(440px, 70vh); overflow-y: auto; overscroll-behavior: contain; }
@@ -2795,11 +2798,11 @@ html[data-concise='on'] .note.concise-note { font-size: var(--fs-meta); color: v
 /* The identity block (Grok / Codex parity): avatar · title · caret, nothing around it at rest — the hover / open state is a
    soft fill. --head-av is the avatar's size, --head-pad the chip's left inset; the folder line lines up under the title
    with both. Split panes: 24px avatar, 14px title. Desktop top bar: 32px avatar, 15px title, folder under it. */
-.pane-head-main { --head-av: 24px; --head-pad: 4px; position: relative; display: flex; flex-direction: column; align-items: flex-start; flex: 0 1 auto; min-width: 0; }
+.pane-head-main { --head-av: 24px; --head-pad: 4px; --head-gap: var(--s2); position: relative; display: flex; flex-direction: column; align-items: flex-start; flex: 0 1 auto; min-width: 0; }
 .pane-head.in-topbar .pane-head-main { --head-av: 28px; }
-.pane-head.in-topbar .pane-head-main.with-folder { --head-av: 32px; }
+.pane-head.in-topbar .pane-head-main.with-folder { --head-av: 32px; --head-pad: 6px; --head-gap: 10px; }
 .head-chip-wrap { position: relative; display: inline-flex; align-items: center; min-width: 0; max-width: 100%; }
-.head-chip { display: inline-flex; align-items: center; gap: var(--s2); min-width: 0; max-width: 100%; height: 32px; padding: 0 var(--s2) 0 var(--s3); border-radius: var(--r-lg); font-size: var(--fs-label); line-height: 20px; font-weight: 600; letter-spacing: -.005em; color: var(--muted); background: transparent; transition: background-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease), color var(--t-fast) var(--ease); }
+.head-chip { display: inline-flex; align-items: center; gap: var(--head-gap, var(--s2)); min-width: 0; max-width: 100%; height: 32px; padding: 0 var(--s2) 0 var(--s3); border-radius: var(--r-lg); font-size: var(--fs-label); line-height: 20px; font-weight: 600; letter-spacing: -.005em; color: var(--muted); background: transparent; transition: background-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease), color var(--t-fast) var(--ease); }
 .with-avatar .head-chip { padding-left: var(--head-pad); }
 .head-chip.static { padding-right: var(--s3); }
 .pane.active .head-chip, .pane-head.in-topbar .head-chip { color: var(--fg-strong); }
@@ -2807,7 +2810,7 @@ button.head-chip:hover, button.head-chip[aria-expanded="true"] { background: var
 button.head-chip:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus); }
 .head-chip[data-grip] { touch-action: none; }
 body.pane-dragging .head-chip { cursor: grabbing; }
-.head-avatar { --av-size: var(--head-av); flex: none; display: grid; place-items: center; width: var(--head-av); height: var(--head-av); border-radius: var(--r-full); background: var(--av, var(--avatar-8)); color: var(--avatar-glyph); transition: opacity var(--t-fast) var(--ease); }
+.head-avatar { --av-size: var(--head-av); flex: none; display: grid; place-items: center; width: var(--head-av); height: var(--head-av); border-radius: var(--r-full); background: var(--av, var(--avatar-8)); color: var(--avatar-glyph); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .12); transition: opacity var(--t-fast) var(--ease); }
 .head-avatar .row-avatar-icon { width: 64%; height: 64%; }
 /* A split pane that is not the active one: its avatar steps back with its title. */
 .pane:not(.active) > .pane-head:not(.in-topbar) .head-avatar, .pane:not(.active) .chat > .pane-head:not(.in-topbar) .head-avatar { opacity: .7; }
@@ -2817,7 +2820,7 @@ body.pane-dragging .head-chip { cursor: grabbing; }
 /* The engine: a small muted mark after the name, not a second identity. */
 .head-chip-title .engine-mark { flex: none; font-size: var(--fs-label); }
 .head-chip-spacer { display: block; height: calc(var(--fs-meta) * var(--lh-meta)); }
-.head-chip .caret { flex: none; color: var(--muted); opacity: .85; transition: opacity var(--t-fast) var(--ease), transform var(--t-fast) var(--ease); }
+.head-chip .caret { flex: none; color: var(--muted); opacity: .7; transition: opacity var(--t-fast) var(--ease), transform var(--t-fast) var(--ease); }
 button.head-chip:hover .caret, button.head-chip:focus-visible .caret, button.head-chip[aria-expanded="true"] .caret { opacity: 1; color: var(--muted); }
 button.head-chip[aria-expanded="true"] .caret { transform: rotate(180deg); }
 .head-chip-input { min-width: 12em; max-width: 100%; height: 32px; padding: 0 var(--s3); border: 0; border-radius: var(--r-full); outline: none; background: var(--bg-raised); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--fg-strong); font: inherit; font-size: var(--fs-label); font-weight: 600; }
@@ -2825,9 +2828,25 @@ button.head-chip[aria-expanded="true"] .caret { transform: rotate(180deg); }
 .pane-head.in-topbar .head-chip { height: 36px; font-size: var(--fs-body); }
 .pane-head.in-topbar .with-folder .head-chip { height: 44px; padding-top: 4px; padding-bottom: 4px; padding-right: var(--s3); border-radius: var(--r-lg); }
 .pane-head.in-topbar .head-chip-input { height: 36px; font-size: max(16px, var(--fs-body)); text-align: center; }
+/* The top bar's identity block, polished: title 15px/600 on a tight 19px line, the folder a 12px/500 line under it with a
+   small folder glyph; at rest nothing around it, on hover a soft fill with a hairline edge, open a step firmer. The
+   warning dot and the 갈라짐 chip match the bar's 28px rhythm (☰ 32 · chip 44 · dot 28, all centred). */
+.pane-head.in-topbar { gap: 6px; }
+.pane-head.in-topbar .head-chip { letter-spacing: -.011em; }
+.pane-head.in-topbar .with-folder .head-chip-name { line-height: 19px; }
+.pane-head.in-topbar .head-chip .caret { margin-left: 2px; }
+.pane-head.in-topbar button.head-chip:hover { box-shadow: inset 0 0 0 1px var(--line); }
+.pane-head.in-topbar button.head-chip[aria-expanded="true"] { background: var(--selected); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.pane-head.in-topbar button.head-chip:focus-visible { box-shadow: var(--focus); }
+.with-folder > .folder-chip.head-folder { font-weight: 500; letter-spacing: .005em; }
+.with-folder > .folder-chip.head-folder::before { content: ''; display: inline-block; width: 11px; height: 11px; margin-right: 4px; vertical-align: -1px; background: currentColor; opacity: .75; -webkit-mask: var(--folder-glyph) center / contain no-repeat; mask: var(--folder-glyph) center / contain no-repeat; }
+.with-folder { --folder-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'%3E%3Cpath d='M2 4.6c0-.6.4-1.1 1-1.1h3.1l1.5 1.6H13c.6 0 1 .5 1 1.1v6.2c0 .6-.4 1.1-1 1.1H3c-.6 0-1-.5-1-1.1z'/%3E%3C/svg%3E"); }
+.pane-head.in-topbar .pane-head-chips > .chip.perm-badge.perm-bypassPermissions { width: 28px; height: 28px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 20%, transparent); }
+.pane-head.in-topbar .pane-head-chips > .chip.perm-badge.perm-bypassPermissions svg { width: 14px; height: 14px; margin-top: -1px; }
+.pane-head.in-topbar .pane-head-chips .fork-btn { height: 28px; padding: 0 var(--s3); }
 .folder-chip.head-folder { max-width: 100%; height: auto; padding: 0 var(--s2); margin-top: 1px; background: none; box-shadow: none; border-radius: 0; font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--muted); }
 /* Over the chip's lower half, under the title (the chip's spacer holds the room): left = inset + avatar + gap. */
-.with-folder > .folder-chip.head-folder { position: absolute; left: calc(var(--head-pad) + var(--head-av) + var(--s2)); bottom: 4px; max-width: calc(100% - var(--head-pad) - var(--head-av) - var(--s2) - var(--s3)); margin: 0; padding: 0; border-radius: var(--r-xs); font-size: var(--fs-meta); }
+.with-folder > .folder-chip.head-folder { position: absolute; left: calc(var(--head-pad) + var(--head-av) + var(--head-gap)); bottom: 5px; max-width: calc(100% - var(--head-pad) - var(--head-av) - var(--head-gap) - var(--s3)); margin: 0; padding: 0; border-radius: var(--r-xs); font-size: var(--fs-meta); }
 .with-folder > .folder-chip.head-folder:hover, .with-folder > .folder-chip.head-folder[aria-expanded="true"] { color: var(--fg); text-decoration: underline; text-underline-offset: 2px; text-decoration-color: var(--line-strong); }
 .with-folder > .folder-chip.head-folder:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus); }
 .with-folder:not(.with-avatar) > .folder-chip.head-folder { left: var(--s3); max-width: calc(100% - var(--s3) * 2); }
@@ -2865,6 +2884,9 @@ button.head-chip[aria-expanded="true"] .caret { transform: rotate(180deg); }
   .pane-head.in-topbar .pane-head-main { --head-av: 32px; }
   .pane-head.in-topbar .head-chip { font-size: var(--fs-body); }
   button.head-chip::after { content: ''; position: absolute; left: 0; right: 0; top: calc((var(--phone-tap) - 40px) / -2); bottom: calc((var(--phone-tap) - 40px) / -2); }
+  /* 갈라짐 in the head: seen as the 28px pill beside the warning dot, touched through a 44px band (not a 44px circle). */
+  .pane-head-chips .fork-btn { position: relative; min-height: 0; }
+  .pane-head-chips .fork-btn::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: var(--phone-tap); transform: translateY(-50%); }
 }
 
 /* Phone: the 작업으로 button keeps its 44px square (this rule comes after the base .task-add above) and shows its icon —
@@ -2887,6 +2909,7 @@ button.head-chip[aria-expanded="true"] .caret { transform: rotate(180deg); }
   .topbar { flex-wrap: nowrap; height: 44px; min-height: 44px; }
   .pane-head { min-height: 36px; }
   .pane-head.in-topbar .head-chip, .pane-head.in-topbar .head-chip-input { height: 32px; }
+  .pane-head.in-topbar .pane-head-main { --head-av: 26px; }
   .pane-head.in-topbar .with-folder .head-chip { height: 38px; padding-top: 2px; padding-bottom: 2px; }
   /* The chip is seen at 32–38px; its touch band stays 44 (centred, whatever the chip's height). */
   .pane-head.in-topbar button.head-chip::after { top: 50%; bottom: auto; height: var(--phone-tap); transform: translateY(-50%); }

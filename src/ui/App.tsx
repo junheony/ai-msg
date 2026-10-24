@@ -17,7 +17,7 @@ import { readHashToken } from './loginHash';
 import { Toasts, type ToastItem } from './components/Toasts';
 import { RETRY_CONNECTION_EVENT } from './components/QueueChips';
 import { describeError } from './errorText';
-import { SplitIcon } from './components/icons';
+import { MenuIcon, SidebarIcon, SplitIcon } from './components/icons';
 import { postPin, postPinOrder, postSessionIcon } from './pins';
 import { findHitElement } from './scrollToHit';
 import { postSessionMeta, restoreSession, searchTranscripts, trashSession, type SearchHit } from './sessionApi';
@@ -33,7 +33,7 @@ import { isClaudeModel, type ClaudeModel } from '../shared/models';
 import { claimReload, hasDraftText, hasOpenModal, isNewBuild, shouldAutoReload } from './autoReload';
 import { paneColumns, paneSize, resizePair } from './paneResize';
 import { hydrate, loadQueues, loadSent, loadUi, saveQueues, saveSent, saveUi, snapshotQueues, snapshotUi } from './persist';
-import { findSession } from './push';
+import { findSession, isStandalone } from './push';
 import { dockedPanes, initialState, openPanes, reducer, reopenForOlder, sessionsToClose, withOlderFrom, type Action, type AppState, type UploadedAttachment } from './state';
 import { arrangeFloats, clampFloat, dockSlot, EDGE_PX, FLOAT_MIN_H, FLOAT_MIN_W, floatRectAt, onRail, reorderSlot, SCROLL_STEP, slotX, snapFloat, shownBox, COLLAPSED_H, useTabReorder, type FloatRect } from './paneDrag';
 import { isMacPlatform, isTypingTarget, matchPaneShortcut, matchPinShortcut, matchShortcut, type ShortcutId } from './shortcuts';
@@ -152,7 +152,7 @@ function useTabTitle(running: boolean, chat: string | null) {
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
-  useEffect(() => { document.title = tabTitle(running ? '●' : done ? '✓' : null, chat); }, [running, done, chat]);
+  useEffect(() => { document.title = tabTitle(running ? '●' : done ? '✓' : null, chat, isStandalone()); }, [running, done, chat]);
 }
 
 export function App() {
@@ -1346,9 +1346,9 @@ export function App() {
     <div className="app">
       <a className="skip-link" href="#main" onClick={(e) => { e.preventDefault(); skipToChat(); }}>{ui().common.skipToMain}</a>
       <header className="topbar">
-        {phone && <button type="button" className="menu" aria-label="메뉴" aria-expanded={drawer} onClick={() => setDrawer((d) => !d)}>☰</button>}
+        {phone && <button type="button" className="menu" aria-label="메뉴" aria-expanded={drawer} onClick={() => setDrawer((d) => !d)}><MenuIcon /></button>}
         {/* Tablet / unfolded (721–1100px, CSS only shows it there): a visible way to fold the sidebar away without ⌘\. */}
-        {!phone && <button type="button" className="icon-btn sidebar-toggle" aria-label={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} title={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} aria-pressed={!sidebarHidden} onClick={toggleSidebar} onMouseEnter={peekable && !peek ? armPeek : undefined} onMouseLeave={peekable ? () => { unlatchPeek(); leavePeek(); } : undefined}>☰</button>}
+        {!phone && <button type="button" className="icon-btn sidebar-toggle" aria-label={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} title={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} aria-pressed={!sidebarHidden} onClick={toggleSidebar} onMouseEnter={peekable && !peek ? armPeek : undefined} onMouseLeave={peekable ? () => { unlatchPeek(); leavePeek(); } : undefined}><SidebarIcon /></button>}
         {/* The session chip of the one pane (desktop) / the shown pane (phone) renders here (Pane → Chat, a portal). */}
         <div className="topbar-head" ref={setHeadSlot} />
         {/* Every seat's usage: in the bar, shrinking in steps; when even its narrowest does not fit (and always on a phone)

@@ -16,6 +16,10 @@ export const ImageIcon = ({ className }: { className?: string }) => <svg {...svg
 export const ChevronIcon = () => <svg {...svg} width={10} height={10} strokeWidth={1.8} className="tool-caret chev"><path d="M6 3.5L10.5 8 6 12.5" /></svg>;
 /** 새 분할: a window split in two (the top bar's split button). */
 export const SplitIcon = () => <svg {...svg}><rect x="2.5" y="3" width="11" height="10" rx="1.6" /><path d="M8 3v10" /></svg>;
+/** 사이드바 보이기 / 숨기기 (tablet top bar): a window with its left column — the split icon's sibling. */
+export const SidebarIcon = () => <svg {...svg} width={18} height={18} strokeWidth={1.5} className="bar-icon"><rect x="2.25" y="3" width="11.5" height="10" rx="1.8" /><path d="M6.25 3v10" /><path d="M3.9 5.6h.7M3.9 7.4h.7" /></svg>;
+/** 메뉴 (phone top bar): three lines, the middle one shorter. */
+export const MenuIcon = () => <svg {...svg} width={20} height={20} strokeWidth={1.6} className="bar-icon"><path d="M2.75 4.5h10.5M2.75 8h7.5M2.75 11.5h10.5" /></svg>;
 export const ShareIcon = () => <svg {...svg}><path d="M8 10V2.5" /><path d="M5.2 5.2L8 2.4l2.8 2.8" /><path d="M5 7.5H4c-.6 0-1 .4-1 1v4c0 .6.4 1 1 1h8c.6 0 1-.4 1-1v-4c0-.6-.4-1-1-1h-1" /></svg>;
 
 /** 고정됨 pin (sidebar rows, new-chat cards); filled when pinned. */

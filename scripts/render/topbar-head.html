@@ -1,0 +1,65 @@
+<!doctype html><html><head><meta charset="utf-8">
+<!-- 상단 바 왼쪽 fixture for scripts/render-check.sh (keep in step with App.tsx's top bar, SessionChipHead.tsx, Sidebar.tsx's head):
+     ☰ (SidebarIcon) · the session chip with its folder line · the 모두 자동 승인 dot, at rest and open, a long title with 갈라짐,
+     and the sidebar's AI-MSG row under the bar to judge the left edge. Phone (≤720px): ☰ (MenuIcon) · chip · dot · 활동.
+     scripts/render-check.sh topbar-head 1250 1000 390 (RENDER_HEIGHT=560; RENDER_THEME=light for the light theme). -->
+<link rel="stylesheet" href="../../src/ui/styles.css">
+<script>
+  (() => {
+    const touchPhone = Math.min(screen.width, screen.height) <= 640 && matchMedia('(pointer: coarse)').matches;
+    const phone = touchPhone || matchMedia('(max-width: 720px)').matches;
+    const forced = new URLSearchParams(location.search).get('phone');
+    const mode = forced || (!phone ? '' : touchPhone && (screen.orientation?.type ?? '').startsWith('landscape') ? 'landscape' : 'portrait');
+    if (mode) document.documentElement.setAttribute('data-phone', mode);
+  })();
+</script>
+<style>
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font); }
+  .fx-name { margin: 12px 12px 6px; font-size: 12px; color: var(--faint); }
+  .fx-frame { position: relative; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .fx-body { display: flex; height: 56px; }
+  .fx-body .sidebar { padding-top: 8px; overflow: hidden; }
+  .fx-body .fx-main { flex: 1; background: var(--bg); }
+  .fx-phone { display: none; }
+  @media (max-width: 720px) { .fx-desk { display: none; } .fx-phone { display: block; } }
+</style>
+</head><body>
+
+<template id="avatar"><span class="head-avatar" data-avatar="5" style="--av: var(--avatar-5)" aria-hidden="true"><span class="avatar-mono">A</span></span></template>
+<template id="caret"><svg class="caret" viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4.75l3 3 3-3"/></svg></template>
+<template id="warn"><div class="pane-head-chips"><span class="chip perm-badge perm-bypassPermissions" title="모두 자동 승인"><svg class="perm-badge-icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.2 14.3 13.3H1.7z"/><path d="M8 6.6v3M8 11.6v.1"/></svg><span class="perm-badge-full">모두 자동 승인</span></span></div></template>
+<template id="toggle"><button type="button" class="icon-btn sidebar-toggle" aria-label="사이드바 숨기기" aria-pressed="true"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="bar-icon" aria-hidden="true"><rect x="2.25" y="3" width="11.5" height="10" rx="1.8"/><path d="M6.25 3v10"/><path d="M3.9 5.6h.7M3.9 7.4h.7"/></svg></button></template>
+<template id="menu"><button type="button" class="menu" aria-label="메뉴"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" class="bar-icon" aria-hidden="true"><path d="M2.75 4.5h10.5M2.75 8h7.5M2.75 11.5h10.5"/></svg></button></template>
+<template id="strip"><div class="usage-strip-wrap"><button type="button" class="usage-strip" aria-label="계정별 사용량"><span class="usage-seg ok" data-current=""><span class="usage-seg-who">A</span><span class="usage-seg-bar"><i style="width:42%"></i></span><span class="usage-seg-num">42%</span><span class="usage-seg-reset">2h</span></span><span class="usage-seg ok"><span class="usage-seg-who">B</span><span class="usage-seg-bar"><i style="width:18%"></i></span><span class="usage-seg-num">18%</span><span class="usage-seg-reset">4h</span></span></button></div></template>
+<template id="end"><div class="topbar-end"><button type="button" class="activity-btn lvl-idle" aria-label="활동"><span class="activity-dot"></span></button></div></template>
+<template id="brand"><div class="sidebar-head"><span class="sidebar-brand"><svg class="brand-mark sidebar-brand-mark" viewBox="0 0 24 24" aria-hidden="true"><path class="brand-top" fill="#a5b4fc" d="M12 1.4 20.31 6.2 12 11 3.69 6.2Z"/><path class="brand-left" fill="#4f46e5" d="M3.69 6.2 12 11V20.6L8.26 18.44 4.1 22.4 5.19 16.66 3.69 15.8Z"/><path class="brand-right" fill="#3730a3" d="M12 11 20.31 6.2V15.8L12 20.6Z"/></svg><span class="brand-wordmark"><span class="brand-ai">AI</span><span class="brand-dash">-</span><span class="brand-msg">MSG</span></span></span><span class="grow"></span></div></template>
+
+<div class="fx-desk">
+  <div class="fx-name">쉼 — ☰ · 아바타 · 제목 / 폴더 · ⌄ · 경고 점</div>
+  <div class="fx-frame" data-bar='{"title":"Weekly Report","folder":"weekly-report","open":false,"warn":true,"side":true}'></div>
+  <div class="fx-name">열림 (aria-expanded)</div>
+  <div class="fx-frame" data-bar='{"title":"Weekly Report","folder":"weekly-report","open":true,"warn":true}'></div>
+  <div class="fx-name">긴 제목 · 갈라짐 · 경고 점</div>
+  <div class="fx-frame" data-bar='{"title":"사용량 카드 오래된 값 표시 정리하고 계정 전환 흐름 다시 보기","folder":"deck","open":false,"warn":true,"fork":true}'></div>
+</div>
+<div class="fx-phone">
+  <div class="fx-name">폰 — ☰ · 칩 · 경고 점 · 활동</div>
+  <div class="fx-frame" data-bar='{"title":"Weekly Report","open":false,"warn":true,"phone":true}'></div>
+  <div class="fx-name">폰 — 긴 제목, 열림</div>
+  <div class="fx-frame" data-bar='{"title":"사용량 카드 오래된 값 표시 정리하고 계정 전환 흐름 다시 보기","open":true,"warn":true,"phone":true}'></div>
+</div>
+
+<script>
+  const t = (id) => document.getElementById(id).innerHTML;
+  for (const f of document.querySelectorAll('[data-bar]')) {
+    const o = JSON.parse(f.dataset.bar);
+    const phone = !!o.phone || document.documentElement.hasAttribute('data-phone');
+    const folder = !phone && o.folder;
+    const chip = `<button type="button" class="head-chip" aria-haspopup="menu" aria-expanded="${o.open}">${t('avatar')}<span class="head-chip-text"><span class="head-chip-title"><span class="head-chip-name">${o.title}</span></span>${folder ? '<span class="head-chip-spacer" aria-hidden="true"></span>' : ''}</span>${t('caret')}</button>`;
+    const head = `<div class="pane-head in-topbar"><div class="pane-head-main with-avatar${folder ? ' with-folder' : ''}"><span class="head-chip-wrap">${chip}</span>${folder ? `<button type="button" class="folder-chip head-folder" title="/Users/u/${o.folder}">${o.folder}</button>` : ''}</div>${o.warn || o.fork ? `<div class="pane-head-chips">${o.fork ? '<button type="button" class="fork-btn">갈라짐</button>' : ''}${o.warn ? t('warn').replace(/^<div class="pane-head-chips">|<\/div>$/g, '') : ''}</div>` : ''}</div>`;
+    f.innerHTML = `<header class="topbar">${phone ? t('menu') : t('toggle')}<div class="topbar-head">${head}</div>${phone ? '' : t('strip')}${t('end')}</header>`
+      + (o.side ? `<div class="fx-body"><nav class="sidebar">${t('brand')}</nav><div class="fx-main"></div></div>` : '');
+  }
+</script>
+</body></html>
