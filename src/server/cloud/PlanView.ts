@@ -29,8 +29,8 @@ export class PlanView {
     now?: () => number;
     setTimer?: typeof setTimeout;
     random?: () => number;
-    /** `token` = the one the failed request carried. */
-    onError?: (err: unknown, token: string) => void;
+    /** `token` = the one the failed request carried. Awaited: a confirmation that unlinks makes the answer `null`. */
+    onError?: (err: unknown, token: string) => unknown;
     /** After a new plan is stored. */
     onChange?: () => void;
   }) {
@@ -82,8 +82,8 @@ export class PlanView {
     try {
       next = await this.o.api.entitlement(token);
     } catch (err) {
-      this.o.onError?.(err, token);
-      return err instanceof CloudError && err.status === 401 && err.code === 'unauthorized' ? null : this.get();
+      await this.o.onError?.(err, token);
+      return this.get(); // null when the owner's confirmation unlinked, else the stored plan
     }
     if (st.get().hostToken !== token) return this.get(); // unlinked or relinked meanwhile
     const prev = st.get().plan;

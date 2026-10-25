@@ -74,6 +74,14 @@ describe('PlanView', () => {
     expect(errors).toEqual([expect.objectContaining({ status: 401 })]);
   });
 
+  it('a 401 unauthorized that the owner finds still valid keeps the stored plan; one that unlinks answers null', async () => {
+    await state.update({ plan: pro });
+    const { pv } = view(async () => { throw new CloudError(401, 'unauthorized'); }, { onError: async () => { await Promise.resolve(); } });
+    expect(await pv.refresh()).toEqual(pro);
+    const { pv: pv2 } = view(async () => { throw new CloudError(401, 'unauthorized'); }, { onError: async () => { await Promise.resolve(); await state.reset(); } });
+    expect(await pv2.refresh()).toBeNull();
+  });
+
   it('a bare 401 (no unauthorized code, e.g. a proxy) keeps the stored plan', async () => {
     await state.update({ plan: pro });
     const { pv } = view(async () => { throw new CloudError(401); });

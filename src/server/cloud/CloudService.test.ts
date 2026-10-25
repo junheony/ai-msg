@@ -170,6 +170,26 @@ describe('CloudService', () => {
     expect(logs.join('\n')).not.toContain('a@example.test');
   });
 
+  it('a plan 401 and a relay 401 at the same time share one devices check and one forget', async () => {
+    const relay = await FakeRelay.start({ token: 'other' });
+    cleanups.push(() => relay.close());
+    await linkedState('host-token', ['d1']);
+    const { calls, fetchImpl: base } = cloudFetch({ 'GET /v1/entitlement': [401, { error: 'unauthorized', code: 'unauthorized' }], 'GET /v1/devices': [401, { error: 'unauthorized', code: 'unauthorized' }] });
+    // a slow devices answer keeps the first check in flight while the second path asks
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).endsWith('/v1/devices')) await sleep(150);
+      return base(input, init);
+    }) as typeof fetch;
+    const logs: string[] = [];
+    const svc = service({ relayUrl: relayOrigin(relay), fetch: fetchImpl, log: (s) => logs.push(s) });
+    svc.start();
+    await svc.refreshPlan();
+    await eventually(() => !svc.status().linked);
+    await sleep(300);
+    expect(calls.filter((c) => c.path === '/v1/devices')).toHaveLength(1);
+    expect(logs.filter((l) => l.includes('link forgotten'))).toHaveLength(1);
+  });
+
   it('entitlement 401 without the unauthorized code (a proxy) keeps the link and asks nothing more', async () => {
     await linkedState('host-token', ['d1']);
     const { calls, fetchImpl } = cloudFetch({ 'GET /v1/entitlement': [401, undefined], 'GET /v1/devices': [401, { error: 'unauthorized', code: 'unauthorized' }] });

@@ -212,7 +212,7 @@ export class CloudService {
           state: st,
           relay: { recheck: () => this.recheck() },
           onChange: () => { this.lastPlanError = ''; this.changed(); },
-          onError: (err, token) => void this.planFailed(st, err, token),
+          onError: (err, token) => this.planFailed(st, err, token),
         });
         return st;
       },
@@ -319,6 +319,8 @@ export class CloudService {
     this.retryTimer = null;
   }
 
+  private confirming: Promise<boolean> | null = null;
+
   /** Review item 1: the relay refused the token. Forget the link only when the host API refuses it too. */
   private async confirmUnlinked(): Promise<void> {
     const st = this.state;
@@ -340,7 +342,13 @@ export class CloudService {
    * A second, independent refusal: the host API (`GET /v1/devices`) answers 401 with the cloud's own `unauthorized`
    * code. Only then is the link (and the phone list) forgotten — a proxy's bare 401 never does it. True = forgotten.
    */
-  private async forgetIfRefused(st: CloudState, token: string): Promise<boolean> {
+  private forgetIfRefused(st: CloudState, token: string): Promise<boolean> {
+    // One check at a time: the plan 401 and the relay 401 share it (one devices request, one forget).
+    this.confirming ??= this.confirmRefused(st, token).finally(() => { this.confirming = null; });
+    return this.confirming;
+  }
+
+  private async confirmRefused(st: CloudState, token: string): Promise<boolean> {
     try {
       await this.api.devices(token);
       return false;
