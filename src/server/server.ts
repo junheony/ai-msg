@@ -70,7 +70,7 @@ import { recordAudit } from './audit';
 import { Commander } from './commander/Commander';
 import { judge } from './commander/Judge';
 import { isOtherEngineState } from './turn/SessionState';
-import { GEMINI_ACCOUNTS, type GeminiAccount } from '../shared/accounts';
+import { GEMINI_ACCOUNTS, type Account, type GeminiAccount } from '../shared/accounts';
 import type { PermMode } from '../shared/permission';
 import type { GrokStatus, ServerMessage } from '../shared/protocol';
 
@@ -200,7 +200,9 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     cleanup.push(() => codexUsage.stop());
     // An account not observed (`cli` mode; usage-deck mode: only one whose dashboard card is not ok) for ~8 min (before it would turn stale) gets its real limits from `claude -p /usage` (no tokens), one at a time, checked every 5 min.
     const pollBin = claudePollBin(cfg);
-    const claudeUsage = pollBin ? new ClaudeUsagePoller({ bin: pollBin, accounts, usage }) : null;
+    // `runner` is made below; busy = a turn or background work of a session pinned to the account (a long turn and a `/usage` CLI would share its profile).
+    let busyAccount: (account: Account) => boolean = () => false;
+    const claudeUsage = pollBin ? new ClaudeUsagePoller({ bin: pollBin, accounts, usage, busy: (a) => busyAccount(a) }) : null;
     claudeUsage?.start();
     cleanup.push(() => claudeUsage?.stop());
     // 사용량 view: incremental token usage index over every transcript/rollout; first scan runs in the background.
@@ -296,6 +298,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
       desktopMirror: () => experimental().desktop,
       onIndexChanged: () => notifyIndex(),
     });
+    busyAccount = (account) => runner.busySessionIds().some((id) => { const st = store.get(id); return !!st && !isOtherEngineState(st) && st.account === account; });
 
     // Deviation (added per review I5): the addresses deck itself binds to double as the
     // Host allowlist (DNS-rebinding defence), plus any operator-configured extra names.

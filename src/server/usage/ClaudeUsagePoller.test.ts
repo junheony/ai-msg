@@ -111,7 +111,7 @@ function fakeChild(): Fake {
 const end = (f: Fake, code: number | null) => { f.child.emit('exit', code); f.child.emit('close', code); };
 const answer = (text: string) => (f: Fake) => { f.stdout.end(JSON.stringify({ type: 'result', is_error: false, num_turns: 0, result: text })); end(f, 0); };
 
-function setup(o: { script: (f: Fake, n: number) => void; fetchedAt?: Record<string, string | null>; bin?: string | null; timeoutMs?: number; now?: () => number }) {
+function setup(o: { script: (f: Fake, n: number) => void; fetchedAt?: Record<string, string | null>; bin?: string | null; timeoutMs?: number; now?: () => number; busy?: (a: string) => boolean }) {
   const spawned: { bin: string; args: string[]; cwd: string; env: Record<string, string | undefined> }[] = [];
   const children: Fake[] = [];
   const spawnFn: SpawnFn = (bin, args, so) => {
@@ -126,7 +126,7 @@ function setup(o: { script: (f: Fake, n: number) => void; fetchedAt?: Record<str
   const usage = { applyCliPoll: vi.fn(), cliObservedAt: vi.fn((a: string) => { const t = fetchedAt[a]; return t ? Date.parse(t) : null; }) };
   const logs: string[] = [];
   const p = new ClaudeUsagePoller({
-    bin: o.bin === undefined ? '/x/claude' : o.bin, accounts: testRegistry(), usage, spawnFn, now: o.now ?? (() => NOW),
+    bin: o.bin === undefined ? '/x/claude' : o.bin, accounts: testRegistry(), usage, spawnFn, ...(o.busy ? { busy: o.busy } : {}), now: o.now ?? (() => NOW),
     timeoutMs: o.timeoutMs ?? 2_000, startDelayMs: 1_000, intervalMs: 60_000, maxAgeMs: 10 * 60_000,
     baseEnv: { PATH: '/bin', ANTHROPIC_API_KEY: 'k', CLAUDE_CONFIG_DIR: '/elsewhere' }, log: (l) => logs.push(l),
   });
@@ -281,6 +281,27 @@ describe('ClaudeUsagePoller', () => {
     expect(logs[0]).toContain('시간 초과');
   });
 
+  it('a busy account is skipped (no spawn); once free, the next round reads it; nothing is recorded for the skip', async () => {
+    const busy = new Set(['a', 'b']);
+    const { p, usage, spawned, logs } = setup({ script: answer(SAMPLE), busy: (a) => busy.has(a) });
+    await p.sweep();
+    expect(spawned.map((s) => s.env.CLAUDE_CONFIG_DIR)).toEqual(['/h/.claude-c']);
+    expect(usage.applyCliPoll).toHaveBeenCalledTimes(1);
+    expect(logs).toHaveLength(0);
+    busy.clear();
+    await p.sweep(); // no backoff from the skip: a and b are due at once
+    expect(spawned.slice(1).map((s) => s.env.CLAUDE_CONFIG_DIR)).toEqual([undefined, '/h/.claude-b', '/h/.claude-c']);
+  });
+  it('a busy skip leaves pollAt and the back-off alone; a busy check that throws counts as not busy', async () => {
+    const { p, usage, spawned } = setup({ script: answer(SAMPLE), busy: () => true });
+    await p.sweep();
+    expect(spawned).toHaveLength(0);
+    expect(usage.applyCliPoll).not.toHaveBeenCalled();
+    expect((p as unknown as { failures: Map<string, unknown> }).failures.size).toBe(0);
+    const t = setup({ script: answer(SAMPLE), busy: () => { throw new Error('boom'); } });
+    await t.p.sweep();
+    expect(t.spawned).toHaveLength(3);
+  });
   it('no usable claude binary: nothing runs', async () => {
     const { p, spawned } = setup({ bin: null, script: answer(SAMPLE) });
     await p.sweep();

@@ -134,7 +134,7 @@ const BACKOFF_MAX_MS = 2 * 3_600_000;
  * account whose last observation (a turn's rate_limit_event or an earlier poll; the last poll too, so the account in use
  * — fresh from its own turns, which never tell Fable — is still read; never polled = due) is older than `maxAgeMs`
  * (STALE_MAX_MS − 2 min, so the card never turns 오래됨 between checks) gets one `claude -p /usage` in its own profile
- * (the registry's CLAUDE_CONFIG_DIR), one at a time. A failure is logged when it changes (a new error, or the account
+ * (the registry's CLAUDE_CONFIG_DIR), one at a time; an account with a turn or background work running (`busy`) waits for the next round. A failure is logged when it changes (a new error, or the account
  * recovering) and the account backs off exponentially, up to BACKOFF_MAX_MS. Reads the CLI's text only — never
  * credentials.
  */
@@ -160,6 +160,8 @@ export class ClaudeUsagePoller {
     bin: string | null;
     accounts: Pick<AccountRegistry, 'list' | 'env'>;
     usage: Pick<UsageService, 'applyCliPoll' | 'cliObservedAt'>;
+    /** True while a turn or background work runs on the account: that round skips it (not a failure: no backoff, nothing recorded). A throw counts as not busy. */
+    busy?: (account: Account) => boolean;
     intervalMs?: number;
     maxAgeMs?: number;
     startDelayMs?: number;
@@ -192,11 +194,15 @@ export class ClaudeUsagePoller {
     return at === null || this.now() - at > this.maxAgeMs;
   }
 
+  private isBusy(a: Account): boolean {
+    try { return this.opts.busy?.(a) ?? false; } catch { return false; }
+  }
+
   private async round(): Promise<void> {
     if (!this.opts.bin) return;
     for (const a of this.opts.accounts.list()) {
       if (this.stopped) return;
-      if (!this.due(a)) continue;
+      if (!this.due(a) || this.isBusy(a)) continue;
       await this.pollAccount(a);
     }
   }

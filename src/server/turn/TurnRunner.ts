@@ -888,6 +888,11 @@ export class TurnRunner {
     return typeof this.inputs.get(turnId)?.stopTask === 'function';
   }
 
+  /** Claude session ids with a deck turn running or a process held open for background work. */
+  busySessionIds(): string[] {
+    return [...new Set([...this.active.keys(), ...this.live.keys()])];
+  }
+
   /** Session ids whose process is held open for background work. */
   backgroundSessions(): string[] {
     return [...this.live.keys()];
