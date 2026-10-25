@@ -188,9 +188,10 @@ export function agoParts(ms: number, now: number): { unit: 'now' | 'minutes' | '
   return { unit: 'days', n: Math.floor(d / 86_400_000) };
 }
 
-// --- lazy fetch, cached ~60 s per URL (the home asks only while it is on screen) -------------------------------------
+// --- lazy fetch, cached ~50 s per URL (the home asks only while it is on screen) -------------------------------------
 
-const TTL_MS = 60_000;
+/** Shorter than the home's 60 s refresh, so every tick really asks again (equal ones skipped every other tick). */
+export const HOME_TTL_MS = 50_000;
 const cache = new Map<string, { at: number; value: unknown; pending?: Promise<unknown> }>();
 
 /** Tests: start every case with an empty cache. */
@@ -199,13 +200,13 @@ export function clearHomeCache(): void {
 }
 
 /**
- * GET `url` as JSON through `fetchFn`, reusing an answer younger than a minute (and an in-flight ask). A failure
+ * GET `url` as JSON through `fetchFn`, reusing an answer younger than HOME_TTL_MS (and an in-flight ask). A failure
  * resolves to null and is not cached, so the next visit asks again.
  */
 export function cachedJson<T>(url: string, fetchFn: typeof fetch, now = Date.now()): Promise<T | null> {
   const hit = cache.get(url);
   if (hit?.pending) return hit.pending as Promise<T | null>;
-  if (hit && now - hit.at < TTL_MS) return Promise.resolve(hit.value as T);
+  if (hit && now - hit.at < HOME_TTL_MS) return Promise.resolve(hit.value as T);
   const pending = (async () => {
     try {
       const r = await fetchFn(url, { credentials: 'same-origin' });

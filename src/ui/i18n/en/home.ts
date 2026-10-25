@@ -9,7 +9,9 @@ export const home = {
   },
   /** The line under the greeting: the date, then these parts joined by " · ". */
   waitingCount: (n: number) => `${n} waiting for review`,
-  todayCost: (cost: string) => `today ${cost}`,
+  todayCost: (cost: string) => `today ≈${cost}`,
+  /** The date line's tooltip when it shows today's cost. */
+  todayCostNote: 'Estimated at API rates',
   engineLabel: 'Engine for the new session',
   engineAuto: 'Auto',
   engineNeedsLogin: (name: string) => `${name} — log in first`,
@@ -41,6 +43,7 @@ export const home = {
     needsLogin: 'Log in',
     unavailable: 'Unavailable',
     unknown: 'Login unknown',
+    statusUnknown: 'Status unknown',
     weekly: 'Weekly',
     left: (pct: number) => `${pct}% left`,
     reset: {

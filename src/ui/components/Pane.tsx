@@ -295,6 +295,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   closingRef.current = closing;
   const keyRef = useRef(sideTabs.key);
   keyRef.current = sideTabs.key;
+  // Stable across renders, so the home's memoised lists are not redrawn for a new closure.
+  const onMarkRead = useCallback((sessionIds: string[]) => dispatch({ type: 'mark_read', sessionIds }), [dispatch]);
   const updateTabs = useCallback((fn: (t: SideTabs) => SideTabs) => {
     if (closingRef.current) { setClosing(false); setInstant(true); }
     setSideTabs((cur) => ({ ...cur, tabs: fn(cur.tabs), open: true }));
@@ -752,7 +754,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
             ? <NewChat projects={projects} loaded={!!app.ready} pins={app.pins ?? []} defaultCwd={newChatCwd ?? null} onStart={onStartChat} draftKey={newChatDraftKey(pane.id)} {...(onStartChatSplit ? { onStartSplit: onStartChatSplit } : {})} engine={pane.engine} sandbox={pane.sandbox} codexAvailable={app.codexAvailable} gemini={app.gemini ?? null} grok={app.grok ?? null}
                 onEngine={(engine) => dispatch({ type: 'set_engine', engine, paneId: pane.id })} onSandbox={(sandbox) => dispatch({ type: 'set_sandbox', sandbox, paneId: pane.id })} {...(onOpenSession ? { onOpenSession } : {})} {...(uploadFn ? { uploadFn } : {})}
                 models={modelChoices(pane.engine)} model={model} effort={effort} onModel={onModel} onEffort={onEffort} defaultPerm={app.defaultPermMode ?? null}
-                home={!closable && !floating ? { activity: app.activity ?? [], unread: app.unread ?? [], pending: app.pending, questions: app.questions, usage: app.usage ?? null, onMarkRead: (sessionIds) => dispatch({ type: 'mark_read', sessionIds }) } : null} />
+                home={!closable && !floating ? { activity: app.activity ?? [], unread: app.unread ?? [], pending: app.pending, questions: app.questions, usage: app.usage ?? null, onMarkRead } : null} />
             : <div className="chat center muted">왼쪽에서 세션을 고르거나 새 세션을 시작하세요.</div>}
         </>
       )}

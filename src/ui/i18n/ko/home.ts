@@ -9,7 +9,8 @@ export const home: Widen<typeof en> = {
     late: '늦은 시간까지 수고 많아요',
   },
   waitingCount: (n: number) => `${n}개 검토 대기`,
-  todayCost: (cost: string) => `오늘 ${cost}`,
+  todayCost: (cost: string) => `오늘 ≈${cost}`,
+  todayCostNote: 'API 단가 기준 추정',
   engineLabel: '새 세션의 엔진',
   engineAuto: '자동',
   engineNeedsLogin: (name: string) => `${name} — 로그인 필요`,
@@ -41,6 +42,7 @@ export const home: Widen<typeof en> = {
     needsLogin: '연결 필요',
     unavailable: '사용 불가',
     unknown: '인증 미확인',
+    statusUnknown: '상태 미상',
     weekly: '주간',
     left: (pct: number) => `${pct}% 남음`,
     reset: {

@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { DEFAULT_SANDBOX, type CodexSandbox, type Effort, type EngineChoice, type ModelChoice } from '../../shared/models';
 import type { PermMode } from '../../shared/permission';
 import type { GeminiStatus, GrokStatus, SessionActivity } from '../../shared/protocol';
 import type { UsageSnapshot } from '../../shared/usage-types';
-import type { ProjectEntry } from '../../shared/session-types';
+import type { ProjectEntry, SessionEntry } from '../../shared/session-types';
 import type { PendingPermission, PendingQuestion, UploadedAttachment } from '../state';
 import { ATTACHMENT_ONLY_TEXT, filesFrom, replaceAttachment, uploadFile, usePasteUploads, type UploadFn } from '../upload';
 import { AttachmentBar } from './AttachmentBar';
@@ -21,9 +21,12 @@ import { usePrefs } from '../usePrefs';
 import { FolderPicker } from './FolderPicker';
 import { ui } from '../i18n';
 import { agoParts } from '../home';
-import { HomeFrame, homeGreeting, type HomeData } from './HomeBoard';
+import { HomeFrame, homeGreeting, useMinuteNow, type HomeData } from './HomeBoard';
 
 const RECENT_CARDS = 10;
+/** One array for "no pins", so the home's memoised lists see the same input from render to render. */
+const NO_PINS: string[] = [];
+type LiveCard = { s: SessionEntry; name: string };
 const baseName = (cwd: string) => cwd.split('/').filter(Boolean).pop() ?? cwd;
 
 export const greeting = homeGreeting;
@@ -54,7 +57,7 @@ export type NewChatOptions = { engine: EngineChoice; sandbox: CodexSandbox };
  * above the auto-growing text; [+] · mic · ↑ in its bottom row), the pinned sessions (pin order) and the latest others as compact cards. Everything is reachable here, so the phone does not need
  * the drawer to start or resume. Attachments upload as soon as they are picked and ride the first message.
  */
-export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit, onOpenSession, now, uploadFn, models, model = 'auto', effort = null, onModel, onEffort, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, gemini = null, grok = null, onEngine, onSandbox, defaultPerm = null, fetchFn = fetch, loaded = false, home = null }: {
+export function NewChat({ projects, pins = NO_PINS, defaultCwd, onStart, onStartSplit, onOpenSession, now, uploadFn, models, model = 'auto', effort = null, onModel, onEffort, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, gemini = null, grok = null, onEngine, onSandbox, defaultPerm = null, fetchFn = fetch, loaded = false, home = null }: {
   projects: ProjectEntry[];
   /** The home dashboard (the only, docked pane): lists, providers and usage around the composer. */
   home?: NewChatHome | null;
@@ -111,13 +114,26 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit
   const project = projects.find((p) => p.cwd === cwd) ?? null;
   const pinned = projects.filter((p) => p.pinned);
   const others = projects.filter((p) => !p.pinned);
-  const live = projects.flatMap((p) => p.sessions.map((s) => ({ s, name: p.name }))).filter(({ s }) => !s.archived)
-    .sort((a, b) => b.s.lastModified - a.s.lastModified)
-    .filter((r, i, all) => all.findIndex((x) => x.s.sessionId === r.s.sessionId) === i);
-  const pinnedCards = [...new Set(pins)].flatMap((id) => live.find((r) => r.s.sessionId === id) ?? []);
-  const pinSet = new Set(pins);
-  const recent = live.filter((r) => !pinSet.has(r.s.sessionId)).slice(0, RECENT_CARDS);
-  const t = now ?? Date.now();
+  // The plain screen's cards (the home lists its own): computed when the sessions or pins change, not per keystroke.
+  const isHome = !!home;
+  const { pinnedCards, recent } = useMemo(() => {
+    if (isHome) return { pinnedCards: [] as LiveCard[], recent: [] as LiveCard[] };
+    const byId = new Map<string, LiveCard>();
+    for (const p of projects) {
+      for (const s of p.sessions) {
+        if (s.archived) continue;
+        const had = byId.get(s.sessionId);
+        if (!had || had.s.lastModified < s.lastModified) byId.set(s.sessionId, { s, name: p.name });
+      }
+    }
+    const live = [...byId.values()].sort((a, b) => b.s.lastModified - a.s.lastModified);
+    const pinSet = new Set(pins);
+    return {
+      pinnedCards: [...pinSet].flatMap((id) => byId.get(id) ?? []),
+      recent: live.filter((r) => !pinSet.has(r.s.sessionId)).slice(0, RECENT_CARDS),
+    };
+  }, [isHome, projects, pins]);
+  const t = useMinuteNow(now);
 
   // Auto-grow: the card follows the text up to the CSS max-height, then the textarea scrolls.
   useAutoGrow(taRef, text);
@@ -206,7 +222,7 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit
   const replace = (old: UploadedAttachment, f: File) =>
     replaceAttachment(old, f, uploadOne, () => unsent.current, (a) => setAttachments((all) => all.map((x) => (x.id === old.id ? a : x))));
   const option = (p: ProjectEntry) => <option key={p.cwd} value={p.cwd}>{p.name}</option>;
-  const card = ({ s, name }: (typeof live)[number], open: NonNullable<typeof onOpenSession>, pin: boolean) => (
+  const card = ({ s, name }: LiveCard, open: NonNullable<typeof onOpenSession>, pin: boolean) => (
     <button type="button" key={s.sessionId} className="newchat-card" title={`${s.title}\n${s.cwd}`} onClick={() => open(s.sessionId, s.cwd, s.title)}>
       <span className="newchat-card-title">{pin && <span className="newchat-card-pin"><PinIcon filled /></span>}<EngineMark engine={engineOf(s)} decorative />{s.title}</span>
       <span className="newchat-card-meta">{name} · {ago(s.lastModified, t)}</span>
@@ -315,11 +331,26 @@ function EngineChips({ value, codexAvailable, gemini, grok, onPick }: { value: E
     ...(grokReady || grok ? [{ v: 'grok' as const, label: CHIP_NAME.grok, disabled: !grokReady, ...(grokReady ? {} : { title: h.engineNeedsInstall(CHIP_NAME.grok) }) }] : []),
     ...(codexAvailable ? [{ v: 'auto' as const, label: h.engineAuto }] : []),
   ];
+  // Roving tabindex: one stop in the Tab order (the picked engine, else the first one that can be picked); ← / → move
+  // to the next pickable engine and pick it, as radio buttons do.
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const pickable = options.flatMap((o, i) => (o.disabled ? [] : [i]));
+  const picked = options.findIndex((o) => o.v === value && !o.disabled);
+  const stop = picked >= 0 ? picked : pickable[0] ?? -1;
+  const arrow = (e: ReactKeyboardEvent, i: number) => {
+    const dir = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+    if (!dir || pickable.length === 0) return;
+    e.preventDefault();
+    const at = pickable.indexOf(i);
+    const next = pickable[((at < 0 ? 0 : at + dir) + pickable.length) % pickable.length]!;
+    onPick(options[next]!.v);
+    refs.current[next]?.focus();
+  };
   return (
     <div className="home-engines" role="radiogroup" aria-label={h.engineLabel}>
-      {options.map((o) => (
-        <button key={o.v} type="button" role="radio" aria-checked={value === o.v} className={`home-engine${value === o.v ? ' on' : ''}`}
-          disabled={o.disabled} title={o.title} onClick={() => onPick(o.v)}>
+      {options.map((o, i) => (
+        <button key={o.v} ref={(el) => { refs.current[i] = el; }} type="button" role="radio" aria-checked={value === o.v} className={`home-engine${value === o.v ? ' on' : ''}`}
+          disabled={o.disabled} title={o.title} tabIndex={i === stop ? 0 : -1} onKeyDown={(e) => arrow(e, i)} onClick={() => onPick(o.v)}>
           {o.v === 'auto' ? <span className="home-engine-auto" aria-hidden="true">✦</span> : <EngineBadge engine={o.v} className="home-engine-badge" />}
           {o.label}
         </button>

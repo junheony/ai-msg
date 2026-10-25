@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from 'react';
+import { memo, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import type { EngineKind } from '../../shared/models';
 import type { GeminiStatus, GrokStatus, SessionActivity } from '../../shared/protocol';
 import type { ProjectEntry } from '../../shared/session-types';
@@ -29,14 +29,17 @@ export type HomeData = { engines: EngineProbe[] | null | undefined; rows: UsageR
 
 /**
  * `/api/setup` and `/api/usage/history`, read only while the home is mounted (an empty single pane), then once a
- * minute while the tab is visible; the answers are shared for ~60 s across panes and remounts (home.ts cachedJson).
+ * minute while the tab is visible and again as soon as it shows; the answers are shared for ~50 s across panes and
+ * remounts (home.ts cachedJson). `skip` (a render fixture brings its own data): nothing is fetched.
  */
-export function useHomeData(fetchFn: typeof fetch): HomeData {
+export function useHomeData(fetchFn: typeof fetch, skip = false): HomeData {
   const [data, setData] = useState<HomeData>({ engines: undefined, rows: undefined, scanning: false });
   useEffect(() => {
+    if (skip) return;
     let live = true;
+    const hidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
     const load = () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      if (hidden()) return;
       void Promise.all([cachedJson<SetupStatus>(SETUP_URL, fetchFn), cachedJson<UsageHistory>(HISTORY_URL, fetchFn)]).then(([setup, history]) => {
         if (!live) return;
         setData({ engines: setupEngines(setup), rows: historyRows(history), scanning: history?.scanning === true });
@@ -44,9 +47,27 @@ export function useHomeData(fetchFn: typeof fetch): HomeData {
     };
     load();
     const id = setInterval(load, REFRESH_MS);
-    return () => { live = false; clearInterval(id); };
-  }, [fetchFn]);
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', load);
+    return () => {
+      live = false;
+      clearInterval(id);
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', load);
+    };
+  }, [fetchFn, skip]);
   return data;
+}
+
+/** `fixed` when given (tests, render fixtures); otherwise the clock, moved on at each whole minute (the "N분 전" texts). */
+export function useMinuteNow(fixed?: number): number {
+  const [tick, setTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (fixed !== undefined) return;
+    let id: ReturnType<typeof setTimeout>;
+    const arm = () => { id = setTimeout(() => { setTick(Date.now()); arm(); }, 60_000 - (Date.now() % 60_000)); };
+    arm();
+    return () => clearTimeout(id);
+  }, [fixed]);
+  return fixed ?? tick;
 }
 
 function agoText(ms: number, now: number): string {
@@ -108,8 +129,11 @@ function Row({ item, meta, tail, open, tone }: { item: HomeItem; meta: ReactNode
   );
 }
 
-/** 확인 필요 · 실행 중 · 최근: the main column under the composer. */
-export function HomeLists({ projects, activity, unread, pending, questions, pins, now, onOpenSession, onMarkRead }: {
+/**
+ * 확인 필요 · 실행 중 · 최근: the main column under the composer. Memoised on the store slices only, so typing in the
+ * composer above (NewChat's own state) recomputes nothing here.
+ */
+export const HomeLists = memo(function HomeLists({ projects, activity, unread, pending, questions, pins, now, onOpenSession, onMarkRead }: {
   projects: ProjectEntry[];
   activity: readonly SessionActivity[];
   unread: readonly string[];
@@ -121,12 +145,24 @@ export function HomeLists({ projects, activity, unread, pending, questions, pins
   onMarkRead?: ((ids: string[]) => void) | undefined;
 }) {
   const h = ui().home;
-  const lists = homeLists({ projects, activity, unread, pending, questions });
+  const lists = useMemo(() => homeLists({ projects, activity, unread, pending, questions }), [projects, activity, unread, pending, questions]);
   const [unreadOpen, setUnreadOpen] = useState(false);
-  const shown = new Set([...lists.waiting, ...lists.running, ...lists.unread].map((x) => x.sessionId));
-  const pinned = recentByProject(projects.map((p) => ({ ...p, sessions: p.sessions.filter((s) => pins.includes(s.sessionId)) })), new Set(), pins.length)
-    .flatMap((g) => g.items).sort((a, b) => pins.indexOf(a.sessionId) - pins.indexOf(b.sessionId));
-  const recent = recentByProject(projects, new Set([...shown, ...pins]), RECENT_LIMIT);
+  const { pinned, recent } = useMemo(() => {
+    // Pin order by id (the first place a repeated id holds).
+    const order = new Map<string, number>();
+    pins.forEach((id, i) => { if (!order.has(id)) order.set(id, i); });
+    const pinnedItems = recentByProject(projects.map((p) => ({ ...p, sessions: p.sessions.filter((s) => order.has(s.sessionId)) })), new Set(), order.size)
+      .flatMap((g) => g.items).sort((a, b) => order.get(a.sessionId)! - order.get(b.sessionId)!);
+    const exclude = new Set(order.keys());
+    for (const x of [...lists.waiting, ...lists.running, ...lists.unread]) exclude.add(x.sessionId);
+    return { pinned: pinnedItems, recent: recentByProject(projects, exclude, RECENT_LIMIT) };
+  }, [projects, pins, lists]);
+  // 모두 읽음: every unread session the home shows, wherever it is listed (a waiting or running one too), so no
+  // sidebar dot is left behind.
+  const unreadShown = useMemo(() => {
+    const u = new Set(unread);
+    return [...lists.waiting, ...lists.running, ...lists.unread].map((x) => x.sessionId).filter((id) => u.has(id));
+  }, [lists, unread]);
   const unreadId = useId();
 
   return (
@@ -149,7 +185,7 @@ export function HomeLists({ projects, activity, unread, pending, questions, pins
               <button type="button" className="home-disclose" aria-expanded={unreadOpen} aria-controls={unreadId} onClick={() => setUnreadOpen((v) => !v)}>
                 <span className="home-chevron" aria-hidden="true" />{h.attention.unread(lists.unread.length)}
               </button>
-              {onMarkRead && <button type="button" className="btn ghost home-markall" onClick={() => onMarkRead(lists.unread.map((u) => u.sessionId))}>{h.attention.markAll}</button>}
+              {onMarkRead && <button type="button" className="btn ghost home-markall" onClick={() => onMarkRead(unreadShown)}>{h.attention.markAll}</button>}
             </div>
             {unreadOpen && (
               <ul className="home-list" id={unreadId}>
@@ -190,7 +226,7 @@ export function HomeLists({ projects, activity, unread, pending, questions, pins
       </Card>
     </>
   );
-}
+});
 
 const PILL: Record<ProviderState, { cls: string; label: () => string }> = {
   ready: { cls: 'ok', label: () => ui().home.providers.ready },
@@ -199,16 +235,19 @@ const PILL: Record<ProviderState, { cls: string; label: () => string }> = {
   unknown: { cls: 'info', label: () => ui().home.providers.unknown },
 };
 
-/** What hello alone says when /api/setup did not answer: installed or not, and Gemini's login. */
+/**
+ * What hello alone says when /api/setup did not answer: installed or not, and Gemini's login. Hello says nothing about
+ * Claude's CLI, so Claude has no fallback (shown with its status unknown, not as installed).
+ */
 function helloFallback(engine: EngineKind, hello: { codexAvailable: boolean; gemini: GeminiStatus | null; grok: GrokStatus | null }): { installed: boolean; login?: LoginState } | null {
-  if (engine === 'claude') return { installed: true };
+  if (engine === 'claude') return null;
   if (engine === 'codex') return hello.codexAvailable ? { installed: true } : null;
   if (engine === 'gemini') return hello.gemini?.available ? { installed: true, login: hello.gemini.loggedIn.g1 || hello.gemini.loggedIn.g2 ? 'yes' : 'no' } : null;
   return hello.grok?.bin ? { installed: true } : null;
 }
 
-/** 공급자 · 사용량: the right column (below the lists on a narrow pane). */
-export function HomeSide({ data, usage, now, codexAvailable, gemini, grok }: {
+/** 공급자 · 사용량: the right column (below the lists on a narrow pane). Memoised like HomeLists. */
+export const HomeSide = memo(function HomeSide({ data, usage, now, codexAvailable, gemini, grok }: {
   data: HomeData;
   usage: UsageSnapshot | null | undefined;
   now: number;
@@ -222,7 +261,7 @@ export function HomeSide({ data, usage, now, codexAvailable, gemini, grok }: {
       <Usage data={data} usage={usage} now={now} />
     </>
   );
-}
+});
 
 function Providers({ data, usage, now, hello }: { data: HomeData; usage: UsageSnapshot | null | undefined; now: number; hello: { codexAvailable: boolean; gemini: GeminiStatus | null; grok: GrokStatus | null } }) {
   const h = ui().home.providers;
@@ -231,14 +270,15 @@ function Providers({ data, usage, now, hello }: { data: HomeData; usage: UsageSn
   const engines = ENGINE_ORDER.flatMap((engine) => {
     const probe = data.engines?.find((p) => p.engine === engine) ?? null;
     const fallback = helloFallback(engine, hello);
-    // With a setup answer every probed engine shows (an uninstalled one says 사용 불가); without one, what hello knows.
-    if (data.engines ? !probe : !fallback) return [];
-    return [{ engine, probe, state: providerState(probe, fallback ?? undefined) }];
+    // With a setup answer every probed engine shows (an uninstalled one says 사용 불가); without one, what hello knows,
+    // and Claude (the default engine) always, its status unknown.
+    if (data.engines ? !probe : !fallback && engine !== 'claude') return [];
+    return [{ engine, probe, state: providerState(probe, fallback ?? undefined), blind: !probe && !fallback }];
   });
   return (
     <Card title={h.title} className="home-providers">
       <ul className="home-providers-list">
-        {engines.map(({ engine, probe, state }) => {
+        {engines.map(({ engine, probe, state, blind }) => {
           const r = rows[engine];
           const pill = PILL[state];
           return (
@@ -248,7 +288,7 @@ function Providers({ data, usage, now, hello }: { data: HomeData; usage: UsageSn
                 <span className="home-provider-name">{engineName(engine)}</span>
                 {probe?.version && <span className="home-provider-ver">{probe.version.replace(/^v/, '')}</span>}
                 {r.plan && <span className="home-provider-plan">{r.plan}</span>}
-                <span className={`home-pill ${pill.cls}`}><span className="home-dot" aria-hidden="true" />{pill.label()}</span>
+                <span className={`home-pill ${pill.cls}`}><span className="home-dot" aria-hidden="true" />{blind ? h.statusUnknown : pill.label()}</span>
               </div>
               {r.rows.length > 0 ? r.rows.map((row) => {
                 const left = shownPct(row.w);
@@ -277,12 +317,27 @@ function Usage({ data, usage, now }: { data: HomeData; usage: UsageSnapshot | nu
   const totals = usageTotals(data.rows ?? [], usage?.grokSeats, tab, today);
   const max = Math.max(1, totals.tokens);
   const tabs: [UsageTab, string][] = [['today', h.today], ['week', h.week]];
+  const base = useId();
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  // ← / → (Home / End) move between the tabs and select them; only the selected tab is in the Tab order.
+  const tabKey = (e: ReactKeyboardEvent, i: number) => {
+    const n = tabs.length;
+    const j = e.key === 'ArrowRight' ? (i + 1) % n : e.key === 'ArrowLeft' ? (i - 1 + n) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1;
+    if (j < 0) return;
+    e.preventDefault();
+    setTab(tabs[j]![0]);
+    tabRefs.current[j]?.focus();
+  };
   return (
     <Card title={h.title} className="home-usage" aside={(
       <div className="home-tabs" role="tablist" aria-label={h.title}>
-        {tabs.map(([k, label]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{label}</button>)}
+        {tabs.map(([k, label], i) => (
+          <button key={k} ref={(el) => { tabRefs.current[i] = el; }} type="button" role="tab" id={`${base}-tab-${k}`} aria-controls={`${base}-panel`}
+            aria-selected={tab === k} tabIndex={tab === k ? 0 : -1} className={tab === k ? 'on' : ''} onClick={() => setTab(k)} onKeyDown={(e) => tabKey(e, i)}>{label}</button>
+        ))}
       </div>
     )}>
+      <div role="tabpanel" id={`${base}-panel`} aria-labelledby={`${base}-tab-${tab}`}>
       {data.rows === null ? <p className="home-failed">{h.failed}</p> : (
         <>
           <div className="home-tiles">
@@ -311,6 +366,7 @@ function Usage({ data, usage, now }: { data: HomeData; usage: UsageSnapshot | nu
           <p className="home-note">{tab === 'week' && usage?.grokSeats ? `${h.costNote} · ${h.grokToday}` : h.costNote}</p>
         </>
       )}
+      </div>
     </Card>
   );
 }
@@ -342,17 +398,17 @@ export function HomeFrame({ home, projects, pins, now, fetchFn, onOpenSession, c
   first: ReactNode;
   form: ReactNode;
 }) {
-  const fetched = useHomeData(fetchFn);
+  const fetched = useHomeData(fetchFn, !!home.data);
   const data = home.data ?? fetched;
-  const waiting = homeLists({ projects, pending: home.pending, questions: home.questions }).waiting.length;
-  const todayCost = data.rows ? usageTotals(data.rows, undefined, 'today', localDay(new Date(now))).cost : null;
+  const waiting = useMemo(() => homeLists({ projects, pending: home.pending, questions: home.questions }).waiting.length, [projects, home.pending, home.questions]);
+  const todayCost = useMemo(() => (data.rows ? usageTotals(data.rows, undefined, 'today', localDay(new Date(now))).cost : null), [data.rows, now]);
   return (
     <div className="newchat home" data-testid="home">
       <div className="home-grid">
         <div className="home-main">
           <header className="home-head">
             <h1 className="home-greeting"><BrandMark className="spark" />{homeGreeting(new Date(now).getHours())}</h1>
-            <p className="home-date">{homeDateLine(now, waiting, todayCost)}</p>
+            <p className="home-date" title={todayCost !== null && todayCost > 0 ? ui().home.todayCostNote : undefined}>{homeDateLine(now, waiting, todayCost)}</p>
           </header>
           {first}
           {form}

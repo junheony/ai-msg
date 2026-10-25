@@ -2079,7 +2079,7 @@ button.hl-row-main:hover { background: var(--hover); }
   .home-engines { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-inline: -12px; padding-inline: 12px; }
   .home-engine { flex: none; }
   .home-markall { height: var(--tap); }
-  .home-tabs button { min-height: calc(var(--tap) - 4px); padding: 0 14px; }
+  .home-tabs button { min-height: var(--tap); padding: 0 14px; }
   .home-card { padding: var(--s3); }
 }
 /* Side panel (artifacts / file preview), one per pane. */

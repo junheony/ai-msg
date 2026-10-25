@@ -120,14 +120,15 @@ describe('cachedJson', () => {
   beforeEach(clearHomeCache);
   const ok = (body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
 
-  it('reuses an answer for a minute and shares an ask in flight', async () => {
+  it('reuses an answer for ~50 s and shares an ask in flight', async () => {
     const f = vi.fn(() => ok({ n: 1 }));
     const [a, b] = await Promise.all([cachedJson('/x', f as unknown as typeof fetch), cachedJson('/x', f as unknown as typeof fetch)]);
     expect(a).toEqual({ n: 1 });
     expect(b).toEqual({ n: 1 });
     expect(await cachedJson('/x', f as unknown as typeof fetch)).toEqual({ n: 1 });
     expect(f).toHaveBeenCalledTimes(1);
-    expect(await cachedJson('/x', f as unknown as typeof fetch, Date.now() + 61_000)).toEqual({ n: 1 });
+    // Younger than the home's 60 s refresh, so every refresh tick really asks again.
+    expect(await cachedJson('/x', f as unknown as typeof fetch, Date.now() + 51_000)).toEqual({ n: 1 });
     expect(f).toHaveBeenCalledTimes(2);
   });
 
