@@ -85,6 +85,7 @@ export class CloudState {
     this.writing = this.writing.catch(() => {}).then(async () => {
       const dir = path.dirname(this.file);
       await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+      await fs.chmod(dir, 0o700); // before the temp file lands, also when the folder already existed with wider rights
       const tmp = `${this.file}.${process.pid}.${randomUUID()}.tmp`;
       try {
         const fh = await fs.open(tmp, 'w', 0o600);
@@ -99,7 +100,6 @@ export class CloudState {
         await fs.rm(tmp, { force: true });
         throw e;
       }
-      await fs.chmod(dir, 0o700); // also when the folder already existed with wider rights
     });
     await this.writing;
   }

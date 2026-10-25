@@ -210,7 +210,7 @@ describe('RelayClient', () => {
     expect(states.at(-1)).toBe('up');
   });
 
-  it('4409 three times in a row → stays replaced, no reconnect until start(); 60 s attached resets the count', async () => {
+  it('4409 three times in a row → stays replaced, no reconnect until start(); a non-4409 drop resets the count', async () => {
     const { client, relay, states } = await setupClient();
     const replacedOnce = async (n: number) => {
       relay.closeHost(CLOSE.replaced);
@@ -222,22 +222,47 @@ describe('RelayClient', () => {
     await waitFor(() => states.at(-1) === 'up');
     await replacedOnce(2);
     await replacedOnce(3);
-    // a good connection (traffic halfway, so the silence watchdog stays quiet): the count starts over
-    let controls = 0;
-    client.on('control', () => { controls++; });
-    clock.advance(30_000);
-    relay.control({ t: 'peer', dev: 'd', up: false });
-    await waitFor(() => controls === 1);
-    clock.advance(31_000);
-    await replacedOnce(4);
+    relay.closeHost(1011); // an ordinary drop: the count starts over
+    await waitFor(() => states.at(-1) === 'down');
+    await expectRetries(relay, states, [[4, 1]]);
     await replacedOnce(5);
+    await replacedOnce(6);
     relay.closeHost(CLOSE.replaced); // third in a row since the reset
     await waitFor(() => states.at(-1) === 'replaced');
     clock.advance(3_600_000);
-    expect(relay.attempts).toBe(5);
+    expect(states.at(-1)).toBe('replaced'); // a reconnect timer would have moved it to 'connecting'
+    expect(relay.attempts).toBe(6);
     client.start(); // resumes
-    await relay.attempted(6);
+    await relay.attempted(7);
     await waitFor(() => states.at(-1) === 'up');
+  });
+
+  it('two installs with one token taking turns (each attached > 60 s before the 4409) still stop at the third', async () => {
+    const { client, relay, states } = await setupClient();
+    let controls = 0;
+    client.on('control', () => { controls++; });
+    const stayAttached = async () => { // > 60 s with traffic halfway, so the silence watchdog stays quiet
+      const before = controls;
+      clock.advance(30_000);
+      relay.control({ t: 'peer', dev: 'd', up: false });
+      await waitFor(() => controls === before + 1);
+      clock.advance(31_000);
+    };
+    client.start();
+    await relay.attempted(1);
+    await waitFor(() => states.at(-1) === 'up');
+    for (const n of [2, 3]) {
+      await stayAttached();
+      relay.closeHost(CLOSE.replaced);
+      await waitFor(() => states.at(-1) === 'replaced');
+      await expectRetries(relay, states, [[n, 600]]);
+    }
+    await stayAttached();
+    relay.closeHost(CLOSE.replaced);
+    await waitFor(() => states.at(-1) === 'replaced');
+    clock.advance(3_600_000);
+    expect(states.at(-1)).toBe('replaced'); // a reconnect timer would have moved it to 'connecting'
+    expect(relay.attempts).toBe(3);
   });
 
   it('a server that accepts TCP but never answers the upgrade → handshake timeout, then the retry path', async () => {

@@ -125,7 +125,7 @@ export class RelayClient extends EventEmitter {
     ws.on('open', () => {
       if (this.ws !== ws) return;
       this.pinger = setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send('ping'); }, PING_MS);
-      this.timers.push(setTimeout(() => { this.attempt = 0; this.entAttempt = 0; this.replacedInRow = 0; }, GOOD_CONNECTION_MS));
+      this.timers.push(setTimeout(() => { this.attempt = 0; this.entAttempt = 0; }, GOOD_CONNECTION_MS));
       this.heard(ws);
     });
     ws.on('message', (data, isBinary) => {
@@ -171,6 +171,7 @@ export class RelayClient extends EventEmitter {
         this.schedule('replaced', this.jitter(REPLACED_WAIT_MS));
         return;
       }
+      this.replacedInRow = 0; // only a drop for another reason ends a run of 4409s
       if (status === 402 || code === CLOSE.notEntitled) this.notEntitled = true;
       if (this.notEntitled) {
         this.setState('not_entitled');
