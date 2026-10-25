@@ -22,6 +22,10 @@ const RESPONSE_BYTES = 100 * 1024 * 1024;
 /** Responses stop reading from the loopback while the relay socket holds more than this, unsent. */
 const RELAY_HIGH_WATER = 4 * 1024 * 1024;
 const DRAIN_POLL_MS = 20;
+/** Longest total wait on a backed-up relay socket for one response; past it the response is cut (`http.abort`). */
+const DRAIN_MS = 60_000;
+/** Request ids a session has used, remembered so a late chunk or a repeated `http.req` for one is dropped. */
+const SEEN_IDS = 256;
 /** Lines per minute for handshakes from untrusted devices (anyone can send them through the relay). */
 const UNTRUSTED_LOG_PER_MIN = 5;
 const MAX_STREAMS = 8;
@@ -49,6 +53,8 @@ type Session = {
   http: Map<number, HttpReq>;
   /** Sum of `size` over `http`. */
   bodyBytes: number;
+  /** The last `SEEN_IDS` request ids, oldest first. */
+  seenIds: Set<number>;
   hsTimer: ReturnType<typeof setTimeout> | null;
   /** Outgoing frames, encrypted and sent strictly in nonce order. */
   out: Promise<void>;
@@ -76,7 +82,7 @@ export class RelayBridge {
   private readonly fetchImpl: typeof fetch;
   private readonly WS: typeof WebSocket;
   private readonly log: (s: string) => void;
-  private readonly limits: { httpTimeoutMs: number; sessionBodyBytes: number; responseBytes: number };
+  private readonly limits: { httpTimeoutMs: number; sessionBodyBytes: number; responseBytes: number; drainMs: number };
   private self: { src: string; key: Promise<StaticKey> } | null = null;
   private closed = false;
   private untrustedLog = { since: 0, n: 0 };
@@ -94,9 +100,9 @@ export class RelayBridge {
     /** The Mac's current settings, for the socket policy (absent: judged as if nothing were consented to). */
     settings?: () => RelayWsContext;
     /** Tests: shorter limits. */
-    limits?: Partial<{ httpTimeoutMs: number; sessionBodyBytes: number; responseBytes: number }>;
+    limits?: Partial<{ httpTimeoutMs: number; sessionBodyBytes: number; responseBytes: number; drainMs: number }>;
   }) {
-    this.limits = { httpTimeoutMs: HTTP_TIMEOUT_MS, sessionBodyBytes: SESSION_BODY_BYTES, responseBytes: RESPONSE_BYTES, ...o.limits };
+    this.limits = { httpTimeoutMs: HTTP_TIMEOUT_MS, sessionBodyBytes: SESSION_BODY_BYTES, responseBytes: RESPONSE_BYTES, drainMs: DRAIN_MS, ...o.limits };
     this.fetchImpl = o.fetchImpl ?? globalThis.fetch;
     this.WS = o.WebSocketImpl ?? WebSocket;
     this.log = o.log ?? ((s) => console.error(s));
@@ -193,7 +199,7 @@ export class RelayBridge {
     if (this.closed || !this.trusted(id)) return; // revoked while the handshake ran
     const old = this.pending.get(id);
     if (old) this.closeSession(old);
-    const sess: Session = { id, transport: r.transport, ready: false, dead: false, streams: new Map(), http: new Map(), bodyBytes: 0, hsTimer: null, out: Promise.resolve() };
+    const sess: Session = { id, transport: r.transport, ready: false, dead: false, streams: new Map(), http: new Map(), bodyBytes: 0, seenIds: new Set(), hsTimer: null, out: Promise.resolve() };
     sess.hsTimer = setTimeout(() => {
       if (this.pending.get(id) !== sess) return;
       this.pending.delete(id);
@@ -333,7 +339,9 @@ export class RelayBridge {
   // ── HTTP ──
 
   private httpRequest(sess: Session, f: Extract<TunnelFrame, { t: 'http.req' }>): void {
-    if (sess.http.has(f.id)) return;
+    if (sess.http.has(f.id) || sess.seenIds.has(f.id)) return;
+    sess.seenIds.add(f.id);
+    if (sess.seenIds.size > SEEN_IDS) sess.seenIds.delete(sess.seenIds.values().next().value as number);
     if (sess.http.size >= MAX_HTTP) { void this.respond(sess, f.id, 503, { error: 'busy' }); return; }
     const verdict = relayPathPolicy(f.m, f.p);
     if (verdict === 'deny') { void this.respond(sess, f.id, 403, { error: 'forbidden' }); return; }
@@ -379,14 +387,16 @@ export class RelayBridge {
       if (r.timer) clearTimeout(r.timer);
       r.timer = setTimeout(() => { r.timedOut = true; r.ac.abort(); }, this.limits.httpTimeoutMs);
     };
-    // Backpressure: hold off while the relay socket is backed up (the wait itself is not idleness).
+    // Backpressure: hold off while the relay socket is backed up (the wait itself is not idleness, but has its own cap).
+    let drained = 0;
     const drain = async () => {
       if (this.o.relay.bufferedAmount() <= RELAY_HIGH_WATER) return;
       if (r.timer) clearTimeout(r.timer);
       r.timer = null;
       while (this.o.relay.bufferedAmount() > RELAY_HIGH_WATER) {
-        if (!alive() || r.ac.signal.aborted) throw new Error('gone');
+        if (!alive() || r.ac.signal.aborted || drained >= this.limits.drainMs) throw new Error('gone');
         await new Promise((res) => setTimeout(res, DRAIN_POLL_MS));
+        drained += DRAIN_POLL_MS;
       }
       idle();
     };
@@ -403,7 +413,6 @@ export class RelayBridge {
     };
     try {
       const body = r.m === 'GET' || r.m === 'HEAD' ? undefined : Buffer.concat(r.parts);
-      this.release(sess, r); // the bytes are fetch's now
       const res = await this.fetchImpl(`http://127.0.0.1:${this.o.loopback.port}${r.p}`, {
         method: r.m,
         headers,
@@ -411,6 +420,7 @@ export class RelayBridge {
         signal: r.ac.signal,
         redirect: 'manual',
       });
+      this.release(sess, r); // the loopback has the body: it no longer counts toward the session's budget
       const h: Record<string, string> = {};
       for (const k of RESPONSE_HEADERS) { const v = res.headers.get(k); if (v !== null) h[k] = v; }
       reader = res.body?.getReader() ?? null;
@@ -446,6 +456,7 @@ export class RelayBridge {
       }
       if (held) await this.sendFrame(sess, { t: 'http.chunk', id, b: held.toString('base64'), more: false });
     } catch {
+      this.release(sess, r);
       r.ac.abort(); // closes the loopback request too (a cut-off response, a backed-up relay that went away)
       await reader?.cancel().catch(() => undefined);
       if (!alive()) return;

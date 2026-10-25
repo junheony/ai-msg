@@ -388,6 +388,30 @@ describe('RelayBridge', () => {
     expect((await r).body.length).toBe(100 * 1024);
   });
 
+  it('a relay socket that stays backed up past the drain limit cuts the response', async () => {
+    const { device } = await connected({ buffered: () => 8 << 20, bridge: { limits: { drainMs: 200 } } });
+    await expect(device.http('GET', '/api/big')).rejects.toThrow('aborted');
+  });
+
+  it('a body being forwarded still counts toward the session budget until the response starts', async () => {
+    const { device, loop } = await connected({ bridge: { limits: { sessionBodyBytes: 64 * 1024 } } });
+    const kib = (n: number) => Buffer.alloc(n * 1024, 1);
+    const a = device.httpChunks('POST', '/api/slow', [kib(40)]); // complete, but the loopback never answers
+    void a.catch(() => undefined);
+    await waitFor(() => loop.hits === 1);
+    expect((await device.httpChunks('POST', '/api/echo', [kib(30)])).status).toBe(413);
+  });
+
+  it('a finished request id is not reused: a late chunk or a repeated http.req is dropped', async () => {
+    const { device, loop } = await connected();
+    expect((await device.http('POST', '/api/echo', { body: 'one' })).status).toBe(200); // id 1
+    await device.frame({ t: 'http.req', id: 1, m: 'POST', p: '/api/echo', h: {}, b: Buffer.from('again').toString('base64'), more: false });
+    await device.frame({ t: 'http.chunk', id: 1, b: '', more: false });
+    await sleep(100);
+    expect(loop.hits).toBe(1);
+    expect(device.framesReceived.filter((f) => f.t === 'http.res')).toHaveLength(1);
+  });
+
   it('autoConsent: widening is refused, narrowing goes through (from the Mac settings)', async () => {
     const { device, loop } = await connected({ bridge: { settings: () => ({ autoConsent: ['gemini'] }) } });
     const s = await device.wsOpen();

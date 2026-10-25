@@ -4,10 +4,10 @@ const RAISED = new Set(['acceptEdits', 'bypassPermissions']);
 export type RelayWsContext = { autoConsent?: readonly string[] };
 
 /**
- * Socket messages from a phone over the relay that only the Mac itself may send. Principle: a phone may use sessions
- * at the defaults the Mac has set (it can already answer Claude's tool prompts itself, so blocking per-turn defaults
- * gains nothing); it needs the Mac to raise an existing session's permissions or to change persistent settings, safety
- * switches or instructions every session keeps.
+ * Socket messages from a phone over the relay that only the Mac itself may send. Principle: new sessions run at the
+ * Mac's defaults (the phone can already approve tool prompts, so blocking per-turn defaults gains nothing). The Mac is
+ * needed only to raise an existing session's permissions, or for persistent settings that widen permissions, safety
+ * switches, consent to send data to other engines, and global instructions.
  *
  * Looks at `type` and the few fields below only (no `ClientMsg` parse): anything else, unparseable text included, is
  * `allow` and the server refuses it as before. Lowering (default, plan, read-only, false, fewer consents) is allowed.
