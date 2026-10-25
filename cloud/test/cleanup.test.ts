@@ -124,10 +124,14 @@ describe('runCleanup', () => {
 
     await run("INSERT INTO refunds (adjustment_id, subscription_id, action, status, full, cancel_done_at, last_event_at) VALUES (?, ?, 'refund', 'approved', 1, NULL, ?)", `adj_404${s}`, `sub_404${s}`, NOW - HOUR);
     const p2 = fakePaddle(true, 404);
-    expect(await runCleanup(env, NOW, { paddle: p2 })).toMatchObject({ refund_cancel_done: 1, refund_cancel_failed: 0 });
+    expect(await runCleanup(env, NOW, { paddle: p2 })).toMatchObject({ refund_cancel_done: 1, refund_cancel_failed: 0, refund_cancel_not_found: 1 });
     expect(p2.calls).toEqual([`sub_404${s}`]);
     expect(await env.DB.prepare('SELECT cancel_done_at FROM refunds WHERE adjustment_id = ?').bind(`adj_404${s}`).first('cancel_done_at')).toBe(NOW);
     expect(await n("SELECT count(*) AS n FROM ops_alerts WHERE kind = 'refund_cancel_failed' AND ref IN (?, ?)", `sub_gone${s}`, `sub_404${s}`)).toBe(0);
+    // The 404 leaves one alert (a live/sandbox key mix-up 404s every cancel); the locally canceled one none. Done → no repeat.
+    expect(await n("SELECT count(*) AS n FROM ops_alerts WHERE kind = 'refund_cancel_not_found' AND ref = ?", `sub_404${s}`)).toBe(1);
+    expect(await n("SELECT count(*) AS n FROM ops_alerts WHERE kind = 'refund_cancel_not_found' AND ref = ?", `sub_gone${s}`)).toBe(0);
+    expect(await runCleanup(env, NOW + DAY, { paddle: fakePaddle(true, 404) })).toMatchObject({ refund_cancel_not_found: 0 });
   });
 
   it('a refund cancel still failing 30 days after its event is given up with one last alert', async () => {

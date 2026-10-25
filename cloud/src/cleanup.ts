@@ -41,12 +41,13 @@ const notFound = (err: unknown) => typeof err === 'object' && err !== null && (e
 /**
  * Refund cancels a webhook delivery could not finish (Task 9 claim: NULL, or a negative `-claimedAt` over 10 min old).
  * Each retry claims the row with the same conditional UPDATE as the webhook (old value → -now). Already canceled
- * locally, or unknown to Paddle → done. Other failures alert once a day; after 30 days the row is given up (last alert).
+ * locally, or unknown to Paddle (404, alerted once) → done. Other failures alert once a day; after 30 days the row is given up (last alert).
  */
 async function retryRefundCancels(db: D1Database, nowMs: number, paddle: PaddleApi, counts: Record<string, number>): Promise<void> {
   counts.refund_cancel_done = 0;
   counts.refund_cancel_failed = 0;
   counts.refund_cancel_gave_up = 0;
+  counts.refund_cancel_not_found = 0;
   const refunds = await db.prepare(`SELECT r.adjustment_id, r.subscription_id, r.cancel_done_at, r.last_event_at, s.status AS sub_status FROM refunds r
     LEFT JOIN subscriptions s ON s.id = r.subscription_id
     WHERE r.full = 1 AND r.subscription_id IS NOT NULL AND r.last_event_at < ?1 - ${REFUND_SETTLE_MS}
@@ -65,7 +66,11 @@ async function retryRefundCancels(db: D1Database, nowMs: number, paddle: PaddleA
     try {
       if (r.sub_status !== 'canceled') await paddle.cancelSubscription(r.subscription_id);
     } catch (err) {
-      if (!notFound(err)) {
+      if (notFound(err)) {
+        // Done — but say so once: a live/sandbox key mix-up turns every cancel into a 404.
+        counts.refund_cancel_not_found++;
+        await alertStmt(db, 'refund_cancel_not_found', r.subscription_id, `${r.adjustment_id}: Paddle 404 — marked done; check PADDLE_ENV and PADDLE_API_KEY`, nowMs).run();
+      } else {
         counts.refund_cancel_failed++;
         if (failedToday.has(r.subscription_id)) continue;
         failedToday.add(r.subscription_id);
@@ -104,7 +109,7 @@ export async function runCleanup(env: Env, nowMs: number, deps: { paddle: Paddle
     });
   }
 
-  await step(['refund_cancel_done', 'refund_cancel_failed', 'refund_cancel_gave_up'], () => retryRefundCancels(db, nowMs, deps.paddle, counts));
+  await step(['refund_cancel_done', 'refund_cancel_failed', 'refund_cancel_gave_up', 'refund_cancel_not_found'], () => retryRefundCancels(db, nowMs, deps.paddle, counts));
 
   // Customer links waiting for a `customer.created` that may never come (an existing Paddle customer).
   await step(['paddle_link_pending'], async () => {

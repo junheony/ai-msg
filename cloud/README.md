@@ -75,14 +75,14 @@ npm --prefix cloud test        # miniflare 안의 workerd, 네트워크 없음
 ## 법적 페이지·계정 삭제·정리 cron (Task 12)
 
 - 법적 페이지: `docs/legal/{terms,privacy,refund}{,.ko}.md` 가 유일한 원본이다. `scripts/build-legal.mjs` 가 `src/legal/pages.gen.ts`(커밋 안 함)를 만든다. `test`·`dev`·`typecheck` 앞에서 자동으로 돈다. 지원 문법 밖(원시 HTML, 이미지, 기울임, 각주, 코드 펜스, 들여쓴 줄)은 `파일:줄` 과 함께 빌드 실패다. `/legal/{terms,privacy,refund,notice}` 와 `/legal/ko/…` 는 스크립트 없는 CSP 에 1시간 캐시이고, 모든 app 페이지 바닥글에 링크와 비제휴 고지가 붙는다.
-- 계정 삭제: `POST /v1/account/delete {confirm:'DELETE'}`. `active`·`trialing`·`past_due` 이고 `scheduled_cancel = 0` 인 구독이 있으면 시간창 없이 409 `active_subscription` 이다. 결제를 마쳤는데 웹훅이 아직 안 왔으면 409 `payment_pending` 이다. 나머지는 한 batch 로 지운다. `trial_claims` 와 `subscriptions` 는 `user_id` 만 NULL 로 남는다.
+- 계정 삭제: `POST /v1/account/delete {confirm:'DELETE'}`. `active`·`trialing`·`past_due`·`paused` 이고 `scheduled_cancel = 0` 인 구독이 있으면 시간창 없이 409 `active_subscription` 이다. 결제를 마쳤는데 웹훅이 아직 안 왔으면 409 `payment_pending` 이다. 나머지는 한 batch 로 지운다. `trial_claims` 와 `subscriptions` 는 `user_id` 만 NULL 로 남는다.
 - 정리 cron: 매일 03:17 UTC 에 만료 행을 지운다(표마다 최대 5,000행). 보류 고객 연결 알림(30일 지나면 삭제)과 기간이 지났는데 살아 있는 구독 알림도 낸다. 로그는 개수만 남는다. 단계가 실패하면 그 개수를 `-1` 로 두고 `errors` 를 하나 올린 뒤 다음 단계로 간다.
-- 환불 해지 재시도: 구독이 이미 `canceled` 이거나 Paddle 에 없으면(404) 완료로 본다. 그 밖의 실패는 하루 한 번 알림을 낸다. 환불 이벤트 뒤 30일이 지나면 마지막 알림을 한 번 내고 멈춘다(`cancel_done_at = 0`). 그다음은 손으로 해지한다.
+- 환불 해지 재시도: 구독이 이미 `canceled` 이거나 Paddle 에 없으면(404) 완료로 본다. 404 는 `refund_cancel_not_found` 알림을 한 번 낸다. 운영 키와 sandbox 키가 섞이면 모든 해지가 404 가 되기 때문이다. 그 밖의 실패는 하루 한 번 알림을 낸다. 환불 이벤트 뒤 30일이 지나면 마지막 알림을 한 번 내고 멈춘다(`cancel_done_at = 0`). 그다음은 손으로 해지한다.
 - "살아 있는 구독"(결제 차단·계정 페이지 표시)은 이용권과 같은 유예 상수를 쓴다. `active`·`trialing` 이면 `period_end` 뒤 48시간(`RENEWAL_GRACE_MS`)까지, `past_due` 는 7일(`PAST_DUE_GRACE_MS`)까지다. 그 뒤에도 상태가 그대로면 webhook 을 놓친 것으로 보고 `subscription_stale` 알림을 낸다.
 
 ## 운영 알림 보기
 
-업무 충돌은 `ops_alerts` 에 남는다(종류: `unmatched`, `second_subscription`, `customer_conflict`, `customer_unlinked`, `bad_payload`, `invalid_event`, `refund_cancel_failed`, `customer_pending_stale`, `subscription_stale` — 마지막 둘은 정리 cron 이 하루 한 번 낸다). 아직 처리하지 않은 것만 본다.
+업무 충돌은 `ops_alerts` 에 남는다(종류: `unmatched`, `second_subscription`, `customer_conflict`, `customer_unlinked`, `bad_payload`, `invalid_event`, `refund_cancel_failed`, `customer_pending_stale`, `subscription_stale`, `refund_cancel_not_found` — 마지막 셋은 정리 cron 이 낸다). 아직 처리하지 않은 것만 본다.
 
 ```sh
 npx --prefix cloud wrangler d1 execute ai-msg --remote --command "SELECT id, kind, ref, detail, created_at FROM ops_alerts WHERE resolved_at IS NULL ORDER BY created_at DESC LIMIT 50"

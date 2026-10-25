@@ -67,7 +67,7 @@ describe('POST /v1/account/delete', () => {
   });
 
   it('a renewing subscription blocks deletion even when it looks stale (no time window)', async () => {
-    for (const o of [{ periodEnd: Date.now() - 4 * DAY }, { status: 'past_due', pastDueSince: Date.now() - 8 * DAY }, { status: 'trialing', periodEnd: Date.now() - 30 * DAY }]) {
+    for (const o of [{ periodEnd: Date.now() - 4 * DAY }, { status: 'past_due', pastDueSince: Date.now() - 8 * DAY }, { status: 'trialing', periodEnd: Date.now() - 30 * DAY }, { status: 'paused' }]) {
       const addr = email();
       const cookie = await loginAs(addr);
       const uid = await userId(addr);

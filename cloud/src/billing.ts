@@ -27,7 +27,10 @@ export const PENDING_TTL_MS = 15 * 60_000;
 export const liveSql = (now: string) => `((status IN ('active', 'trialing') AND (period_end IS NULL OR period_end + ${RENEWAL_GRACE_MS} > ${now}))
   OR (status = 'past_due' AND past_due_since + ${PAST_DUE_GRACE_MS} > ${now}))`;
 
-/** Whether the user has a running subscription (`liveSql`), whatever plan wins the display. Blocks a new checkout. */
+/**
+ * Whether the user has a running subscription (`liveSql`), whatever plan wins the display. Blocks a new checkout.
+ * `paused` does not count: entitled.ts grants it no Pro, so blocking checkout would leave the user with neither.
+ */
 export async function liveSubscription(db: D1Database, userId: string, nowMs: number): Promise<boolean> {
   return Boolean(await db.prepare(`SELECT 1 AS x FROM subscriptions WHERE user_id = ?1 AND ${liveSql('?2')} LIMIT 1`).bind(userId, nowMs).first<number>('x'));
 }
@@ -47,12 +50,13 @@ export async function checkoutBlock(db: D1Database, userId: string, nowMs: numbe
 }
 
 /**
- * Why this account may not be deleted. `active_subscription`: any row in a live status set to renew — no time window
- * (unlike `liveSql`), since even a stale-looking row may still bill at Paddle; cancel it under Manage billing first.
+ * Why this account may not be deleted. `active_subscription`: any row in a live status or `paused` (Paddle bills again
+ * on resume) set to renew — no time window (unlike `liveSql`), since even a stale-looking row may still bill at Paddle;
+ * cancel it under Manage billing first.
  * `payment_pending`: a finished checkout whose subscription has not arrived — it would land with no owner and bill.
  */
 export async function deleteBlock(db: D1Database, userId: string, nowMs: number): Promise<'active_subscription' | 'payment_pending' | null> {
-  const sub = await db.prepare("SELECT 1 AS x FROM subscriptions WHERE user_id = ? AND status IN ('active', 'trialing', 'past_due') AND scheduled_cancel = 0 LIMIT 1").bind(userId).first<number>('x');
+  const sub = await db.prepare("SELECT 1 AS x FROM subscriptions WHERE user_id = ? AND status IN ('active', 'trialing', 'past_due', 'paused') AND scheduled_cancel = 0 LIMIT 1").bind(userId).first<number>('x');
   if (sub) return 'active_subscription';
   return (await paymentPending(db, userId, nowMs)) ? 'payment_pending' : null;
 }

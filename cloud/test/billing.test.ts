@@ -129,6 +129,12 @@ describe('/checkout (app origin)', () => {
     expect(await (await call('/account', web(u))).text()).not.toContain('/checkout?plan=');
   });
 
+  it('a paused subscription does not block checkout (entitled grants it no Pro)', async () => {
+    const u = await user();
+    await subscribe(u.id, { status: 'paused' });
+    expect((await post('/v1/billing/intent', { plan: 'pro-monthly' }, { cookie: u.cookie })).status).toBe(200);
+  });
+
   it('a canceled subscription does not block checkout', async () => {
     const u = await user();
     await subscribe(u.id, { status: 'canceled' });
