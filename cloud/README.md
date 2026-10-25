@@ -55,7 +55,7 @@ npm --prefix cloud test        # miniflare 안의 workerd, 네트워크 없음
 
 1. `wrangler d1 create ai-msg` 를 실행하고, 나온 `database_id` 를 `wrangler.jsonc` 에 넣는다.
 2. `wrangler d1 migrations apply ai-msg --remote` 로 마이그레이션을 적용한다.
-3. 비밀은 `wrangler secret put` 으로 넣는다: `SESSION_SECRET`, `EMAIL_HASH_SECRET`, `CHECKOUT_SECRET`(각각 32자 이상의 임의 값), `RESEND_API_KEY`, `PADDLE_WEBHOOK_SECRET`(Paddle 알림 대상의 비밀), `PADDLE_API_KEY`(권한 `subscription.write`, Task 10 부터 `customer_portal_session.write` 도). `PADDLE_WEBHOOK_SECRET` 이 비었거나 32자 미만이면 웹훅 경로만 503 이고(나머지는 정상), `pdl_ntfset_` 로 시작하지 않으면 경고 로그만 남긴다.
+3. 비밀은 `wrangler secret put` 으로 넣는다: `SESSION_SECRET`, `EMAIL_HASH_SECRET`, `CHECKOUT_SECRET`(각각 32자 이상의 임의 값), `RESEND_API_KEY`, `PADDLE_WEBHOOK_SECRET`(Paddle 알림 대상의 비밀), `PADDLE_API_KEY`(권한 `subscription.write`, Task 10 부터 `customer_portal_session.write` 도). `PADDLE_WEBHOOK_SECRET` 이 비었거나 32자 미만이면 웹훅 경로만 503 이고(나머지는 정상), `pdl_ntfset_` 로 시작하지 않으면 경고 로그만 남긴다. Paddle 알림 대상은 `subscription.*`·`transaction.completed`·`adjustment.*` 와 함께 **`customer.created`·`customer.updated`** 도 구독해야 한다(빠지면 customer 연결이 보류에서 멈춘다).
    - `vars` 의 `PADDLE_ENV`(`sandbox`/`production`)와 키 환경을 맞춘다. 샌드박스 키는 샌드박스 주소에서만 통한다.
 4. `wrangler.jsonc` 의 `vars` 를 채운다: `EMAIL_FROM`(Resend 에서 검증한 발신 주소), 두 출처. `routes` 에는 두 호스트 이름을 커스텀 도메인으로 적는다.
 5. `wrangler deploy` 로 배포한다.

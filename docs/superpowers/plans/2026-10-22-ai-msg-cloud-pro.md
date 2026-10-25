@@ -2095,6 +2095,7 @@ CREATE INDEX trial_claims_user ON trial_claims(user_id);
 | `ops_alerts` | `resolved_at IS NOT NULL` 이거나 `created_at < now − 90일` |
 
   - 이어서 `refunds` 가운데 `full = 1 AND (cancel_done_at IS NULL OR cancel_done_at < 0) AND last_event_at < now − 10분` 인 행에(음수는 Task 9 의 선점값 — 실패했거나 처리 중, 다시 시도 전에 같은 조건부 UPDATE 로 선점한다) `paddle.cancelSubscription` 을 다시 시도한다(Task 9). 성공하면 `cancel_done_at`, 실패하면 `refund_cancel_failed` 알림(같은 행은 하루 한 번만).
+  - `paddle_link_pending` 가운데 `created_at < now − 24시간` 인 행은 `customer_pending_stale` 알림을 하루 한 번 내고(이미 있던 Paddle 고객은 `customer.created` 가 다시 오지 않아 영영 보류될 수 있다 — Task 9 보안 리뷰 LOW), 30일 지난 행은 지운다. 계정 삭제 때 그 사용자의 보류 행도 지운다.
   - 결과는 `console.log(JSON.stringify({ cron: 'cleanup', ...counts }))` 로 남긴다(개수만, 식별자 없음).
 - `index.ts`: `scheduled(controller, env, ctx) { ctx.waitUntil(runCleanup(env, Date.now(), deps)) }`. `wrangler.jsonc`: `triggers: { crons: ["17 3 * * *"] }`(하루 한 번, UTC 03:17).
 - 데이터 보관 기간은 위 표가 기준이고, Task 11 의 `docs/privacy-data-inventory.md` 와 `docs/legal/privacy*.md` 가 같은 값을 말해야 한다(다르면 사용자에게 보고).
