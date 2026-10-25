@@ -5,13 +5,13 @@ import type { Env } from '../env';
 
 /**
  * Per-socket state; survives hibernation (serializeAttachment). Every socket of one room has the same `user`.
- * `tok`/`tokAt` are the frame token bucket, `bad` marks that this socket's malformed frame was already logged.
+ * `tok`/`tokAt` are the frame token bucket (device sockets only), `bad` marks that this socket's malformed frame was already logged.
  * A socket without an attachment is one still being checked (or refused) by `upgrade`: it routes nothing.
  */
 type Att = { role: 'host' | 'device'; host: string; dev?: string; user: string; until: number; lastRecheck: number; tok: number; tokAt: number; bad?: true };
 
 const RECHECK_GAP_MS = 30_000;
-/** Frame limit per socket: 200 frames/s sustained, bursts of 400 — far above a terminal stream; past it, 4429. */
+/** Frame limit per device socket: 200 frames/s sustained, bursts of 400 — far above a phone's input; past it, 4429. */
 const FRAME_RATE = 200;
 const FRAME_BURST = 400;
 const OPEN = 1; // WebSocket.READY_STATE_OPEN
@@ -110,6 +110,8 @@ export class RelayRoom extends DurableObject<Env> {
       relayLog('refused', { host, dev: dev ?? undefined, code });
       return new Response(null, { status: 101, webSocket: client });
     }
+    // A revoke/unlink notice may have closed it while D1 answered: then no replacement, attachment or presence.
+    if (server.readyState !== OPEN) return new Response(null, { status: 101, webSocket: client });
     const t0 = Date.now();
     const base = { host, user, until, lastRecheck: 0, tok: FRAME_BURST, tokAt: t0 };
     const a: Att = role === 'host' ? { role, ...base } : { role, dev: dev!, ...base };
@@ -135,14 +137,19 @@ export class RelayRoom extends DurableObject<Env> {
     const prev = att(ws);
     if (!prev) return; // still being checked by upgrade, or refused
     const now = Date.now();
-    const tok = Math.min(FRAME_BURST, prev.tok + ((now - prev.tokAt) * FRAME_RATE) / 1000);
-    if (tok < 1) {
-      relayLog('flood', { host: prev.host, dev: prev.dev, code: CLOSE.rateLimited });
-      closeWs(ws, CLOSE.rateLimited, 'too many frames');
-      return;
+    let a = prev;
+    // Device sockets only: the host socket is the user's own Mac and carries every device's replies (a big answer
+    // is hundreds of 32 KiB chunks), so limiting it would cut all devices at once. MAX_FRAME still applies to it.
+    if (prev.role === 'device') {
+      const tok = Math.min(FRAME_BURST, prev.tok + ((now - prev.tokAt) * FRAME_RATE) / 1000);
+      if (tok < 1) {
+        relayLog('flood', { host: prev.host, dev: prev.dev, code: CLOSE.rateLimited });
+        closeWs(ws, CLOSE.rateLimited, 'too many frames');
+        return;
+      }
+      a = { ...prev, tok: tok - 1, tokAt: now };
+      ws.serializeAttachment(a);
     }
-    const a: Att = { ...prev, tok: tok - 1, tokAt: now };
-    ws.serializeAttachment(a);
     if (typeof message === 'string') {
       // `ping` is answered by the auto-response; the host's `{"t":"recheck"}` is the only other text that means anything.
       const text = message;

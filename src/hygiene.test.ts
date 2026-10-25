@@ -61,7 +61,10 @@ describe('repository hygiene', () => {
     for (const file of [...shared, ...worker]) {
       const rel = path.relative(ROOT, file);
       const own = !shared.includes(file);
-      const src = fs.readFileSync(file, 'utf8');
+      // `//` and `/* */` comments are dropped first (string literals kept as they are), so prose such as
+      // "uses import(...)" in a comment is not read as code. Inside a string literal it still fails — on purpose.
+      const src = fs.readFileSync(file, 'utf8')
+        .replace(/('(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`)|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (_m, str: string | undefined) => str ?? '');
       const specs: string[] = [];
       for (const m of src.matchAll(/\b(?:from|import)\s*['"]([^'"]+)['"]/g)) specs.push(m[1]!);
       // Dynamic import(…) and require(…): only a plain string literal can be checked; anything else fails.

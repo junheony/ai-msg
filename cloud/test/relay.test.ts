@@ -358,23 +358,37 @@ describe('relay routing', () => {
     await waitFor(() => binaries(p1).length > 0);
   });
 
-  it('a frame flood closes the socket with 4429; a malformed-frame log line is written once per socket', async () => {
+  it('a device frame flood closes that device with 4429; a malformed-frame log line is written once per socket', async () => {
     const lines: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
     try {
       const h = await linkHost(email());
-      const host = await openHost(h.hostToken);
-      await waitFor(() => texts(host).length > 0);
-      for (let i = 0; i < 1200 && host.closes.length === 0; i++) {
-        try { host.ws!.send(new Uint8Array([200, 1, 2, 3])); } catch { break; }
+      const d1 = await pairedDevice(h);
+      const p1 = await openDevice(d1.deviceToken);
+      await waitFor(() => texts(p1).length > 0);
+      for (let i = 0; i < 1200 && p1.closes.length === 0; i++) {
+        try { p1.ws!.send(new Uint8Array([200, 1, 2, 3])); } catch { break; }
       }
-      await waitFor(() => host.closes.length > 0);
-      expect(host.closes).toEqual([CLOSE.rateLimited]);
+      await waitFor(() => p1.closes.length > 0);
+      expect(p1.closes).toEqual([CLOSE.rateLimited]);
       expect(lines.filter((l) => l.includes('"ev":"bad_frame"'))).toHaveLength(1);
     } finally {
       spy.mockRestore();
     }
   });
+
+  it('the host socket has no frame limit: 1000 frames at once (a big reply to every device) all pass', async () => {
+    const h = await linkHost(email());
+    const d1 = await pairedDevice(h);
+    const host = await openHost(h.hostToken);
+    const p1 = await openDevice(d1.deviceToken);
+    await waitFor(() => hasText(host, { t: 'peer', dev: d1.deviceId, up: true }));
+    const chunk = new Uint8Array(32 * 1024);
+    for (let i = 0; i < 1000; i++) host.ws!.send(encodeEnvelope({ kind: EnvKind.Data, peer: d1.deviceId, payload: chunk }));
+    await waitFor(() => binaries(p1).length === 1000, 15_000);
+    expect(host.closes).toEqual([]);
+    expect(p1.closes).toEqual([]);
+  }, 20_000);
 
   it('a normal burst (300 frames at once) passes the frame limit', async () => {
     const h = await linkHost(email());

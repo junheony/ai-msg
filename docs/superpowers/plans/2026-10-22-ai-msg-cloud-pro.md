@@ -286,7 +286,7 @@ relay 출처는 쿠키를 읽지도 심지도 않는다. 폰 UI 가 app 출처�
 | 4408 | 핸드셰이크 시간 초과 |
 | 4409 | 같은 호스트·기기의 새 연결로 대체됨 |
 | 4413 | 프레임 1MiB 초과 |
-| 4429 | 프레임 폭주(소켓당 초당 200·버스트 400 초과, 릴레이가 닫음) |
+| 4429 | 기기 소켓의 프레임 폭주(초당 200·버스트 400 초과, 릴레이가 닫음 — 호스트 소켓은 제한 없음) |
 
 **이용권 표시 (출시 1차)** — `GET /v1/entitlement`(host Bearer)는 서명 없는 JSON `{plan: 'pro'|'trial'|'comp'|'none', st: 'active'|'trialing'|'past_due'|'canceled'|'none', untilMs, checkedAt}` 을 준다. 로컬은 **표시만** 한다(Task 7). Ed25519 JWS·로컬 검증·오프라인 유예는 출시 뒤 Task 13 이다.
 
@@ -1500,6 +1500,7 @@ it('relay mode hides link, pair and revoke', () => { /* … */ });
   - 메서드: `start(); stop(); onState(cb); http(req): Promise<Response>; openStream(): WebSocketLike`
   - 흐름: `POST /v1/relay/ticket` → `wss://<relay>/relay/device?ticket=` → `deviceHandshake({ self: identity.key, hostPublic, deviceId, hostId, uiVersion })` → `hs_init` → `hs_ack` → `ready` 보내기 → 호스트 `ready` 받기(5초, 아니면 4408 로 닫고 재시도) 순서다.
   - 티켓 응답: 403 `pending_confirm` → `awaiting_mac`(3초마다 다시), 401 → `revoked`(identity 삭제), 402 → `not_entitled`. **402 재시도는 5초부터 두 배씩, 최대 5분**이고 앱이 보이게 되면(`visibilitychange`) 즉시 다시 묻는다(2차 필수 1 — 결제 직후 Mac 은 이미 붙어 있으므로 폰이 수 초 안에 티켓을 받는다. 옛 값은 5분 고정이었다).
+  - 티켓 429 `rate_limited`(기기당 분당 10회, Task 3) → 지수 백오프로 다시 묻는다(5초부터 두 배씩, 최대 60초). 티켓을 받으면 처음으로 되돌린다. (Mac 의 RelayClient 는 티켓을 쓰지 않는다 — `/relay/host` 에 Bearer 로 붙는다.)
   - 버전: **호스트 `ready` 를 연 뒤에만** 본다. `hostVersion !== uiVersion` 이고 `isSemver(hostVersion)` 이면 `localStorage['aimsg.hostVersion'] = hostVersion` 후 `navigate('/v/<hostVersion>/' + location.search)`. semver 가 아니면 이동하지 않고 오류 상태를 보인다(필수 4).
   - 봉투 `close` 를 받거나 4403 으로 닫히면 `revoked`(identity 삭제).
   - 재연결: 1→30초 백오프. 앱이 보이게 될 때(`visibilitychange`)는 즉시 시도한다.
