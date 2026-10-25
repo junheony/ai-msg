@@ -3,9 +3,14 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "pretypecheck": "node scripts/build-legal.mjs",
     "typecheck": "tsc --noEmit -p .",
+    "pretest": "node scripts/build-legal.mjs",
     "test": "vitest run --maxWorkers=2",
-    "dev": "wrangler dev --local"
+    "predev": "node scripts/build-legal.mjs",
+    "dev": "wrangler dev --local",
+    "predeploy": "node scripts/build-legal.mjs --strict",
+    "deploy": "wrangler deploy"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.7",

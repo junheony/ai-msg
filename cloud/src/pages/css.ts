@@ -17,5 +17,11 @@ section { border-top: 1px solid var(--line); }
 button, .button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 1rem; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent); color: var(--accent-fg); font: inherit; text-decoration: none; cursor: pointer; }
 .items button { background: transparent; color: var(--accent); }
 button:disabled { opacity: 0.6; cursor: default; }
+.draft { padding: 0.5rem 0.75rem; border: 1px solid var(--line); border-radius: 8px; font-weight: 600; }
+mark.todo { background: transparent; color: inherit; outline: 2px dashed var(--accent); }
+.legal table { border-collapse: collapse; width: 100%; }
+.legal th, .legal td { border: 1px solid var(--line); padding: 0.375rem 0.5rem; text-align: left; vertical-align: top; }
+.legal blockquote { margin: 1rem 0; padding: 0 1rem; border-left: 3px solid var(--line); color: var(--muted); }
+footer p { margin: 0.25rem 0; }
 input { min-height: 44px; padding: 0 0.75rem; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); font: inherit; }
 `;

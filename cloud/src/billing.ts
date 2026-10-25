@@ -1,4 +1,5 @@
 import { cookieRoute } from './auth/session';
+import { PAST_DUE_GRACE_MS } from './entitled';
 import type { Env } from './env';
 import { HttpError, json, problem, readBody } from './http';
 import type { PaddleApi } from './paddle/api';
@@ -17,9 +18,26 @@ export const INTENT_TTL_MS = 60 * 60_000;
 /** After `checkout.completed`: how long the "confirming" lock holds while the webhook is on its way. */
 export const PENDING_TTL_MS = 15 * 60_000;
 
-/** Whether the user has any running subscription (`active`·`trialing`·`past_due`), whatever plan wins the display. */
-export async function liveSubscription(db: D1Database, userId: string): Promise<boolean> {
-  return Boolean(await db.prepare("SELECT 1 AS x FROM subscriptions WHERE user_id = ? AND status IN ('active', 'trialing', 'past_due') LIMIT 1").bind(userId).first<number>('x'));
+/**
+ * An `active`·`trialing` row whose `period_end` is this far behind is not running any more — its cancel webhook was
+ * missed (Paddle renews at `period_end`, and the renewal webhook lags hours, not days). The Task 12 cron alerts on it.
+ */
+export const STALE_PERIOD_MS = 3 * 24 * 3_600_000;
+
+/**
+ * SQL condition: the subscription is running at `?<n>` (ms). `active`·`trialing` until 3 days past `period_end` (no
+ * `period_end` → running); `past_due` within its 7-day dunning grace, the same rule as entitled.ts.
+ */
+export const liveSql = (now: string) => `((status IN ('active', 'trialing') AND (period_end IS NULL OR period_end > ${now} - ${STALE_PERIOD_MS}))
+  OR (status = 'past_due' AND past_due_since + ${PAST_DUE_GRACE_MS} > ${now}))`;
+
+/**
+ * Whether the user has a running subscription (`liveSql`), whatever plan wins the display. `renewing` keeps only those
+ * not set to cancel (`scheduled_cancel = 0`) — what blocks account deletion.
+ */
+export async function liveSubscription(db: D1Database, userId: string, nowMs: number, opts: { renewing?: boolean } = {}): Promise<boolean> {
+  const renewing = opts.renewing ? ' AND scheduled_cancel = 0' : '';
+  return Boolean(await db.prepare(`SELECT 1 AS x FROM subscriptions WHERE user_id = ?1 AND ${liveSql('?2')}${renewing} LIMIT 1`).bind(userId, nowMs).first<number>('x'));
 }
 
 /**
@@ -27,7 +45,7 @@ export async function liveSubscription(db: D1Database, userId: string): Promise<
  * longer comp grant cannot hide it), or a checkout they finished whose webhook has not come yet. `null` → go ahead.
  */
 export async function checkoutBlock(db: D1Database, userId: string, nowMs: number): Promise<'already_subscribed' | 'payment_pending' | null> {
-  if (await liveSubscription(db, userId)) return 'already_subscribed';
+  if (await liveSubscription(db, userId, nowMs)) return 'already_subscribed';
   const done = await db.prepare('SELECT 1 AS x FROM checkout_intents WHERE user_id = ? AND completed_at IS NOT NULL AND expires_at > ?').bind(userId, nowMs).first<number>('x');
   return done ? 'payment_pending' : null;
 }

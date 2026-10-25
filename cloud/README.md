@@ -51,7 +51,7 @@ npm --prefix cloud run typecheck
 npm --prefix cloud test        # miniflare 안의 workerd, 네트워크 없음
 ```
 
-## 배포(사용자 몫, 요약 — Task 12 에서 완성)
+## 배포(사용자 몫, 요약)
 
 1. `wrangler d1 create ai-msg` 를 실행하고, 나온 `database_id` 를 `wrangler.jsonc` 에 넣는다.
 2. `wrangler d1 migrations apply ai-msg --remote` 로 마이그레이션을 적용한다.
@@ -60,21 +60,28 @@ npm --prefix cloud test        # miniflare 안의 workerd, 네트워크 없음
 4. `wrangler.jsonc` 의 `vars` 를 채운다: `EMAIL_FROM`(Resend 에서 검증한 발신 주소), 두 출처. `routes` 에는 두 호스트 이름을 커스텀 도메인으로 적는다.
    - 결제(Task 10): `PADDLE_CLIENT_TOKEN`(클라이언트 토큰, 샌드박스는 `test_`·실서비스는 `live_` — `PADDLE_ENV` 와 안 맞으면 checkConfig 가 막는다), `PADDLE_PRICE_MONTHLY`·`PADDLE_PRICE_YEARLY`(가격 id), 선택 `PADDLE_DISCOUNT_FOUNDING`. 비어 있으면 `/checkout` 은 503 이다.
    - Paddle 대시보드에서 app 출처 도메인(예: `app.aimsg.app`)의 결제 승인(checkout domain approval)은 사용자가 한다.
-5. `wrangler deploy` 로 배포한다.
+5. `npm --prefix cloud run deploy` 로 배포한다. `predeploy` 가 `node scripts/build-legal.mjs --strict` 를 먼저 돌려, `docs/legal/*.md` 에 `{{…}}` 나 DRAFT 띠가 하나라도 남아 있으면 남은 개수와 `파일:줄` 목록을 찍고 배포를 멈춘다. 마이그레이션 `0004_account.sql`(정리용 색인)도 함께 적용한다. cron(`17 3 * * *`, UTC)은 `wrangler.jsonc` 의 `triggers` 로 같이 올라간다.
 
 ## 계정·결제 페이지 (Task 10, app 출처에서만)
 
 - `GET /account`: 이메일, 요금제 줄, 연결된 Mac[Unlink]·폰[Revoke], 구독 버튼(살아 있는 구독·확인 중 결제가 없을 때), [Manage billing](연결된 Paddle customer 가 있을 때), Sign out. 서드파티 스크립트 없음 — 기본 엄격 CSP.
 - `GET /checkout?plan=pro-monthly|pro-yearly`: Paddle.js 오버레이. 이 페이지만 `script-src 'self' https://cdn.paddle.com`·Paddle frame 출처를 허용하는 CSP 를 쓴다. relay 출처에서는 404.
 - 흐름: checkout.js → `POST /v1/billing/intent`(의도 행을 먼저 쓰고 서명된 ref 를 돌려준다, 60분 — 결제 창에 오래 머물러도 웹훅 때 열려 있도록) → `Paddle.Checkout.open`(`customer.email` = 계정 이메일, `settings.allowLogout: false`, `customData` 에는 ref 만) → `checkout.completed` 면 `POST /v1/billing/intent/complete`(아직 열린 의도만, 15분 더 잠금) → `/account?pending=1`(10초마다 새로 고침, 웹훅이 오면 Task 9 가 의도 행을 지운다).
-- 잠금: `subscriptions` 에 `active`·`trialing`·`past_due` 구독이 하나라도 있으면(comp 기간이 더 길어도) 또는 완료한 결제가 확인 중이면 새 결제를 막는다(409 `already_subscribed`·`payment_pending`). 계정 페이지의 구독 버튼도 같은 헬퍼(`liveSubscription`)로 판단한다.
+- 잠금: `subscriptions` 에 살아 있는 `active`·`trialing`·`past_due` 구독(기간 지난 행은 제외, 아래 Task 12)이 하나라도 있으면(comp 기간이 더 길어도) 또는 완료한 결제가 확인 중이면 새 결제를 막는다(409 `already_subscribed`·`payment_pending`). 계정 페이지의 구독 버튼도 같은 헬퍼(`liveSubscription`)로 판단한다.
 - `POST /v1/billing/portal`: 그 사용자에게 연결된 customer 와, 그 customer 아래 그 사용자의 살아 있는 구독만 넘긴다(`no-store`). 연결된 customer 가 없으면 409 `no_customer` + "결제 때 쓴 이메일이 계정 이메일과 다를 수 있다 — 지원에 문의" 안내(영문). Paddle 실패는 502.
 - `POST /v1/hosts/:id/unlink`(쿠키, 사용자당 시간 20회), `POST /logout`(폼). 정적 파일 `/static/{checkout,account}.js`·`pages.css` 는 ASSETS 바인딩이 없어서 TS 문자열로 내보낸다.
 - 로컬 앱의 설정 > 클라우드 행: [Pro 구독]·[구독 관리] 는 `/api/cloud/web/{checkout,account}` 로 열고, 로컬 서버가 클라우드 주소로 302 한다(상태 응답에 클라우드 주소를 싣지 않기 위해). 돌아오면 요금제를 한 번 다시 읽는다.
 
+## 법적 페이지·계정 삭제·정리 cron (Task 12)
+
+- 법적 페이지: `docs/legal/{terms,privacy,refund}{,.ko}.md` 가 유일한 원본이다. `scripts/build-legal.mjs` 가 `src/legal/pages.gen.ts`(커밋 안 함)를 만든다. `test`·`dev`·`typecheck` 앞에서 자동으로 돈다. 지원 문법 밖(원시 HTML, 이미지, 기울임, 각주, 코드 펜스, 들여쓴 줄)은 `파일:줄` 과 함께 빌드 실패다. `/legal/{terms,privacy,refund,notice}` 와 `/legal/ko/…` 는 스크립트 없는 CSP 에 1시간 캐시이고, 모든 app 페이지 바닥글에 링크와 비제휴 고지가 붙는다.
+- 계정 삭제: `POST /v1/account/delete {confirm:'DELETE'}`. 갱신되는 구독(`scheduled_cancel = 0` 이고 아직 살아 있음)이 있으면 409 다. 나머지는 한 batch 로 지운다. `trial_claims` 와 `subscriptions` 는 `user_id` 만 NULL 로 남는다.
+- 정리 cron: 매일 03:17 UTC 에 만료 행을 지운다(표마다 최대 5,000행). 환불 해지 재시도, 보류 고객 연결 알림(30일 지나면 삭제), 기간이 지났는데 살아 있는 구독 알림도 한다. 로그는 개수만 남는다.
+- "살아 있는 구독"(결제 차단·계정 삭제 차단 공통)은 `active`·`trialing` 이면 `period_end` 뒤 3일까지, `past_due` 는 7일 유예까지다. 그 뒤에도 상태가 그대로면 webhook 을 놓친 것으로 보고 `subscription_stale` 알림을 낸다.
+
 ## 운영 알림 보기
 
-업무 충돌은 `ops_alerts` 에 남는다(종류: `unmatched`, `second_subscription`, `customer_conflict`, `customer_unlinked`, `bad_payload`, `invalid_event`, `refund_cancel_failed`). 아직 처리하지 않은 것만 본다.
+업무 충돌은 `ops_alerts` 에 남는다(종류: `unmatched`, `second_subscription`, `customer_conflict`, `customer_unlinked`, `bad_payload`, `invalid_event`, `refund_cancel_failed`, `customer_pending_stale`, `subscription_stale` — 마지막 둘은 정리 cron 이 하루 한 번 낸다). 아직 처리하지 않은 것만 본다.
 
 ```sh
 npx --prefix cloud wrangler d1 execute ai-msg --remote --command "SELECT id, kind, ref, detail, created_at FROM ops_alerts WHERE resolved_at IS NULL ORDER BY created_at DESC LIMIT 50"

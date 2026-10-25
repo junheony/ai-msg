@@ -1,5 +1,7 @@
+import { accountDelete, accountDeletedGet } from './account';
 import { loginGet, loginPost, magicRequest, verifyGet, verifyPost } from './auth/magic';
 import { billingIntent, billingIntentComplete, billingPortal } from './billing';
+import { runCleanup } from './cleanup';
 import { listDevices, revokeDevice } from './devices';
 import { entitlement } from './entitlement';
 import type { Env } from './env';
@@ -9,6 +11,7 @@ import { APP_HTML_CSP, relayHeaders, sideOf } from './origins';
 import { ACCOUNT_JS, accountGet, signOut } from './pages/account';
 import { CHECKOUT_JS, checkoutGet } from './pages/checkout';
 import { PAGES_CSS } from './pages/css';
+import { legalEn, legalKo } from './pages/legal';
 import { LINK_JS } from './pages/link';
 import { paddleApi } from './paddle/api';
 import { type WebhookDeps, paddleWebhook, webhookSecretProblem } from './paddle/webhook';
@@ -93,6 +96,9 @@ const ROUTES: readonly Route[] = [
   ['app', 'GET', '/account', accountGet],
   ['app', 'POST', '/logout', signOut],
   ['app', 'GET', '/checkout', checkoutGet],
+  ['app', 'GET', '/account/deleted', accountDeletedGet],
+  ['app', 'GET', '/legal/ko/:doc', legalKo],
+  ['app', 'GET', '/legal/:doc', legalEn],
   ['app', 'GET', '/static/link.js', asset(LINK_JS, JS)],
   ['app', 'GET', '/static/account.js', asset(ACCOUNT_JS, JS)],
   ['app', 'GET', '/static/checkout.js', asset(CHECKOUT_JS, JS)],
@@ -114,6 +120,7 @@ const ROUTES: readonly Route[] = [
   ['app', 'POST', '/v1/billing/intent', billingIntent],
   ['app', 'POST', '/v1/billing/intent/complete', billingIntentComplete],
   ['app', 'POST', '/v1/billing/portal', billingPortal(deps)],
+  ['app', 'POST', '/v1/account/delete', accountDelete],
   ['app', 'POST', '/v1/paddle/webhook', (c) => paddleWebhook(c, deps)],
   ['app', 'GET', '/dev/outbox', devOutbox],
   // relay origin — no cookies are read or set here
@@ -145,7 +152,8 @@ export default {
     const { res, side } = cfg.ok ? await dispatch(req, env, exec) : { res: problem(503, 'misconfigured'), side: null };
     if (res.status === 101) return res; // the relay room's WebSocket: rebuilding the Response would drop it
     const out = new Response(req.method === 'HEAD' ? null : res.body, { status: res.status, headers: new Headers(res.headers) });
-    out.headers.set('cache-control', 'no-store');
+    // Only the legal pages bring their own (public, an hour); everything else is never cached.
+    if (!out.headers.has('cache-control')) out.headers.set('cache-control', 'no-store');
     out.headers.set('x-content-type-options', 'nosniff');
     if (side === 'relay') relayHeaders(out.headers);
     else {
@@ -154,5 +162,10 @@ export default {
       if ((out.headers.get('content-type') ?? '').startsWith('text/html') && !out.headers.has('content-security-policy')) out.headers.set('content-security-policy', APP_HTML_CSP);
     }
     return out;
+  },
+
+  /** The daily cron (wrangler.jsonc `17 3 * * *`): expired rows, refund cancel retries, stale-link/-subscription alerts. */
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(runCleanup(env, Date.now(), { paddle: deps.paddle(env) }));
   },
 } satisfies ExportedHandler<Env>;

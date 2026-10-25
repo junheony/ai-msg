@@ -29,7 +29,7 @@ function planLine(e: Entitled, sub: SubRow | null, env: Env, everHad: boolean, n
 /**
  * `GET /account` (web session, else `/login?next=/account`): email, plan, linked Macs [Unlink], phones [Revoke],
  * [Subscribe monthly]·[Subscribe yearly] (no live subscription) or [Manage billing] (a linked Paddle customer),
- * [Sign out]. No third-party script — Paddle.js lives on /checkout only. Task 12 adds "Delete account" at the bottom.
+ * [Sign out], and "Delete account" (what goes, what stays; blocked while a subscription renews). No third-party script — Paddle.js lives on /checkout only.
  */
 export const accountGet = cookieRoute({ session: 'page' }, async (c) => {
   const db = c.env.DB;
@@ -43,7 +43,7 @@ export const accountGet = cookieRoute({ session: 'page' }, async (c) => {
     db.prepare('SELECT (EXISTS (SELECT 1 FROM trials WHERE user_id = ?1) OR EXISTS (SELECT 1 FROM subscriptions WHERE user_id = ?1) OR EXISTS (SELECT 1 FROM grants WHERE user_id = ?1)) AS x').bind(c.userId),
   ]);
   const u = user!.results[0] as { email: string; paddle_customer_id: string | null } | undefined;
-  const live = await liveSubscription(db, c.userId); // same rule as checkoutBlock
+  const live = await liveSubscription(db, c.userId, c.nowMs); // same rule as checkoutBlock
   const isPending = !live && pending!.results.length > 0;
   const hostRows = hosts!.results as { id: string; name: string; created_at: number }[];
   const deviceRows = devices!.results as { id: string; name: string; created_at: number }[];
@@ -61,6 +61,13 @@ export const accountGet = cookieRoute({ session: 'page' }, async (c) => {
   ].join('');
   // A subscription with no linked customer (paid under someone else's Paddle customer): say so instead of a dead button.
   const unlinked = !u?.paddle_customer_id && live ? `<p class="muted" id="billing-unavailable">${esc(NO_CUSTOMER_MESSAGE)}</p>` : '';
+  // Same rule as POST /v1/account/delete: a running subscription set to renew blocks deletion.
+  const renewing = live && (await liveSubscription(db, c.userId, c.nowMs, { renewing: true }));
+  const deletion = renewing
+    ? '<p id="delete-blocked">You have a subscription that renews. Cancel it under Manage billing first, then delete your account.</p>'
+    : `<div id="delete-account"><label for="delete-confirm">To confirm, type DELETE</label>
+<input id="delete-confirm" autocomplete="off" spellcheck="false">
+<button type="button" id="delete-button">Delete my account</button></div>`;
 
   return page('Account', `<h1>Your account</h1>
 <p>Signed in as <strong>${esc(u?.email ?? '')}</strong></p>
@@ -73,6 +80,14 @@ ${unlinked}
 </section>
 <section><h2>Macs</h2>${hostList}</section>
 <section><h2>Phones</h2>${deviceList}</section>
+<section><h2>Delete account</h2>
+<ul>
+<li>Deleted: your email address, sign-in sessions and links, linked Macs and paired phones (they stop working at once), trial and invitation.</li>
+<li>Kept: a one-way key of your email address, so the free trial stays used if you sign up again.</li>
+<li>Kept: subscription records, without your account — Paddle keeps payment records as the seller.</li>
+</ul>
+${deletion}
+</section>
 <p id="result" role="status"></p>
 <form method="post" action="/logout"><button type="submit">Sign out</button></form>`, { scripts: ['/static/account.js'] });
 });
@@ -80,11 +95,11 @@ ${unlinked}
 /** `POST /logout` — the account page's no-script form (same Origin check as every cookie route). */
 export const signOut = cookieRoute({ session: 'required', form: true }, async (c) => redirect('/login', { 'set-cookie': await endSession(c) }));
 
-/** `/static/account.js` — Unlink / Revoke / Manage billing (JSON POSTs with the page's own Origin); while a payment confirms, reload every 10 s. */
+/** `/static/account.js` — Unlink / Revoke / Manage billing / Delete account (JSON POSTs with the page's own Origin); while a payment confirms, reload every 10 s. */
 export const ACCOUNT_JS = `(() => {
   const out = document.getElementById('result');
   const say = (t) => { if (out) out.textContent = t; };
-  const post = (path) => fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  const post = (path, body = {}) => fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const act = async (button, path, question) => {
     if (!window.confirm(question)) return;
     button.disabled = true;
@@ -108,6 +123,19 @@ export const ACCOUNT_JS = `(() => {
       say(body.code === 'no_customer' && body.error ? body.error : 'Billing is not available right now (' + (body.code || r.status) + ').');
     } catch { say('Network error — try again.'); }
     manage.disabled = false;
+  });
+  const del = document.getElementById('delete-button');
+  const confirmBox = document.getElementById('delete-confirm');
+  if (del && confirmBox) del.addEventListener('click', async () => {
+    if (confirmBox.value !== 'DELETE') { say('Type DELETE to confirm.'); return; }
+    del.disabled = true;
+    try {
+      const r = await post('/v1/account/delete', { confirm: confirmBox.value });
+      if (r.ok) { location.href = '/account/deleted'; return; }
+      const body = await r.json().catch(() => ({}));
+      say(body.code === 'active_subscription' ? 'Cancel your subscription under Manage billing first.' : 'That did not work (' + (body.code || r.status) + ').');
+    } catch { say('Network error — try again.'); }
+    del.disabled = false;
   });
   if (document.getElementById('pending')) setTimeout(() => location.reload(), 10000);
 })();

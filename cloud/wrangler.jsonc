@@ -17,6 +17,8 @@
   // One relay room per host (Hibernation WebSocket API). SQLite-backed class (`new_sqlite_classes`).
   "durable_objects": { "bindings": [{ "name": "RELAY", "class_name": "RelayRoom" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RelayRoom"] }],
+  // Task 12: the daily cleanup (expired rows, refund cancel retries, stale alerts) at 03:17 UTC.
+  "triggers": { "crons": ["17 3 * * *"] },
   "vars": {
     "PUBLIC_ORIGIN": "https://app.aimsg.app",
     "RELAY_ORIGIN": "https://relay.aimsg.app",
