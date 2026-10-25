@@ -1,12 +1,16 @@
 import { loginGet, loginPost, magicRequest, verifyGet, verifyPost } from './auth/magic';
-import { listDevices, relayTicket, revokeDevice } from './devices';
+import { listDevices, revokeDevice } from './devices';
 import type { Env } from './env';
 import { linkApprove, linkGet, linkPoll, linkStart, hostUnlink } from './hosts';
 import { HttpError, clientIp, json, problem } from './http';
 import { APP_HTML_CSP, relayHeaders, sideOf } from './origins';
 import { LINK_JS } from './pages/link';
 import { pairClaim, pairConfirm, pairReject, pairStart, pairStatus } from './pairing';
+import { relayDevice, relayHost } from './relay/routes';
+import { relayTicket } from './relay/tickets';
 import { type Ctx, type Route, route } from './router';
+
+export { RelayRoom } from './relay/RelayRoom';
 
 export type ConfigCheck = { ok: true } | { ok: false; reason: string };
 
@@ -84,15 +88,17 @@ const ROUTES: readonly Route[] = [
   // relay origin — no cookies are read or set here
   ['relay', 'POST', '/v1/pair/claim', pairClaim],
   ['relay', 'POST', '/v1/relay/ticket', relayTicket],
+  ['relay', 'GET', '/relay/host', relayHost],
+  ['relay', 'GET', '/relay/device', relayDevice],
 ];
 
-async function dispatch(req: Request, env: Env): Promise<{ res: Response; side: 'app' | 'relay' | null }> {
+async function dispatch(req: Request, env: Env, exec: ExecutionContext): Promise<{ res: Response; side: 'app' | 'relay' | null }> {
   const side = sideOf(req, env);
   if (!side) return { res: problem(404, 'not_found'), side };
   const url = new URL(req.url);
   const hitRoute = route(ROUTES, side, req.method, url.pathname);
   if (hitRoute === null) return { res: problem(404, 'not_found'), side };
-  const c: Ctx = { req, env, url, params: hitRoute.params, nowMs: Date.now(), ip: clientIp(req) };
+  const c: Ctx = { req, env, exec, url, params: hitRoute.params, nowMs: Date.now(), ip: clientIp(req) };
   try {
     return { res: await hitRoute.handler(c), side };
   } catch (e) {
@@ -103,9 +109,10 @@ async function dispatch(req: Request, env: Env): Promise<{ res: Response; side: 
 }
 
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: Env, exec: ExecutionContext): Promise<Response> {
     const cfg = cachedCheck(env);
-    const { res, side } = cfg.ok ? await dispatch(req, env) : { res: problem(503, 'misconfigured'), side: null };
+    const { res, side } = cfg.ok ? await dispatch(req, env, exec) : { res: problem(503, 'misconfigured'), side: null };
+    if (res.status === 101) return res; // the relay room's WebSocket: rebuilding the Response would drop it
     const out = new Response(req.method === 'HEAD' ? null : res.body, { status: res.status, headers: new Headers(res.headers) });
     out.headers.set('cache-control', 'no-store');
     out.headers.set('x-content-type-options', 'nosniff');

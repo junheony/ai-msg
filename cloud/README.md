@@ -1,13 +1,19 @@
 # AI msg cloud (Cloudflare Worker)
 
 AI msg Pro 클라우드 Worker 다. 공개본에는 들어가지 않는다(`.gitattributes` 의 `cloud/** export-ignore`).
-이 문서는 Task 12 에서 완성한다. 지금은 Task 2 범위(두 출처·로그인·호스트 연결·QR 페어링·기기 API)만 적는다.
+이 문서는 Task 12 에서 완성한다. 지금은 Task 2~3 범위(두 출처·로그인·호스트 연결·QR 페어링·기기 API·릴레이)만 적는다.
 
 ## 구조
 
 - 출처 둘을 한 Worker 가 맡고, `Host` 로 나눈다.
   - `PUBLIC_ORIGIN` (app): 로그인, 계정, 호스트 연결, 페어링 관리.
-  - `RELAY_ORIGIN` (relay): `POST /v1/pair/claim`, `POST /v1/relay/ticket`. Task 3 에서 WS 가 붙는다.
+  - `RELAY_ORIGIN` (relay): `POST /v1/pair/claim`, `POST /v1/relay/ticket`, WS `GET /relay/host`(Bearer 호스트 토큰), `GET /relay/device?ticket=`(일회용·60초).
+- 릴레이는 호스트마다 Durable Object 하나다(`RelayRoom`, `idFromName(hostId)`, Hibernation WS 전용, 타이머 없음).
+  - 봉투 머리(kind·peer)만 읽고 본문은 그대로 넘긴다. 기기가 쓴 `peer` 는 그 기기 id 로 덮어쓴다.
+  - 로그는 `{ev,host,dev,bytes,code}` 메타데이터 한 줄뿐이다(`relayLog`).
+  - 이용권은 소켓 첨부의 `until` 이고 alarm 이 D1 에서 다시 읽는다. 끝나면 기기 소켓만 4402 로 닫고 호스트는 남긴다.
+  - 기기 해제·페어링 소각 → 4403 과 호스트에 `{t:'revoked'}`, 호스트 해제 → 모두 4401. Worker 가 `/internal/*` 로 DO 에 알린다(`notifyRelay`).
+  - 다 쓴 `relay_tickets` 행 정리는 Task 12 의 cron 몫이다.
   - 반대편 경로는 404 다. relay 응답에서는 `Set-Cookie` 를 지우고, 엄격한 CSP 를 붙인다.
 - 저장소는 D1 하나다(`migrations/`). `UI` R2 바인딩은 선언만 해 두었다(Task 7 이 쓴다).
 - 설정이 틀리면 `checkConfig` 가 모든 요청에 503 `misconfigured` 로 답한다.
@@ -66,6 +72,11 @@ npm --prefix cloud test        # miniflare 안의 workerd, 네트워크 없음
   - 본문에서 `from`·`to`·`subject` 는 필수다. `text` 는 선택이다.
   - 성공하면 `{ id }` 로 답한다.
   - 실제 호출은 하지 않았다. 테스트는 fetch 를 주입해서 요청 형태만 본다.
+- Durable Object: `migrations[].new_sqlite_classes` 키는 wrangler 설정 스키마(`config-schema.json`)에서 확인했다.
+  - `cloudflare:test` 의 `runInDurableObject(stub, fn)`, `runDurableObjectAlarm(stub)`(alarm 이 돌았으면 true), `evictDurableObject(stub, { webSockets: 'hibernate' | 'close' })` 는 `.d.ts` 로 확인했다.
+  - 테스트 쪽(workerd) 클라이언트 WebSocket 의 `binaryType` 기본값은 Blob 이다. 그래서 테스트는 `arraybuffer` 로 바꾼다.
+  - Worker 는 DO 가 준 101 응답을 그대로 돌려준다. 새 Response 로 다시 만들면 `webSocket` 이 사라진다.
+- **(미확인)** 실제 Cloudflare 에서의 Hibernation 동작(잠든 뒤 깨어나는 시점, 과금). 테스트는 `evictDurableObject` 로만 흉내 냈다.
 - `routes`: `[{ "pattern": "app.example", "custom_domain": true }, …]` 형태로 한 Worker 에 커스텀 도메인 둘을 건다(wrangler 설정 스키마).
 - **(미확인)** 실제 Cloudflare 계정에서 배포할 때의 동작. 실제 배포는 하지 않았다.
   - 커스텀 도메인 두 개의 인증서 발급.

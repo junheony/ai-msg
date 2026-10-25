@@ -3,6 +3,7 @@ import { sha256B64u, timingSafeEqual } from '../../src/shared/cloud/b64';
 import { type HostAuth, hashToken, hostAuth, isB64uBytes, newId, newToken } from './auth/tokens';
 import { HttpError, json, problem, readBody, str } from './http';
 import { MINUTE, hit } from './rate';
+import { notifyRelay } from './relay/routes';
 import type { Ctx } from './router';
 
 const PAIR_TTL_MS = 5 * MINUTE;
@@ -52,7 +53,7 @@ export async function pairStart(c: Ctx): Promise<Response> {
  * - right secret again with the same `devicePub`·`mac` (lost response): new token for the same device while
  *   `claimed` — but 409 `retry` within 10 s of the last token, so racing resends rotate it at most once —
  *   and `already_paired` once `confirmed`. Never a burn.
- * - right secret again from anything else: `burned`, every device of the pairing revoked (Task 3 adds the DO notice).
+ * - right secret again from anything else: `burned`, every device of the pairing revoked and its relay channel closed.
  */
 export async function pairClaim(c: Ctx): Promise<Response> {
   if (c.req.headers.get('origin') !== c.env.RELAY_ORIGIN) return problem(403, 'bad_origin');
@@ -116,10 +117,11 @@ export async function pairClaim(c: Ctx): Promise<Response> {
       if (r.meta.changes === 1) return json(200, { deviceId: dev.id, deviceToken, hostId: dev.host_id } satisfies PairClaimRes);
       return problem(409, 'retry');
     }
-    await db.batch([
+    const [, gone] = await db.batch<{ id: string; host_id: string }>([
       db.prepare("UPDATE pairings SET state = 'burned' WHERE id = ?").bind(p.id),
-      db.prepare("UPDATE devices SET state = 'revoked' WHERE pairing_id = ?").bind(p.id),
+      db.prepare("UPDATE devices SET state = 'revoked' WHERE pairing_id = ? RETURNING id, host_id").bind(p.id),
     ]);
+    for (const d of gone!.results) notifyRelay(c, d.host_id, 'revoke', d.id);
     return problem(409, 'pairing_burned');
   }
   return problem(409, 'pairing_burned');

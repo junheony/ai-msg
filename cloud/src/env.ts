@@ -1,8 +1,8 @@
 /** Bindings, secrets and vars of the cloud Worker. Later Tasks extend it. */
 export interface Env {
   DB: D1Database;
-  /** RelayRoom Durable Object namespace — bound in wrangler.jsonc by Task 3; required from then on. */
-  RELAY?: DurableObjectNamespace;
+  /** RelayRoom Durable Object namespace (one room per host, `idFromName(hostId)`). */
+  RELAY: DurableObjectNamespace;
   /** Phone UI bundles (Task 5c). */
   UI: R2Bucket;
   PUBLIC_ORIGIN: string;

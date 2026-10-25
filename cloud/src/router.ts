@@ -1,7 +1,8 @@
 import type { Env } from './env';
 import type { Side } from './origins';
 
-export type Ctx = { req: Request; env: Env; url: URL; params: Record<string, string>; nowMs: number; ip: string };
+/** `exec` is the request's ExecutionContext (`waitUntil` for the relay notices). */
+export type Ctx = { req: Request; env: Env; exec: ExecutionContext; url: URL; params: Record<string, string>; nowMs: number; ip: string };
 export type Handler = (c: Ctx) => Promise<Response>;
 /** `[side, method, pattern, handler]`; pattern segments starting with `:` capture one path segment. */
 export type Route = readonly [Side, string, string, Handler];

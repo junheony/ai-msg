@@ -6,12 +6,17 @@
   "name": "ai-msg-cloud",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-15",
+  // The runtime answers a client's Close frame itself, so RelayRoom.webSocketClose never has to.
+  "compatibility_flags": ["web_socket_auto_reply_to_close"],
   "d1_databases": [
     // database_id: filled in by the operator at deploy time (`wrangler d1 create ai-msg`).
     { "binding": "DB", "database_name": "ai-msg", "migrations_dir": "migrations" }
   ],
-  // Phone UI bundles (Task 5c). The RelayRoom Durable Object binding `RELAY` arrives with Task 3.
+  // Phone UI bundles (Task 5c).
   "r2_buckets": [{ "binding": "UI", "bucket_name": "ai-msg-ui" }],
+  // One relay room per host (Hibernation WebSocket API). SQLite-backed class (`new_sqlite_classes`).
+  "durable_objects": { "bindings": [{ "name": "RELAY", "class_name": "RelayRoom" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RelayRoom"] }],
   "vars": {
     "PUBLIC_ORIGIN": "https://app.aimsg.app",
     "RELAY_ORIGIN": "https://relay.aimsg.app",

@@ -6,6 +6,7 @@ import { hashToken, hostAuth, isB64uBytes, newId, newToken, newUserCode } from '
 import { HttpError, json, problem, readBody, str } from './http';
 import { linkLimitedPage, linkMissingPage, linkPage } from './pages/link';
 import { DAY, HOUR, hit, windowStart } from './rate';
+import { notifyRelay } from './relay/routes';
 import type { Ctx } from './router';
 
 const LINK_TTL_MS = 600_000;
@@ -132,7 +133,7 @@ export async function linkPoll(c: Ctx): Promise<Response> {
   return json(200, { state: 'linked', hostId, hostToken, email: email ?? '' } satisfies LinkPollRes);
 }
 
-/** `POST /v1/host/unlink` (host) — the token stops working and every device of the host is revoked. Task 3 adds the DO close. */
+/** `POST /v1/host/unlink` (host) — the token stops working, every device of the host is revoked and its relay room closes all (4401). */
 export async function hostUnlink(c: Ctx): Promise<Response> {
   const host = await hostAuth(c.env, c.req);
   if (!host) return problem(401, 'unauthorized');
@@ -142,5 +143,6 @@ export async function hostUnlink(c: Ctx): Promise<Response> {
     db.prepare("UPDATE devices SET state = 'revoked' WHERE host_id = ?").bind(host.id),
     db.prepare("UPDATE pairings SET state = 'expired' WHERE host_id = ? AND state IN ('open', 'claimed')").bind(host.id),
   ]);
+  notifyRelay(c, host.id, 'unlink');
   return json(200, { ok: true });
 }
