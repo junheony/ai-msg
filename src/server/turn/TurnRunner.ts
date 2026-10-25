@@ -2437,6 +2437,8 @@ export class TurnRunner {
           // A turn itself sent on after an ended process (line not its own) leaves the line to that loop (which already
           // said why) — but what waits in it still goes before this turn's own continuation.
           if (line.own || need) ran = await this.resendFollowUps(line.items, { ...again, notice: line.own });
+          // The capped account is done here: the continuation marks its own account under its own turn id.
+          if (need) this.busyAccounts.delete(p.turnId);
           if (need && 'cap' in need) await this.continueAfterCap(need, { p, sink, cwd, sessionId });
           else if (need) await this.failoverAfterBackground(need, { p, sink, cwd, sessionId, account, model, routerBase, line: line.items });
           // Sends that came meanwhile were told why they wait (turn_queued): no second notice.

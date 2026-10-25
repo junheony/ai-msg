@@ -146,9 +146,9 @@ export class ClaudeUsagePoller {
   private running: Promise<void> | null = null;
   private child: { child: UsageChild; give: () => void } | null = null;
   private stopped = false;
-  /** Per account: the last failure (logged once) and when it may be tried again. */
   /** Per account: when a round first skipped it as busy (cleared once it is not busy or the cap let a poll through). */
   private busySince = new Map<Account, number>();
+  /** Per account: the last failure (logged once) and when it may be tried again. */
   private failures = new Map<Account, { error: string; count: number; retryAt: number }>();
   private readonly intervalMs: number;
   private readonly maxAgeMs: number;
@@ -214,7 +214,9 @@ export class ClaudeUsagePoller {
     if (!this.opts.bin) return;
     for (const a of this.opts.accounts.list()) {
       if (this.stopped) return;
-      if (!this.due(a) || this.isBusy(a)) continue;
+      // Not due = fresh: drop any old busy mark so a later busy spell starts its own window.
+      if (!this.due(a)) { this.busySince.delete(a); continue; }
+      if (this.isBusy(a)) continue;
       await this.pollAccount(a);
     }
   }
