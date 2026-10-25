@@ -451,6 +451,30 @@ describe('ws', () => {
     a.ws.close();
   });
 
+  it('Grok Bot: two first sends raced — the late one is told (grokbot_linked) on its own socket only, not app-wide', async () => {
+    const SX = '99999999-9999-4999-8999-999999999994';
+    const cwd = await seed(SX, 'grokbot-raced');
+    const a = await connect({ Origin: origin, Cookie: COOKIE });
+    const b = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(a.ws, (m) => m.type === 'hello');
+    await collect(b.ws, (m) => m.type === 'hello');
+    const seenB: ServerMessage[] = [];
+    b.ws.on('message', (d) => seenB.push(JSON.parse(String(d)) as ServerMessage));
+    hold();
+    const started = collect(a.ws, (m) => m.type === 'turn_started');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd, text: 'continued-later', handoffFrom: 'grokbot-r', clientRef: 'gr-1' }));
+    await started;
+    await meta.link('grokbot-r', SX, 'r (이어서)'); // the other device's first send linked meanwhile
+    const told = collect(a.ws, (m) => m.type === 'error' && m.code === 'grokbot_linked');
+    release();
+    expect((await told).at(-1)).toMatchObject({ type: 'error', turnId: null, sessionId: '77777777-7777-4777-8777-777777777778', code: 'grokbot_linked', nextSession: SX });
+    expect(meta.next('grokbot-r')).toBe(SX);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(seenB.some((m) => m.type === 'error')).toBe(false);
+    a.ws.close();
+    b.ws.close();
+  });
+
   it('handoff: a first send that ends without an id links nothing; its retry links once the id arrives, even after the sender disconnected', async () => {
     const SX = '99999999-9999-4999-8999-999999999992';
     const cwd = await seed(SX, 'handoff-retry');

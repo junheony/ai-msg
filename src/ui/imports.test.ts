@@ -205,13 +205,56 @@ describe('reducer: Grok Bot 대화에서 바로 보내기 (grokbot_send)', () =>
     expect(grokBotRequest('그냥 글')).toBe('그냥 글');
   });
 
-  it('waiting for a folder, then another session is opened: the request goes back into the composer there, not lost', () => {
-    const s = sendIt(opened([proj('/h', [bot])]));
-    const moved = pane(reducer(s, { type: 'open', sessionId: 'X9', cwd: '/w/x', title: 'x', paneId: pane(s).id }));
+  it('waiting for a folder, then another session is opened: the request stays with the Grok Bot conversation, back in its composer when reopened', () => {
+    const file = { id: 'f1', name: 'a.png', isImage: true, size: 1 };
+    let s = reducer(opened([proj('/h', [bot])]), { type: 'grokbot_send', from: 'grokbot-a', text: '다음 달에 갈래', attachments: [file], paneId: 'p0' });
+    s = reducer(s, { type: 'open', sessionId: 'X9', cwd: '/w/x', title: 'x', paneId: pane(s).id });
+    const moved = pane(s);
     expect(moved.session?.sessionId).toBe('X9');
     expect(moved.grokBotSend).toBeNull();
     expect(moved.queue).toEqual([]);
-    expect(moved.prefill).toBe('다음 달에 갈래');
+    expect(moved.prefill).toBeNull();
+    expect(moved.attachments).toEqual([]);
+    s = reducer(s, { type: 'open', sessionId: 'grokbot-a', cwd: '/h', title: '여행 계획', paneId: pane(s).id });
+    expect(pane(s).prefill).toBe('다음 달에 갈래');
+    expect(pane(s).attachments).toEqual([file]);
+    expect(s.grokBotDrafts).toEqual({});
+  });
+
+  it('sent again while another pane holds the unsent continuing session: that pane gets the excerpt + text by the folder rule (never an empty folder)', () => {
+    // Folder known: the manual handoff pane (excerpt only in its composer) queues excerpt + text.
+    const ps = [proj('/h', [bot]), proj('/w/work', [work])];
+    let s = reducer(opened(ps), { type: 'grokbot_handoff', paneId: 'p0' });
+    s = reducer(s, { type: 'add_pane' });
+    const second = s.panes[1]!.id;
+    s = reducer(s, { type: 'open', sessionId: 'grokbot-a', cwd: '/h', title: '여행 계획', paneId: second });
+    s = play([{ type: 'history', sessionId: 'grokbot-a', cwd: '/h', account: 'x1', engine: 'grok', sandbox: null, runningTurnId: null, messages: [
+      { kind: 'user', text: '도쿄 가고 싶어', ts: null },
+      { kind: 'assistant', text: '언제 갈까요?', model: null, toolCalls: [], ts: null },
+    ] }], s);
+    s = reducer(s, { type: 'grokbot_send', from: 'grokbot-a', text: '하나 더', attachments: [], paneId: second });
+    expect(s.panes[0]!.queue.map((q) => q.text)).toEqual([first('하나 더')]);
+    expect(s.panes[1]!.queue).toEqual([]);
+    expect(s.activePaneId).toBe(s.panes[0]!.id);
+    // No folder: the pane waiting for one gets the text added to what waits — nothing queued with an empty cwd.
+    let w = sendIt(opened([proj('/h', [bot])]));
+    w = reducer(w, { type: 'add_pane' });
+    const other = w.panes[1]!.id;
+    w = reducer(w, { type: 'open', sessionId: 'grokbot-a', cwd: '/h', title: '여행 계획', paneId: other });
+    w = reducer(w, { type: 'grokbot_send', from: 'grokbot-a', text: '하나 더', attachments: [], paneId: other });
+    expect(w.panes[0]!.queue).toEqual([]);
+    expect(w.panes[0]!.grokBotSend?.text).toBe(`${first('다음 달에 갈래')}\n\n하나 더`);
+    expect(nextQueued(w.panes[0]!)).toBeNull();
+  });
+
+  it('an error about a session no pane shows leaves other panes loading (their afterLoad messages keep waiting); grokbot_linked shows no error bar', () => {
+    let s = opened([proj('/h', [{ ...bot, nextSession: 'g-away' }])]);
+    s = reducer(s, { type: 'open', sessionId: 'g-away', cwd: '/h', title: '여행 계획', paneId: pane(s).id });
+    s = reducer(s, { type: 'grokbot_send', from: 'grokbot-a', to: 'g-away', text: '두 번째', attachments: [], paneId: pane(s).id });
+    s = play([{ type: 'error', turnId: null, sessionId: 'g-raced', code: 'grokbot_linked', nextSession: 'g-away', message: '이미 이어짐' }], s);
+    expect(pane(s).loading).toBe(true);
+    expect(nextQueued(pane(s))).toBeNull();
+    expect(s.error).toBeNull();
   });
 
   it('waiting for a folder, the home folder is picked (refused): the picker closes and the text goes back into the composer', () => {

@@ -621,16 +621,21 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   };
 
   /** 새 세션으로 이어가기: `to` continues `from` (deck's session meta, never the transcript), titled "<old title> (이어서)". */
-  const linkHandoff = async (from: string, to: string) => {
+  const linkHandoff = async (from: string, to: string, turn?: Turn) => {
     if (!deps.meta) return;
     const old = deps.index.lookup(from)?.title ?? deps.index.codexOwned(deps.store.codexEntries()).find((e) => e.sessionId === from)?.title ?? from.slice(0, 8);
     try {
       await deps.meta.link(from, to, handoffTitle(old), sessionListed);
       deps.index.regroup();
       broadcast(indexMsg());
-      // Two first sends raced (another device): the conversation keeps its first continuing session; this one says so.
+      // Two first sends raced (another device): the conversation keeps its first continuing session; this one says so —
+      // to the devices on this turn and on this session only (as turn events go), never app-wide.
       const next = deps.meta.next?.(from);
-      if (from.startsWith(GROKBOT_ID_PREFIX) && next && next !== to) broadcast({ type: 'error', turnId: null, sessionId: to, message: sm().turn.grokBotLinked, code: 'grokbot_linked', nextSession: next });
+      if (turn && from.startsWith(GROKBOT_ID_PREFIX) && next && next !== to) {
+        const told = new Set<WebSocket>([turn.origin, ...turn.watchers]);
+        for (const [c, v] of viewing) if (v.has(to)) told.add(c);
+        for (const c of told) send(c, { type: 'error', turnId: null, sessionId: to, message: sm().turn.grokBotLinked, code: 'grokbot_linked', nextSession: next });
+      }
     } catch (err) {
       console.error('deck: handoff link failed', errMsg(err));
     }
@@ -713,7 +718,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (turn.fresh) {
       turn.fresh = false;
       if (turn.title) void titleNew(sid, turn.title).finally(() => announceSession(sid));
-      else if (turn.handoffFrom) void linkHandoff(turn.handoffFrom, sid).finally(() => announceSession(sid));
+      else if (turn.handoffFrom) void linkHandoff(turn.handoffFrom, sid, turn).finally(() => announceSession(sid));
       else if (turn.branch) { const b = turn.branch; void linkBranch(sid, b.parent, b.n).finally(() => announceSession(sid)); }
       else announceSession(sid);
     }

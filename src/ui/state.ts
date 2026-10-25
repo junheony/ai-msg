@@ -448,6 +448,8 @@ export type AppState = {
   unread: string[];
   /** Messages held for a restart whose pane left their session (opened another, cleared, closed): back, paused, when it is opened again. */
   parked: Record<string, { cwd: string; queue: QueueItem[] }>;
+  /** A Grok Bot message left waiting for its folder (the pane opened another session): kept by conversation id, back in its composer when it is opened again. */
+  grokBotDrafts?: Record<string, { text: string; attachments: UploadedAttachment[] }>;
   /** The server's hello arrived on this socket (false from a disconnect until then): the queue runner waits for it. */
   ready: boolean;
   /**
@@ -1506,6 +1508,9 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       if (sid && state.panes.some((p) => p.session?.sessionId === sid)) {
         return { ...state, panes: mapPanes(state, msg).map((p) => (p.session?.sessionId === sid ? { ...withNotice(p, { sessionId: sid, message: msg.message, level: 'error' }), loading: false } : p)) };
       }
+      // About a session no pane shows: other panes' history waits are not touched (their afterLoad messages wait on).
+      // A raced Grok Bot continuation (grokbot_linked) only matters to a pane showing that session: no error bar.
+      if (sid) return { ...state, panes: mapPanes(state, msg), ...(msg.code === 'grokbot_linked' ? {} : { error: msg.message }) };
       // Not tied to a shown session: no pane can wait on it, so a loading placeholder would never clear — drop them.
       return { ...state, panes: mapPanes(state, msg).map((p) => (p.loading ? { ...p, loading: false } : p)), error: msg.message };
     }
@@ -1565,7 +1570,13 @@ export function reducer(state: AppState, action: Action): AppState {
       const key = parkKey(action.sessionId, action.cwd);
       const back = s.parked[key]?.queue.map((q): QueueItem => ({ ...q, kept: true }));
       const { [key]: _back, ...parked } = s.parked;
-      return updatePane({ ...s, parked: back ? parked : s.parked, unread: action.sessionId ? s.unread.filter((u) => u !== action.sessionId) : s.unread }, action.paneId, (p) => ({
+      // A Grok Bot message waiting for its folder stays with its conversation (never this session's composer); opening that
+      // conversation again puts it back in the composer.
+      const left = !same && pane?.grokBotSend && pane.handoffFrom ? { [pane.handoffFrom.sessionId]: { text: grokBotRequest(pane.grokBotSend.text), attachments: pane.grokBotSend.attachments } } : {};
+      const drafts = { ...s.grokBotDrafts, ...left };
+      const draft = action.sessionId !== null ? drafts[action.sessionId] : undefined;
+      const { [action.sessionId ?? '']: _draft, ...otherDrafts } = drafts;
+      return updatePane({ ...s, parked: back ? parked : s.parked, grokBotDrafts: draft ? otherDrafts : drafts, unread: action.sessionId ? s.unread.filter((u) => u !== action.sessionId) : s.unread }, action.paneId, (p) => ({
         ...p,
         session: { sessionId: action.sessionId, cwd: action.cwd, account: null, title: action.title, engine: action.sessionId === null && p.engine !== 'auto' ? p.engine : null, sandbox: null },
         items: cached ?? [], activeTurnId: null, myTurns: [], attachments: [], ...ACTIVITY_RESET, loading: action.sessionId !== null,
@@ -1576,8 +1587,7 @@ export function reducer(state: AppState, action: Action): AppState {
               // The 자동 engine: 자동 model again (a model 자동 routed to is never sent with engine 자동).
               modelPicked: false, ...(action.sessionId === null && !p.modelPicked ? (p.engine === 'auto' ? { model: 'auto' as const } : engineOf(p.model) === 'claude' ? { model: DEFAULT_MODEL } : {}) : {}) }),
         handoff: null, handoffFrom: null, prefill: null, notices: [], older: undefined, grokBotCwd: null, grokBotSend: null, grokBotGoto: null,
-        // A Grok Bot message still waiting for its folder: the request goes back into the composer here, not lost.
-        ...(p.grokBotSend ? { prefill: grokBotRequest(p.grokBotSend.text), attachments: p.grokBotSend.attachments } : {}),
+        ...(draft ? { prefill: draft.text, attachments: draft.attachments } : {}),
       }));
     }
     case 'older_request': {
@@ -1655,9 +1665,19 @@ export function reducer(state: AppState, action: Action): AppState {
       }
       if (p.session?.sessionId !== action.from) return updatePane(state, p.id, back);
       // Another pane already started the continuing session (its first send not linked yet): the text goes there, not into a second one.
-      const started = state.panes.find((x) => x.id !== p.id && x.session && x.handoffFrom?.sessionId === action.from);
+      // Its first message out (or queued): the text follows it. Not yet: it gets the excerpt + text, by the folder rule.
+      const others = state.panes.filter((x) => x.id !== p.id && x.session && x.handoffFrom?.sessionId === action.from);
+      const started = others.find((x) => x.awaitingSend || x.activeTurnId || x.myTurns.length || x.session!.sessionId || x.queue.length);
       if (started) return { ...updatePane(state, started.id, (x) => ({ ...x, queue: [...x.queue, { id: nextQueueId(), text, attachments: action.attachments }] })), activePaneId: started.id };
       const next = grokBotHandoff(p, state.projects);
+      const unsent = others[0];
+      if (unsent) {
+        return { ...updatePane(state, unsent.id, (x) => {
+          if (x.grokBotSend) return { ...x, grokBotSend: { text: `${x.grokBotSend.text}\n\n${text}`, attachments: [...x.grokBotSend.attachments, ...action.attachments] } };
+          const first = { text: `${next.prefill ?? ''}${text}`, attachments: action.attachments };
+          return x.session!.cwd ? { ...x, prefill: null, queue: [...x.queue, { id: nextQueueId(), ...first }] } : { ...x, prefill: null, grokBotSend: first };
+        }), activePaneId: unsent.id };
+      }
       // As the manual flow sends it: the prefilled excerpt with the request typed after it.
       const first = { text: `${next.prefill ?? ''}${text}`, attachments: action.attachments };
       const ready: PaneState = next.session?.cwd
