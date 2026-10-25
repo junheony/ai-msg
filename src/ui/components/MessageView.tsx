@@ -525,35 +525,58 @@ function RegenModelMenu({ models, current, sticky, onPick }: { models: readonly 
 const SelectIcon = () => <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 4h7M3 8h10M3 12h5" /><path d="M12 10v4M10.5 10h3M10.5 14h3" /></svg>;
 
 /**
- * A reply's markdown as the plain text 텍스트 선택 shows: fences, heading / quote / rule marks, emphasis, inline code and
- * link syntax dropped (a link keeps its address), list marks as bullets; code inside fences stays exactly as written.
+ * One line's inline markdown as plain text. Code spans and backslash escapes are set aside first (as placeholders) so
+ * nothing below touches them: `__init__.py`, `x**2`, `[a](b)` in code stay as written, `\*` keeps its `*`. Then links
+ * keep their text (and address), emphasis / strike marks go; `_` / `__` only at word edges (snake_case stays).
+ */
+function plainInline(s: string): string {
+  const kept: string[] = [];
+  const keep = (v: string) => `\uE000${kept.push(v) - 1}\uE001`;
+  return s
+    .replace(/(?<!`)(`+)(.*?[^`])\1(?!`)/g, (_, _ticks: string, code: string) => keep(code))
+    .replace(/\\([!-/:-@[-`{-~])/g, (_, c: string) => keep(c))
+    .replace(/!?\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, (_, text: string, url: string) => (text && text !== url ? `${text} (${url})` : url))
+    .replace(/\*\*(?=\S)(.+?)(?<=\S)\*\*/g, '$1')
+    .replace(/(?<![A-Za-z0-9_])__(?=\S)(.+?)(?<=\S)__(?![A-Za-z0-9_])/g, '$1')
+    .replace(/~~(?=\S)(.+?)(?<=\S)~~/g, '$1')
+    .replace(/(^|[^\w*])\*(?=\S)([^*]+?)(?<=\S)\*(?!\w)/g, '$1$2')
+    .replace(/(?<![A-Za-z0-9_])_(?=\S)([^_]+?)(?<=\S)_(?![A-Za-z0-9_])/g, '$1')
+    .replace(/\uE000(\d+)\uE001/g, (_, i: string) => kept[Number(i)]!);
+}
+
+/**
+ * A reply's markdown as the plain text 텍스트 선택 shows: fences, heading / quote / rule marks and table separator rows
+ * dropped, list marks as bullets (task boxes as ☑ / ☐), inline marks via plainInline; blank-line runs outside code
+ * become one. Code inside fences stays exactly as written, blank lines included. Not handled: indented (4-space) code
+ * and fences inside a quote (their lines get the inline treatment).
  * Plain text, not the rendered reply: no code-block buttons or folds in the way, every line on screen, and what the
  * phone copies is clean text.
  */
 export function plainOf(md: string): string {
   let fence: string | null = null;
   const out: string[] = [];
+  /** out's last line is a blank line outside code (code keeps its blank lines; only these are collapsed / trimmed). */
+  let blank = true;
   for (const line of md.split('\n')) {
     const t = line.trim();
     if (fence) {
       if (t.startsWith(fence) && /^(`+|~+)$/.test(t)) fence = null;
-      else out.push(line);
+      else { out.push(line); blank = false; }
       continue;
     }
     const open = /^(`{3,}|~{3,})/.exec(t);
     if (open) { fence = open[1]!; continue; }
     if (/^([-*_])(\s*\1){2,}$/.test(t) || /^\|?(\s*:?-+:?\s*\|)+\s*:?-*:?\s*\|?$/.test(t)) continue;
-    out.push(line
+    // Outside code, a blank line after a blank line (or at the start) adds nothing.
+    if (!t) { if (!blank) out.push(''); blank = true; continue; }
+    blank = false;
+    out.push(plainInline(line
       .replace(/^(\s*)(?:>\s?)+/, '$1')
       .replace(/^(\s*)#{1,6}\s+/, '$1')
-      .replace(/^(\s*)[-*+]\s+(?:\[[ xX]\]\s+)?/, '$1• ')
-      .replace(/!?\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, (_, text: string, url: string) => (text && text !== url ? `${text} (${url})` : url))
-      .replace(/`([^`]+)`/g, '$1')
-      .replace(/(\*\*|__)(?=\S)(.+?)(?<=\S)\1/g, '$2')
-      .replace(/~~(?=\S)(.+?)(?<=\S)~~/g, '$1')
-      .replace(/(^|[^\w*])\*(?=\S)([^*]+?)(?<=\S)\*(?!\w)/g, '$1$2'));
+      .replace(/^(\s*)[-*+]\s+(?:\[([ xX])\]\s+)?/, (_, pad: string, box?: string) => `${pad}${box === undefined ? '•' : box === ' ' ? '☐' : '☑'} `)));
   }
-  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  if (blank && out.at(-1) === '') out.pop();
+  return out.join('\n');
 }
 
 /**

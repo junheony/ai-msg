@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { MSG_PRESS_MS, MessageActionsContext, MessageView, RegenerateContext, type MessageActions, type Regenerate } from './MessageView';
+import { MSG_PRESS_MS, MessageActionsContext, MessageView, RegenerateContext, plainOf, type MessageActions, type Regenerate } from './MessageView';
 import { TurnBadge } from './TurnBadge';
 import { DIVIDER_GAP_MS, timeDividers, timeLabel } from '../dateGroups';
 import { fromTranscript, type ChatItem } from '../state';
@@ -200,19 +200,37 @@ describe('message long press (touch)', () => {
 
   it('inside the selection sheet a long press is the phone\'s own selection: no message menu opens; 전체 복사 copies', async () => {
     vi.useFakeTimers();
-    const msg = userMsg({ onEdit: () => {} });
+    // A long-press handler above the message (as a list could have): the portal's events reach it through React's tree
+    // unless the sheet stops them.
+    const outer = vi.fn();
+    render(<div onPointerDown={outer} onContextMenu={outer}><MessageActionsContext.Provider value={{ onEdit: () => {} }}><MessageView item={{ kind: 'user', text: '원래 질문', n: 0 }} /></MessageActionsContext.Provider></div>);
+    const msg = document.querySelector<HTMLElement>('.msg.user')!;
     touchDown(msg.querySelector('pre')!);
     act(() => { vi.advanceTimersByTime(MSG_PRESS_MS); });
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '텍스트 선택' }));
     const text = screen.getByTestId('select-text');
+    expect(msg.contains(text)).toBe(false);
+    outer.mockClear();
     fireEvent.pointerUp(text, { pointerType: 'touch', isPrimary: true, pointerId: 1 });
     touchDown(text, 2);
+    fireEvent.contextMenu(text);
+    expect(outer).not.toHaveBeenCalled();
     act(() => { vi.advanceTimersByTime(MSG_PRESS_MS * 2); });
     expect(screen.getAllByRole('dialog').map((d) => d.getAttribute('aria-label'))).toEqual(['텍스트 선택']);
     fireEvent.click(screen.getByRole('button', { name: '전체 복사' }));
     await act(async () => {});
     expect(writeText).toHaveBeenCalledWith('원래 질문');
     expect(screen.getByRole('status').textContent).toContain('복사했어요');
+  });
+
+  it('plainOf: marks go, code (inline and fenced) stays as written', () => {
+    expect(plainOf('`__init__.py` 와 `x**2 + y**2`, `*.ts`,`*.js`, `[a](b)`')).toBe('__init__.py 와 x**2 + y**2, *.ts,*.js, [a](b)');
+    expect(plainOf('foo__bar__baz snake_case_name __굵게__ _기울임_ **둘** *하나*')).toBe('foo__bar__baz snake_case_name 굵게 기울임 둘 하나');
+    expect(plainOf('~/path 와 ~/other, ~~지움~~')).toBe('~/path 와 ~/other, 지움');
+    expect(plainOf('\\*글\\* 과 \\_밑\\_')).toBe('*글* 과 _밑_');
+    expect(plainOf('[문서](https://a.b/c) · <x>')).toBe('문서 (https://a.b/c) · <x>');
+    expect(plainOf('- [x] 끝\n- [ ] 남음\n- 그냥')).toBe('☑ 끝\n☐ 남음\n• 그냥');
+    expect(plainOf('앞\n\n\n\n뒤\n\n```py\na = 1\n\n\n\nb = [a](b)\n```\n\n\n끝')).toBe('앞\n\n뒤\n\na = 1\n\n\n\nb = [a](b)\n\n끝');
   });
 
   it('the selection sheet\'s text is selectable with the phone\'s callout (the message itself keeps touch-callout: none)', () => {
