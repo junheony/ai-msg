@@ -525,16 +525,57 @@ function RegenModelMenu({ models, current, sticky, onPick }: { models: readonly 
 const SelectIcon = () => <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 4h7M3 8h10M3 12h5" /><path d="M12 10v4M10.5 10h3M10.5 14h3" /></svg>;
 
 /**
- * 텍스트 선택: selects all of `body` (a message's text) so the phone's own selection handles can narrow it — the long press
- * that opens the sheet is the gesture a phone would otherwise use to start a selection.
+ * A reply's markdown as the plain text 텍스트 선택 shows: fences, heading / quote / rule marks, emphasis, inline code and
+ * link syntax dropped (a link keeps its address), list marks as bullets; code inside fences stays exactly as written.
+ * Plain text, not the rendered reply: no code-block buttons or folds in the way, every line on screen, and what the
+ * phone copies is clean text.
  */
-function selectAll(body: Element | null | undefined) {
-  const sel = typeof window.getSelection === 'function' ? window.getSelection() : null;
-  if (!body || !sel) return;
-  const range = document.createRange();
-  range.selectNodeContents(body);
-  sel.removeAllRanges();
-  sel.addRange(range);
+export function plainOf(md: string): string {
+  let fence: string | null = null;
+  const out: string[] = [];
+  for (const line of md.split('\n')) {
+    const t = line.trim();
+    if (fence) {
+      if (t.startsWith(fence) && /^(`+|~+)$/.test(t)) fence = null;
+      else out.push(line);
+      continue;
+    }
+    const open = /^(`{3,}|~{3,})/.exec(t);
+    if (open) { fence = open[1]!; continue; }
+    if (/^([-*_])(\s*\1){2,}$/.test(t) || /^\|?(\s*:?-+:?\s*\|)+\s*:?-*:?\s*\|?$/.test(t)) continue;
+    out.push(line
+      .replace(/^(\s*)(?:>\s?)+/, '$1')
+      .replace(/^(\s*)#{1,6}\s+/, '$1')
+      .replace(/^(\s*)[-*+]\s+(?:\[[ xX]\]\s+)?/, '$1• ')
+      .replace(/!?\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, (_, text: string, url: string) => (text && text !== url ? `${text} (${url})` : url))
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/(\*\*|__)(?=\S)(.+?)(?<=\S)\1/g, '$2')
+      .replace(/~~(?=\S)(.+?)(?<=\S)~~/g, '$1')
+      .replace(/(^|[^\w*])\*(?=\S)([^*]+?)(?<=\S)\*(?!\w)/g, '$1$2'));
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * 텍스트 선택 (message long press → sheet): the message as plain text in a tall sheet where the phone's own selection
+ * works — long press / drag to select, its handles and copy callout (the message itself keeps the long press for its
+ * menu). Plus 전체 복사. A portal like MessageSheet, its events kept from the message's long press.
+ */
+function SelectTextSheet({ text, onCopy, onClose }: { text: string; onCopy: () => void; onClose: () => void }) {
+  const t = ui().chat.selectText;
+  const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
+  return createPortal(
+    <div className="msg-sheet-root" onPointerDown={stop} onClick={stop} onContextMenu={stop}>
+      <Sheet className="select-sheet" label={t.title} onClose={onClose}>
+        <SheetHead title={t.title} onClose={onClose} />
+        <div className="select-sheet-text" data-testid="select-text">{text}</div>
+        <div className="select-sheet-foot">
+          <button type="button" className="btn ghost" onClick={onCopy}><CopyIcon />{t.copyAll}</button>
+        </div>
+      </Sheet>
+    </div>,
+    document.body,
+  );
 }
 
 /** A message's first non-empty line, markdown marks dropped: the long-press sheet's head (CSS cuts it to one line). */
@@ -703,6 +744,8 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
     setMenu(true);
   }, { ms: MSG_PRESS_MS, ignore: PRESS_IGNORE });
   const closeMenu = () => setMenu(false);
+  // 텍스트 선택: the text the selection sheet shows while it is open.
+  const [selecting, setSelecting] = useState<string | null>(null);
   // 간결 모드, live turn: the raw text before the last tool call (ToolCallItem.textAt counts item.text) folds into a lead
   // line, memoized so a delta only re-slices; the rest streams. Hooks stay above the early returns.
   const liveCuts = concise && item.kind === 'assistant' && item.streaming ? item.toolCalls.map((t) => t.textAt) : null;
@@ -718,6 +761,9 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
   // icon alone is easy to miss, so the row's copy toasts too.
   const feedback = useFileActions();
   const copied = actions.coarse ? (ok: boolean) => feedback.toast(ok ? '복사했어요' : '복사하지 못했어요', ok ? 'info' : 'error') : undefined;
+  const selectSheet = selecting !== null && (
+    <SelectTextSheet text={selecting} onCopy={() => feedback.copy(selecting, ui().chat.selectText.copied)} onClose={() => setSelecting(null)} />
+  );
   if (item.kind === 'user') {
     if (absorbed) return null;
     if (item.text === HANDOFF_PROMPT) return <div className="msg user handoff-req" title={HANDOFF_PROMPT}><pre>인계 메모 요청 (새 세션으로 이어가기)</pre></div>;
@@ -764,7 +810,8 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
             </div>
           )}
         </div>
-        {menu && text && <MessageSheet excerpt={excerptOf(text)} copy={() => feedback.copy(text, '복사했어요')} select={() => selectAll(msgRef.current?.querySelector('pre'))} edit={edit} retry={undefined} again={undefined} pick={null} versions={versions} onClose={closeMenu} />}
+        {menu && text && <MessageSheet excerpt={excerptOf(text)} copy={() => feedback.copy(text, '복사했어요')} select={shown ? () => setSelecting(shown) : null} edit={edit} retry={undefined} again={undefined} pick={null} versions={versions} onClose={closeMenu} />}
+        {selectSheet}
         {feedback.node}
       </>
     );
@@ -835,10 +882,11 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
       <MessageSheet
         excerpt={excerptOf(shownText || item.text)}
         copy={item.text ? () => feedback.copy(shownText || item.text, '복사했어요') : null}
-        select={shownText ? () => selectAll(msgRef.current?.querySelector('.markdown:not(.failed-attempt)')) : null}
+        select={shownText ? () => setSelecting(plainOf(shownText)) : null}
         edit={null} retry={retry} again={again} pick={regenPick} versions={null} onClose={closeMenu}
       />
     )}
+    {selectSheet}
     {feedback.node}
     </FileRootContext.Provider>
   );

@@ -66,6 +66,8 @@ export const chat = {
   /** A long fenced code block shows its first lines; the toggle under it. */
   code: { more: (n: number) => `Show ${n} more line${n === 1 ? '' : 's'}`, less: 'Show less' },
   taskMenu: 'Run as a separate task',
+  /** The phone's text-selection screen (message long press → Select text): the message as plain text to select from. */
+  selectText: { title: 'Select text', copyAll: 'Copy all', copied: 'Copied' },
   /** The new-chat screen; `intro`…`homeFailed` = the first run (no folders yet). */
   newChat: {
     send: 'Send — start a new chat (Enter)',

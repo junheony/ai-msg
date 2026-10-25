@@ -171,21 +171,55 @@ describe('message long press (touch)', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('텍스트 선택 closes the sheet and selects the whole message text for the phone\'s handles', () => {
+  it('텍스트 선택 opens the selection sheet with the message text; ✕ / Esc close it, focus back on the message', () => {
+    vi.useFakeTimers();
+    const msg = userMsg({ onEdit: () => {} });
+    const openSelect = (target: Element) => {
+      touchDown(target);
+      act(() => { vi.advanceTimersByTime(MSG_PRESS_MS); });
+      fireEvent.click(within(screen.getByRole('dialog', { name: '메시지 메뉴' })).getByRole('button', { name: '텍스트 선택' }));
+      return screen.getByRole('dialog', { name: '텍스트 선택' });
+    };
+    let sheet = openSelect(msg.querySelector('pre')!);
+    expect(screen.queryByRole('dialog', { name: '메시지 메뉴' })).toBeNull();
+    expect(within(sheet).getByRole('heading', { name: '텍스트 선택' })).toBeTruthy();
+    expect(within(sheet).getByTestId('select-text').textContent).toBe('원래 질문');
+    expect(window.getSelection()!.toString()).toBe('');
+    fireEvent.click(within(sheet).getByRole('button', { name: '닫기' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(msg);
+    sheet = openSelect(msg.querySelector('pre')!);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    cleanup();
+    render(<MessageView item={reply('# 제목\n답장 **본문**과 `코드`\n\n```ts\nconst a = 1; // *그대로*\n```')} />);
+    const answer = document.querySelector('.msg.assistant')!;
+    sheet = openSelect(answer.querySelector('p')!);
+    expect(within(sheet).getByTestId('select-text').textContent).toBe('제목\n답장 본문과 코드\n\nconst a = 1; // *그대로*');
+  });
+
+  it('inside the selection sheet a long press is the phone\'s own selection: no message menu opens; 전체 복사 copies', async () => {
     vi.useFakeTimers();
     const msg = userMsg({ onEdit: () => {} });
     touchDown(msg.querySelector('pre')!);
     act(() => { vi.advanceTimersByTime(MSG_PRESS_MS); });
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '텍스트 선택' }));
-    expect(screen.queryByRole('dialog')).toBeNull();
-    expect(window.getSelection()!.toString()).toBe('원래 질문');
-    cleanup();
-    render(<MessageView item={reply('답장 **본문**')} />);
-    const answer = document.querySelector('.msg.assistant')!;
-    touchDown(answer.querySelector('p')!);
-    act(() => { vi.advanceTimersByTime(MSG_PRESS_MS); });
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '텍스트 선택' }));
-    expect(window.getSelection()!.toString()).toBe('답장 본문');
+    const text = screen.getByTestId('select-text');
+    fireEvent.pointerUp(text, { pointerType: 'touch', isPrimary: true, pointerId: 1 });
+    touchDown(text, 2);
+    act(() => { vi.advanceTimersByTime(MSG_PRESS_MS * 2); });
+    expect(screen.getAllByRole('dialog').map((d) => d.getAttribute('aria-label'))).toEqual(['텍스트 선택']);
+    fireEvent.click(screen.getByRole('button', { name: '전체 복사' }));
+    await act(async () => {});
+    expect(writeText).toHaveBeenCalledWith('원래 질문');
+    expect(screen.getByRole('status').textContent).toContain('복사했어요');
+  });
+
+  it('the selection sheet\'s text is selectable with the phone\'s callout (the message itself keeps touch-callout: none)', () => {
+    const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    const rule = css.match(/\n\.select-sheet-text \{([^}]*)\}/)![1]!;
+    expect(rule).toContain('user-select: text');
+    expect(rule).toContain('-webkit-touch-callout: default');
   });
 
   it('복사 in the sheet says how it went in one toast (a status, read once); a failure is an alert', async () => {

@@ -62,6 +62,7 @@ export const chat: Widen<typeof en> = {
   /** A long fenced code block shows its first lines; the toggle under it. */
   code: { more: (n: number) => `${n}줄 더 보기`, less: '접기' },
   taskMenu: '따로 작업으로 돌리기',
+  selectText: { title: '텍스트 선택', copyAll: '전체 복사', copied: '복사했어요' },
   newChat: {
     send: '보내기 — 새 대화로 시작 (Enter)',
     firstLabel: '시작하기',
