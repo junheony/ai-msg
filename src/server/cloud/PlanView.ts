@@ -82,7 +82,7 @@ export class PlanView {
     try {
       next = await this.o.api.entitlement(token);
     } catch (err) {
-      await this.o.onError?.(err, token);
+      try { await this.o.onError?.(err, token); } catch { /* the owner's handler failing must not reject refresh() */ }
       return this.get(); // null when the owner's confirmation unlinked, else the stored plan
     }
     if (st.get().hostToken !== token) return this.get(); // unlinked or relinked meanwhile
