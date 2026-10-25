@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { useReducer } from 'react';
-import { Pane } from './Pane';
+import { Pane, useQueueRunner } from './Pane';
 import { Sidebar, importTitle, rowTag } from './Sidebar';
-import { GEMINI_IMPORT_NOTE } from '../../shared/handoff';
+import { GEMINI_IMPORT_NOTE, grokBotHandoffMessage } from '../../shared/handoff';
+import type { ClientMessage } from '../../shared/protocol';
 import type { ProjectEntry, SessionEntry } from '../../shared/session-types';
-import { initialState, newPane, reducer, type PaneState } from '../state';
+import { initialState, newPane, reducer, type Action, type PaneState } from '../state';
 
 Element.prototype.scrollIntoView = () => {};
 
@@ -22,14 +23,14 @@ const actions = () => ({ pins: [], onRename: vi.fn(), onTogglePin: vi.fn(), onAr
 describe('Grok Bot conversation pane', () => {
   afterEach(cleanup);
 
-  it.each([['source', bot], ['the grokbot- id alone (old index)', oldBot]])('by %s: read-only composer, the app note, and the handoff button dispatches grokbot_handoff', (_, entry) => {
+  it.each([['source', bot], ['the grokbot- id alone (old index)', oldBot]])('by %s: the composer is open (where a send goes in the placeholder), the handoff button still dispatches grokbot_handoff', (_, entry) => {
     const dispatch = vi.fn();
     const send = vi.fn();
     render(<Pane pane={paneOn(entry)} app={{ pending: [], questions: [], codexAvailable: false, projects: projects([entry]) }} active closable={false} dispatch={dispatch} send={send} onClose={noop} />);
     const ta = screen.getByLabelText('메시지') as HTMLTextAreaElement;
-    expect(ta.disabled).toBe(true);
-    expect(ta.placeholder).toBe('Grok Bot 앱 대화라 읽기만 할 수 있어요');
-    expect(screen.getByTestId('composer-note').textContent).toBe('Grok Bot 앱 대화예요 — 여기서 이어 쓰려면 새 Grok 세션으로 옮겨요');
+    expect(ta.disabled).toBe(false);
+    expect(ta.placeholder).toBe('보내면 새 Grok 세션으로 이어져요');
+    expect(screen.getByTestId('composer-note').textContent).toBe('보내면 작업 폴더부터 골라요 — 홈 폴더에서는 시작하지 않아요');
     fireEvent.click(screen.getByTestId('grokbot-handoff'));
     expect(dispatch).toHaveBeenCalledWith({ type: 'grokbot_handoff', paneId: 'p1' });
     expect(send).not.toHaveBeenCalled();
@@ -92,8 +93,8 @@ describe('Grok Bot handoff pane: the folder', () => {
     return <Pane pane={state.panes[0]!} app={state} active closable={false} dispatch={dispatch} send={noop} onClose={noop} />;
   }
 
-  it('starts in the most recent non-home project, shown with 작업 폴더 바꾸기 (opens the folder picker); never the home folder', () => {
-    const work = e({ sessionId: 'c-1', engine: 'claude', imported: false, cwd: '/w/proj', lastModified: 5 });
+  it('starts in the most recent non-home Grok session\'s folder, shown with 작업 폴더 바꾸기 (opens the folder picker); never the home folder', () => {
+    const work = e({ sessionId: 'g-1', imported: false, cwd: '/w/proj', lastModified: 5 });
     render(<Harness ps={[...projects([bot]), { cwd: '/w/proj', name: 'proj', pinned: false, sessions: [work] }]} />);
     fireEvent.click(screen.getByTestId('grokbot-handoff'));
     expect(screen.getByTestId('composer-note').textContent).toBe('작업 폴더: /w/proj — 보내기 전에 바꿀 수 있어요');
@@ -110,6 +111,64 @@ describe('Grok Bot handoff pane: the folder', () => {
     expect(ta.disabled).toBe(true);
     expect(ta.placeholder).toBe('작업 폴더를 고른 뒤 보낼 수 있어요');
     expect(screen.getByTestId('grokbot-handoff-cwd')).toBeTruthy();
+  });
+});
+
+describe('Grok Bot conversation: write and send', () => {
+  afterEach(cleanup);
+  const work = e({ sessionId: 'g-work', imported: false, cwd: '/w/proj', lastModified: 5 });
+  const next = e({ sessionId: 'g-next', imported: false, cwd: '/w/next', title: 'Grok Bot 대화 (이어서)', prevSession: 'grokbot-a' });
+
+  function setup(ps: ProjectEntry[]) {
+    const send = vi.fn<(m: ClientMessage) => void>();
+    const opened = vi.fn();
+    let out: (a: Action) => void = () => {};
+    function Harness() {
+      const [state, dispatch] = useReducer(reducer, { ...initialState, ready: true, projects: ps, panes: [paneOn(bot)], activePaneId: 'p1' });
+      out = dispatch;
+      useQueueRunner(state.panes, state.ready, dispatch, send);
+      return <Pane pane={state.panes[0]!} app={state} active closable={false} dispatch={dispatch} send={send} onClose={noop}
+        onOpenSession={(sessionId, cwd, title) => { opened(sessionId); dispatch({ type: 'open', sessionId, cwd, title, paneId: 'p1' }); }} />;
+    }
+    render(<Harness />);
+    const type = (text: string) => {
+      const ta = screen.getByLabelText('메시지') as HTMLTextAreaElement;
+      fireEvent.change(ta, { target: { value: text } });
+      fireEvent.keyDown(ta, { key: 'Enter' });
+    };
+    const sends = () => send.mock.calls.map(([m]) => m).filter((m): m is Extract<ClientMessage, { type: 'send' }> => m.type === 'send');
+    return { type, sends, opened, act: (a: Action) => act(() => out(a)) };
+  }
+
+  it('the first send becomes a new Grok session: one send with the excerpt + the text, never to the grokbot- id', () => {
+    const h = setup([...projects([bot]), { cwd: '/w/proj', name: 'proj', pinned: false, sessions: [work] }]);
+    expect(screen.getByTestId('composer-note').textContent).toBe('작업 폴더: /w/proj');
+    h.type('다음 달에 갈래');
+    expect(h.sends()).toEqual([expect.objectContaining({ sessionId: null, cwd: '/w/proj', engine: 'grok', handoffFrom: 'grokbot-a', text: grokBotHandoffMessage('Grok Bot 대화', '') + '다음 달에 갈래' })]);
+    expect(h.sends().some((m) => m.sessionId?.startsWith('grokbot-'))).toBe(false);
+  });
+
+  it('no folder found by itself: the picker opens and nothing is sent; closing it keeps the text in the composer', () => {
+    const h = setup(projects([bot]));
+    h.type('다음 달에 갈래');
+    expect(screen.getByRole('dialog', { name: '작업 폴더 바꾸기' })).toBeTruthy();
+    expect(h.sends()).toEqual([]);
+    expect(screen.getByTestId('composer-note').textContent).toBe('작업 폴더를 고르면 쓴 글을 바로 보내요');
+    fireEvent.click(within(screen.getByRole('dialog', { name: '작업 폴더 바꾸기' })).getAllByRole('button', { name: '닫기' })[0]!);
+    expect(screen.queryByRole('dialog', { name: '작업 폴더 바꾸기' })).toBeNull();
+    expect((screen.getByLabelText('메시지') as HTMLTextAreaElement).value).toBe(grokBotHandoffMessage('Grok Bot 대화', '') + '다음 달에 갈래');
+    expect(h.sends()).toEqual([]);
+  });
+
+  it('already continued: the send opens that session and goes there — no new session (0 sends without an id), no excerpt again', () => {
+    const h = setup([...projects([bot]), { cwd: '/w/next', name: 'next', pinned: false, sessions: [next] }]);
+    expect(screen.getByTestId('grokbot-handoff').textContent).toBe('이어 쓴 세션 열기');
+    h.type('두 번째');
+    expect(h.opened).toHaveBeenCalledWith('g-next');
+    expect(h.sends()).toEqual([]); // waits for the history
+    h.act({ type: 'server', msg: { type: 'history', sessionId: 'g-next', cwd: '/w/next', account: 'x1', engine: 'grok', sandbox: null, runningTurnId: null, messages: [] } });
+    expect(h.sends()).toEqual([expect.objectContaining({ sessionId: 'g-next', text: '두 번째' })]);
+    expect(h.sends().filter((m) => m.sessionId === null)).toHaveLength(0);
   });
 });
 

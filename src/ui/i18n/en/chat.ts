@@ -76,4 +76,16 @@ export const chat = {
     home: 'Home folder',
     homeFailed: "Couldn't open your home folder. Try picking a folder.",
   },
+  /** A Grok Bot app conversation: sending continues it in a Grok session (the app conversation itself is never written). */
+  grokBot: {
+    placeholderNew: 'Send to continue in a new Grok session',
+    placeholderLinked: 'Send to continue in the Grok session you already started',
+    linkedNote: (title: string) => `Goes to the continuing session “${title}”`,
+    cwdNote: (cwd: string) => `Working folder: ${cwd}`,
+    pickFirst: "Sending asks for a working folder first — never starts in your home folder",
+    pickThenSend: 'Pick a working folder and your message goes out right away',
+    openLinked: 'Open the continuing session',
+    tag: 'From Grok Bot',
+    rowTitle: (preview: string) => `Grok Bot app conversation — sending here continues it in a new Grok session (the app conversation itself is not written)${preview}`,
+  },
 };

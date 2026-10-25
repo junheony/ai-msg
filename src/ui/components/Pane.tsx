@@ -10,7 +10,7 @@ import { tasksForPane } from '../../shared/tasks';
 import { newChatDraftKey } from '../drafts';
 import type { ProjectEntry, SessionEntry } from '../../shared/session-types';
 import { linksOf, versionsAt } from '../../shared/branches';
-import { cardsForPane, engineOf, modelFor, nextQueued, olderOfPane, paneMode, type Action, type AppState, type PaneState, type UploadedAttachment } from '../state';
+import { cardsForPane, engineOf, grokBotLinked, grokBotSendCwd, modelFor, nextQueued, olderOfPane, paneMode, type Action, type AppState, type PaneState, type UploadedAttachment } from '../state';
 import type { UploadFn } from '../upload';
 import { Chat, modelChoices, type ChatProps } from './Chat';
 import { RegenerateContext, type Regenerate } from './MessageView';
@@ -31,6 +31,7 @@ import { hasOpenPopup } from '../composerFocus';
 import { isMacPlatform, isTypingTarget, modKeys } from '../shortcuts';
 import { isPhoneNow, useIsPhone } from '../useIsPhone';
 import { isFast } from '../fastMode';
+import { ui } from '../i18n';
 
 // T9 prerequisite (a): every send carries a fresh correlation id so the reducer matches its turn_started / refusal
 // to this pane, not to whichever pane waits first. Not crypto.randomUUID — it is missing outside secure contexts
@@ -526,9 +527,20 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const grokBot = entry?.source === 'grokbot' || !!s?.sessionId?.startsWith('grokbot-');
   // The Grok Bot handoff's new session: its folder (never the home folder) is shown and can be changed before the first send.
   const grokBotNew = isNew && !!pane.handoffFrom?.sessionId.startsWith('grokbot-');
+  // A Grok Bot conversation is written to by sending: the text goes on in the Grok session continuing it — the one
+  // already linked (opened here first: one per conversation), else a new one in grokBotSendCwd ('' = the picker asks).
+  const grokBotNext = grokBot && sid ? grokBotLinked(projects, sid) : undefined;
+  const grokBotCwd = grokBot && !grokBotNext ? grokBotSendCwd(pane, projects) : '';
+  const grokBotSend = (text: string) => {
+    if (!sid) return;
+    if (grokBotNext) onOpenSession?.(grokBotNext.sessionId, grokBotNext.cwd, grokBotNext.title);
+    dispatch({ type: 'grokbot_send', from: sid, text, attachments: pane.attachments, paneId: pane.id });
+  };
   // A terminal `grok` has this conversation open: deck only reads it (sending too would fork it). The server rescans
   // the holders while a browser is connected, so the composer opens again by itself once that grok exits.
   const grokHeld = entry?.engine === 'grok' && !!entry.heldBy;
+  // A send that found no folder by itself: the picker opens (closing it puts the message back in the composer).
+  useEffect(() => { if (grokBotNew && pane.grokBotSend) setCwdPick(true); }, [grokBotNew, !!pane.grokBotSend]);
   const blocked = grokBot || !!entry?.codexArchived || !!(entry?.imported && entry.cwdMissing) || gone === 'retired' || gone === 'unknown';
   const latest = useRef({ pane, send, accounts: names.all, defaultMode: app.defaultPermMode ?? null });
   latest.current = { pane, send, accounts: names.all, defaultMode: app.defaultPermMode ?? null };
@@ -618,9 +630,9 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           grok={app.grok ?? null}
           attachments={pane.attachments}
           uploadFn={uploadFn}
-          onSend={(text) => sendFromPane(pane, text, pane.attachments, dispatch, send, app.defaultPermMode ?? null)}
-          onSendText={(text) => sendFromPane(pane, text, [], dispatch, send, app.defaultPermMode ?? null, false, undefined, { keepAttachments: true })}
-          onSendStandard={(text) => sendFromPane(pane, text, pane.attachments, dispatch, send, app.defaultPermMode ?? null, false, undefined, { noFast: true })}
+          onSend={(text) => (grokBot ? grokBotSend(text) : sendFromPane(pane, text, pane.attachments, dispatch, send, app.defaultPermMode ?? null))}
+          onSendText={(text) => (grokBot ? grokBotSend(text) : sendFromPane(pane, text, [], dispatch, send, app.defaultPermMode ?? null, false, undefined, { keepAttachments: true }))}
+          onSendStandard={(text) => (grokBot ? grokBotSend(text) : sendFromPane(pane, text, pane.attachments, dispatch, send, app.defaultPermMode ?? null, false, undefined, { noFast: true }))}
           {...(has('tasks') && s.cwd && !grokBot ? { onStartTask: (text: string) => startTaskFromPane(pane, text, dispatch, send) } : {})}
           tasks={tasksForPane(app.tasks ?? [], s.sessionId, s.cwd)}
           taskCap={app.taskCap ?? null}
@@ -636,7 +648,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           prefill={pane.prefill}
           draftKey={`new:${pane.id}`}
           prevSession={link(prevId)}
-          nextSession={link(entry?.nextSession ?? null)}
+          nextSession={link(entry?.nextSession ?? grokBotNext?.sessionId ?? null)}
           notices={pane.notices?.filter((n) => n.sessionId === null || n.sessionId === s.sessionId)}
           onDismissNotice={(message) => dispatch({ type: 'dismiss_notice', paneId: pane.id, message })}
           routeFit={pane.routeFit ?? null}
@@ -657,10 +669,12 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
             dispatch({ type: 'route_fit_resolve', how, paneId: pane.id });
             if (how === 'send') sendFromPane(pane, f.text, f.attachments.map((a) => ({ ...a, size: 0 })), dispatch, send, app.defaultPermMode ?? null, false, undefined, { ignoreFit: true });
           }}
-          composerNote={gone === 'retired' ? '뺀 계정의 세션이라 이어 쓸 수 없습니다 — 기록은 볼 수 있습니다' : gone === 'unknown' ? '설정에 없는 계정의 세션이라 이어 쓸 수 없습니다' : grokBot ? 'Grok Bot 앱 대화예요 — 여기서 이어 쓰려면 새 Grok 세션으로 옮겨요' : grokBotNew ? (s.cwd ? `작업 폴더: ${s.cwd} — 보내기 전에 바꿀 수 있어요` : '작업 폴더를 골라 주세요 — 홈 폴더에서는 시작하지 않아요') : grokHeld ? GROK_HELD.note : entry?.imported && entry.engine === 'gemini' && !entry.cwdMissing ? GEMINI_IMPORT_NOTE : null}
-          onGrokBotHandoff={grokBot ? () => dispatch({ type: 'grokbot_handoff', paneId: pane.id }) : undefined}
-          onPickCwd={grokBotNew ? () => setCwdPick(true) : undefined}
-          readOnly={grokBot ? 'Grok Bot 앱 대화라 읽기만 할 수 있어요' : grokBotNew && !s.cwd ? '작업 폴더를 고른 뒤 보낼 수 있어요' : entry?.codexArchived ? '보관된 Codex 대화라 읽기만 할 수 있어요' : entry?.imported && entry.cwdMissing ? '폴더가 없어 이어서 보낼 수 없어요 · 읽기만 할 수 있어요' : grokHeld ? GROK_HELD.readOnly : null}
+          composerNote={gone === 'retired' ? '뺀 계정의 세션이라 이어 쓸 수 없습니다 — 기록은 볼 수 있습니다' : gone === 'unknown' ? '설정에 없는 계정의 세션이라 이어 쓸 수 없습니다' : grokBot ? (grokBotNext ? ui().chat.grokBot.linkedNote(grokBotNext.title) : grokBotCwd ? ui().chat.grokBot.cwdNote(grokBotCwd) : ui().chat.grokBot.pickFirst) : grokBotNew ? (pane.grokBotSend ? ui().chat.grokBot.pickThenSend : s.cwd ? `작업 폴더: ${s.cwd} — 보내기 전에 바꿀 수 있어요` : '작업 폴더를 골라 주세요 — 홈 폴더에서는 시작하지 않아요') : grokHeld ? GROK_HELD.note : entry?.imported && entry.engine === 'gemini' && !entry.cwdMissing ? GEMINI_IMPORT_NOTE : null}
+          onGrokBotHandoff={grokBot ? () => (grokBotNext ? onOpenSession?.(grokBotNext.sessionId, grokBotNext.cwd, grokBotNext.title) : dispatch({ type: 'grokbot_handoff', paneId: pane.id })) : undefined}
+          grokBotHandoffLabel={grokBotNext ? ui().chat.grokBot.openLinked : undefined}
+          onPickCwd={grokBotNew || (grokBot && !grokBotNext) ? () => setCwdPick(true) : undefined}
+          idlePlaceholder={grokBot ? (grokBotNext ? ui().chat.grokBot.placeholderLinked : ui().chat.grokBot.placeholderNew) : undefined}
+          readOnly={grokBotNew && !s.cwd ? '작업 폴더를 고른 뒤 보낼 수 있어요' : entry?.codexArchived ? '보관된 Codex 대화라 읽기만 할 수 있어요' : entry?.imported && entry.cwdMissing ? '폴더가 없어 이어서 보낼 수 없어요 · 읽기만 할 수 있어요' : grokHeld ? GROK_HELD.readOnly : null}
           onInterrupt={interrupt}
           onCancelStart={() => {
             // Waiting in the server's queue (turn_queued): take it back out there too, or it would run after the 취소.
@@ -783,8 +797,8 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           onClose={() => { clearRefusal(); setCommanderSheet(false); setCommanderAsked(false); }} />,
         document.body,
       )}
-      {cwdPick && grokBotNew && s && createPortal(
-        <SessionCwdDialog title={s.title} cwd={s.cwd || '—'} onClose={() => setCwdPick(false)} onPick={(cwd) => { setCwdPick(false); dispatch({ type: 'set_new_cwd', cwd, paneId: pane.id }); }} />,
+      {cwdPick && (grokBotNew || grokBot) && s && createPortal(
+        <SessionCwdDialog title={s.title} cwd={(grokBot ? grokBotCwd : s.cwd) || '—'} onClose={() => { setCwdPick(false); dispatch({ type: 'grokbot_send_cancel', paneId: pane.id }); }} onPick={(cwd) => { setCwdPick(false); dispatch({ type: 'set_new_cwd', cwd, paneId: pane.id }); }} />,
         document.body,
       )}
     </section>

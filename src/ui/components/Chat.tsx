@@ -159,10 +159,14 @@ export type ChatProps = {
   onHandoff?: () => void;
   /** deck 에서 새 GPT 세션으로 이어가기: offered under a GPT turn the thread lock refused (another app holds the thread). */
   onCodexHandoff?: (turnId: string) => void;
-  /** A read-only Grok Bot app conversation: opens a deck Grok session prefilled with an excerpt (nothing is sent). */
+  /** A Grok Bot app conversation: opens a deck Grok session prefilled with an excerpt (nothing is sent) — or the one already continuing it. */
   onGrokBotHandoff?: () => void;
-  /** 작업 폴더 바꾸기 under the composer note (the Grok Bot handoff's new session, before its first send). */
+  /** The handoff button's label when not the default (the conversation already continues: 이어 쓴 세션 열기). */
+  grokBotHandoffLabel?: string;
+  /** 작업 폴더 바꾸기 under the composer note (a Grok Bot conversation, or its handoff's new session before its first send). */
   onPickCwd?: () => void;
+  /** The idle composer's placeholder instead of the default (a Grok Bot conversation: where a send goes). */
+  idlePlaceholder?: string;
   /** The handoff-note turn is running. */
   handoffWriting?: boolean;
   /** Text put into the composer once (the new session's first message after a handoff); not sent. Never over a draft. */
@@ -779,7 +783,7 @@ export function Chat(p: ChatProps) {
           <div className="pane-notice notice composer-note">
             {p.composerNote && <span className="pane-notice-text" role="status" data-testid="composer-note">{p.composerNote}</span>}
             {p.onPickCwd && <button type="button" className="btn ghost" data-testid="grokbot-handoff-cwd" onClick={p.onPickCwd}>작업 폴더 바꾸기</button>}
-            {p.onGrokBotHandoff && <button type="button" className="btn ghost" data-testid="grokbot-handoff" onClick={p.onGrokBotHandoff}>새 Grok 세션으로 이어가기</button>}
+            {p.onGrokBotHandoff && <button type="button" className="btn ghost" data-testid="grokbot-handoff" onClick={p.onGrokBotHandoff}>{p.grokBotHandoffLabel ?? '새 Grok 세션으로 이어가기'}</button>}
           </div>
         )}
         <Composer
@@ -849,7 +853,7 @@ export function Chat(p: ChatProps) {
             // letter, swaps words with autocorrect and underlines code — prompts are not prose.
             autoCorrect="off" autoCapitalize="off" spellCheck={false}
             disabled={!!p.readOnly}
-            placeholder={p.readOnly ? p.readOnly : ghost ? ghost : waitingFor ? (waitingFor === 'question' ? ui().chat.waiting.placeholderQuestion : ui().chat.waiting.placeholderPermission) : queueing ? (steering ? (coarse ? '실행 중 · 보내면 다음 도구 실행 뒤 전달' : '실행 중 · Enter 로 보내면 다음 도구 실행 뒤 전달 · Esc 중단') : coarse ? '실행 중 · 보내면 대기열에 추가' : '실행 중 · Enter 로 대기열에 추가 · Esc 중단') : composerPlaceholder()}
+            placeholder={p.readOnly ? p.readOnly : ghost ? ghost : waitingFor ? (waitingFor === 'question' ? ui().chat.waiting.placeholderQuestion : ui().chat.waiting.placeholderPermission) : queueing ? (steering ? (coarse ? '실행 중 · 보내면 다음 도구 실행 뒤 전달' : '실행 중 · Enter 로 보내면 다음 도구 실행 뒤 전달 · Esc 중단') : coarse ? '실행 중 · 보내면 대기열에 추가' : '실행 중 · Enter 로 대기열에 추가 · Esc 중단') : p.idlePlaceholder ?? composerPlaceholder()}
             aria-label="메시지"
             rows={1}
             // Not a form field: keeps iOS from showing its AutoFill (password/card/address) bar above the keyboard.

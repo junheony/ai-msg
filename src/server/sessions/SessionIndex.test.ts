@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { MAX_RECENT_FOLDERS, SessionIndex, groupProjects, readPinned, readRecent, scanProfile } from './SessionIndex';
+import { SessionMetaStore } from './SessionMetaStore';
 import type { SessionEntry } from '../../shared/session-types';
 import { rootsOf } from '../../shared/accounts.testkit';
 
@@ -267,5 +268,32 @@ describe('headless (`claude -p`) sessions', () => {
     known.add(ID1);
     idx.regroup();
     expect(listed(idx)).toEqual([ID1, ID2, ID3]);
+  });
+});
+
+describe('SessionIndex: one row per Grok Bot conversation', () => {
+  const entry = (over: Partial<SessionEntry>): SessionEntry => ({ sessionId: 'x', account: 'x1', engine: 'grok', cwd: '/w', projectDir: '/p', file: '/f', title: 't', lastModified: 1, sizeBytes: 0, imported: true, ...over });
+  const fake = (list: SessionEntry[]) => ({ refresh: async () => {}, list: () => list, lookup: (id: string) => list.find((e) => e.sessionId === id) ?? null, activeAgeMs: async () => null });
+
+  it('a Grok Bot conversation continued by a listed session is left out (sidebar and search); unlinked, it is back', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-grokbot-merge-'));
+    const meta = new SessionMetaStore(path.join(dir, 'session-meta.json'));
+    await meta.load();
+    const bots = [entry({ sessionId: 'grokbot-a', source: 'grokbot', cwd: '/h' }), entry({ sessionId: 'grokbot-b', source: 'grokbot', cwd: '/h' }), entry({ sessionId: 'grokbot-c', cwd: '/h' })];
+    const grok = [entry({ sessionId: 'g-next', cwd: '/w' }), entry({ sessionId: 'g-old', cwd: '/w' })];
+    const idx = new SessionIndex({ roots: rootsOf({ a: '/nonexistent/a', b: '/nonexistent/b', c: '/nonexistent/c' }), pinnedFile: path.join(dir, 'p.json'), meta, grokImports: fake(grok), grokBotImports: fake(bots) });
+    await idx.refresh();
+    await meta.link('grokbot-a', 'g-next', 'a (이어서)');
+    await meta.link('grokbot-c', 'g-old', 'c (이어서)'); // an id-only (untagged) Grok Bot entry merges too
+    await meta.link('grokbot-b', 'gone', 'b (이어서)'); // continued in a session no longer listed: stays
+    idx.regroup();
+    const ids = (all: boolean) => idx.projects([], { all }).flatMap((p) => p.sessions.map((s) => s.sessionId)).sort();
+    expect(ids(false)).toEqual(['g-next', 'g-old', 'grokbot-b']);
+    expect(ids(true)).toEqual(['g-next', 'g-old', 'grokbot-b']);
+    expect(idx.projects().flatMap((p) => p.sessions).find((s) => s.sessionId === 'g-next')?.prevSession).toBe('grokbot-a');
+    await meta.unlink('g-next');
+    idx.regroup();
+    expect(ids(false)).toEqual(['g-next', 'g-old', 'grokbot-a', 'grokbot-b']);
+    await fs.rm(dir, { recursive: true, force: true });
   });
 });

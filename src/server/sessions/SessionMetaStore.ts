@@ -126,6 +126,16 @@ export class SessionMetaStore {
     return this.update(to, { title });
   }
 
+  /** The link into `to` goes (the session that continued another was deleted): the old session may continue anew. False = none. */
+  async unlink(to: string): Promise<boolean> {
+    const from = this.prevIds.get(to);
+    if (!from) return false;
+    this.prevIds.delete(to);
+    if (this.nextIds.get(from) === to) this.nextIds.delete(from);
+    await this.update(to, {});
+    return true;
+  }
+
   title(sessionId: string): string | null {
     return this.titles.get(sessionId) ?? null;
   }

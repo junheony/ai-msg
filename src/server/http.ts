@@ -20,6 +20,7 @@ import { sm } from './i18n';
 import { MemoryTooLarge, type MemoryStore } from './memory/MemoryStore';
 import { MEMORY_MAX_BYTES } from '../shared/memory';
 import { isTrashId } from './sessions/SessionTrash';
+import { GROKBOT_ID_PREFIX } from './sessions/GrokBotImports';
 import { MAX_TITLE_CHARS, type SessionMetaStore } from './sessions/SessionMetaStore';
 import { MAX_QUERY_CHARS, type TranscriptSearch } from './sessions/search';
 import type { SessionIndex } from './sessions/SessionIndex';
@@ -494,6 +495,8 @@ export function createRequestHandler(deps: HttpDeps) {
           if (!r.ok) { json(res, 409, { error: r.error }); return; }
           // A trashed session's chosen icon goes with it (a restore comes back with the first letter).
           if (!restore) await deps.sessionIcons?.set(body.sessionId as string, null).catch(() => {});
+          // The session continuing a Grok Bot conversation is gone: the conversation is listed again, its next send starts anew.
+          if (!restore && deps.meta?.prev(body.sessionId as string)?.startsWith(GROKBOT_ID_PREFIX)) await deps.meta.unlink(body.sessionId as string).catch(() => false);
           await deps.index.refresh();
           deps.onIndexChanged?.();
           json(res, 200, r);

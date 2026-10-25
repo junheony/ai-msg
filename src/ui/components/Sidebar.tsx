@@ -665,7 +665,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
 /** Tooltip of an imported row's meta: where it came from and whether a message continues it in deck. */
 export function importTitle(s: SessionEntry): string {
   const preview = s.preview ? `\n\n${s.preview}` : '';
-  if (s.source === 'grokbot') return `Grok Bot 앱 대화 — 읽기만 할 수 있어요 (새 Grok 세션으로 이어갈 수 있어요)${preview}`;
+  if (s.source === 'grokbot') return ui().chat.grokBot.rowTitle(preview);
   if (s.cwdMissing) return `폴더가 없어 이어서 보낼 수 없음 — 읽기만 할 수 있습니다${preview}`;
   if (s.engine === 'grok' && s.heldBy) return `${SIDEBAR_HELD.title}${preview}`;
   if (s.engine === 'grok') return `${s.autoRun ? 'grok 헤드리스로 자동 실행된' : '터미널 Grok CLI 에서 만든'} 대화 — 메시지를 보내면 AI-MSG 에서 이어갑니다${preview}`;
@@ -685,6 +685,8 @@ export function rowTag(s: SessionEntry): string | null {
   if (s.source === 'grokbot' || s.codexArchived) return TAG_READ_ONLY;
   if (s.cwdMissing) return TAG_NO_FOLDER;
   if (s.engine === 'grok' && s.heldBy) return SIDEBAR_HELD.tag;
+  // The session a Grok Bot conversation continues in (that conversation's own row is merged into this one).
+  if (s.prevSession?.startsWith('grokbot-')) return ui().chat.grokBot.tag;
   return null;
 }
 

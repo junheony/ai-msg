@@ -7,6 +7,7 @@ import type { DesktopSession, PinnedProject, ProjectEntry, SessionEntry, Session
 import { findCopies, resolveCopies, type PrefixFn, type SessionCopy } from './copies';
 import { CodexRolloutIndex } from './CodexImports';
 import type { ImportIndex } from './ImportIndex';
+import { GROKBOT_ID_PREFIX } from './GrokBotImports';
 import { recentDesktopSessions } from './DesktopSessions';
 import { ancestorInfo, type FileState } from './SessionMover';
 import { pathKey } from './slug';
@@ -315,7 +316,22 @@ export class SessionIndex {
   }
 
   private group(sessions: SessionEntry[], all = false): ProjectEntry[] {
-    return groupProjects((all ? sessions : sessions.filter((s) => this.listed(s))).map((s) => this.decorate(s)), this.pinned, this.recentFolders);
+    return groupProjects(this.mergeGrokBot(all ? sessions : sessions.filter((s) => this.listed(s))).map((s) => this.decorate(s)), this.pinned, this.recentFolders);
+  }
+
+  /**
+   * One row per Grok Bot conversation: once a listed session continues it (the handoff link), only that session is
+   * listed — sidebar, home and search alike. The link gone (that session deleted): the Grok Bot entry is back.
+   */
+  private mergeGrokBot(sessions: SessionEntry[]): SessionEntry[] {
+    const meta = this.opts.meta;
+    if (!meta?.next) return sessions;
+    const ids = new Set(sessions.map((s) => s.sessionId));
+    return sessions.filter((s) => {
+      if (s.source !== 'grokbot' && !s.sessionId.startsWith(GROKBOT_ID_PREFIX)) return true;
+      const to = meta.next?.(s.sessionId);
+      return !to || !ids.has(to);
+    });
   }
 
   /** Re-applies titles / archive flags / `heldBy` after a SessionMetaStore or process-holder change (no rescan). */

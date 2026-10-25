@@ -71,4 +71,15 @@ export const chat: Widen<typeof en> = {
     home: '홈 폴더',
     homeFailed: '홈 폴더를 열지 못했어요. 폴더 고르기로 시작해 보세요.',
   },
+  grokBot: {
+    placeholderNew: '보내면 새 Grok 세션으로 이어져요',
+    placeholderLinked: '보내면 이어 쓴 Grok 세션으로 이어져요',
+    linkedNote: (title: string) => `이어 쓴 세션 「${title}」으로 보내져요`,
+    cwdNote: (cwd: string) => `작업 폴더: ${cwd}`,
+    pickFirst: '보내면 작업 폴더부터 골라요 — 홈 폴더에서는 시작하지 않아요',
+    pickThenSend: '작업 폴더를 고르면 쓴 글을 바로 보내요',
+    openLinked: '이어 쓴 세션 열기',
+    tag: 'Grok Bot에서 이어짐',
+    rowTitle: (preview: string) => `Grok Bot 앱 대화 — 여기서 보내면 새 Grok 세션으로 이어져요 (앱 대화 자체엔 안 써져요)${preview}`,
+  },
 };

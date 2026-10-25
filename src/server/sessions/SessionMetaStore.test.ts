@@ -129,6 +129,27 @@ describe('SessionMetaStore', () => {
     expect(again.prev(ID3)).toBeNull();
   });
 
+  it('Grok Bot link: one continuing session, seen by another device (a fresh load); unlink() frees the conversation for a new link', async () => {
+    const ID3 = '33333333-3333-4333-8333-333333333333';
+    const file = path.join(await tmp(), 'm.json');
+    const s = new SessionMetaStore(file);
+    await s.load();
+    await s.link('grokbot-a', ID2, '여행 (이어서)');
+    await s.link('grokbot-a', ID3, '여행 (이어서)'); // a second continuation is refused
+    const phone = new SessionMetaStore(file);
+    await phone.load();
+    expect(phone.next('grokbot-a')).toBe(ID2);
+    expect(phone.prev(ID2)).toBe('grokbot-a');
+    expect(await s.unlink(ID2)).toBe(true);
+    expect(await s.unlink(ID2)).toBe(false);
+    expect(s.next('grokbot-a')).toBeNull();
+    const after = new SessionMetaStore(file);
+    await after.load();
+    expect(after.next('grokbot-a')).toBeNull();
+    await s.link('grokbot-a', ID3, '여행 (이어서)');
+    expect(s.next('grokbot-a')).toBe(ID3);
+  });
+
   it('SessionIndex decorates entries with prevSession / nextSession from the links', async () => {
     const dir = await tmp();
     const root = path.join(dir, 'b');

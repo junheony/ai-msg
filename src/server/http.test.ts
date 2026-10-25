@@ -12,6 +12,7 @@ import { PinStore } from './sessions/PinStore';
 import { SessionIconStore } from './sessions/SessionIconStore';
 import { MemoryStore } from './memory/MemoryStore';
 import { SessionIndex } from './sessions/SessionIndex';
+import { SessionMetaStore } from './sessions/SessionMetaStore';
 import { UsageService } from './usage/UsageService';
 import { rootsOf, testRegistry } from '../shared/accounts.testkit';
 import { sm } from './i18n';
@@ -520,6 +521,45 @@ describe('POST /api/session-icon', () => {
     expect(r.status).toBe(200);
     expect(icons.list()).toEqual({ [ID3]: '🎨' });
     expect(JSON.parse(await fs.readFile(path.join(dir, 'session-icons.json'), 'utf8'))).toEqual({ [ID3]: '🎨' });
+  });
+});
+
+describe('POST /api/session-trash: the session continuing a Grok Bot conversation', () => {
+  let base = '';
+  let srv: http.Server;
+  let meta: SessionMetaStore;
+  let dir: string;
+  const NEXT = '44444444-4444-4444-8444-444444444444';
+  const OTHER = '55555555-5555-4555-8555-555555555555';
+  const OLD = '66666666-6666-4666-8666-666666666666';
+  const trashPost = (sessionId: string) => fetch(`${base}/api/session-trash`, { method: 'POST', headers: { cookie: `deck_session=${cookieValueFor(TOKEN)}`, origin: base }, body: JSON.stringify({ sessionId }) });
+
+  beforeAll(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-grokbot-trash-'));
+    const roots = { a: path.join(dir, 'a'), b: path.join(dir, 'b'), c: path.join(dir, 'c') };
+    const idx = new SessionIndex({ roots: rootsOf(roots), pinnedFile: path.join(dir, 'p.json') });
+    await idx.refresh();
+    meta = new SessionMetaStore(path.join(dir, 'session-meta.json'));
+    await meta.load();
+    await meta.link('grokbot-a', NEXT, '여행 (이어서)');
+    await meta.link(OLD, OTHER, '작업 (이어서)');
+    const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
+    const trash = { trashSession: async () => ({ ok: true as const, trashId: 'tr1' }), restoreSession: async () => ({ ok: true as const }) } as unknown as Parameters<typeof createRequestHandler>[0]['trash'];
+    srv = http.createServer(createRequestHandler({ token: TOKEN, uiDir: dir, usage, index: idx, meta, trash }));
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`;
+  });
+  afterAll(async () => { srv.close(); await fs.rm(dir, { recursive: true, force: true }); });
+
+  it('deleting it unlinks the Grok Bot conversation (also on disk: another device reloads it so); other handoff links stay', async () => {
+    expect((await trashPost(NEXT)).status).toBe(200);
+    expect(meta.next('grokbot-a')).toBeNull();
+    expect(meta.prev(NEXT)).toBeNull();
+    const again = new SessionMetaStore(path.join(dir, 'session-meta.json'));
+    await again.load();
+    expect(again.next('grokbot-a')).toBeNull();
+    expect((await trashPost(OTHER)).status).toBe(200);
+    expect(meta.next(OLD)).toBe(OTHER);
   });
 });
 
