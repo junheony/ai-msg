@@ -5,7 +5,7 @@ import path from 'node:path';
 import type { AccountRegistry } from '../../shared/accounts';
 import type { Attachment } from '../attachments/AttachmentStore';
 import { ZERO_USAGE, contextUsageOf, type ContextUsage } from '../../shared/turn-types';
-import type { Engine, EngineEvent, LiveInput, TurnRequest } from './Engine';
+import type { BgTask, Engine, EngineEvent, LiveInput, TurnRequest } from './Engine';
 import { buildMcpConfig, buildSettings, claudeArgs, claudeEnv, validResume, type CliPermissionMode } from './claudeCli/args';
 import { MCP_TOOL_TIMEOUT_MS, PermissionBridge } from './claudeCli/bridge';
 import { forkCandidates, writeForkSource } from './claudeCli/fork';
@@ -17,7 +17,7 @@ import { ClaudeProcess, exitFailureText } from './claudeCli/process';
 import { toUserMessage, type ReadFile } from './claudeCli/prompt';
 import type { ClaudeSpawnFn } from './claudeCli/spawnTypes';
 import { childScript } from './claudeCli/childScripts';
-import { BackgroundTracker, ProgressMeter, ToolTracker, deniedCalls, isActivity, isInjectedNoopResult, mapCliMessage, noteCommands, toolAudit, type CommandsListener } from './claudeCli/stream';
+import { BackgroundTracker, ProgressMeter, ToolTracker, deniedCalls, isActivity, isInjectedNoopResult, isNotificationResult, mapCliMessage, noteCommands, toolAudit, type CommandsListener } from './claudeCli/stream';
 import { ABORTED_TEXT, CLAUDE_MISSING_TEXT, claudeTooOldText, fastFailureKind, fastModeText, invalidResumeText } from './claudeCli/texts';
 import type { ClaudeBin } from './claudeCli/version';
 
@@ -183,6 +183,26 @@ export class ClaudeEngine implements Engine {
       const meter = new ProgressMeter();
       let shownTasks: string[] = [];
       let shownSig = '[]';
+      /**
+       * Background tasks that ended while a turn was streaming: the CLI queues their notification and runs it as a turn of
+       * its own right after that turn's result. Until that turn begins they are still shown as background work, so the
+       * result does not let the process go — here, nor ws endHeld while a restart drains (2026-10-25: the notification
+       * turn was cut at once, its answer never came). Settled when the process, idle after a result, shows main-thread
+       * activity again, or by the notification turn's own result (origin task-notification). Bounded: an idle process with no live task is still let go after bgGraceMs (armGrace counts live tasks only).
+       */
+      const owed = new Map<string, BgTask>();
+      /** A turn is streaming: main-thread activity since the last result (the first turn streams from the start). */
+      let streaming = true;
+      const shown = (): BgTask[] => { const live = bg.detail(); const ids = new Set(live.map((t) => t.id)); return [...live, ...[...owed.values()].filter((t) => !ids.has(t.id))]; };
+      /** The shown set as a `background` event when it changed since last told, else null. */
+      const bgChange = (): EngineEvent | null => {
+        const detail = shown();
+        const sig = JSON.stringify(detail.map((t) => [t.id, t.description, t.type]));
+        if (sig === shownSig) return null;
+        shownSig = sig;
+        shownTasks = detail.map((t) => t.description);
+        return { kind: 'background', tasks: shownTasks, detail };
+      };
       const unanswered: string[] = [];
       const steers = new Map<string, string>();
       let echoed: string[] = [];
@@ -274,14 +294,22 @@ export class ClaudeEngine implements Engine {
         if (m.type === 'assistant') for (const b of m.message.content) if (b.type === 'tool_use' && typeof b.id === 'string') toolInputs.set(b.id, b.input);
         for (const d of deniedCalls(m, toolInputs)) await audit.report(d, 'deny', d.source);
         if (m.type === 'result') toolInputs.clear();
-        if (bg.apply(m)) {
-          const tasks = bg.tasks();
-          const detail = bg.detail();
-          const sig = JSON.stringify(detail.map((t) => [t.id, t.description, t.type]));
-          if (sig !== shownSig) { shownSig = sig; shownTasks = tasks; yield { kind: 'background', tasks, detail }; }
+        const before = m.type === 'system' ? bg.detail() : [];
+        const taskMsg = bg.apply(m);
+        if (taskMsg && streaming) { const now = new Set(bg.detail().map((t) => t.id)); for (const t of before) if (!now.has(t.id)) owed.set(t.id, t); }
+        // The process gets going after a result (the queued notification turn begins), or that turn's own result: what it
+        // owed is being told now. Shown after the turn opened (`continue` below), so it never looks idle in between.
+        const settled = owed.size > 0 && ((idle && isActivity(m)) || (m.type === 'result' && isNotificationResult(m)));
+        if (settled) owed.clear();
+        if (m.type === 'result') streaming = false;
+        else if (isActivity(m)) streaming = true;
+        if (taskMsg) {
+          const change = bgChange();
+          if (change) yield change;
           armGrace();
         }
         if (idle && isActivity(m)) { idle = false; clearGrace(); yield { kind: 'continue', cause: 'background' }; }
+        if (settled) { const change = bgChange(); if (change) yield change; }
         const prog = meter.apply(m);
         if (prog) yield { kind: 'progress', ...prog };
         if (m.type === 'assistant' && m.parent_tool_use_id === null) lastCtx = contextUsageOf(m.message.usage) ?? lastCtx;
@@ -326,7 +354,7 @@ export class ClaudeEngine implements Engine {
         }
         if (!gotResult) continue;
         if (aborted) break; // changed
-        if (unanswered.length === 0 && bg.tasks().length === 0) {
+        if (unanswered.length === 0 && shown().length === 0) {
           // The turn is done; only a successful one gets a suggestion, so only then is stdin held open a moment for it.
           if (!suggest || !lastOk || suggestWait) break;
           suggestWait = true;

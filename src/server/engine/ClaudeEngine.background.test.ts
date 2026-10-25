@@ -173,3 +173,40 @@ describe('ClaudeEngine: background tasks outlive the turn result', () => {
     expect(rest.map((e) => e.kind)).toEqual(['background', 'task_done', 'continue', 'system', 'delta', 'result']);
   });
 });
+
+describe('ClaudeEngine: a task that ends while a turn streams', () => {
+  it('its queued notification turn is still owed after that result: the process stays open and the task stays shown until the notification turn begins (restart drain 2026-10-25)', async () => {
+    const f = fakeClaudeCli();
+    const r = reader((await engine(f)).runTurn(req()));
+    f.push(cli.init(), cli.bgLevel([{ id: 'rv', desc: 'review' }]), cli.delta('waiting for the review'));
+    expect(await r.until('background')).toMatchObject({ tasks: ['review'] });
+    await r.until('delta');
+    // The review ends while the turn still streams (the CLI queues its notification behind the turn), then the turn ends.
+    f.push(cli.bgLevel([]), cli.delta(' — merge once it is in'), cli.result('merge once it is in'));
+    expect(await r.until('result')).toMatchObject({ ok: true });
+    await new Promise((res) => setTimeout(res, 10));
+    expect(f.state.inputClosed).toBe(false);
+    // Not shown as settled before the notification turn opens (ws ends a drained process with nothing left).
+    expect(r.seen.filter((e) => e.kind === 'background').map((e) => (e as Extract<EngineEvent, { kind: 'background' }>).tasks)).toEqual([['review']]);
+    // The CLI runs the notification as its own turn (fixtures/background.jsonl order).
+    f.push(cli.taskDone('rv'), cli.init(), cli.delta('review is in'), cli.notifyResult('review is in'));
+    const kinds: string[] = [];
+    for (let e = await r.next(); e && e.kind !== 'result'; e = await r.next()) kinds.push(e.kind === 'background' ? `background:${e.tasks.length}` : e.kind);
+    expect(kinds.indexOf('continue')).toBeGreaterThanOrEqual(0);
+    expect(kinds.indexOf('continue')).toBeLessThan(kinds.indexOf('background:0'));
+    expect(kinds).toContain('delta');
+    expect(r.seen.at(-1)).toMatchObject({ kind: 'result', ok: true, text: 'review is in' });
+    await r.rest();
+    await new Promise((res) => setTimeout(res, 0));
+    expect(f.state.inputClosed).toBe(true);
+  });
+
+  it('a task that ends while the process waits idle is no owed turn: nothing changes there', async () => {
+    const f = fakeClaudeCli();
+    const r = reader((await engine(f)).runTurn(req()));
+    f.push(cli.init(), cli.bgLevel([{ id: 't1', desc: 'build' }]), cli.result('started'));
+    await r.until('result');
+    f.push(cli.bgLevel([]));
+    expect(await r.until('background')).toMatchObject({ tasks: [] });
+  });
+});

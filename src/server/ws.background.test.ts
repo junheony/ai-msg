@@ -19,6 +19,7 @@ import { SessionStateStore } from './turn/SessionState';
 import { RESEND_NOTICE, TurnRunner } from './turn/TurnRunner';
 import { UsageService } from './usage/UsageService';
 import { attachWebSocket } from './ws';
+import { drain } from './lifecycle';
 import { sm } from './i18n';
 const DRAINING_MESSAGE = sm().turn.draining;
 import { rootsOf, testRegistry } from '../shared/accounts.testkit';
@@ -677,5 +678,42 @@ describe('ws: drain and held processes', () => {
     a.close();
     s.close();
     await expect(fs.stat(s.activityFile)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('restart drain (2026-10-25): a task that ends while a turn streams is waited for through its notification turn — the drain does not end the process between that result and the notification', async () => {
+    const s = await ownServer();
+    const a = await s.client();
+    await a.next('hello');
+    const S = '63636363-6363-4363-8363-636363636363';
+    const cwd = await seed(S, 'dr3');
+    const f = (fake = fakeClaudeCli());
+    a.send({ type: 'send', sessionId: S, cwd, text: 'go', clientRef: 'dr3-go' });
+    const t = await a.next('turn_started', (m) => m.clientRef === 'dr3-go');
+    f.push(cli.init(S), cli.bgLevel([{ id: 'rv', desc: 'review' }]), cli.delta('fixing while the review runs'));
+    await a.next('turn_background', (m) => m.tasks.length === 1);
+    // SIGUSR2 while the turn runs with its review live.
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    let done: string | null = null;
+    const drained = drain(s.api, { maxMs: Infinity, pollMs: 5 }).then((r) => { done = r; return r; });
+    await a.next('error', (m) => m.message === DRAINING_MESSAGE);
+    // The review ends while the turn still streams; the turn ends ("merge once the review is in").
+    f.push(cli.bgLevel([]), cli.delta(' — merge once the review is in'), cli.result('merge once the review is in', S));
+    expect(await a.next('turn_result', (m) => m.turnId === t.turnId)).toMatchObject({ ok: true });
+    await new Promise((r) => setTimeout(r, 40));
+    // Its notification turn is still to come: the process is not ended, the drain goes on, and a cut would name it.
+    expect(s.api.activeTurns()).toBe(1);
+    expect(done).toBeNull();
+    expect(f.state.inputClosed).toBe(false);
+    expect(s.api.cutSessions()).toEqual([{ sessionId: S, tasks: ['review'] }]);
+    // The CLI runs the notification as its own turn; the drain ends only after it answered.
+    f.push(cli.taskDone('rv'), cli.init(S), cli.delta('review is in — merged'), cli.notifyResult('review is in — merged', S));
+    const bg = await a.next('turn_started', (m) => m.reason === '백그라운드 계속');
+    expect(await a.next('turn_result', (m) => m.turnId === bg.turnId)).toMatchObject({ ok: true, text: 'review is in — merged' });
+    expect(await drained).toBe('drained');
+    expect(s.api.activeTurns()).toBe(0);
+    expect(a.got.filter((m) => m.type === 'turn_result' && !m.ok)).toEqual([]);
+    log.mockRestore();
+    a.close();
+    s.close();
   });
 });

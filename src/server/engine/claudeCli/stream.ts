@@ -220,6 +220,13 @@ export function isInjectedNoopResult(m: CliMessage): boolean {
   return typeof kind === 'string' && kind !== 'human' && !named && r.num_turns === 0;
 }
 
+/** The result of a turn the CLI ran for a background task's notification (origin task-notification), whether the model ran or not. */
+export function isNotificationResult(m: CliMessage): boolean {
+  if (m.type !== 'result') return false;
+  const o = (m as unknown as Rec).origin;
+  return !!o && typeof o === 'object' && (o as Rec).kind === 'task-notification';
+}
+
 /** Where an audited call was decided without deck being asked: 'cli' = the CLI ran or refused it on its own (an allow rule, the mode, or a tool that needs no permission — the SDK does not say which), 'rule' = a deny rule (the SDK says so), 'deck' = deck's own hook. */
 export type AuditSource = 'cli' | 'rule' | 'deck';
 export type ToolAudit = { handled: Set<string>; report: (e: { tool_name: string; tool_input: unknown; tool_use_id: string }, decision: 'allow' | 'deny', source: AuditSource) => Promise<void> };
