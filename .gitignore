@@ -4,6 +4,12 @@ dist/
 coverage/
 *.tsbuildinfo
 
+# cloud Worker (cloud/): local wrangler state, dev secrets, generated legal pages
+cloud/node_modules/
+cloud/.wrangler/
+cloud/.dev.vars
+cloud/src/legal/pages.gen.ts
+
 # local environment and logs
 .env*
 !.env.example

@@ -33,7 +33,7 @@ echo "export-public: $(find "$OUT" -type f | wc -l | tr -d ' ') 개 파일 → $
 fail=0
 # Deliberately a second copy of the .gitattributes list: it catches an entry dropped from .gitattributes
 # by mistake. Add a path to both.
-for p in docs/HANDOFF.md docs/superpowers .hygiene-private.json .gitattributes scripts/export-public.sh src/hygiene.private.test.ts; do
+for p in docs/HANDOFF.md docs/superpowers cloud .hygiene-private.json .gitattributes scripts/export-public.sh src/hygiene.private.test.ts; do
   if [[ -e "$OUT/$p" ]]; then
     echo "export-public: 공개본에 있으면 안 되는 경로 — $p (.gitattributes export-ignore 확인)" >&2
     fail=1

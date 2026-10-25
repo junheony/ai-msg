@@ -1,0 +1,132 @@
+import type { LinkApproveRes, LinkPollRes, LinkStartRes } from '../../src/shared/cloud/api-types';
+import { fromB64u, sha256B64u } from '../../src/shared/cloud/b64';
+import { emailKey } from './auth/email';
+import { cookieRoute } from './auth/session';
+import { hashToken, hostAuth, isB64uBytes, newId, newToken, newUserCode } from './auth/tokens';
+import { HttpError, json, problem, readBody, str } from './http';
+import { linkMissingPage, linkPage } from './pages/link';
+import { DAY, HOUR, hit, hitStmt, peek } from './rate';
+import type { Ctx } from './router';
+
+const LINK_TTL_MS = 600_000;
+const POLL_MIN_MS = 2000;
+const TRIALS_PER_IP_PER_DAY = 3;
+/** Same shape as `isSemver` in src/shared/cloud/noise.ts (the Worker does not import noise.ts). */
+const SEMVER = /^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/;
+
+type LinkRow = { device_code_hash: string; user_code: string; host_name: string; host_pub: string; ui_version: string; state: string; user_id: string | null; last_poll: number | null; expires_at: number };
+
+const normCode = (v: unknown): string | null => (typeof v === 'string' && v.length <= 16 ? v.trim().toUpperCase() : null);
+
+/** `POST /v1/host/link/start {hostName, hostPub, uiVersion}` — 10 per hour per IP. */
+export async function linkStart(c: Ctx): Promise<Response> {
+  if (!(await hit(c.env.DB, `link:start:ip:${c.ip}`, 10, HOUR, c.nowMs))) return problem(429, 'rate_limited');
+  const body = await readBody(c.req);
+  const hostName = str(body, 'hostName', 64);
+  const uiVersion = str(body, 'uiVersion', 40);
+  if (!isB64uBytes(body.hostPub, 32) || !SEMVER.test(uiVersion)) throw new HttpError(400, 'bad_request');
+  const deviceCode = newToken();
+  const userCode = newUserCode();
+  await c.env.DB.prepare("INSERT INTO host_links (device_code_hash, user_code, host_name, host_pub, ui_version, state, expires_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)")
+    .bind(await hashToken(deviceCode), userCode, hostName, body.hostPub, uiVersion, c.nowMs + LINK_TTL_MS).run();
+  return json(200, { deviceCode, userCode, verifyUrl: `${c.env.PUBLIC_ORIGIN}/link?code=${userCode}`, interval: 3, expiresIn: LINK_TTL_MS / 1000 } satisfies LinkStartRes);
+}
+
+async function pendingLink(c: Ctx, userCode: string | null): Promise<LinkRow | null> {
+  if (!userCode) return null;
+  return c.env.DB.prepare("SELECT * FROM host_links WHERE user_code = ? AND state = 'pending' AND expires_at > ?").bind(userCode, c.nowMs).first<LinkRow>();
+}
+
+/** sha256 of the host key, first 8 bytes as four hex groups. */
+async function fingerprint(hostPub: string): Promise<string> {
+  const hex = Array.from(fromB64u(await sha256B64u(fromB64u(hostPub))).subarray(0, 8), (b) => b.toString(16).padStart(2, '0')).join('');
+  return hex.match(/.{4}/g)!.join(' ');
+}
+
+/** `GET /link?code=` */
+export const linkGet = cookieRoute({ session: 'page' }, async (c) => {
+  const link = await pendingLink(c, normCode(c.url.searchParams.get('code')));
+  if (!link) return linkMissingPage();
+  return linkPage({ userCode: link.user_code, hostName: link.host_name, fingerprint: await fingerprint(link.host_pub) });
+});
+
+/**
+ * `POST /v1/host/link/approve {userCode}` (web session + Origin). 10/h per user and 20/h per IP, wrong codes
+ * included. Grants the trial once per normalized email and at most 3 per IP per day.
+ */
+export const linkApprove = cookieRoute({ session: 'required' }, async (c) => {
+  const userOk = await hit(c.env.DB, `link:approve:user:${c.userId}`, 10, HOUR, c.nowMs);
+  const ipOk = await hit(c.env.DB, `link:approve:ip:${c.ip}`, 20, HOUR, c.nowMs);
+  if (!userOk || !ipOk) return problem(429, 'rate_limited');
+  const body = await readBody(c.req);
+  const link = await pendingLink(c, normCode(body.userCode));
+  if (!link) return problem(404, 'unknown_code');
+
+  const db = c.env.DB;
+  const used = await db.prepare(
+    `SELECT (SELECT count(*) FROM hosts WHERE user_id = ?1 AND revoked_at IS NULL)
+          + (SELECT count(*) FROM host_links WHERE user_id = ?1 AND state = 'approved' AND expires_at > ?2) AS n`,
+  ).bind(c.userId, c.nowMs).first<number>('n');
+  if ((used ?? 0) >= Number(c.env.MAX_HOSTS)) return problem(409, 'host_limit');
+
+  const approve = db.prepare("UPDATE host_links SET state = 'approved', user_id = ? WHERE device_code_hash = ? AND state = 'pending'").bind(c.userId, link.device_code_hash);
+  const email = await db.prepare('SELECT email FROM users WHERE id = ?').bind(c.userId).first<string>('email');
+  const key = await emailKey(c.env.EMAIL_HASH_SECRET, email ?? '');
+  const ipKey = `trial:ip:${c.ip}`;
+  let trial: LinkApproveRes['trial'];
+  if (await db.prepare('SELECT 1 FROM trial_claims WHERE email_key = ?').bind(key).first()) trial = 'already_used';
+  else if ((await peek(db, ipKey, DAY, c.nowMs)) >= TRIALS_PER_IP_PER_DAY) trial = 'unavailable';
+  else {
+    const endsAt = c.nowMs + Number(c.env.TRIAL_DAYS) * DAY;
+    try {
+      await db.batch([
+        db.prepare('INSERT INTO trial_claims (email_key, user_id, claimed_at) VALUES (?, ?, ?)').bind(key, c.userId, c.nowMs),
+        db.prepare('INSERT INTO trials (user_id, started_at, ends_at) VALUES (?, ?, ?)').bind(c.userId, c.nowMs, endsAt),
+        hitStmt(db, ipKey, DAY, c.nowMs),
+        approve,
+      ]);
+      return json(200, { trial: 'granted' } satisfies LinkApproveRes);
+    } catch (e) {
+      if (!/UNIQUE/i.test(String(e))) throw e;
+      trial = 'already_used'; // lost a race with another approval for the same person
+    }
+  }
+  await approve.run();
+  return json(200, { trial } satisfies LinkApproveRes);
+});
+
+/** `POST /v1/host/link/poll {deviceCode}` — 202 pending, 200 linked (token once), 429 slow_down, 410 gone. */
+export async function linkPoll(c: Ctx): Promise<Response> {
+  const body = await readBody(c.req);
+  const db = c.env.DB;
+  const codeHash = await hashToken(str(body, 'deviceCode', 128));
+  const link = await db.prepare('SELECT * FROM host_links WHERE device_code_hash = ?').bind(codeHash).first<LinkRow>();
+  if (!link) return problem(404, 'unknown_device_code');
+  if (link.state === 'consumed' || link.state === 'denied' || link.expires_at <= c.nowMs) return problem(410, 'expired');
+  if (link.last_poll !== null && c.nowMs - link.last_poll < POLL_MIN_MS) return problem(429, 'slow_down');
+  await db.prepare('UPDATE host_links SET last_poll = ? WHERE device_code_hash = ?').bind(c.nowMs, codeHash).run();
+  if (link.state === 'pending') return json(202, { state: 'pending' } satisfies LinkPollRes);
+
+  // approved: claim the row first so two racing polls cannot both mint a host.
+  const won = await db.prepare("UPDATE host_links SET state = 'consumed' WHERE device_code_hash = ? AND state = 'approved' RETURNING user_id").bind(codeHash).first<{ user_id: string }>();
+  if (!won) return problem(410, 'expired');
+  const hostId = newId();
+  const hostToken = newToken();
+  await db.prepare('INSERT INTO hosts (id, user_id, name, host_pub, token_hash, ui_version, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .bind(hostId, won.user_id, link.host_name, link.host_pub, await hashToken(hostToken), link.ui_version, c.nowMs).run();
+  const email = await db.prepare('SELECT email FROM users WHERE id = ?').bind(won.user_id).first<string>('email');
+  return json(200, { state: 'linked', hostId, hostToken, email: email ?? '' } satisfies LinkPollRes);
+}
+
+/** `POST /v1/host/unlink` (host) — the token stops working and every device of the host is revoked. Task 3 adds the DO close. */
+export async function hostUnlink(c: Ctx): Promise<Response> {
+  const host = await hostAuth(c.env, c.req);
+  if (!host) return problem(401, 'unauthorized');
+  const db = c.env.DB;
+  await db.batch([
+    db.prepare('UPDATE hosts SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').bind(c.nowMs, host.id),
+    db.prepare("UPDATE devices SET state = 'revoked' WHERE host_id = ?").bind(host.id),
+    db.prepare("UPDATE pairings SET state = 'expired' WHERE host_id = ? AND state IN ('open', 'claimed')").bind(host.id),
+  ]);
+  return json(200, { ok: true });
+}

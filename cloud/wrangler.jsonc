@@ -1,0 +1,31 @@
+// AI msg cloud Worker — private (left out of the public export, D11).
+// Two origins on one Worker, split by Host (D18). Secrets (SESSION_SECRET, EMAIL_HASH_SECRET,
+// RESEND_API_KEY) go in with `wrangler secret put`, never here. See README.md.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ai-msg-cloud",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-15",
+  "d1_databases": [
+    // database_id: filled in by the operator at deploy time (`wrangler d1 create ai-msg`).
+    { "binding": "DB", "database_name": "ai-msg", "migrations_dir": "migrations" }
+  ],
+  // Phone UI bundles (Task 5c). The RelayRoom Durable Object binding `RELAY` arrives with Task 3.
+  "r2_buckets": [{ "binding": "UI", "bucket_name": "ai-msg-ui" }],
+  "vars": {
+    "PUBLIC_ORIGIN": "https://app.aimsg.app",
+    "RELAY_ORIGIN": "https://relay.aimsg.app",
+    // `resend` by default, so a missing setting can never pile mail up in D1 (checkConfig).
+    "EMAIL_MODE": "resend",
+    // Operator fills in a verified Resend sender, e.g. "AI msg <login@your-domain>". Empty = 503 misconfigured.
+    "EMAIL_FROM": "",
+    "DEV_ROUTES": "0",
+    "MAX_DEVICES": "3",
+    "MAX_HOSTS": "3",
+    "TRIAL_DAYS": "7"
+  },
+  "routes": [
+    { "pattern": "app.aimsg.app", "custom_domain": true },
+    { "pattern": "relay.aimsg.app", "custom_domain": true }
+  ]
+}
