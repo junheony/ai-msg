@@ -86,6 +86,19 @@ describe('parseTranscript', () => {
       ['시각 없음', null],
     ]);
   });
+
+  it('a prompt folded into a running turn (queued_command) is marked as a steer; a turn\'s own prompt is not', () => {
+    const msgs = parseTranscript([
+      L({ type: 'user', uuid: 'u0', message: { role: 'user', content: '첫 메시지' } }),
+      L({ type: 'assistant', uuid: 'a0', message: { id: 'm1', model: 'claude-opus-5-5', content: [{ type: 'tool_use', id: 'tu1', name: 'Bash', input: {} }] } }),
+      L({ type: 'user', uuid: 'r0', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'ok' }] } }),
+      L({ type: 'attachment', attachment: { type: 'queued_command', prompt: '도중에 보낸 것', source_uuid: 'q1' } }),
+    ].join('\n'));
+    expect(msgs.filter((m) => m.kind === 'user')).toEqual([
+      { kind: 'user', text: '첫 메시지', ts: null, n: 0 },
+      { kind: 'user', text: '도중에 보낸 것', ts: null, n: 1, steer: true },
+    ]);
+  });
 });
 
 describe('parseTranscript — context usage', () => {

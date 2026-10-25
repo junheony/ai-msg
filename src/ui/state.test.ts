@@ -1731,6 +1731,23 @@ describe('cross-device prompt sync', () => {
     expect(pane(written).items.map((it) => it.kind)).toEqual(['user', 'assistant']);
     expect(pane(written).items[0]).toMatchObject({ attachments: [{ id: 'a1', name: 'f.txt', isImage: false }] });
   });
+
+  it('opening mid-turn after a steer went in: the prompt stays where the transcript has it, not again after the steer', () => {
+    const base = { type: 'history', sessionId: S, cwd: '/w', account: 'b', runningTurnId: 't9' } as const;
+    const call = (id: string) => ({ kind: 'assistant' as const, text: '', model: null, toolCalls: [{ id, name: 'Bash', input: {} }], ts: null });
+    const s = play([{ ...base, messages: [
+      { kind: 'user', text: 'old', ts: null, n: 0 },
+      { kind: 'assistant', text: 'a', model: null, toolCalls: [], ts: null },
+      { kind: 'user', text: 'new q', ts: null, n: 1 },
+      call('c1'),
+      { kind: 'tool_result', toolUseId: 'c1', content: 'ok', isError: false, ts: null },
+      { kind: 'user', text: 'steer', ts: null, n: 2, steer: true },
+      call('c2'),
+    ], runningPrompt: { text: 'new q', attachments: [{ id: 'a1', name: 'f.png', isImage: true }] } }], openedOn(S));
+    expect(pane(s).items.map((it) => (it.kind === 'user' ? it.text : 'A'))).toEqual(['old', 'A', 'new q', 'A', 'steer', 'A', 'A']);
+    expect(pane(s).items[2]).toMatchObject({ attachments: [{ id: 'a1', name: 'f.png', isImage: true }] });
+    expect(pane(s).items.at(-1)).toMatchObject({ turnId: 't9', streaming: true });
+  });
 });
 
 describe('context gauge state', () => {

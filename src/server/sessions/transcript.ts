@@ -366,7 +366,7 @@ class TranscriptBuilder {
     } else if (queuedPrompt(r)) {
       const q = queuedPrompt(r)!;
       const t = textOfContent(q.content);
-      if (t && this.seen.first(q.source)) this.push({ kind: 'user', text: t, ts, n: this.userCount++ });
+      if (t && this.seen.first(q.source)) this.push({ kind: 'user', text: t, ts, n: this.userCount++, steer: true });
       this.lastAssistantId = null;
     } else if (r.type === 'assistant' && !r.isSidechain) {
       const m = message(r);

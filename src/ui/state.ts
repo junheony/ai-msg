@@ -17,7 +17,7 @@ import { paneSize } from './paneResize';
 export type ToolCallItem = { toolUseId: string; name: string; input: unknown; result: string | null; isError: boolean; /** Live turn: the reply text's length when this call began (간결 모드 folds the text before it). */ textAt?: number };
 
 export type ChatItem =
-  | { kind: 'user'; text: string; /** sent attachments (display: name tile, or a thumbnail for images) */ attachments?: SentFile[]; /** 메시지 편집 갈래: the message's ordinal among the session's user messages (TranscriptMessage.n); absent = unknown. */ n?: number; /** When it was sent (ms): the transcript's time, or this device's clock for one sent here; absent = unknown. */ at?: number }
+  | { kind: 'user'; text: string; /** sent attachments (display: name tile, or a thumbnail for images) */ attachments?: SentFile[]; /** 메시지 편집 갈래: the message's ordinal among the session's user messages (TranscriptMessage.n); absent = unknown. */ n?: number; /** When it was sent (ms): the transcript's time, or this device's clock for one sent here; absent = unknown. */ at?: number; /** The transcript logged it as sent into a running turn (TranscriptMessage.steer). */ steer?: true }
   /** A hook's message to the model (e.g. a Stop hook made it keep going): a muted row, collapsed. Never counted as a user message. */
   | { kind: 'system'; source: string; label: string; text: string }
   | { kind: 'assistant'; turnId: string | null; text: string; toolCalls: ToolCallItem[]; badge: TurnBadge | null; streaming: boolean; error: string | null; notes: string[]; attempts: string[]; /** Claude thinking: text so far, an encrypted block seen, when it began and how long it took (ms; absent = unknown / still going). */ thinking?: ThinkingInfo; /** The context after this turn (gauge). */ ctx?: ContextInfo; /** Badge tooltip when the turn rewrote the prompt cache (e.g. "캐시 새로 씀 · 계정 전환"). */ cacheNote?: string | null; /** This client sent an interrupt for this turn (중단, 지금 전송): its error is the stop, not a failure. */ interrupted?: true; /** The model that answered (the server's per-turn model, or the transcript's); absent = unknown. */ model?: string; /** The failed turn's turn_result.errorCode (e.g. 'thread_locked': deck 에서 새 GPT 세션으로 이어가기 is offered; 'fast_refused': 표준으로 다시 보내기). */ errorCode?: 'thread_locked' | 'fast_refused' };
@@ -616,7 +616,7 @@ export function fromTranscript(messages: TranscriptMessage[]): ChatItem[] {
   for (const m of messages) {
     if (m.kind === 'user') {
       const at = m.ts ? Date.parse(m.ts) : NaN;
-      items.push({ kind: 'user', text: m.text, ...(m.n !== undefined ? { n: m.n } : {}), ...(Number.isNaN(at) ? {} : { at }) });
+      items.push({ kind: 'user', text: m.text, ...(m.n !== undefined ? { n: m.n } : {}), ...(Number.isNaN(at) ? {} : { at }), ...(m.steer ? { steer: true as const } : {}) });
     }
     else if (m.kind === 'system') items.push({ kind: 'system', source: m.source, label: m.label, text: m.text });
     else if (m.kind === 'assistant') {
@@ -719,9 +719,10 @@ export function nextUserN(items: ChatItem[], session: PaneSession | null): numbe
 /**
  * A pane opened mid-turn: the running turn's prompt goes before its streaming item unless the transcript already
  * ends its user messages with it (the CLI writes the prompt early; the server appends path lines after attachments).
+ * Messages sent into the turn since (steers: TranscriptMessage.steer) come after its prompt: they are passed over.
  */
 function withRunningPrompt(items: ChatItem[], prompt: TurnPrompt): ChatItem[] {
-  const idx = items.findLastIndex((it) => it.kind === 'user');
+  const idx = items.findLastIndex((it) => it.kind === 'user' && !it.steer);
   const lastUser = idx >= 0 ? (items[idx] as Extract<ChatItem, { kind: 'user' }>) : null;
   if (lastUser && (lastUser.text === prompt.text || lastUser.text.startsWith(`${prompt.text}\n`))) {
     if (lastUser.attachments?.length || !prompt.attachments.length) return items;
