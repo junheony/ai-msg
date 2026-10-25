@@ -1,8 +1,25 @@
-# HANDOFF — deck (갱신 2026-10-25)
+# HANDOFF — deck (갱신 2026-10-26)
 
 > 형식은 agentic-harness 의 `session-handoff` 스킬. 이 파일을 고쳐 쓴다(날짜별 새 파일 금지). 이 저장소는 비공개 원본(원격 없음)이고, 공개본은 `scripts/export-public.sh` 로 뽑아 따로 올린다.
 
-## 지금 상태 (2026-10-25 저녁)
+## 지금 상태 (2026-10-26)
+
+**한 줄:** Pro 클라우드 출시 1차 가운데 폰 쪽(5a·5b·5c)을 뺀 구현이 모두 master 에 합쳐졌어요(1·2·3·4a·4b·7·9·10·12·11, 각 Task 마다 보안 리뷰를 다시 통과). 남은 구현은 iPhone 실기 확인을 기다리는 5a~5c 이고, 나머지 출시 일은 사용자 몫이에요.
+- **한 일 (10-26):**
+  - **Task 10 결제·계정 화면:** `/account`·`/checkout`·`/logout`(app 출처만), 설정 클라우드 행의 [Pro 구독]·[구독 관리], `/v1/hosts/:id/unlink`. 결제 잠금은 구독 표를 직접 보는 `liveSubscription` 기준이고, intent 유효 시간은 60분, 만료된 intent 는 되살리지 않아요. 리뷰 2회.
+  - **Task 12 법적·삭제·cron:** `docs/legal` 을 빌드해 `/legal/*` 로 게시해요. strict 빌드는 `{{…}}`·DRAFT 가 남으면 배포를 거부해요(지금 126개 남음). 모든 app 페이지에 비제휴 고지 바닥글을 붙였어요. 계정 삭제는 결제 확인 중이거나, 해지하지 않은 active·trialing·past_due·paused 구독이 있으면 409 이고, 체험 키와 구독 기록은 user_id 만 비워서 남겨요. 매일 03:17 UTC cron 이 만료 행 정리, 환불 해지 재시도(404 면 알림 1회, 30일 뒤 포기), 보류 연결·기간 지난 구독 알림을 돌리고, 단계마다 격리돼 있어요. 결제 잠금 유예는 이용권 상수(48시간·past_due 7일)를 그대로 써요. 리뷰 3회.
+  - **Task 11 보안·장애 테스트와 문서:** 로컬 방어, 장애 4건, 클라우드 보안(출처 분리 행렬·CSP·쿠키·CSRF·로그·D1 평문 없음·속도 제한·checkConfig)을 테스트로 고정했어요. 위생 규칙은 PEM·JWK. 잠자기에서 깨어나면 릴레이를 즉시 다시 연결해요. `docs/privacy-data-inventory.md` 를 새로 쓰고, `docs/security-model.md`·`cloud/README.md`(배포·라이브 전환)·`README.md` Pro 절을 보완했어요. 폰 연결은 "다음 릴리스"로 적었어요. 리뷰 2회.
+  - **간결 모드:** 마지막 메시지에서 "위 그대로"처럼 앞을 가리키지 말라는 문장을 넣었어요(도구 호출 앞 글은 접혀서 사용자에게 안 보임).
+  - **상단 배치:** AI-MSG 를 위에 고정하고 세션 이름은 오른쪽에(Codex·Grok 식).
+  - master 검사 통과(서버 3032, UI 1765, cloud 235+).
+- **남은 일:**
+  - **재시작:** 상단 배치·간결 모드·요금제 표시·결제 행이 빌드와 재시작을 기다려요("재시작 ㄱ" 때 한 번에).
+  - **iPhone 탐침 → 5a·5b·5c:** 탐침 서버가 시간 제한으로 꺼졌어요. 사용자가 준비되면 `scripts/probe/ios-pwa` 를 127.0.0.1:3200 으로 다시 띄워요(tailscale serve :3400 그대로). 결과는 계획의 "근거·미확인"에 표로 넣어요.
+  - **사용자 몫:** Paddle 가입·KYC(최우선), Cloudflare·도메인 aimsg.app, Resend, `docs/legal/` 빈칸 126개, 개인정보 문서를 `docs/privacy-data-inventory.md` 에 맞추기(푸시 데이터 없음·보관 기간·삭제 뒤 남는 것·처리자·Cloudflare IP 로그·Mac 이름·속도 제한 키·누락 항목), 벤더 서면 확인.
+  - **LOW:** Task 9 신원 대조를 emailKey 대신 원형 이메일로 / Task 7 공유 확인이 토큰을 구분하지 않음 / 상단 배치 drawer 첫 로드 포커스·toggleFocus 테스트 / relay 한도 테스트가 DO 시계 고정을 직접 단언하지 않음 / 두 탭 동시 결제(마지막 그물은 second_subscription 알림) / Paddle 오버레이 CSP·allowLogout 은 샌드박스에서 확인.
+  - **기타:** 공개본 export, 유료 스펙·패키징 계획 동기화, 오래된 `/private/tmp/deck-*` 정리.
+
+## 이전 상태 (2026-10-25 저녁)
 
 **한 줄:** **홈 대시보드**·**폴드 대화 순서**·**메시지 시트 글자 선택**(16:50 재시작으로 반영)과 **Grok Bot 대화에서 바로 보내기**를 master 에 합치고 `npm run build` 완료, 대기 재시작 요청함(`deck.log` "launchd 시작" 줄로 확인).
 - **한 일:**
