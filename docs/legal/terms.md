@@ -3,6 +3,7 @@
 > **DRAFT. Not legal advice. A lawyer must review this before payments go live.**
 > 초안 — 법률 자문 아님, 결제 개시 전 변호사 검토 필요
 > Effective date: `{{EFFECTIVE_DATE}}`
+> If this document and its Korean translation differ, this English original controls `{{확인 필요: 준거 언어 조항 — 변호사 확인}}`.
 
 These terms are an agreement between you and `{{OPERATOR_NAME}}` ("we", "us"), of `{{ADDRESS}}`. Contact: `{{CONTACT_EMAIL}}`.
 
@@ -56,7 +57,7 @@ Do not use AI-MSG or Pro Cloud to break the law, break a vendor's terms, attack 
 
 ## 9. Experimental features
 
-Some features read files that other apps keep on your device. They are experimental and unofficial, and are off by default. You turn them on yourself. Those apps may change their file formats without notice, and the features may stop working. Use them at your own risk.
+Some features read files that other apps keep on your device. They are experimental and unofficial. Some are off by default on a new install and you turn them on yourself. Others are on by default and you can turn them off in Settings. The [Privacy Policy](privacy.md) lists which. Installs upgraded from an earlier version keep the earlier behavior. Those apps may change their file formats without notice, and the features may stop working. Use them at your own risk.
 
 ## 10. Your content
 

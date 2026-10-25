@@ -3,12 +3,13 @@
 > **DRAFT. Not legal advice. A lawyer must review this before payments go live.**
 > 초안 — 법률 자문 아님, 결제 개시 전 변호사 검토 필요
 > Effective date: `{{EFFECTIVE_DATE}}`
+> If this document and its Korean translation differ, this English original controls `{{확인 필요: 준거 언어 조항 — 변호사 확인}}`.
 
 `{{OPERATOR_NAME}}` of `{{ADDRESS}}` ("we") operates AI-MSG. Contact: `{{CONTACT_EMAIL}}`. This policy covers three things: the local app, the Pro Cloud, and payments.
 
 ## Summary
 
-- The local app stores everything on your device. It sends nothing to us.
+- The local app stores everything on your device. It sends nothing to us. Local push notifications go straight from your computer to your browser's push service (see section 1).
 - Pro Cloud holds your account email, device and pairing information, and push subscriptions. It cannot read your messages, because they are end-to-end encrypted.
 - Paddle handles payments. We never receive your card number.
 - We never access your AI vendor credentials.
@@ -24,14 +25,19 @@ The local app runs on your computer. It stores its data on your device only. We 
 | Conversation transcripts that the Vendor Tools keep (for example under each Claude profile folder and the Codex sessions folder) | To list your sessions and show history |
 | Folders you choose to work in | To run the Vendor Tools there and preview files |
 | Usage figures the Vendor Tools print during a turn | To show remaining limits |
+| Codex session files (rollouts), for usage display. This cannot be turned off | To show remaining Codex limits |
+| Grok CLI session folder. There is no switch for this | To list and continue Grok sessions |
+| The list of running processes on your computer (`ps`) | To tell whether another process is holding a session |
 
-The app does not read vendor sign-in tokens, key files or keychains. For Gemini it only checks whether a credential file exists. It does not open it.
+The app does not read vendor sign-in tokens, key files or keychains. For Gemini it runs the official tool's status command (`agy models`) and looks only at the exit code to see whether you are signed in. It does not read any credential.
+
+**Usage checks.** In the background, AI-MSG periodically runs the official tools' own usage commands: for Claude `claude -p /usage` every 5 minutes, for Gemini `agy /usage`, and for Grok the official CLI's billing query. Those tools talk to their vendor with your own sign-in. AI-MSG does not read or receive that sign-in.
 
 **Files the app writes.** Its own settings, session state, an audit log of permission decisions, highlights (kept 7 days), uploaded attachments (deleted after 7 days), push keys and usage aggregates, all in its own configuration folder on your device.
 
-**Experimental features (off by default).** Some features read local files of other apps, for example the session files of a desktop AI app or other tools' local history. You must turn each one on in Settings. When off, the files are not read. The app opens other apps' databases only as temporary copies, and does not write to their folders, except where the setting for mirroring sessions says so `{{확인 필요: 실험 기능별 읽기·쓰기 범위 최종 목록(제품 확정 후)}}`.
+**Reading other apps' local files.** Some features read local files of other apps. On a new install, the Grok Bot and Claude Desktop features are off. Reading Codex sessions and Antigravity summaries is on by default, and you can turn it off in Settings. Reading Codex session files for the usage display cannot be turned off. Installs upgraded from an earlier version keep the earlier behavior, with all three switches on. When a switch is off, those files are not read. The app opens other apps' databases only as temporary copies, and does not write to their folders, except where the setting for mirroring sessions says so `{{확인 필요: 실험 기능별 읽기·쓰기 범위 최종 목록(제품 확정 후)}}`.
 
-**Local push.** If you use push without Pro Cloud, your device sends notifications directly and keeps the subscription in its own folder.
+**Local push.** If you use push without Pro Cloud, your computer sends notifications directly to your browser's push service (run by Google, Mozilla, Apple or Microsoft) and keeps the subscription in its own folder. That service sees that a push was sent and the VAPID subject, which is your computer's Tailscale name. The content is encrypted for your device. Local push text can include the session title, the first line of the AI's reply, and the name and a short description of the tool asking for permission. For a shell tool, that can be the command.
 
 ## 2. Pro Cloud
 
@@ -56,7 +62,7 @@ Pro Cloud exists only if you sign in and link a device.
 
 **What we cannot see.** Session content, prompts, code and AI output pass through the relay as encrypted data. The keys exist only on your paired devices. We cannot decrypt them. We do not store them.
 
-**Push notifications.** To send a push, your computer encrypts the notification, and the cloud signs and forwards it to your browser's push service (for example the one run by your browser vendor). Cloud push text holds only the session title and the kind of event. It does not hold code or commands. We keep a hash of your push endpoint, not the endpoint itself `{{확인 필요: 푸시 구독 전문을 클라우드가 저장하는지}}`.
+**Push notifications.** To send a push, your computer encrypts the notification, and the cloud signs and forwards it to your browser's push service (for example the one run by your browser vendor). What a cloud push contains is not yet settled `{{확인 필요: 클라우드 경유 푸시 payload 내용 — 계획은 세션 제목·종류만이나 로컬 푸시는 답 첫 줄·도구 설명도 포함}}`. We keep a hash of your push endpoint, not the endpoint itself `{{확인 필요: 푸시 구독 전문을 클라우드가 저장하는지}}`.
 
 **Service providers.** We use infrastructure and email providers to run Pro Cloud `{{확인 필요: 호스팅·메일 업체 이름과 서버 지역}}`. Your browser's push service sees that a push was sent to your device.
 

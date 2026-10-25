@@ -3,6 +3,7 @@
 > **DRAFT. Not legal advice. A lawyer must review this before payments go live.**
 > 초안 — 법률 자문 아님, 결제 개시 전 변호사 검토 필요
 > Effective date: `{{EFFECTIVE_DATE}}`
+> If this document and its Korean translation differ, this English original controls `{{확인 필요: 준거 언어 조항 — 변호사 확인}}`.
 
 This policy applies to the AI-MSG Pro subscription. The free Core costs nothing and has nothing to refund. Operator: `{{OPERATOR_NAME}}`, `{{ADDRESS}}`. Contact: `{{CONTACT_EMAIL}}`.
 

@@ -19,4 +19,4 @@ Each document has an English original and a Korean translation. If they differ, 
 - Have a lawyer review the vendor-terms wording, the Pro wording and the local file reading described in the Privacy Policy.
 - Check the Refund Policy against Paddle's current requirements.
 - Show the non-affiliation notice in the app (Settings, About), on the landing page and on the checkout page.
-- Keep these files free of real names, personal emails and personal paths. The hygiene tests check this.
+- Keep these files free of real names, personal emails and personal paths.
