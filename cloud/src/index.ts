@@ -7,7 +7,7 @@ import { HttpError, clientIp, json, problem } from './http';
 import { APP_HTML_CSP, relayHeaders, sideOf } from './origins';
 import { LINK_JS } from './pages/link';
 import { paddleApi } from './paddle/api';
-import { type WebhookDeps, paddleWebhook } from './paddle/webhook';
+import { type WebhookDeps, paddleWebhook, webhookSecretProblem } from './paddle/webhook';
 import { pairClaim, pairConfirm, pairReject, pairStart, pairStatus } from './pairing';
 import { relayDevice, relayHost } from './relay/routes';
 import { relayTicket } from './relay/tickets';
@@ -22,7 +22,7 @@ const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
 /**
  * Refuses a deployment that would leak or misroute: log mail / dev routes off a local or `.test` origin,
  * short secrets (`CHECKOUT_SECRET` too), `resend` without a key or sender, equal origins, a non-https origin off localhost,
- * a `PADDLE_WEBHOOK_SECRET` not in Paddle's format, a `PADDLE_ENV`/`PADDLE_IP_CHECK` typo, or a limit (`MAX_HOSTS`·`MAX_DEVICES`·`TRIAL_DAYS`) that is not a positive integer.
+ * a `PADDLE_ENV`/`PADDLE_IP_CHECK` typo, or a limit (`MAX_HOSTS`·`MAX_DEVICES`·`TRIAL_DAYS`) that is not a positive integer.
  */
 export function checkConfig(env: Env): ConfigCheck {
   let pub: URL, relay: URL;
@@ -39,8 +39,6 @@ export function checkConfig(env: Env): ConfigCheck {
   if ((env.SESSION_SECRET ?? '').length < 32) return { ok: false, reason: 'SESSION_SECRET must be at least 32 characters' };
   if ((env.EMAIL_HASH_SECRET ?? '').length < 32) return { ok: false, reason: 'EMAIL_HASH_SECRET must be at least 32 characters' };
   if ((env.CHECKOUT_SECRET ?? '').length < 32) return { ok: false, reason: 'CHECKOUT_SECRET must be at least 32 characters' };
-  // Paddle's endpoint_secret_key format (notification settings API). Unset is allowed: the webhook answers 503.
-  if (env.PADDLE_WEBHOOK_SECRET !== undefined && !/^pdl_ntfset_[a-zA-Z0-9]{26}_[a-zA-Z0-9]{32}$/.test(env.PADDLE_WEBHOOK_SECRET)) return { ok: false, reason: 'PADDLE_WEBHOOK_SECRET must be a Paddle endpoint secret (pdl_ntfset_…)' };
   if (env.PADDLE_ENV !== 'sandbox' && env.PADDLE_ENV !== 'production') return { ok: false, reason: 'PADDLE_ENV must be sandbox or production' };
   if (env.PADDLE_IP_CHECK !== '0' && env.PADDLE_IP_CHECK !== '1') return { ok: false, reason: 'PADDLE_IP_CHECK must be 0 or 1' };
   // `Number('x')` is NaN and `count >= NaN` is false — a typo would silently lift the limit.
@@ -57,6 +55,8 @@ function cachedCheck(env: Env): ConfigCheck {
   if (!r) {
     r = checkConfig(env);
     if (!r.ok) console.error(`misconfigured: ${r.reason}`);
+    // Never the whole Worker: a missing/short secret closes only the webhook route (webhook.ts).
+    if (webhookSecretProblem(env.PADDLE_WEBHOOK_SECRET) === 'prefix') console.warn('PADDLE_WEBHOOK_SECRET does not start with pdl_ntfset_ (Paddle format)');
     checked.set(env, r);
   }
   return r;

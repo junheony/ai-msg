@@ -1,10 +1,11 @@
+import { emailKey } from '../auth/email';
 import type { Env } from '../env';
 import { alertStmt } from '../ops';
 import { verifyUserRef } from './userRef';
 
 /** A verified, parsed webhook event. `occurred_at` is ms. */
 export type PaddleEvent = { event_id: string; event_type: string; occurred_at: number; data: unknown };
-export type Outcome = 'applied' | 'stale' | 'unmatched' | 'customer_conflict' | 'customer_unlinked' | 'second_subscription' | 'refund_recorded' | 'refund_cancel' | 'ignored' | 'invalid';
+export type Outcome = 'applied' | 'stale' | 'unmatched' | 'customer_conflict' | 'customer_unlinked' | 'customer_pending' | 'second_subscription' | 'refund_recorded' | 'refund_cancel' | 'ignored' | 'invalid';
 /** Work done after the batch commits (`ctx.waitUntil`): a room recheck, or the immediate cancel after a full refund/chargeback. */
 export type Effect = { kind: 'recheck'; hostId: string } | { kind: 'cancel'; subscriptionId: string; adjustmentId: string };
 export type EventPlan = { outcome: Outcome; stmts: D1PreparedStatement[]; alerts: D1PreparedStatement[]; effects: Effect[] };
@@ -42,7 +43,7 @@ ON CONFLICT(adjustment_id) DO UPDATE SET
   status = excluded.status, full = excluded.full, last_event_at = excluded.last_event_at
 WHERE excluded.last_event_at >= refunds.last_event_at`;
 
-type PlanEnv = Pick<Env, 'DB' | 'CHECKOUT_SECRET'>;
+type PlanEnv = Pick<Env, 'DB' | 'CHECKOUT_SECRET' | 'EMAIL_HASH_SECRET'>;
 
 /**
  * The user the server-signed `custom_data.ref` (userRef) names, if it verifies and the user still exists. An unsigned
@@ -58,23 +59,34 @@ async function customerOwner(db: D1Database, customer: string | null): Promise<s
   return (await db.prepare('SELECT id FROM users WHERE paddle_customer_id = ?').bind(customer).first<string>('id')) ?? null;
 }
 
+/** Sets `users.paddle_customer_id` only if the user has none and no other user holds it (never a UNIQUE error). */
+const linkStmt = (db: D1Database, customer: string, userId: string) =>
+  db.prepare('UPDATE users SET paddle_customer_id = ?1 WHERE id = ?2 AND paddle_customer_id IS NULL AND NOT EXISTS (SELECT 1 FROM users WHERE paddle_customer_id = ?1)').bind(customer, userId);
+
+type Link = { stmt: D1PreparedStatement | null; problem: 'owned' | 'other' | 'no_intent' | 'email_mismatch' | 'pending' | null };
+
 /**
- * Whether `customer` may be linked to `userId` (who came from a verified ref). Paddle reuses a customer whose email
- * matches at checkout, so anyone can end up holding someone else's customer id: a new link needs a checkout intent of
- * this user that was open when the event happened, and never takes a customer id another user holds.
+ * Whether `customer` may be linked to `userId` (who came from a verified ref). Paddle reuses the customer whose email
+ * is typed at checkout, so anyone can end up holding someone else's customer id. A new link needs: no other user
+ * holds it, a checkout intent of this user open at `occurred_at`, and Paddle's customer email = the account email
+ * (both as `emailKey`). Without the customer's email yet (its `customer.*` event comes later) the link waits in
+ * `paddle_link_pending` (`stmt`) and the customer event finishes it.
  */
-async function customerLink(db: D1Database, userId: string, customer: string, at: number): Promise<{ stmt: D1PreparedStatement | null; problem: 'owned' | 'other' | 'no_intent' | null }> {
+async function customerLink(env: PlanEnv, userId: string, customer: string, at: number, now: number): Promise<Link> {
+  const db = env.DB;
   const ownerId = await customerOwner(db, customer);
   if (ownerId && ownerId !== userId) return { stmt: null, problem: 'owned' };
-  const current = await db.prepare('SELECT paddle_customer_id FROM users WHERE id = ?').bind(userId).first<string | null>('paddle_customer_id');
-  if (current === customer) return { stmt: null, problem: null };
-  if (current) return { stmt: null, problem: 'other' };
+  const me = await db.prepare('SELECT email, paddle_customer_id FROM users WHERE id = ?').bind(userId).first<{ email: string; paddle_customer_id: string | null }>();
+  if (!me) return { stmt: null, problem: 'no_intent' };
+  if (me.paddle_customer_id === customer) return { stmt: null, problem: null };
+  if (me.paddle_customer_id) return { stmt: null, problem: 'other' };
   if (!(await db.prepare('SELECT 1 FROM checkout_intents WHERE user_id = ? AND expires_at > ?').bind(userId, at).first())) return { stmt: null, problem: 'no_intent' };
-  // Same conditions again inside the write, so a concurrent event cannot slip past them.
-  const stmt = db.prepare(`UPDATE users SET paddle_customer_id = ?1 WHERE id = ?2 AND paddle_customer_id IS NULL
-    AND NOT EXISTS (SELECT 1 FROM users WHERE paddle_customer_id = ?1)
-    AND EXISTS (SELECT 1 FROM checkout_intents WHERE user_id = ?2 AND expires_at > ?3)`).bind(customer, userId, at);
-  return { stmt, problem: null };
+  const stored = await db.prepare('SELECT email_key FROM paddle_customers WHERE id = ?').bind(customer).first<string>('email_key');
+  if (stored == null) {
+    return { stmt: db.prepare('INSERT INTO paddle_link_pending (customer_id, user_id, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING').bind(customer, userId, now), problem: 'pending' };
+  }
+  if (stored !== (await emailKey(env.EMAIL_HASH_SECRET, me.email))) return { stmt: null, problem: 'email_mismatch' };
+  return { stmt: linkStmt(db, customer, userId), problem: null };
 }
 
 async function rechecks(db: D1Database, userId: string | null): Promise<Effect[]> {
@@ -114,12 +126,9 @@ export async function planEvent(env: PlanEnv, ev: PaddleEvent, now: number): Pro
     const owner = existing?.user_id ?? null;
     const userId = owner ?? byRef ?? (await customerOwner(db, customer));
     const upsert = db.prepare(UPSERT_SUBSCRIPTION).bind(id, userId, customer, status, item, period, canceledAt, ev.occurred_at, scheduled, now);
-    if (existing && existing.last_event_at > ev.occurred_at) {
-      // The WHERE blocks the upsert. A late past_due may still only move past_due_since earlier, never later.
-      const stmts = [upsert];
-      if (status === 'past_due') stmts.push(db.prepare(`UPDATE subscriptions SET past_due_since = ?1 WHERE id = ?2 AND status = 'past_due' AND past_due_since > ?1`).bind(ev.occurred_at, id));
-      return plan('stale', stmts);
-    }
+    // The WHERE blocks the upsert too. A late past_due is not used to move past_due_since earlier: it may belong to
+    // an older dunning run, and cutting Pro short is the worse error.
+    if (existing && existing.last_event_at > ev.occurred_at) return plan('stale', [upsert]);
     if (!userId) return plan('unmatched', [upsert], [alertStmt(db, 'unmatched', id, ev.event_type, now)]);
 
     const stmts = [upsert];
@@ -131,9 +140,10 @@ export async function planEvent(env: PlanEnv, ev: PaddleEvent, now: number): Pro
     }
     if (ACTIVE.includes(status)) {
       if (byRef === userId && customer) {
-        const link = await customerLink(db, userId, customer, ev.occurred_at);
+        const link = await customerLink(env, userId, customer, ev.occurred_at, now);
         if (link.stmt) stmts.push(link.stmt); // before the intent is deleted below
         if (link.problem === 'owned') alerts.push(alertStmt(db, 'customer_conflict', id, 'customer id owned by another user', now));
+        if (link.problem === 'email_mismatch') alerts.push(alertStmt(db, 'customer_unlinked', id, 'Paddle customer email is not the account email', now));
       }
       const other = await db.prepare(`SELECT id FROM subscriptions WHERE user_id = ? AND id <> ? AND status IN ('active','trialing','past_due') LIMIT 1`)
         .bind(userId, id).first<string>('id');
@@ -157,13 +167,38 @@ export async function planEvent(env: PlanEnv, ev: PaddleEvent, now: number): Pro
       // Without a verified ref nothing is linked; a customer already linked is fine as it is.
       return (await customerOwner(db, customer)) ? plan('applied') : plan('unmatched', [], [alertStmt(db, 'unmatched', txn, ev.event_type, now)]);
     }
-    const link = await customerLink(db, userId, customer, ev.occurred_at);
+    const link = await customerLink(env, userId, customer, ev.occurred_at, now);
     // Never overwrite, and never let the UNIQUE index turn this into a 500 (Paddle would retry for days).
     if (link.problem === 'owned' || link.problem === 'other') {
       return plan('customer_conflict', [], [alertStmt(db, 'customer_conflict', txn, link.problem === 'owned' ? 'customer id owned by another user' : 'user has another customer id', now)]);
     }
     if (link.problem === 'no_intent') return plan('customer_unlinked', [], [alertStmt(db, 'customer_unlinked', txn, 'no checkout intent open at occurred_at', now)]);
+    if (link.problem === 'email_mismatch') return plan('customer_unlinked', [], [alertStmt(db, 'customer_unlinked', txn, 'Paddle customer email is not the account email', now)]);
+    if (link.problem === 'pending') return plan('customer_pending', [link.stmt!]);
     return plan('applied', link.stmt ? [link.stmt] : []);
+  }
+
+  if (ev.event_type === 'customer.created' || ev.event_type === 'customer.updated') {
+    if (!isObj(d)) return invalid('data');
+    const id = idStr(d.id);
+    if (!id) return invalid('data.id');
+    if (typeof d.email !== 'string' || !d.email || d.email.length > 320) return invalid('data.email');
+    const key = await emailKey(env.EMAIL_HASH_SECRET, d.email);
+    const existing = await db.prepare('SELECT last_event_at FROM paddle_customers WHERE id = ?').bind(id).first<number>('last_event_at');
+    const upsert = db.prepare(`INSERT INTO paddle_customers (id, email_key, last_event_at) VALUES (?1, ?2, ?3)
+      ON CONFLICT(id) DO UPDATE SET email_key = excluded.email_key, last_event_at = excluded.last_event_at
+      WHERE excluded.last_event_at >= paddle_customers.last_event_at`).bind(id, key, ev.occurred_at);
+    if (existing != null && existing > ev.occurred_at) return plan('stale', [upsert]);
+    // Finish links that waited for this email. An existing link is never undone by a later email change.
+    const waiting = await db.prepare('SELECT p.user_id, u.email FROM paddle_link_pending p JOIN users u ON u.id = p.user_id WHERE p.customer_id = ?').bind(id).all<{ user_id: string; email: string }>();
+    const stmts = [upsert];
+    const alerts: D1PreparedStatement[] = [];
+    for (const w of waiting.results) {
+      if ((await emailKey(env.EMAIL_HASH_SECRET, w.email)) === key) stmts.push(linkStmt(db, id, w.user_id));
+      else alerts.push(alertStmt(db, 'customer_unlinked', id, 'Paddle customer email is not the account email', now));
+    }
+    stmts.push(db.prepare('DELETE FROM paddle_link_pending WHERE customer_id = ?').bind(id));
+    return plan(alerts.length > 0 ? 'customer_unlinked' : 'applied', stmts, alerts);
   }
 
   if (ev.event_type === 'adjustment.created' || ev.event_type === 'adjustment.updated') {

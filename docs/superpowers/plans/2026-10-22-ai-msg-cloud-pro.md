@@ -2545,8 +2545,9 @@ it('hello carries pro; a gate change rides on the settings broadcast', async () 
   - 즉시 해지: `POST /subscriptions/{subscription_id}/cancel`, 본문 `{ "effective_from": "immediately" }`(기본은 `next_billing_period`), 권한 `subscription.write`.
   - API 주소: 샌드박스 `https://sandbox-api.paddle.com`, 라이브 `https://api.paddle.com`. 키는 `Authorization: Bearer`, 환경마다 따로이고 접두사 `pdl_sdbx_`·`pdl_live_`(69자).
 - Paddle 고객과 웹훅 비밀 (2026-10-26, Task 9 보안 리뷰):
-  - 고객 이메일은 계정 안에서 유일하고, 체크아웃에서 이미 있는 고객의 이메일을 넣으면 Paddle 은 새 고객을 만들지 않고 그 고객 엔터티를 쓴다(`build/customers/create-update-customers`). 그래서 남의 이메일로 결제하면 남의 `customer_id` 가 웹훅에 실린다 → Task 9 는 user↔customer 연결을 "서명된 ref + 그 사용자의 `checkout_intents` 가 `occurred_at` 에 열려 있음 + 다른 사용자가 쓰지 않는 customer" 일 때만 새로 만든다.
-  - 웹훅 비밀 `endpoint_secret_key` 는 `pdl_ntfset_` 접두사, 형식 `^pdl_ntfset_[a-zA-Z0-9]{26}_[a-zA-Z0-9]{32}$`(`api-reference/notification-settings/get-notification-setting`). `checkConfig` 가 이 형식을 검사한다.
+  - 고객 이메일은 계정 안에서 유일하고, 체크아웃에서 이미 있는 고객의 이메일을 넣으면 Paddle 은 새 고객을 만들지 않고 그 고객 엔터티를 쓴다(`build/customers/create-update-customers`). 그래서 남의 이메일로 결제하면 남의 `customer_id` 가 웹훅에 실린다 → Task 9 는 user↔customer 연결을 "서명된 ref + 그 사용자의 `checkout_intents` 가 `occurred_at` 에 열려 있음 + 다른 사용자가 쓰지 않는 customer + **Paddle customer 이메일 = 계정 이메일**" 일 때만 새로 만든다(의도는 사용자가 아무 때나 열 수 있어 이메일 비교가 실제 방어다).
+  - `customer.created`/`customer.updated` 의 `data` 에 `id`(`ctm_`)·`email` 이 있고, 이메일은 바뀔 수 있다(`webhooks/customers/customer-updated`). Task 9 는 이 이벤트로 `paddle_customers(id, email_key)` 를 `occurred_at` 가드 upsert 한다. 원문은 저장하지 않고 `emailKey(EMAIL_HASH_SECRET, …)`(정규화 뒤 HMAC)만 둔다. customer 이벤트가 늦게 오면 연결은 `paddle_link_pending` 에 보류(`customer_pending`)했다가 그 이벤트가 올 때 이메일이 맞으면 연결, 다르면 `customer_unlinked` 알림. 연결된 뒤 이메일이 바뀌어도 끊지 않는다. 결제 창 이메일을 계정 이메일로 고정하는 일은 Task 10 몫.
+  - 웹훅 비밀 `endpoint_secret_key` 는 `pdl_ntfset_` 접두사, 형식 `^pdl_ntfset_[a-zA-Z0-9]{26}_[a-zA-Z0-9]{32}$`(`api-reference/notification-settings/get-notification-setting`). 형식이 바뀔 수 있어 Worker 전체를 막지 않는다: 접두사가 다르면 경고 로그만, 비었거나 32자 미만이면 웹훅 경로만 503.
 - `web-push` 3.6.7 소스: `generateRequestDetails` 는 `vapidDetails` 가 없으면 `Authorization` 없이 aes128gcm 본문과 머리를 만든다(출시 뒤 Task 6 에서만 쓴다).
 
 **미확인 (해당 Task 첫 단계에서 확인)**

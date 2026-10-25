@@ -22,15 +22,16 @@ AI msg Pro 클라우드 Worker 다. 공개본에는 들어가지 않는다(`.git
   - 순서: 본문 64KB 상한(`content-length` 와 실제로 읽은 바이트 둘 다, 넘으면 413·저장 없음) → 원문 바이트 HMAC(`Paddle-Signature`, 5초) → 401, `PADDLE_IP_CHECK=1` 이면 환경별 Paddle IP 목록 → 403, `event_id` 선조회(중복이면 200 `duplicate`), 변경·알림·이벤트 행을 한 batch 로 쓴다.
   - 모든 쓰기는 `occurred_at` 으로 막는 upsert 다. 늦게 온 옛 이벤트는 `stale` 로 기록만 한다.
   - 구독의 사용자는 기존 행의 주인 → 서명된 `custom_data.ref`(`signUserRef(CHECKOUT_SECRET, userId)`) → 이미 연결된 `paddle_customer_id` 순서로 정한다. 서명 없는 `user_id` 는 읽지 않는다. 주인이 정해진 구독은 주인이 바뀌지 않는다(다른 사용자의 ref 가 오면 `customer_conflict` 알림만).
-  - user↔customer 연결은 서명된 ref 가 있고, 그 사용자의 `checkout_intents` 가 이벤트 `occurred_at` 에 열려 있고, 다른 사용자가 그 customer 를 쓰지 않을 때만 새로 만든다(Paddle 은 같은 이메일이면 기존 고객을 재사용한다). 거래에서 의도가 없으면 `customer_unlinked` 알림.
+  - user↔customer 연결은 서명된 ref, 그 사용자의 `checkout_intents` 가 이벤트 `occurred_at` 에 열려 있음, 다른 사용자가 그 customer 를 쓰지 않음, **Paddle customer 이메일 = 계정 이메일**(`emailKey` 비교)일 때만 새로 만든다(Paddle 은 같은 이메일이면 기존 고객을 재사용한다). 어긋나면 `customer_unlinked` 알림.
+  - customer 이메일은 `customer.created`/`customer.updated` 로 `paddle_customers(id, email_key)` 에 둔다(원문 없음, `EMAIL_HASH_SECRET` HMAC). 그 이벤트가 아직 없으면 연결은 `paddle_link_pending` 에 보류되고(`customer_pending`), customer 이벤트가 오면 그때 맞춰 연결하거나 알린다. 오래 남은 보류 행 정리와 계정 삭제 때 지우기는 Task 12 몫.
   - 업무 충돌(사용자 못 찾음·두 번째 구독·고객 id 충돌·깨진 페이로드)은 200 + `ops_alerts` 행 + `console.error` 한 줄이다. D1 오류만 500(Paddle 이 다시 보낸다).
   - 전액 환불·차지백(거절·취소된 차지백과 차지백 되돌림은 제외)이면 커밋 뒤 `ctx.waitUntil` 로 Paddle 즉시 해지 API 를 부른다. 먼저 `cancel_done_at` 을 NULL → `-now` 로 조건부 선점해 한 번만 부르고, 성공하면 `+now` 다. 실패하면 음수가 남고 `refund_cancel_failed` 알림, Task 12 cron 이 `full = 1 AND (cancel_done_at IS NULL OR cancel_done_at < 0)` 을 다시 시도한다.
   - 구독이 바뀌면 그 사용자의 호스트 방에 recheck 를 보내 기기 소켓의 `until` 을 새로 읽게 한다.
-- 이용권(`entitled.ts`): active·trialing 은 `period_end + 48시간`, past_due 는 가장 이른 past_due 이벤트 시각 `+ 7일`(늦게 온 옛 past_due 는 이 시각을 앞당기기만 한다), canceled·paused 는 `canceled_at`(예약 해지가 실행됐고 전액 환불이 없으면 `period_end + 48시간` 까지). 체험·comp 와 견줘 가장 늦은 `until` 이 이긴다(같으면 pro > comp > trial).
+- 이용권(`entitled.ts`): active·trialing 은 `period_end + 48시간`, past_due 는 순서대로 받은 첫 past_due 이벤트 시각 `+ 7일`(늦게 온 옛 past_due 는 무시한다 — 옛 연체 구간 것일 수 있어 Pro 를 일찍 끊지 않는 쪽), canceled·paused 는 `canceled_at`(예약 해지가 실행됐고 전액 환불이 없으면 `period_end + 48시간` 까지). 체험·comp 와 견줘 가장 늦은 `until` 이 이긴다(같으면 pro > comp > trial).
 - 저장소는 D1 하나다(`migrations/`). `UI` R2 바인딩은 선언만 해 두었다(Task 7 이 쓴다).
 - 설정이 틀리면 `checkConfig` 가 모든 요청에 503 `misconfigured` 로 답한다.
   - 원인은 `console.error` 로 한 번 남는다.
-  - 검사 항목: https 출처, 두 출처가 서로 다름, 비밀(`SESSION_SECRET`·`EMAIL_HASH_SECRET`·`CHECKOUT_SECRET`) 32자 이상, `PADDLE_WEBHOOK_SECRET` 이 있으면 Paddle 형식(`pdl_ntfset_<26>_<32>`), `PADDLE_ENV` 가 `sandbox|production`, `PADDLE_IP_CHECK` 가 `0|1`, `resend` 일 때 `RESEND_API_KEY`·`EMAIL_FROM`, `MAX_HOSTS`·`MAX_DEVICES`·`TRIAL_DAYS` 가 양의 정수.
+  - 검사 항목: https 출처, 두 출처가 서로 다름, 비밀(`SESSION_SECRET`·`EMAIL_HASH_SECRET`·`CHECKOUT_SECRET`) 32자 이상, `PADDLE_ENV` 가 `sandbox|production`, `PADDLE_IP_CHECK` 가 `0|1`, `resend` 일 때 `RESEND_API_KEY`·`EMAIL_FROM`, `MAX_HOSTS`·`MAX_DEVICES`·`TRIAL_DAYS` 가 양의 정수.
   - `log`·`DEV_ROUTES=1` 은 localhost·`.test` 출처에서만 허용한다.
 
 ## 보안 메모
@@ -54,7 +55,7 @@ npm --prefix cloud test        # miniflare 안의 workerd, 네트워크 없음
 
 1. `wrangler d1 create ai-msg` 를 실행하고, 나온 `database_id` 를 `wrangler.jsonc` 에 넣는다.
 2. `wrangler d1 migrations apply ai-msg --remote` 로 마이그레이션을 적용한다.
-3. 비밀은 `wrangler secret put` 으로 넣는다: `SESSION_SECRET`, `EMAIL_HASH_SECRET`, `CHECKOUT_SECRET`(각각 32자 이상의 임의 값), `RESEND_API_KEY`, `PADDLE_WEBHOOK_SECRET`(Paddle 알림 대상의 비밀), `PADDLE_API_KEY`(권한 `subscription.write`, Task 10 부터 `customer_portal_session.write` 도). `PADDLE_WEBHOOK_SECRET` 이 비어 있으면 웹훅은 503 이다.
+3. 비밀은 `wrangler secret put` 으로 넣는다: `SESSION_SECRET`, `EMAIL_HASH_SECRET`, `CHECKOUT_SECRET`(각각 32자 이상의 임의 값), `RESEND_API_KEY`, `PADDLE_WEBHOOK_SECRET`(Paddle 알림 대상의 비밀), `PADDLE_API_KEY`(권한 `subscription.write`, Task 10 부터 `customer_portal_session.write` 도). `PADDLE_WEBHOOK_SECRET` 이 비었거나 32자 미만이면 웹훅 경로만 503 이고(나머지는 정상), `pdl_ntfset_` 로 시작하지 않으면 경고 로그만 남긴다.
    - `vars` 의 `PADDLE_ENV`(`sandbox`/`production`)와 키 환경을 맞춘다. 샌드박스 키는 샌드박스 주소에서만 통한다.
 4. `wrangler.jsonc` 의 `vars` 를 채운다: `EMAIL_FROM`(Resend 에서 검증한 발신 주소), 두 출처. `routes` 에는 두 호스트 이름을 커스텀 도메인으로 적는다.
 5. `wrangler deploy` 로 배포한다.

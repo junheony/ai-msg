@@ -4,9 +4,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { entitledState } from '../src/entitled';
 import { deps } from '../src/index';
 import type { PaddleApi } from '../src/paddle/api';
-import { paddleIpAllowed } from '../src/paddle/webhook';
+import { paddleIpAllowed, webhookSecretProblem } from '../src/paddle/webhook';
 import { signUserRef } from '../src/paddle/userRef';
 import adjustmentCreated from './fixtures/paddle/adjustment.created.json?raw';
+import customerCreated from './fixtures/paddle/customer.created.json?raw';
 import subscriptionActivated from './fixtures/paddle/subscription.activated.json?raw';
 import subscriptionCanceled from './fixtures/paddle/subscription.canceled.json?raw';
 import subscriptionCreated from './fixtures/paddle/subscription.created.json?raw';
@@ -28,6 +29,7 @@ const FIXTURES = {
   'subscription.canceled': subscriptionCanceled,
   'transaction.completed': transactionCompleted,
   'adjustment.created': adjustmentCreated,
+  'customer.created': customerCreated,
 } as const;
 type FxName = keyof typeof FIXTURES;
 type Json = Record<string, unknown>;
@@ -81,6 +83,10 @@ async function newUser(customerId: string | null = null): Promise<string> {
 /** A checkout intent that was open when the event happened (Task 10 writes these). */
 const intent = (userId: string, expiresAt = Date.now() + HOUR) =>
   env.DB.prepare("INSERT INTO checkout_intents (user_id, plan, expires_at) VALUES (?, 'month', ?) ON CONFLICT(user_id) DO UPDATE SET expires_at = excluded.expires_at").bind(userId, expiresAt).run();
+/** Paddle's customer entity (email) for `ctm`; by default the address of `userId`'s account. */
+const customerEvent = (ctm: string, email: string, at?: number) => deliver(fx('customer.created', { id: ctm, email, at }));
+const emailOf = (userId: string) => `${userId}@example.test`; // newUser()
+const pending = async (ctm: string) => (await env.DB.prepare('SELECT COUNT(*) AS n FROM paddle_link_pending WHERE customer_id = ?').bind(ctm).first<number>('n'))!;
 const customerOf = (userId: string) => env.DB.prepare('SELECT paddle_customer_id FROM users WHERE id = ?').bind(userId).first<string | null>('paddle_customer_id');
 const ids = () => { const n = seq++; return { sub: `sub_t${n}`, ctm: `ctm_t${n}`, adj: `adj_t${n}`, txn: `txn_t${n}` }; };
 
@@ -179,6 +185,33 @@ describe('Paddle webhook — delivery', () => {
     expect(await r.json()).toEqual({ outcome: 'invalid' });
     expect(await eventRow(ev.event_id as string)).toMatchObject({ outcome: 'invalid' });
     expect(await alerts()).toContainEqual(expect.objectContaining({ kind: 'invalid_event', ref: ev.event_id }));
+  });
+
+  it('webhook secret missing or under 32 chars blocks only the webhook (503); other routes keep working', async () => {
+    expect(webhookSecretProblem(undefined)).toBe('missing');
+    expect(webhookSecretProblem('')).toBe('missing');
+    expect(webhookSecretProblem('x'.repeat(31))).toBe('short');
+    expect(webhookSecretProblem('x'.repeat(32))).toBe('prefix'); // only a warning
+    expect(webhookSecretProblem(WEBHOOK_SECRET)).toBeNull();
+    const e = env as unknown as { PADDLE_WEBHOOK_SECRET?: string };
+    for (const bad of ['x'.repeat(31), '']) {
+      e.PADDLE_WEBHOOK_SECRET = bad;
+      try {
+        const ev = fx('subscription.activated', { id: ids().sub });
+        const raw = JSON.stringify(ev);
+        expect((await deliver(raw, { sig: await sigFor(raw, undefined, bad || 'x') })).status).toBe(503);
+        expect((await call('/login', {}, APP)).status).toBe(200);
+      } finally {
+        e.PADDLE_WEBHOOK_SECRET = WEBHOOK_SECRET;
+      }
+    }
+    e.PADDLE_WEBHOOK_SECRET = 'x'.repeat(40); // unusual prefix: works, warns
+    try {
+      const raw = JSON.stringify(fx('subscription.activated', { id: ids().sub }));
+      expect((await deliver(raw, { sig: await sigFor(raw, undefined, 'x'.repeat(40)) })).status).toBe(200);
+    } finally {
+      e.PADDLE_WEBHOOK_SECRET = WEBHOOK_SECRET;
+    }
   });
 
   it('body over 64 KB → 413 before anything is stored, even when signed', async () => {
@@ -282,24 +315,26 @@ describe('Paddle webhook — subscriptions', () => {
     const u = await newUser();
     const x = ids();
     await intent(u);
+    await customerEvent(x.ctm, emailOf(u));
     await deliver(fx('subscription.activated', { ref: await refFor(u), id: x.sub, customer_id: x.ctm }));
     expect(await customerOf(u)).toBe(x.ctm);
     const v = await newUser();
     const y = ids();
+    await customerEvent(y.ctm, emailOf(v));
     expect(await (await deliver(fx('subscription.activated', { ref: await refFor(v), id: y.sub, customer_id: y.ctm }))).json()).toEqual({ outcome: 'applied' });
     expect(await customerOf(v)).toBeNull();
     expect(await sub(y.sub)).toMatchObject({ user_id: v }); // the subscription itself still counts
   });
 
-  it('past_due delivered out of order keeps the earliest past_due_since', async () => {
+  it('a late, older past_due is ignored (never shortens the grace)', async () => {
     const u = await newUser();
     const x = ids();
     const T = Date.now() - 2 * DAY;
     const period = { starts_at: iso(T - 31 * DAY), ends_at: iso(T - DAY) };
     await deliver(fx('subscription.past_due', { ref: await refFor(u), id: x.sub, customer_id: x.ctm, at: T + DAY, current_billing_period: period }));
     expect(await (await deliver(fx('subscription.past_due', { ref: await refFor(u), id: x.sub, customer_id: x.ctm, at: T, current_billing_period: period }))).json()).toEqual({ outcome: 'stale' });
-    expect(await sub(x.sub)).toMatchObject({ status: 'past_due', past_due_since: T, last_event_at: T + DAY });
-    expect((await entitledState(env.DB, u, Date.now())).untilMs).toBe(T + 7 * DAY);
+    expect(await sub(x.sub)).toMatchObject({ status: 'past_due', past_due_since: T + DAY, last_event_at: T + DAY });
+    expect((await entitledState(env.DB, u, Date.now())).untilMs).toBe(T + 8 * DAY);
   });
 
   it('a known paddle_customer_id finds the user without a ref', async () => {
@@ -358,9 +393,49 @@ describe('Paddle webhook — transactions', () => {
     expect(await (await deliver(fx('transaction.completed', { ref: await refFor(u), id: x.txn, customer_id: x.ctm }))).json()).toEqual({ outcome: 'customer_unlinked' });
     expect(await customerOf(u)).toBeNull();
     await intent(u);
+    await customerEvent(x.ctm, ` ${emailOf(u).toUpperCase()} `); // compared normalized
     const r = await deliver(fx('transaction.completed', { ref: await refFor(u), id: x.txn, customer_id: x.ctm, subscription_id: x.sub }));
     expect(await r.json()).toEqual({ outcome: 'applied' });
     expect(await env.DB.prepare('SELECT paddle_customer_id FROM users WHERE id = ?').bind(u).first('paddle_customer_id')).toBe(x.ctm);
+  });
+
+  it('Paddle customer email ≠ account email (someone else\'s email at checkout) → customer_unlinked, not linked', async () => {
+    const attacker = await newUser();
+    const victim = await newUser();
+    const x = ids();
+    await intent(attacker);
+    await customerEvent(x.ctm, emailOf(victim));
+    const r = await deliver(fx('transaction.completed', { ref: await refFor(attacker), id: x.txn, customer_id: x.ctm }));
+    expect(await r.json()).toEqual({ outcome: 'customer_unlinked' });
+    expect(await customerOf(attacker)).toBeNull();
+    expect(await alerts()).toContainEqual(expect.objectContaining({ kind: 'customer_unlinked', ref: x.txn }));
+  });
+
+  it('customer event arriving late: link waits (customer_pending), then the customer event links on a match only', async () => {
+    const u = await newUser();
+    const x = ids();
+    await intent(u);
+    const r = await deliver(fx('transaction.completed', { ref: await refFor(u), id: x.txn, customer_id: x.ctm }));
+    expect(await r.json()).toEqual({ outcome: 'customer_pending' });
+    expect(await customerOf(u)).toBeNull();
+    expect(await pending(x.ctm)).toBe(1);
+    await env.DB.prepare('DELETE FROM checkout_intents WHERE user_id = ?').bind(u).run(); // the activation already cleared it
+    expect(await (await customerEvent(x.ctm, emailOf(u))).json()).toEqual({ outcome: 'applied' });
+    expect(await customerOf(u)).toBe(x.ctm);
+    expect(await pending(x.ctm)).toBe(0);
+
+    const attacker = await newUser();
+    const victim = await newUser();
+    const y = ids();
+    await intent(attacker);
+    await deliver(fx('subscription.activated', { ref: await refFor(attacker), id: y.sub, customer_id: y.ctm }));
+    expect(await pending(y.ctm)).toBe(1);
+    expect(await (await customerEvent(y.ctm, emailOf(victim))).json()).toEqual({ outcome: 'customer_unlinked' });
+    expect(await customerOf(attacker)).toBeNull();
+    expect(await pending(y.ctm)).toBe(0);
+    expect(await alerts()).toContainEqual(expect.objectContaining({ kind: 'customer_unlinked', ref: y.ctm }));
+    // an older customer event cannot overwrite a newer email
+    expect(await (await customerEvent(y.ctm, emailOf(attacker), Date.now() - DAY)).json()).toEqual({ outcome: 'stale' });
   });
 
   it('customer id already owned by another user → 200 customer_conflict, users unchanged, alert', async () => {

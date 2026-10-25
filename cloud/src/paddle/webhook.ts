@@ -16,6 +16,16 @@ export const PADDLE_IPS = {
   production: ['34.232.58.13', '34.195.105.136', '34.237.3.244', '35.155.119.135', '52.11.166.252', '34.212.5.7'],
 } as const;
 
+/**
+ * What is wrong with the webhook secret. `missing`/`short` (< 32) close only this route (503); `prefix` (not
+ * Paddle's documented `pdl_ntfset_…`) is a warning — Paddle may change the format, and the Worker must stay up.
+ */
+export function webhookSecretProblem(secret: string | undefined): 'missing' | 'short' | 'prefix' | null {
+  if (!secret) return 'missing';
+  if (secret.length < 32) return 'short';
+  return secret.startsWith('pdl_ntfset_') ? null : 'prefix';
+}
+
 export function paddleIpAllowed(env: Pick<Env, 'PADDLE_IP_CHECK' | 'PADDLE_ENV'>, ip: string | null): boolean {
   if (env.PADDLE_IP_CHECK !== '1') return true;
   const list: readonly string[] = PADDLE_IPS[env.PADDLE_ENV === 'production' ? 'production' : 'sandbox'];
@@ -87,7 +97,11 @@ async function runEffects(c: Ctx, db: D1Database, paddle: PaddleApi, effects: Ef
  */
 export async function paddleWebhook(c: Ctx, deps: WebhookDeps): Promise<Response> {
   const secret = c.env.PADDLE_WEBHOOK_SECRET ?? '';
-  if (!secret) return problem(503, 'misconfigured');
+  const bad = webhookSecretProblem(secret);
+  if (bad === 'missing' || bad === 'short') {
+    console.error(`paddle webhook: secret ${bad}`);
+    return problem(503, 'misconfigured');
+  }
   const declared = Number(c.req.headers.get('content-length') ?? '0');
   if (!(declared <= MAX_WEBHOOK_BYTES)) return problem(413, 'too_large'); // NaN fails too
   const bytes = await readCapped(c.req, MAX_WEBHOOK_BYTES); // the exact bytes Paddle signed — never re-serialize
@@ -105,7 +119,7 @@ export async function paddleWebhook(c: Ctx, deps: WebhookDeps): Promise<Response
       return json(200, { outcome: 'bad_payload' });
     }
     if (await db.prepare('SELECT outcome FROM paddle_events WHERE event_id = ?').bind(ev.event_id).first()) return json(200, { outcome: 'duplicate' });
-    const p = await planEvent({ DB: db, CHECKOUT_SECRET: c.env.CHECKOUT_SECRET }, ev, now);
+    const p = await planEvent({ DB: db, CHECKOUT_SECRET: c.env.CHECKOUT_SECRET, EMAIL_HASH_SECRET: c.env.EMAIL_HASH_SECRET }, ev, now);
     const insertEvent = db.prepare('INSERT INTO paddle_events (event_id, event_type, occurred_at, received_at, outcome) VALUES (?, ?, ?, ?, ?) ON CONFLICT(event_id) DO NOTHING')
       .bind(ev.event_id, ev.event_type, ev.occurred_at, now, p.outcome);
     await db.batch([...p.stmts, ...p.alerts, insertEvent]);

@@ -1,0 +1,18 @@
+{
+  "event_id": "evt_customer.created",
+  "event_type": "customer.created",
+  "occurred_at": "2026-10-01T00:00:00.500Z",
+  "notification_id": "ntf_customer.created",
+  "data": {
+    "id": "ctm_1",
+    "name": null,
+    "email": "buyer@example.test",
+    "marketing_consent": false,
+    "status": "active",
+    "custom_data": null,
+    "locale": "en",
+    "import_meta": null,
+    "created_at": "2026-10-01T00:00:00.500Z",
+    "updated_at": "2026-10-01T00:00:00.500Z"
+  }
+}
