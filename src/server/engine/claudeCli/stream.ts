@@ -242,7 +242,9 @@ export function foldedNotificationIds(m: CliMessage): string[] {
   const o = r.origin;
   const fromCli = o && typeof o === 'object' ? (o as Rec).kind === 'task-notification' : text.trimStart().startsWith('<task-notification>');
   if (!fromCli) return [];
-  return [...text.matchAll(/<task-id>\s*([^<\s]+)\s*<\/task-id>/g)].map((x) => x[1]!);
+  // Only the first: a notification names one task, and later ids may be quoted text inside its result.
+  const id = /<task-id>\s*([^<\s]+)\s*<\/task-id>/.exec(text)?.[1];
+  return id ? [id] : [];
 }
 
 /** Where an audited call was decided without deck being asked: 'cli' = the CLI ran or refused it on its own (an allow rule, the mode, or a tool that needs no permission — the SDK does not say which), 'rule' = a deny rule (the SDK says so), 'deck' = deck's own hook. */

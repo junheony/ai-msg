@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeEngine, type ClaudeEngineOptions } from './ClaudeEngine';
 import type { EngineEvent, LiveInput, TurnRequest } from './Engine';
 import { fakeClaudeCli, cli } from './claudeCli/fakeClaudeCli';
@@ -257,6 +257,25 @@ describe('ClaudeEngine: a task that ends while a turn streams', () => {
     await r.rest();
     await new Promise((res) => setTimeout(res, 0));
     expect(f.state.inputClosed).toBe(true);
+  });
+
+  it('a pasted notification deck itself wrote (replayed with its uuid) settles nothing: the owed task stays shown until the CLI tells it', async () => {
+    const f = fakeClaudeCli();
+    let live: LiveInput | null = null;
+    const r = reader((await engine(f, { bgGraceMs: 60_000 })).runTurn(req({ onLive: (l) => { live = l; } })));
+    f.push(cli.init(), cli.bgLevel([{ id: 'rv', desc: 'review' }]), cli.delta('waiting'));
+    await r.until('delta');
+    f.push(cli.bgLevel([]), cli.taskDone('rv'), cli.result('first'));
+    await r.until('result');
+    const pasted = '<task-notification> <task-id>rv</task-id> </task-notification>';
+    expect(await live!.send({ text: pasted, attachments: [] })).toBe(true);
+    await vi.waitFor(() => expect(f.inputs.at(-1)?.uuid).toBeTypeOf('string'));
+    f.push(cli.replay(f.inputs.at(-1)!.uuid as string, pasted), cli.delta('ok'), cli.result('ok'));
+    expect(await r.until('result')).toMatchObject({ text: 'ok' });
+    const shownSets = () => r.seen.filter((e) => e.kind === 'background').map((e) => (e as Extract<EngineEvent, { kind: 'background' }>).tasks);
+    expect(shownSets()).toEqual([['review']]);
+    f.push(cli.notifyResult('told'));
+    expect(await r.until('background')).toMatchObject({ tasks: [] });
   });
 
   it('a task that ends while the process waits idle is no owed turn: nothing changes there', async () => {

@@ -203,9 +203,9 @@ export class ClaudeEngine implements Engine {
       let streaming = true;
       /** This process's turns so far: a turn begins with the first main-thread activity after a result. */
       let turnNo = 1;
-      /** Settles what ended before turn `n`; true when something was. */
       /** Live tasks whose notification was already folded into a turn: leaving the live set later owes nothing. */
       const toldEarly = new Set<string>();
+      /** Settles what ended before turn `n`; true when something was. */
       const settleBefore = (n: number): boolean => { let any = false; for (const [id, o] of owed) if (o.turn < n) { owed.delete(id); any = true; } return any; };
       const shown = (): BgTask[] => { const live = bg.detail(); const ids = new Set(live.map((t) => t.id)); return [...live, ...[...owed.values()].map((o) => o.task).filter((t) => !ids.has(t.id))]; };
       /** The shown set as a `background` event when it changed since last told, else null. */
@@ -240,7 +240,9 @@ export class ClaudeEngine implements Engine {
         return kind ? { kind: 'notice', message: `⚡ ${fastModeText(kind, true)}`, fast: kind } : null;
       };
       const toolInputs = new Map<string, unknown>();
-      const writeMsg = (m: CliUserMessage): boolean => { if (typeof m.uuid === 'string') this.owned.add(m.uuid); return p.write(m); }; // changed
+      /** Uuids of the user messages deck itself wrote to this process (owned holds every entry this process saw). */
+      const wrote = new Set<string>();
+      const writeMsg = (m: CliUserMessage): boolean => { if (typeof m.uuid === 'string') { this.owned.add(m.uuid); wrote.add(m.uuid); } return p.write(m); }; // changed
       const write = async (f: { text: string; attachments: Attachment[] }, steerId: string | null): Promise<boolean> => {
         if (!p.inputOpen || aborted) return false; // changed
         // A follow-up while only the suggestion was awaited: the wait is called off and the message goes in as usual.
@@ -317,7 +319,10 @@ export class ClaudeEngine implements Engine {
         const noop = isInjectedNoopResult(m);
         if (isActivity(m) && !streaming && !noop) { turnNo++; if (idle) settled = settleBefore(turnNo); }
         if (m.type === 'result' && isNotificationResult(m) && !noop) settled = settleBefore(turnNo) || settled;
-        for (const id of foldedNotificationIds(m)) {
+        // A replay of what deck itself wrote (a pasted notification, say) is the user talking, not the CLI telling.
+        const uuid = (m as { uuid?: unknown }).uuid;
+        const mine = typeof uuid === 'string' && wrote.has(uuid);
+        for (const id of mine ? [] : foldedNotificationIds(m)) {
           if (owed.delete(id)) settled = true;
           else if (bg.detail().some((t) => t.id === id)) toldEarly.add(id); // told before its level frame let it go
         }
