@@ -1,11 +1,13 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { importStaticPrivate } from '../../shared/cloud/noise';
 import { CloudState } from './CloudState';
 
-const tmp = () => fs.mkdtemp(path.join(os.tmpdir(), 'deck-cloud-state-'));
+const dirs: string[] = [];
+const tmp = async () => { const d = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-cloud-state-')); dirs.push(d); return d; };
+afterEach(async () => { await Promise.all(dirs.splice(0).map((d) => fs.rm(d, { recursive: true, force: true }))); });
 const exists = (p: string) => fs.stat(p).then(() => true, () => false);
 
 describe('CloudState', () => {
@@ -61,5 +63,34 @@ describe('CloudState', () => {
     const s = await CloudState.load(dir);
     await Promise.all([s.update({ hostId: 'a' }), s.update({ email: 'b@example.test' }), s.update({ hostToken: 'c' })]);
     expect((await CloudState.load(dir)).get()).toMatchObject({ hostId: 'a', email: 'b@example.test', hostToken: 'c' });
+  });
+  it('tightens an existing folder to 0700 on write', async () => {
+    const dir = await tmp();
+    await fs.mkdir(path.join(dir, 'cloud'), { mode: 0o755 });
+    await fs.chmod(path.join(dir, 'cloud'), 0o755);
+    const s = await CloudState.load(dir);
+    await s.update({ email: 'e@example.test' });
+    expect((await fs.stat(path.join(dir, 'cloud'))).mode & 0o777).toBe(0o700);
+  });
+
+  it('a host key that does not import, or a wrongly typed token, counts as broken', async () => {
+    const good = (await CloudState.load(await tmp())).get();
+    for (const bad of [{ ...good, hostKey: 'AAAA' }, { ...good, hostToken: 5 }, { ...good, hostId: {} }, { ...good, email: 1 }]) {
+      const dir = await tmp();
+      await fs.mkdir(path.join(dir, 'cloud'));
+      await fs.writeFile(path.join(dir, 'cloud', 'state.json'), JSON.stringify(bad));
+      const s = await CloudState.load(dir);
+      expect(s.get().hostToken).toBeNull();
+      expect((await fs.readdir(path.join(dir, 'cloud'))).some((n) => n.startsWith('state.json.broken-'))).toBe(true);
+    }
+  });
+
+  it('update() cannot replace the host key', async () => {
+    const dir = await tmp();
+    const s = await CloudState.load(dir);
+    const key = s.get().hostKey;
+    await s.update({ hostKey: 'other', hostId: 'h' } as Parameters<CloudState['update']>[0]);
+    expect(s.get().hostKey).toBe(key);
+    expect((await CloudState.load(dir)).get()).toMatchObject({ hostKey: key, hostId: 'h' });
   });
 });

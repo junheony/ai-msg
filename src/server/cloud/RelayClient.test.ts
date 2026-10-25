@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CLOSE } from '../../shared/cloud/frames';
+import { CLOSE, MAX_FRAME } from '../../shared/cloud/frames';
 import { RelayClient, type RelayState } from './RelayClient';
 import { FakeRelay, waitFor, type FakeRelayOpts } from './testkit';
 
@@ -206,11 +206,79 @@ describe('RelayClient', () => {
     await waitFor(() => states.at(-1) === 'up');
     relay.closeHost(CLOSE.replaced);
     await waitFor(() => states.at(-1) === 'replaced');
-    clock.advance(599_000);
-    expect(relay.attempts).toBe(1);
-    clock.advance(2_000);
-    await relay.attempted(2);
+    await expectRetries(relay, states, [[2, 600]]); // 10 min ±20 %
+    expect(states.at(-1)).toBe('up');
+  });
+
+  it('4409 three times in a row → stays replaced, no reconnect until start(); 60 s attached resets the count', async () => {
+    const { client, relay, states } = await setupClient();
+    const replacedOnce = async (n: number) => {
+      relay.closeHost(CLOSE.replaced);
+      await waitFor(() => states.at(-1) === 'replaced');
+      await expectRetries(relay, states, [[n, 600]]);
+    };
+    client.start();
+    await relay.attempted(1);
     await waitFor(() => states.at(-1) === 'up');
+    await replacedOnce(2);
+    await replacedOnce(3);
+    // a good connection (traffic halfway, so the silence watchdog stays quiet): the count starts over
+    let controls = 0;
+    client.on('control', () => { controls++; });
+    clock.advance(30_000);
+    relay.control({ t: 'peer', dev: 'd', up: false });
+    await waitFor(() => controls === 1);
+    clock.advance(31_000);
+    await replacedOnce(4);
+    await replacedOnce(5);
+    relay.closeHost(CLOSE.replaced); // third in a row since the reset
+    await waitFor(() => states.at(-1) === 'replaced');
+    clock.advance(3_600_000);
+    expect(relay.attempts).toBe(5);
+    client.start(); // resumes
+    await relay.attempted(6);
+    await waitFor(() => states.at(-1) === 'up');
+  });
+
+  it('a server that accepts TCP but never answers the upgrade → handshake timeout, then the retry path', async () => {
+    const net = await import('node:net');
+    const held: import('node:net').Socket[] = [];
+    let conns = 0;
+    const srv = net.createServer((sock) => { conns++; held.push(sock); sock.on('error', () => {}); });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    const port = (srv.address() as import('node:net').AddressInfo).port;
+    relay = await FakeRelay.start(); // only so afterEach has something to close
+    const c = new RelayClient({ url: `ws://127.0.0.1:${port}/relay/host`, token: () => 'tok', handshakeTimeoutMs: 100 });
+    client = c;
+    const states: RelayState[] = [];
+    c.on('state', (s: RelayState) => states.push(s));
+    try {
+      c.start();
+      const t0 = performance.now();
+      while (states.at(-1) !== 'down' && performance.now() - t0 < 5000) await new Promise((r) => setImmediate(r));
+      expect(states).toEqual(['connecting', 'down']);
+      expect(conns).toBe(1);
+      clock.advance(1210);
+      const t1 = performance.now();
+      while (conns < 2 && performance.now() - t1 < 5000) await new Promise((r) => setImmediate(r));
+      expect(conns).toBe(2);
+    } finally {
+      c.stop();
+      for (const s of held) s.destroy();
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
+  });
+
+  it('a frame over MAX_FRAME closes the connection and is not delivered', async () => {
+    const { client, relay, states } = await setupClient();
+    const got: Uint8Array[] = [];
+    client.on('envelope', (e: Uint8Array) => got.push(e));
+    client.start();
+    await relay.attempted(1);
+    await waitFor(() => states.at(-1) === 'up');
+    relay.envelope(new Uint8Array(MAX_FRAME + 1));
+    await waitFor(() => states.at(-1) === 'down');
+    expect(got).toEqual([]);
   });
 
   it('4401 close → unlinked, no reconnect', async () => {

@@ -24,7 +24,8 @@ export async function startLink(o: {
   sleep?: (ms: number) => Promise<void>;
 }): Promise<HostLinkHandle> {
   const now = o.now ?? Date.now;
-  const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => { timer = setTimeout(() => { timer = null; r(); }, ms); }));
   const hostPub = toB64u((await importStaticPrivate(o.state.get().hostKey)).publicRaw);
   const info = await o.api.linkStart({ hostName: o.hostName, hostPub, uiVersion: o.uiVersion });
 
@@ -56,5 +57,14 @@ export async function startLink(o: {
     }
   })();
 
-  return { info, done, cancel: () => { cancelled = true; onCancel(); } };
+  return {
+    info,
+    done,
+    cancel: () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      timer = null;
+      onCancel();
+    },
+  };
 }

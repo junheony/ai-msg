@@ -11,8 +11,14 @@ describe('cloudConfig', () => {
     expect(run({}).cfg).toEqual({ enabled: true, baseUrl: 'https://app.aimsg.app', relayUrl: 'https://relay.aimsg.app' });
   });
 
-  it('DECK_CLOUD=off turns it off', () => {
-    expect(run({ DECK_CLOUD: 'off' }).cfg.enabled).toBe(false);
+  it('DECK_CLOUD=off turns it off (any case)', () => {
+    for (const v of ['off', 'OFF', 'Off']) expect(run({ DECK_CLOUD: v }).cfg.enabled, v).toBe(false);
+  });
+
+  it('a disabled config keeps no address', () => {
+    for (const env of [{ DECK_CLOUD: 'off', DECK_CLOUD_URL: 'https://app.example.test' }, { DECK_CLOUD_URL: 'http://user:secret@app.example.test' }, { DECK_CLOUD_URL: 'https://same.example.test', DECK_RELAY_URL: 'https://same.example.test' }]) {
+      expect(run(env).cfg).toEqual({ enabled: false, baseUrl: '', relayUrl: '' });
+    }
   });
 
   it('https only; http only for loopback; same origin for app and relay → disabled', () => {

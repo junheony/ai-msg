@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { WebSocket } from 'ws';
-import { CLOSE } from '../../shared/cloud/frames';
+import { CLOSE, MAX_FRAME } from '../../shared/cloud/frames';
 
 export type RelayState = 'connecting' | 'up' | 'down' | 'not_entitled' | 'unlinked' | 'replaced';
 type Backoff = { minMs: number; maxMs: number };
@@ -9,6 +9,8 @@ const PING_MS = 25_000;
 const SILENCE_MS = 60_000;
 const GOOD_CONNECTION_MS = 60_000;
 const REPLACED_WAIT_MS = 600_000;
+const REPLACED_MAX = 3;
+const HANDSHAKE_TIMEOUT_MS = 15_000;
 const JITTER = 0.2;
 
 /**
@@ -20,11 +22,13 @@ const JITTER = 0.2;
  * - Binary messages are envelopes (`'envelope'`); other JSON texts (`peer`, `revoked`) are `'control'`.
  * - Text `ping` every 25 s (the room auto-answers `pong`); 60 s without receiving anything → drop and reconnect.
  * - Upgrade 401 / close 4401 → `unlinked`, stop. Upgrade 402 / close 4402 → `not_entitled`, entitlement backoff
- *   (30 s doubling, at most 5 min). 4409 → `replaced`, retry in 10 min. Anything else → exponential backoff ±20 %;
- *   a drop while not entitled uses the entitlement backoff, so it also stays within 5 min. 60 s attached resets both.
+ *   (30 s doubling, at most 5 min). 4409 → `replaced`, retry in 10 min ±20 %; the third 4409 in a row stops (until
+ *   `start()`). Anything else → exponential backoff ±20 %; a drop while not entitled uses the entitlement backoff, so
+ *   it also stays within 5 min. 60 s attached resets both backoffs and the 4409 count.
+ * - Handshake timeout 15 s, frames over `MAX_FRAME` close the socket (1009), no permessage-deflate.
  */
 export class RelayClient extends EventEmitter {
-  private readonly o: { url: string; token: () => string | null; WebSocketImpl: typeof WebSocket; backoff: Backoff; entitlementBackoff: Backoff; random: () => number };
+  private readonly o: { url: string; token: () => string | null; WebSocketImpl: typeof WebSocket; backoff: Backoff; entitlementBackoff: Backoff; random: () => number; handshakeTimeoutMs: number };
   private ws: WebSocket | null = null;
   private running = false;
   private st: RelayState | null = null;
@@ -33,12 +37,13 @@ export class RelayClient extends EventEmitter {
   private notEntitled = false;
   private attempt = 0;
   private entAttempt = 0;
+  private replacedInRow = 0;
   private retry: { timer: ReturnType<typeof setTimeout>; kind: 'normal' | 'ent' | 'replaced' } | null = null;
   private timers: ReturnType<typeof setTimeout>[] = [];
   private pinger: ReturnType<typeof setInterval> | null = null;
   private silence: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(o: { url: string; token: () => string | null; WebSocketImpl?: typeof WebSocket; backoff?: Backoff; entitlementBackoff?: Backoff; random?: () => number }) {
+  constructor(o: { url: string; token: () => string | null; WebSocketImpl?: typeof WebSocket; backoff?: Backoff; entitlementBackoff?: Backoff; random?: () => number; handshakeTimeoutMs?: number }) {
     super();
     this.o = {
       url: o.url,
@@ -47,12 +52,14 @@ export class RelayClient extends EventEmitter {
       backoff: o.backoff ?? { minMs: 1000, maxMs: 60_000 },
       entitlementBackoff: o.entitlementBackoff ?? { minMs: 30_000, maxMs: 300_000 },
       random: o.random ?? Math.random,
+      handshakeTimeoutMs: o.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS,
     };
   }
 
   start(): void {
     if (this.running) return;
     this.running = true;
+    this.replacedInRow = 0;
     this.connect();
   }
 
@@ -101,7 +108,12 @@ export class RelayClient extends EventEmitter {
     }
     this.setState('connecting');
     let status: number | null = null;
-    const ws = new this.o.WebSocketImpl(this.o.url, { headers: { authorization: `Bearer ${token}` } });
+    const ws = new this.o.WebSocketImpl(this.o.url, {
+      headers: { authorization: `Bearer ${token}` },
+      handshakeTimeout: this.o.handshakeTimeoutMs,
+      maxPayload: MAX_FRAME,
+      perMessageDeflate: false,
+    });
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
     ws.on('unexpected-response', (_req, res) => {
@@ -113,7 +125,7 @@ export class RelayClient extends EventEmitter {
     ws.on('open', () => {
       if (this.ws !== ws) return;
       this.pinger = setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send('ping'); }, PING_MS);
-      this.timers.push(setTimeout(() => { this.attempt = 0; this.entAttempt = 0; }, GOOD_CONNECTION_MS));
+      this.timers.push(setTimeout(() => { this.attempt = 0; this.entAttempt = 0; this.replacedInRow = 0; }, GOOD_CONNECTION_MS));
       this.heard(ws);
     });
     ws.on('message', (data, isBinary) => {
@@ -152,7 +164,11 @@ export class RelayClient extends EventEmitter {
       }
       if (code === CLOSE.replaced) {
         this.setState('replaced');
-        this.schedule('replaced', REPLACED_WAIT_MS);
+        if (++this.replacedInRow >= REPLACED_MAX) {
+          this.running = false; // another Mac keeps taking this host's place: stop until start()
+          return;
+        }
+        this.schedule('replaced', this.jitter(REPLACED_WAIT_MS));
         return;
       }
       if (status === 402 || code === CLOSE.notEntitled) this.notEntitled = true;
@@ -174,8 +190,11 @@ export class RelayClient extends EventEmitter {
 
   /** `min·2^n` capped at `max`, ±20 % jitter, never above `max`. */
   private delay(b: Backoff, n: number): number {
-    const base = Math.min(b.maxMs, b.minMs * 2 ** Math.min(n, 30));
-    return Math.min(b.maxMs, Math.round(base * (1 + (this.o.random() * 2 - 1) * JITTER)));
+    return Math.min(b.maxMs, this.jitter(Math.min(b.maxMs, b.minMs * 2 ** Math.min(n, 30))));
+  }
+
+  private jitter(ms: number): number {
+    return Math.round(ms * (1 + (this.o.random() * 2 - 1) * JITTER));
   }
 
   private schedule(kind: 'normal' | 'ent' | 'replaced', ms: number): void {

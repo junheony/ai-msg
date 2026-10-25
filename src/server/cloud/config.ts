@@ -16,13 +16,13 @@ function originOf(raw: string): string | null {
 /**
  * `DECK_CLOUD=off` turns the cloud off. `DECK_CLOUD_URL` (app) and `DECK_RELAY_URL` (relay) must be https — http only
  * for a loopback host — and must be two different origins; otherwise the cloud is off and one line is logged (the
- * variable's name only: the address may carry credentials).
+ * variable's name only: the address may carry credentials). A disabled config carries no address.
  */
 export function cloudConfig(env: NodeJS.ProcessEnv, log: (s: string) => void = (s) => console.error(s)): CloudConfig {
   const appRaw = env.DECK_CLOUD_URL || DEFAULT_APP;
   const relayRaw = env.DECK_RELAY_URL || DEFAULT_RELAY;
-  const off = { enabled: false, baseUrl: appRaw, relayUrl: relayRaw };
-  if (env.DECK_CLOUD === 'off') return off;
+  const off = { enabled: false, baseUrl: '', relayUrl: '' };
+  if (env.DECK_CLOUD?.toLowerCase() === 'off') return off;
   const baseUrl = originOf(appRaw);
   const relayUrl = originOf(relayRaw);
   if (!baseUrl || !relayUrl) {
