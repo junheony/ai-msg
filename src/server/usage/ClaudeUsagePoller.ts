@@ -128,6 +128,8 @@ const CLOSE_GRACE_MS = 2_000;
 const KILL_WAIT_MS = 5_000;
 /** Consecutive failures on one account back off to at most this. */
 const BACKOFF_MAX_MS = 2 * 3_600_000;
+/** A busy account is skipped for at most this long (from the first skip); then it is polled anyway. */
+const BUSY_MAX_MS = 30 * 60_000;
 
 /**
  * Claude usage without a turn (`cli` usage mode): shortly after start, then every `intervalMs` (5 min), each active
@@ -145,6 +147,8 @@ export class ClaudeUsagePoller {
   private child: { child: UsageChild; give: () => void } | null = null;
   private stopped = false;
   /** Per account: the last failure (logged once) and when it may be tried again. */
+  /** Per account: when a round first skipped it as busy (cleared once it is not busy or the cap let a poll through). */
+  private busySince = new Map<Account, number>();
   private failures = new Map<Account, { error: string; count: number; retryAt: number }>();
   private readonly intervalMs: number;
   private readonly maxAgeMs: number;
@@ -194,8 +198,16 @@ export class ClaudeUsagePoller {
     return at === null || this.now() - at > this.maxAgeMs;
   }
 
+  /** True when the round should skip `a`: busy, and for less than BUSY_MAX_MS since it was first skipped (a turn-long busy account still gets read, so its Fable value does not go stale). */
   private isBusy(a: Account): boolean {
-    try { return this.opts.busy?.(a) ?? false; } catch { return false; }
+    let busy = false;
+    try { busy = this.opts.busy?.(a) ?? false; } catch { /* not busy */ }
+    if (!busy) { this.busySince.delete(a); return false; }
+    const since = this.busySince.get(a) ?? this.now();
+    this.busySince.set(a, since);
+    if (this.now() - since <= BUSY_MAX_MS) return true;
+    this.busySince.delete(a);
+    return false;
   }
 
   private async round(): Promise<void> {

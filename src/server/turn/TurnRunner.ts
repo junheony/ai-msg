@@ -449,6 +449,8 @@ export class TurnRunner {
    * reading its parent and the parent's own turn each hold it, so the first to end does not unmark the other.
    */
   private readonly active = new Map<string, number>();
+  /** The account each running Claude turn (by turn id) runs on, from the moment it is chosen until the turn, its background hold included, ends. */
+  private readonly busyAccounts = new Map<string, Account>();
   /** When deck itself last wrote a transcript (its turn's process closed, a move/write-back), by resolved path. In memory only. */
   private readonly deckWroteAt = new Map<string, number>();
 
@@ -888,9 +890,10 @@ export class TurnRunner {
     return typeof this.inputs.get(turnId)?.stopTask === 'function';
   }
 
-  /** Claude session ids with a deck turn running or a process held open for background work. */
-  busySessionIds(): string[] {
-    return [...new Set([...this.active.keys(), ...this.live.keys()])];
+  /** Whether a Claude turn (its background work included) is running on `account` now, including a new session's first turn and a fork. */
+  accountBusy(account: Account): boolean {
+    for (const a of this.busyAccounts.values()) if (a === account) return true;
+    return false;
   }
 
   /** Session ids whose process is held open for background work. */
@@ -2167,6 +2170,7 @@ export class TurnRunner {
       // The final write-back at close (also after a long hold for background work).
       if (end) this.scheduleMirror(end.sessionId, sink, p.turnId);
     } finally {
+      this.busyAccounts.delete(p.turnId);
       if (id) { const n = (this.active.get(id) ?? 1) - 1; if (n > 0) this.active.set(id, n); else this.active.delete(id); }
       // The CLI process has closed: whatever it wrote was deck's.
       if (end) this.deckWroteAt.set(path.resolve(end.projectDir, `${end.sessionId}.jsonl`), this.now());
@@ -2272,6 +2276,7 @@ export class TurnRunner {
       if (moved) state = moved;
       else { account = state.account; reason = `이전 실패 · ${this.label(account)} 유지`; byPin = false; asOpus = undefined; }
     }
+    this.busyAccounts.set(p.turnId, account);
     // Non-blocking: the same session written moments ago by Desktop/CLI is about to be continued in two places.
     const elsewhereAge = state && !forkAt ? await this.openElsewhere(state) : null;
     if (state && elsewhereAge !== null) early.push(elsewhereNotice({ engine: 'claude', title: deps.index.lookup(state.sessionId)?.title ?? null, ageMs: elsewhereAge }));
@@ -2496,6 +2501,7 @@ export class TurnRunner {
       sink.emit({ type: 'turn_retry', turnId: p.turnId, sessionId: shownId() ?? sessionId, cwd, fromAccount: account, toAccount: next.account, reason: `${why} → ${next.reason}`, attempt: attempt + 1 });
       reason = `재시도(${why}) · ${next.reason}`;
       account = next.account;
+      this.busyAccounts.set(p.turnId, account);
       asOpus = next.asOpus;
       byPin = false;
     }

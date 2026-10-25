@@ -130,6 +130,22 @@ describe('TurnRunner · 메시지 편집 갈래', () => {
     expect(notices.some((n) => n.includes('쓸 수 없어'))).toBe(false);
   });
 
+  it('accountBusy: a new session’s first turn (no state) and a fork on another account are busy on the account they run on, until the turn ends', async () => {
+    let seen: Record<string, boolean> = {};
+    let r: TurnRunner | null = null;
+    const probe = () => { seen = { a: r!.accountBusy('a'), b: r!.accountBusy('b'), c: r!.accountBusy('c') }; };
+    const eng = new StubEngine(() => { probe(); return ok(CHILD); });
+    const c = await setup(eng, { usage: await roomyUsage() });
+    r = c.runner;
+    await c.runner.run({ turnId: 'n1', cwd: '/w/one', sessionId: null, text: 'x', accountPin: 'b' }, c.sink);
+    expect(seen).toEqual({ a: false, b: true, c: false });
+    expect(c.runner.accountBusy('b')).toBe(false);
+    await c.store.set({ sessionId: PARENT, cwd: '/w/one', account: 'c', projectDir: c.dir, lastTurnAtMs: NOW - 60_000, justCompacted: false, defaultModel: 'sonnet', accountPin: 'b' });
+    await c.runner.run({ turnId: 'f1', cwd: '/w/one', sessionId: null, text: 'x', accountPin: 'b', fork: { from: PARENT, at: 'a0' } }, c.sink);
+    expect(seen).toEqual({ a: false, b: true, c: false });
+    expect(c.runner.accountBusy('b')).toBe(false);
+  });
+
   it('pinned account unusable: the fork falls back like a normal turn (parent’s account, no copy) with the same pin notice', async () => {
     const eng = new StubEngine(() => ok(CHILD));
     const moves: unknown[] = [];

@@ -302,6 +302,19 @@ describe('ClaudeUsagePoller', () => {
     await t.p.sweep();
     expect(t.spawned).toHaveLength(3);
   });
+  it('busy for over 30 min since the first skip: polled anyway', async () => {
+    let clock = NOW;
+    const { p, spawned } = setup({ now: () => clock, script: answer(SAMPLE), busy: (a) => a === 'a' });
+    await p.sweep();
+    expect(spawned).toHaveLength(2); // b, c
+    clock += 29 * 60_000;
+    await p.sweep();
+    expect(spawned).toHaveLength(4);
+    clock += 2 * 60_000;
+    await p.sweep();
+    expect(spawned).toHaveLength(7);
+    expect(spawned.filter((s) => s.env.CLAUDE_CONFIG_DIR === undefined)).toHaveLength(1);
+  });
   it('no usable claude binary: nothing runs', async () => {
     const { p, spawned } = setup({ bin: null, script: answer(SAMPLE) });
     await p.sweep();
