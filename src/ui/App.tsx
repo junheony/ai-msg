@@ -230,8 +230,13 @@ export function App() {
   const sidebarWrap = useRef<HTMLDivElement>(null);
   /** Closed by Esc / a click while the pointer still rests on it: no reopening until the pointer has left. */
   const peekLatch = useRef(false);
-  /** The sidebar toggle was pressed with focus on it: it moves (sidebar head ↔ top bar), so focus follows it there. */
+  /** The sidebar toggle had focus when it moved (sidebar head ↔ top bar: pressed, or a peek closing under it): focus
+      follows it to its new spot. Read in the ref's cleanup, which runs while the old button is still in the document. */
   const toggleFocus = useRef(false);
+  const toggleRef = useCallback((el: HTMLButtonElement | null) => {
+    if (!el) return undefined;
+    return () => { if (document.activeElement === el) toggleFocus.current = true; };
+  }, []);
   const tucked = !phone && sidebarHidden;
   // Hover only means something with a mouse / trackpad: a touch screen keeps ☰ / ⌘\ to show it.
   const peekable = tucked && finePointer() && window.matchMedia('(hover: hover)').matches;
@@ -262,7 +267,7 @@ export function App() {
     tryClose();
   };
   useEffect(() => { if (!peekable) { clearPeekTimer(); setPeek(false); peekLatch.current = false; } }, [peekable]);
-  useEffect(() => { if (toggleFocus.current) { toggleFocus.current = false; document.querySelector<HTMLElement>('.sidebar-toggle')?.focus(); } }, [sidebarHidden]);
+  useEffect(() => { if (toggleFocus.current) { toggleFocus.current = false; document.querySelector<HTMLElement>('.sidebar-toggle')?.focus(); } }, [sidebarHidden, peek]);
   useEffect(() => clearPeekTimer, []);
   useEffect(() => {
     if (!peek) return;
@@ -679,6 +684,21 @@ export function App() {
     dispatch({ type: phone ? 'park_floats' : 'unpark_floats' });
   }, [phone, state.panes]);
   const bodyRef = useRef<HTMLDivElement>(null);
+  // The cards' frame (desktop): the window's width under the top bar and banners, as the body was before the sidebar
+  // became a column of its own — a saved card shows at the same spot whether the sidebar is shown or folded away. It
+  // sits in .app (cards may cover the sidebar); its top follows the body's (the top bar, a banner coming and going).
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [stageTop, setStageTop] = useState(0);
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (phone || !body) return;
+    const sync = () => setStageTop(body.offsetTop);
+    sync();
+    if (typeof ResizeObserver !== 'function') return;
+    const ro = new ResizeObserver(sync);
+    ro.observe(body);
+    return () => ro.disconnect();
+  }, [phone]);
   const panesRef = useRef<HTMLDivElement>(null);
   // Screen-reader narration of the card work (drag, keyboard moves): one polite live region, written directly so a
   // drag's per-move updates never re-render the panes.
@@ -699,7 +719,7 @@ export function App() {
   const floatCount = state.panes.filter((p) => p.float).length;
   useEffect(() => {
     if (phone || !authed || floatCount === 0) return;
-    const body = bodyRef.current;
+    const body = stageRef.current;
     if (!body) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const settle = () => {
@@ -829,7 +849,7 @@ export function App() {
   /** The other cards' boxes, for snapping `paneId`'s card to them. */
   const otherCards = (paneId: string) => latest.current.panes.filter((p) => p.id !== paneId).flatMap((p) => shownBox(p) ?? []);
   const startPaneDrag = (e: ReactPointerEvent<HTMLButtonElement>, paneId: string) => {
-    const body = bodyRef.current;
+    const body = stageRef.current;
     const grid = panesRef.current;
     const section = e.currentTarget.closest<HTMLElement>('.pane');
     const pane = latest.current.panes.find((p) => p.id === paneId);
@@ -1001,7 +1021,7 @@ export function App() {
   };
   /** ⋯ 떠 있는 카드로 떼기 / Enter on the grip: the pane as a card, staggered from the top-left so cards do not pile up. */
   const floatPane = (paneId: string) => {
-    const body = bodyRef.current;
+    const body = stageRef.current;
     const bounds = { w: body?.clientWidth ?? 1200, h: body?.clientHeight ?? 600 };
     const n = latest.current.panes.filter((p) => p.float).length;
     dispatch({ type: 'float_pane', paneId, rect: floatRectAt({ x: 80 + 24 * n, y: 40 + 24 * n }, { w: 480, h: bounds.h }, bounds), at: sizeKey(bounds) });
@@ -1015,14 +1035,14 @@ export function App() {
   };
   /** ⋯ 떠 있는 카드 정렬: every card dealt into a grid over the body, in array order. */
   const arrangeCards = () => {
-    const body = bodyRef.current;
+    const body = stageRef.current;
     const bounds = { w: body?.clientWidth ?? 1200, h: body?.clientHeight ?? 600 };
     const cards = latest.current.panes.filter((p) => p.float);
     const rects = arrangeFloats(cards.length, bounds);
     cards.forEach((p, i) => dispatch({ type: 'move_float', paneId: p.id, rect: rects[i]!, at: sizeKey(bounds) }));
     announce(`카드 ${cards.length}장을 정렬했습니다`);
   };
-  const bodyBounds = () => { const body = bodyRef.current; return { w: body?.clientWidth ?? 1200, h: body?.clientHeight ?? 600 }; };
+  const bodyBounds = () => { const body = stageRef.current; return { w: body?.clientWidth ?? 1200, h: body?.clientHeight ?? 600 }; };
   /** Double-click on a card's header / ⋯ 카드 최대화: the card fills the body, or goes back to its box from before. */
   const toggleMaxCard = (paneId: string) => {
     const pane = latest.current.panes.find((p) => p.id === paneId);
@@ -1112,7 +1132,7 @@ export function App() {
   };
   /** The ◢ corner of a floating card: its size follows the pointer; the state gets the final box. */
   const startFloatResize = (e: ReactPointerEvent<HTMLDivElement>, paneId: string) => {
-    const body = bodyRef.current;
+    const body = stageRef.current;
     const card = e.currentTarget.closest<HTMLElement>('.float-card');
     const pane = latest.current.panes.find((p) => p.id === paneId);
     if (e.button !== 0 || !body || !card || !pane?.float) return;
@@ -1348,15 +1368,17 @@ export function App() {
   // panes, so it stays pressable there), else the top bar's start. One button either way.
   const toggleInHead = !phone && (!sidebarHidden || peek);
   const sidebarToggle = (
-    <button type="button" className="icon-btn sidebar-toggle" aria-label={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} title={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} aria-pressed={!sidebarHidden}
-      onClick={(e) => { toggleFocus.current = document.activeElement === e.currentTarget; toggleSidebar(); }}
+    <button ref={toggleRef} type="button" className="icon-btn sidebar-toggle" aria-label={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} title={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} aria-pressed={!sidebarHidden}
+      onClick={toggleSidebar}
       onMouseEnter={peekable && !peek ? armPeek : undefined} onMouseLeave={peekable && !toggleInHead ? () => { unlatchPeek(); leavePeek(); } : undefined}><SidebarIcon /></button>
   );
+  // One place in the tree at every width (a fold opening, a turn to landscape keeps its search, a rename, its scroll).
   // Desktop / tablet: a column of its own, the window's full height, ahead of the top bar (focus: sidebar → body).
-  // Phone: the drawer, inside the body after the top bar, as before.
+  // Phone: the same element as a fixed drawer (CSS), out of the focus order and the accessibility tree while closed.
   const sidebarEl = (
     <div
       ref={sidebarWrap}
+      inert={phone && !drawer}
       className={`sidebar-wrap ${phone ? 'drawer' : ''} ${drawer ? 'open' : ''} ${tucked ? 'hidden' : ''} ${peek ? 'peek' : ''}`}
       onMouseEnter={peek ? clearPeekTimer : undefined}
       onMouseLeave={peekable ? () => { unlatchPeek(); if (peek) leavePeek(); } : undefined}
@@ -1435,7 +1457,7 @@ export function App() {
     <div className="app">
       <a className="skip-link" href="#main" onClick={(e) => { e.preventDefault(); skipToChat(); }}>{ui().common.skipToMain}</a>
       {peekable && <div className="sidebar-hotzone" data-testid="sidebar-hotzone" aria-hidden="true" onMouseEnter={peek ? undefined : armPeek} onMouseLeave={() => { unlatchPeek(); if (!peek) clearPeekTimer(); }} />}
-      {!phone && sidebarEl}
+      {sidebarEl}
       <div className="main-col">
         <header className={`topbar${!phone && !tucked ? ' beside-sidebar' : ''}`}>
           {phone && <button type="button" className="menu" aria-label="메뉴" aria-expanded={drawer} onClick={() => setDrawer((d) => !d)}><MenuIcon /></button>}
@@ -1520,7 +1542,6 @@ export function App() {
         <div ref={bodyRef} className="body" id="main" tabIndex={-1}>
           <div ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" data-testid="cards-live" />
           {phone && drawer && <div className="drawer-backdrop" onClick={() => setDrawer(false)} />}
-          {phone && sidebarEl}
           <div ref={panesRef} className="panes" data-count={phone || maxed ? 1 : docked.length} {...(maxed ? { 'data-maxed': maxed } : {})} style={{ '--cols': phone || maxed ? 1 : docked.length, ...(!phone && !maxed && docked.length > 1 ? { gridTemplateColumns: paneColumns(docked.map((p) => paneSize(p.size))) } : {}) } as CSSProperties}>
             {phone && state.panes.length > 1 && (
               // 36px strip, 44px presses: "1 · 제목…" (the title cut by CSS), + at the end; press-and-drag reorders.
@@ -1545,7 +1566,11 @@ export function App() {
               </Fragment>
             ))}
           </div>
-          {!phone && floats.length > 0 && (
+        </div>
+      </div>
+      {!phone && (
+        <div ref={stageRef} className="float-stage" style={{ top: stageTop }}>
+          {floats.length > 0 && (
             <div className="floats">
               {floats.map((p) => (
                 <div key={p.id} className={`float-card${p.id === state.activePaneId ? ' on' : ''}${p.floatCollapsed ? ' collapsed' : ''}`} data-float={p.id} style={{ left: p.float!.x, top: p.float!.y, width: p.float!.w, height: p.floatCollapsed ? COLLAPSED_H : p.float!.h }}
@@ -1562,7 +1587,7 @@ export function App() {
             </div>
           )}
         </div>
-      </div>
+      )}
     </div>
     </AccountsContext>
   );

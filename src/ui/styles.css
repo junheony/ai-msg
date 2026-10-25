@@ -330,6 +330,9 @@ svg.spark { transform-box: fill-box; transform-origin: center; }
 .pane.pane-drag-source { opacity: .55; }
 body.pane-dragging { cursor: grabbing; user-select: none; -webkit-user-select: none; }
 body.pane-dragging iframe { pointer-events: none; }
+/* The cards' frame (App: under the top bar and banners, the window's full width — over the sidebar column too). No
+   z-index of its own: the cards keep z 6 in the app's stacking (under the top bar's 7 and a peeked sidebar's 20). */
+.float-stage { position: absolute; left: 0; right: 0; bottom: 0; pointer-events: none; }
 .floats { position: absolute; inset: 0; z-index: 6; pointer-events: none; overflow: hidden; }
 .float-card { position: absolute; display: flex; flex-direction: column; pointer-events: auto; min-width: 320px; min-height: 240px; max-width: 100%; max-height: 100%; background: var(--bg); border-radius: 12px; box-shadow: 0 0 0 1px var(--line-strong), 0 14px 40px rgba(0, 0, 0, .28); overflow: hidden; }
 .float-card.on { z-index: 1; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 60%, var(--line-strong)), 0 18px 48px rgba(0, 0, 0, .34); }
@@ -1326,7 +1329,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .topbar::after { content: ''; position: absolute; left: calc(-1 * var(--sa-left)); right: calc(-1 * var(--sa-right)); bottom: -1px; height: 1px; background: var(--line); pointer-events: none; }
 .usage-strip-row { border-left: var(--sa-left) solid var(--bg); border-right: var(--sa-right) solid var(--bg); }
 .sidebar-wrap { border-left: var(--sa-left) solid var(--sidebar); }
-.sidebar-wrap:is(.drawer, .hidden) ~ .panes, .sidebar-wrap.hidden ~ .main-col .panes { border-left: var(--sa-left) solid var(--bg); }
+.sidebar-wrap:is(.drawer, .hidden) ~ .main-col .panes { border-left: var(--sa-left) solid var(--bg); }
 /* Beside the sidebar's column the left inset is the sidebar's (its border above): the bar, its line and the usage row
    start at the column's edge. */
 .topbar.beside-sidebar { border-left-width: 0; }

@@ -191,8 +191,8 @@ describe('App split view (D6)', () => {
     ] }));
     // jsdom has no layout: the body reports 1200 × 800 (no ResizeObserver either, so the window resize path runs).
     const size = { w: 1200, h: 800 };
-    const cw = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('body') ? size.w : 0; });
-    const ch = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('body') ? size.h : 0; });
+    const cw = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('float-stage') ? size.w : 0; });
+    const ch = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('float-stage') ? size.h : 0; });
     try {
       await boot();
       const card = () => document.querySelector('.float-card') as HTMLElement;
@@ -254,8 +254,8 @@ describe('App split view (D6)', () => {
 
   it('the ◢ corner resizes a card from the keyboard; ⋯ 떠 있는 카드 정렬 deals two or more cards into a grid', async () => {
     const size = { w: 1200, h: 800 };
-    const cw = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('body') ? size.w : 0; });
-    const ch = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('body') ? size.h : 0; });
+    const cw = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('float-stage') ? size.w : 0; });
+    const ch = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('float-stage') ? size.h : 0; });
     try {
       await boot();
       openSession('one');
@@ -293,8 +293,8 @@ describe('App split view (D6)', () => {
   });
 
   const mockBody = (size: { w: number; h: number }) => {
-    const cw = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('body') ? size.w : 0; });
-    const ch = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('body') ? size.h : 0; });
+    const cw = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('float-stage') ? size.w : 0; });
+    const ch = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('float-stage') ? size.h : 0; });
     return () => { cw.mockRestore(); ch.mockRestore(); };
   };
   type StoredPane = { session: { sessionId: string } | null; float?: { x: number; y: number; w: number; h: number }; floatBySize?: Record<string, { x: number; y: number; w: number; h: number }> };
@@ -813,6 +813,37 @@ describe('App phone layout (D10)', () => {
     expect(frames()).toContainEqual({ type: 'open_session', sessionId: 's1' });
     expect(document.querySelector('.sidebar-wrap.drawer.open')).toBeNull();
     expect(document.querySelectorAll('.pane')).toHaveLength(1);
+  });
+
+  it('crossing the phone width (a fold opening, a turn): the sidebar stays mounted — its search kept — and so does the pane', async () => {
+    const mm = mockMatchMedia(false);
+    await boot();
+    openSession('one');
+    const pane = screen.getByTestId('pane-p0');
+    fireEvent.click(within(document.querySelector('.sidebar-head')!).getByRole('button', { name: '검색' }));
+    const input = screen.getByRole('searchbox', { name: '세션 검색' }) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '결제' } });
+    const wrapEl = document.querySelector('.sidebar-wrap')!;
+    mm.setPhone(true);
+    expect(document.querySelector('.sidebar-wrap')).toBe(wrapEl);
+    expect(wrapEl.classList.contains('drawer')).toBe(true);
+    expect(screen.getByRole('searchbox', { name: '세션 검색', hidden: true })).toBe(input);
+    expect(input.value).toBe('결제');
+    expect(screen.getByTestId('pane-p0')).toBe(pane);
+    mm.setPhone(false);
+    expect(document.querySelector('.sidebar-wrap')).toBe(wrapEl);
+    expect(wrapEl.classList.contains('drawer')).toBe(false);
+    expect((screen.getByRole('searchbox', { name: '세션 검색' }) as HTMLInputElement).value).toBe('결제');
+    expect(screen.getByTestId('pane-p0')).toBe(pane);
+  });
+
+  it('phone: the closed drawer is inert (out of the focus order); opened from ☰ it is not', async () => {
+    mockMatchMedia(true);
+    await boot();
+    const wrapEl = document.querySelector('.sidebar-wrap') as HTMLElement & { inert: boolean };
+    expect(wrapEl.hasAttribute('inert')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: '메뉴' }));
+    expect(wrapEl.hasAttribute('inert')).toBe(false);
   });
 
   it('phone with two panes: only the active pane renders, and the pane switcher changes which one renders (PF16)', async () => {

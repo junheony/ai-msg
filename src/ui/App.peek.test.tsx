@@ -165,6 +165,17 @@ describe('hidden sidebar peek (desktop)', () => {
     expect(screen.getByRole('button', { name: '사이드바 보이기' }).closest('.topbar')).not.toBeNull();
   });
 
+  it('peeked with focus on the toggle in its head: when the peek closes, focus goes to the top bar toggle (not <body>)', async () => {
+    await bootPeeked();
+    const inHead = screen.getByRole('button', { name: '사이드바 보이기' });
+    inHead.focus();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(peeking()).toBe(false);
+    const back = screen.getByRole('button', { name: '사이드바 보이기' });
+    expect(back.closest('.topbar')).not.toBeNull();
+    expect(document.activeElement).toBe(back);
+  });
+
   it('peeked: the toggle in its head pins the sidebar (aria-pressed follows)', async () => {
     await bootPeeked();
     const toggle = screen.getByRole('button', { name: '사이드바 보이기' });
