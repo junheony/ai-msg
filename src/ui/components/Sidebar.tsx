@@ -55,7 +55,7 @@ const NO_ICONS: Record<string, string> = {};
 
 const baseName = (cwd: string) => cwd.replace(/\/+$/, '').split('/').pop() || cwd;
 
-export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], sessionIcons = NO_ICONS, onSetSessionIcon, pinShortcut, onTogglePin, onReorderPins, desktop = NO_DESKTOP, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], waiting = [], onOpenSettings, onDelete, onSetCwd, onDuplicate, onNewChat, footMenu, avatar, avatarTitle, onOpenSplit, splitBlocked, openPanes, onOpenPalette }: {
+export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], sessionIcons = NO_ICONS, onSetSessionIcon, pinShortcut, onTogglePin, onReorderPins, desktop = NO_DESKTOP, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], waiting = [], onOpenSettings, onDelete, onSetCwd, onDuplicate, onNewChat, footMenu, avatar, avatarTitle, onOpenSplit, splitBlocked, openPanes, onOpenPalette, headStart }: {
   /** 설정 (avatar menu at the bottom left; ⌘, also opens it — 새 세션 기본 권한 lives there). Used when footMenu is absent. */
   onOpenSettings?: () => void;
   /** The avatar menu's items (설정 / 사용량 / 테마 / 단축키…); absent = just 설정. */
@@ -115,6 +115,8 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   openPanes?: ReadonlyMap<string, number | 'float'>;
   /** ⌘K: a button next to the opened search box (a phone's second way to the palette). Absent = no button. */
   onOpenPalette?: () => void;
+  /** Before the brand in the head (desktop / tablet): the app's sidebar toggle while the sidebar is in its column. */
+  headStart?: ReactNode;
 }) {
   const [picking, setPicking] = useState(false);
   const [{ pinnedFolded }, setPref] = usePrefs();
@@ -551,6 +553,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
       }}
       onScroll={revealed ? () => setRevealed(null) : undefined}>
       <div className="sidebar-head">
+        {headStart}
         <span className="sidebar-brand"><BrandMark className="sidebar-brand-mark" /><BrandWordmark /></span>
         <span className="grow" />
         <button ref={searchBtn} type="button" className="icon-btn" aria-label="검색" title="세션 검색" aria-expanded={searchOpen} onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}><SearchIcon /></button>

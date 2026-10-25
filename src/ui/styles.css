@@ -203,11 +203,16 @@ svg.spark { transform-box: fill-box; transform-origin: center; }
    home-screen apps 100dvh comes out shorter than the window by the status-bar height, which left a dead band under the
    whole app. A fixed box follows the same toolbars dvh was meant to (Safari's collapsing bars, Android's keyboard via
    interactive-widget=resizes-content) without that arithmetic. Bottom safe area: on the composer / sidebar foot only. */
-.app { display: flex; flex-direction: column; position: fixed; inset: 0; }
+.app { display: flex; flex-direction: row; position: fixed; inset: 0; }
+/* Two columns (Codex / Grok desktop): the sidebar the window's full height, then this column — the top bar, the usage
+   line and banners, the panes. On a phone the sidebar is a drawer inside the body, so this column is the whole app. */
+.main-col { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+/* The top bar's height, shared with the sidebar's head so their bottom lines run on as one. */
+:root { --bar-h: 64px; }
 /* …but capped at 100dvh: in that same app the fixed box has also come out a status bar TALLER than the drawn area (the
    composer's bottom edge was cut off). A cap only ever shortens, and an engine without dvh just drops it. */
 .app { max-height: 100dvh; }
-.topbar { display: flex; align-items: center; gap: 14px; height: 64px; padding: 0 12px 0 5px; border-bottom: 1px solid var(--line); background: var(--sidebar); box-shadow: var(--shadow-sm); flex-shrink: 0; }
+.topbar { display: flex; align-items: center; gap: 14px; height: var(--bar-h); padding: 0 12px 0 5px; border-bottom: 1px solid var(--line); background: var(--sidebar); box-shadow: var(--shadow-sm); flex-shrink: 0; }
 .topbar-end { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
 /* Under the header once the server has been silent for a while: since when, and a retry (the header dot is text-less on a phone). */
 .conn-down { display: flex; align-items: center; justify-content: center; flex-wrap: nowrap; gap: 4px 12px; min-height: 32px; box-sizing: border-box; padding: 7px 12px; flex-shrink: 0; font-size: var(--fs-label); color: var(--fg); background: color-mix(in srgb, var(--warn) 16%, var(--panel)); border-bottom: 1px solid var(--line); }
@@ -246,6 +251,16 @@ svg.spark { transform-box: fill-box; transform-origin: center; }
 .sidebar { width: 268px; overflow-y: auto; border-right: 1px solid var(--line); padding: 8px 8px 24px; background: var(--sidebar); display: flex; flex-direction: column; gap: 1px; }
 .sidebar-head { display: flex; align-items: center; gap: 2px; padding: 0 0 6px; }
 .sidebar-head .grow { flex: 1; }
+/* Desktop / tablet: the head is the column's top bar — the toggle · brand · search · +, as tall as the top bar with the
+   same bottom line, pinned while the list scrolls under it. Its start lines up with the toggle's spot in the top bar, so
+   the toggle does not move when the sidebar folds away or peeks out. */
+.sidebar-wrap:not(.drawer) .sidebar { padding-top: 0; }
+.sidebar-wrap:not(.drawer) .sidebar-head { position: sticky; top: 0; z-index: 3; flex-shrink: 0; height: var(--bar-h); margin: 0 -8px 6px; padding: 0 8px 0 5px; gap: 4px; border-bottom: 1px solid var(--line); background: var(--sidebar); }
+.sidebar-wrap:not(.drawer) .sidebar-head .sidebar-brand { padding-left: 4px; }
+/* While peeked, the toggle rides in the sidebar's head over its top-bar spot: this keeps that spot. */
+.sidebar-toggle-spacer { width: var(--icon-btn); height: var(--icon-btn); flex: none; }
+/* Beside the sidebar the bar starts at the column's edge: the chip steps in from the sidebar's line. */
+.topbar.beside-sidebar { padding-left: 14px; }
 .session-menu button[aria-disabled="true"] { opacity: .6; cursor: default; }
 .session-menu .menu-note { display: block; max-width: 220px; margin-top: 2px; font-size: var(--fs-meta); line-height: 1.35; color: var(--muted); white-space: normal; }
 .session-menu button[aria-disabled="true"]:hover { background: transparent; }
@@ -1311,7 +1326,12 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .topbar::after { content: ''; position: absolute; left: calc(-1 * var(--sa-left)); right: calc(-1 * var(--sa-right)); bottom: -1px; height: 1px; background: var(--line); pointer-events: none; }
 .usage-strip-row { border-left: var(--sa-left) solid var(--bg); border-right: var(--sa-right) solid var(--bg); }
 .sidebar-wrap { border-left: var(--sa-left) solid var(--sidebar); }
-.sidebar-wrap:is(.drawer, .hidden) ~ .panes { border-left: var(--sa-left) solid var(--bg); }
+.sidebar-wrap:is(.drawer, .hidden) ~ .panes, .sidebar-wrap.hidden ~ .main-col .panes { border-left: var(--sa-left) solid var(--bg); }
+/* Beside the sidebar's column the left inset is the sidebar's (its border above): the bar, its line and the usage row
+   start at the column's edge. */
+.topbar.beside-sidebar { border-left-width: 0; }
+.topbar.beside-sidebar::after { left: 0; }
+.sidebar-wrap:not(.drawer):not(.hidden) ~ .main-col .usage-strip-row { border-left-width: 0; }
 .panes { border-right: var(--sa-right) solid var(--bg); }
 /* The status-bar strip (the top inset) is painted the top bar's colour, so clock / battery sit on the bar itself
    instead of on a band of page colour above it. Full width: it also covers the side insets in landscape. */
@@ -1863,9 +1883,9 @@ button.hl-row-main:hover { background: var(--hover); }
 /* nav-palette: ⌘K palette, dialogs, undo toast, sidebar view toggle, new-chat screen. */
 /* Hidden sidebar peek (desktop): kept laid out off-screen so it can slide in over the panes from the left edge. */
 .body { position: relative; }
-.sidebar-wrap.hidden { position: absolute; top: 0; left: 0; bottom: 0; z-index: 20; visibility: hidden; transform: translateX(-100%); transition: transform .18s cubic-bezier(.2, .8, .2, 1), visibility 0s linear .18s; }
+.sidebar-wrap.hidden { position: absolute; top: env(safe-area-inset-top, 0); left: 0; bottom: 0; z-index: 20; visibility: hidden; transform: translateX(-100%); transition: transform .18s cubic-bezier(.2, .8, .2, 1), visibility 0s linear .18s; }
 .sidebar-wrap.hidden.peek { visibility: visible; transform: none; box-shadow: 6px 0 18px rgba(0, 0, 0, .18); transition: transform .18s cubic-bezier(.2, .8, .2, 1), visibility 0s; }
-.sidebar-hotzone { position: absolute; top: 0; left: 0; bottom: 0; width: 3px; z-index: 19; }
+.sidebar-hotzone { position: absolute; top: env(safe-area-inset-top, 0); left: 0; bottom: 0; width: 3px; z-index: 19; }
 .palette-hint, .shortcut-list kbd { font-family: var(--mono); font-size: var(--fs-meta); padding: 1px 5px; border-radius: 4px; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong); background: transparent; }
 .shortcut-list kbd { display: inline-block; min-width: 1.8em; text-align: center; color: var(--fg); background: var(--bg-raised); box-shadow: inset 0 0 0 1px var(--line-strong), inset 0 -1px 0 var(--line-strong); }
 .modal-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-start; justify-content: center; padding: 12vh 16px 16px; background: rgba(0, 0, 0, .55); }
@@ -2211,7 +2231,9 @@ button.hl-row-main:hover { background: var(--hover); }
 /* Tablet / unfolded inner screen: menu · logo · usage strip · actions in the top bar (wrapping only if they overflow),
    a font-scale-aware sidebar that can be folded away (☰). */
 @media (min-width: 721px) and (max-width: 1099.98px) {
+  :root { --bar-h: 54px; }
   .topbar { column-gap: 8px; padding: 0 10px 0 5px; }
+  .topbar.beside-sidebar { padding-left: 12px; }
   .sidebar-toggle { display: inline-flex; order: 0; }
   /* The top row has the room: the actions never shrink away here. */
   .topbar-end { flex-shrink: 0; }

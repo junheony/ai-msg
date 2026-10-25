@@ -230,6 +230,8 @@ export function App() {
   const sidebarWrap = useRef<HTMLDivElement>(null);
   /** Closed by Esc / a click while the pointer still rests on it: no reopening until the pointer has left. */
   const peekLatch = useRef(false);
+  /** The sidebar toggle was pressed with focus on it: it moves (sidebar head ↔ top bar), so focus follows it there. */
+  const toggleFocus = useRef(false);
   const tucked = !phone && sidebarHidden;
   // Hover only means something with a mouse / trackpad: a touch screen keeps ☰ / ⌘\ to show it.
   const peekable = tucked && finePointer() && window.matchMedia('(hover: hover)').matches;
@@ -260,6 +262,7 @@ export function App() {
     tryClose();
   };
   useEffect(() => { if (!peekable) { clearPeekTimer(); setPeek(false); peekLatch.current = false; } }, [peekable]);
+  useEffect(() => { if (toggleFocus.current) { toggleFocus.current = false; document.querySelector<HTMLElement>('.sidebar-toggle')?.focus(); } }, [sidebarHidden]);
   useEffect(() => clearPeekTimer, []);
   useEffect(() => {
     if (!peek) return;
@@ -1341,204 +1344,224 @@ export function App() {
     chat.focus();
   };
 
+  // Desktop / tablet: the toggle sits at the start of the sidebar's head while the sidebar is in its column (or peeked out over the
+  // panes, so it stays pressable there), else the top bar's start. One button either way.
+  const toggleInHead = !phone && (!sidebarHidden || peek);
+  const sidebarToggle = (
+    <button type="button" className="icon-btn sidebar-toggle" aria-label={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} title={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} aria-pressed={!sidebarHidden}
+      onClick={(e) => { toggleFocus.current = document.activeElement === e.currentTarget; toggleSidebar(); }}
+      onMouseEnter={peekable && !peek ? armPeek : undefined} onMouseLeave={peekable && !toggleInHead ? () => { unlatchPeek(); leavePeek(); } : undefined}><SidebarIcon /></button>
+  );
+  // Desktop / tablet: a column of its own, the window's full height, ahead of the top bar (focus: sidebar → body).
+  // Phone: the drawer, inside the body after the top bar, as before.
+  const sidebarEl = (
+    <div
+      ref={sidebarWrap}
+      className={`sidebar-wrap ${phone ? 'drawer' : ''} ${drawer ? 'open' : ''} ${tucked ? 'hidden' : ''} ${peek ? 'peek' : ''}`}
+      onMouseEnter={peek ? clearPeekTimer : undefined}
+      onMouseLeave={peekable ? () => { unlatchPeek(); if (peek) leavePeek(); } : undefined}
+    >
+      <Sidebar
+        headStart={toggleInHead ? sidebarToggle : undefined}
+        projects={state.projects}
+        currentSessionId={active.session?.sessionId ?? null}
+        onOpen={(sessionId, cwd, title) => {
+          // Already shown in another pane / card: that one comes forward instead of a second copy here.
+          const shown = active.session?.sessionId === sessionId ? undefined : state.panes.find((p) => p.session?.sessionId === sessionId);
+          if (!shown) { openIn(active.id, sessionId, cwd, title); return; }
+          dispatch({ type: 'focus_pane', paneId: shown.id });
+          setDrawer(false); closePeek();
+          requestFocus(shown.id);
+        }}
+        openPanes={openPanes(state.panes)}
+        onOpenPalette={() => { setDrawer(false); setHelpOpen(false); setPaletteOpen(true); }}
+        onOpenSplit={openSplit}
+        onNew={(cwd, name) => openIn(active.id, null, cwd, `${name} · 새 세션`)}
+        onRefresh={() => send({ type: 'refresh_index' })}
+        pins={state.pins}
+        sessionIcons={state.sessionIcons}
+        {...(has('sessionIcons') ? { onSetSessionIcon: setSessionIcon } : {})}
+        pinShortcut={openPinned}
+        desktop={state.desktop}
+        onTogglePin={togglePin}
+        onReorderPins={(order) => {
+          // Optimistic: the new order shows at once. Only the latest move's answer counts — an older one arriving
+          // late must not undo a newer move (the index broadcast settles those). A failed save puts the old order
+          // back, keeping pins added meanwhile (on top, like a new pin).
+          const seq = ++pinOrderSeq.current;
+          const before = latest.current.pins;
+          dispatch({ type: 'set_pins', pins: order });
+          postPinOrder(order).then(
+            (pins) => { if (seq === pinOrderSeq.current) dispatch({ type: 'set_pins', pins }); },
+            (err: unknown) => {
+              if (seq !== pinOrderSeq.current) return;
+              const now = latest.current.pins;
+              const kept = new Set(before);
+              const has = new Set(now);
+              dispatch({ type: 'set_pins', pins: [...now.filter((id) => !kept.has(id)), ...before.filter((id) => has.has(id))] });
+              dispatch({ type: 'show_error', message: err instanceof Error ? err.message : '고정 순서 변경 실패' });
+            },
+          );
+        }}
+        onRename={renameSession}
+        onArchive={archiveSession}
+        onOpenHit={openHit}
+        onDelete={askDelete}
+        onSetCwd={setCwd}
+        onDuplicate={duplicate}
+        activity={state.activity}
+        unread={state.unread}
+        waiting={[...state.pending, ...state.questions].map((c) => c.sessionId).filter((id): id is string => !!id)}
+        onOpenSettings={() => setSettingsOpen(true)}
+        // The avatar is the person using deck, not the shown session's account (that one is the usage chip's): the
+        // same letter on the new-session screen and in any chat.
+        avatar="D"
+        avatarTitle="AI-MSG"
+        footMenu={[
+          { label: '설정', hint: `${mod},`, run: () => setSettingsOpen(true) },
+          { label: '사용량 기록', run: () => setUsageOpen('history') },
+          { label: `테마: ${THEME_LABEL[prefs.theme]}`, run: () => window.dispatchEvent(new CustomEvent('deck:cycle-theme')) },
+          ...(keyboardless ? [] : [{ label: '단축키', hint: `${mod}/`, run: () => setHelpOpen(true) }]),
+          { label: '새로고침', run: () => location.reload() },
+        ]}
+        onOpenFolder={(cwd) => openIn(active.id, null, cwd, `${cwd.split('/').filter(Boolean).pop() ?? cwd} · 새 세션`)}
+        onNewChat={() => newChat()}
+      />
+    </div>
+  );
+
   return (
     <AccountsContext value={accounts}>
     <div className="app">
       <a className="skip-link" href="#main" onClick={(e) => { e.preventDefault(); skipToChat(); }}>{ui().common.skipToMain}</a>
-      <header className="topbar">
-        {phone && <button type="button" className="menu" aria-label="메뉴" aria-expanded={drawer} onClick={() => setDrawer((d) => !d)}><MenuIcon /></button>}
-        {/* Tablet / unfolded (721–1100px, CSS only shows it there): a visible way to fold the sidebar away without ⌘\. */}
-        {!phone && <button type="button" className="icon-btn sidebar-toggle" aria-label={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} title={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} aria-pressed={!sidebarHidden} onClick={toggleSidebar} onMouseEnter={peekable && !peek ? armPeek : undefined} onMouseLeave={peekable ? () => { unlatchPeek(); leavePeek(); } : undefined}><SidebarIcon /></button>}
-        {/* The session chip of the one pane (desktop) / the shown pane (phone) renders here (Pane → Chat, a portal). */}
-        <div className="topbar-head" ref={setHeadSlot} />
-        {/* Every seat's usage: in the bar, shrinking in steps; when even its narrowest does not fit (and always on a phone)
-            a line of its own under the bar (the slot below, a portal). */}
-        <UsageStrip usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} phone={phone} rowSlot={stripRow} open={usageOpen !== null} onToggle={() => setUsageOpen((v) => (v ? null : 'limits'))} />
-        <div className="topbar-end">
-          {!phone && <button type="button" className="icon-btn split" onClick={addPane} aria-label="새 분할" title={`새 분할 (${mod}⇧O) — 세션 칩을 끌어 순서를 바꾸거나 카드로 떼어낼 수 있어요`}><SplitIcon /></button>}
-          <ActivityButton
-            ready={state.ready} connected={state.connected} downSince={downSince} onRetry={retryNow}
-            pending={state.pending} questions={state.questions}
-            onDecide={(requestId, decision) => send({ type: 'permission_response', requestId, decision })}
-            onAnswer={(requestId, answers) => send({ type: 'question_response', requestId, answers })}
-            activity={state.activity} tasks={has('tasks') ? (state.tasks ?? []) : []}
-            onOpenTask={(t) => { if (t.sessionId && !openById.current(t.sessionId)) openIn(active.id, t.sessionId, t.cwd, t.title); }}
-            onCancelTask={(taskId) => { send({ type: 'cancel_task', taskId }); }}
-            paneBg={state.panes.flatMap((p) => (p.bg ? [p.bg] : []))}
-            onStopTask={(turnId, taskId) => { send({ type: 'stop_task', turnId, taskId }); }}
-            onInterrupt={(turnId) => { send({ type: 'interrupt', turnId }); }}
-            titleOf={titleOf} onOpen={openWorkRow} onNewChat={() => newChat()}
-            serverUpdate={has('serverUpdate')} highlights={has('highlights')} onOpenHighlights={() => setHighlightsOpen(true)}
-            server={{ startedAt: state.serverStartedAt, restartedAt: state.restartedAt, draining: state.draining, onDismissRestart: () => dispatch({ type: 'dismiss_restart' }) }}
-            visibleSessions={phone ? [active.session?.sessionId ?? null] : state.panes.map((p) => p.session?.sessionId ?? null)}
-            onAlert={onActivityAlert}
-          />
-        </div>
-      </header>
-      <div className="usage-strip-slot" ref={setStripRow} />
-      {/* Always there (empty while connected): a live region that appears with its text is often not read the first time. The button stays outside it. */}
-      <div className="sr-only" aria-live="polite" aria-atomic="true" data-testid="conn-live">{connBar ?? ''}</div>
-      {connBar !== null && (
-        <div className="conn-down">
-          <span aria-hidden="true">{connBar}</span>
-          <button type="button" className="text-btn" onClick={retryNow}>{ui().common.retry}</button>
-        </div>
-      )}
-      {setupBanner && !setupOpen && (
-        <div className="setup-banner" role="status">
-          <span>{ui().setup.bannerText}</span>
-          <button type="button" className="text-btn" onClick={() => { setSetupBanner(false); setSetupOpen(true); }}>{ui().setup.bannerOpen}</button>
-          <button type="button" className="text-btn" aria-label={ui().setup.bannerClose} onClick={() => setSetupBanner(false)}>✕</button>
-        </div>
-      )}
-      {usageOpen && <UsageSheet usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} initialHistory={usageOpen === 'history'} onClose={() => setUsageOpen(null)} />}
-      {highlightsOpen && <Highlights onClose={() => setHighlightsOpen(false)} live={{ waiting: [...state.pending.map((c) => ({ sessionId: c.sessionId, kind: 'permission' as const })), ...state.questions.map((c) => ({ sessionId: c.sessionId, kind: 'question' as const }))], activity: state.activity }} engineOf={(id) => paletteSessions.find((x) => x.sessionId === id)?.engine} onOpenSession={(sessionId, cwd, title) => { setHighlightsOpen(false); if (!openById.current(sessionId)) openIn(active.id, sessionId, cwd, title); }} />}
-      {settingsOpen && <SettingsView build={buildId} onLanguage={(language) => new Promise<void>((resolve) => { const done = () => { clearTimeout(t); if (settingsAck.current === done) settingsAck.current = null; resolve(); }; const t = setTimeout(done, SETTINGS_ACK_MS); settingsAck.current = done; if (!send({ type: 'set_settings', language })) done(); })} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} sameVendorRotation={state.sameVendorRotation} onSameVendorRotation={(sameVendorRotation) => send({ type: 'set_settings', sameVendorRotation })} experimental={state.experimental} onExperimental={(experimental) => send({ type: 'set_settings', experimental })} commanderEnabled={state.commanderEnabled} onCommanderEnabled={(commanderEnabled) => send({ type: 'set_settings', commanderEnabled })} autoRoute={state.autoRoute} onAutoRoute={(patch) => send({ type: 'set_settings', ...patch })} claudeAccounts={state.accounts.filter((a) => !a.retired).length} grokLocked={state.grok?.locked ?? null} onGrokUnlock={() => send({ type: 'grok_unlock' })} taskCap={has('tasks') ? (state.taskCap ?? null) : null} onTaskCap={(taskSoftCap) => send({ type: 'set_settings', taskSoftCap })} onSetup={has('setup') ? () => { setSettingsOpen(false); setSetupOpen(true); } : undefined} cloud={has('cloud')} onClose={() => setSettingsOpen(false)} />}
-      {setupOpen && <SetupWizard activity={state.activity} onDone={() => setSetupOpen(false)} onClose={() => setSetupOpen(false)} />}
-      {paletteOpen && <CommandPalette sessions={paletteSessions} actions={actions} onClose={closePalette} onOpenSession={(s) => openById.current(s.sessionId) || openIn(active.id, s.sessionId, s.cwd, s.title)}
-        onOpenSessionSplit={(s) => openSplit(s.sessionId, s.cwd, s.title)}
-        onOpenSessionFloat={phone ? undefined : (s) => { const before = latest.current.panes.length; openSplit(s.sessionId, s.cwd, s.title); if (latest.current.panes.length > before) floatPane(latest.current.activePaneId); }}
-        onOpenHit={openHit} searchFn={searchTranscripts} />}
-      {helpOpen && <ShortcutHelp mac={MAC} onClose={closeHelp} />}
-      <FastConsentSheet />
-      {layouts && <LayoutsDialog layouts={layouts.list} error={layouts.error} onClose={() => setLayouts(null)} onSave={saveCurrentLayout} onLoad={loadLayout} onDelete={(name) => setLayouts({ list: deleteLayout(name), error: null })} />}
-      {cwdFor && <SessionCwdDialog title={cwdFor.title} cwd={cwdFor.cwd} onClose={() => setCwdFor(null)} onPick={(cwd) => { setCwdFor(null); send({ type: 'set_cwd', sessionId: cwdFor.sessionId, cwd }); }} />}
-      {confirmDelete && (
-        <ConfirmDialog title="대화 삭제" danger confirmLabel="삭제" onCancel={cancelDelete} onConfirm={() => doDelete(confirmDelete.s, confirmDelete.which)}
-          message={`“${confirmDelete.s.title}”${confirmDelete.which ? ` (${confirmDelete.which})` : ''} 을(를) 목록에서 지울까요? 파일은 휴지통(session-trash)으로 옮겨지고 바로 되돌릴 수 있어요.`} />
-      )}
-      {undo?.kind === 'trash' && (
-        <div className="toast" role="status">
-          <span>“{undo.title.length > 40 ? `${undo.title.slice(0, 40)}…` : undo.title}”{undo.which ? ` (${undo.which})` : ''} 삭제됨</span>
-          <button type="button" className="text-btn" onClick={() => { const { trashId } = undo; setUndo(null); restoreSession(trashId).catch(showError('되돌리기 실패')); }}>되돌리기</button>
-          <button type="button" className="icon-btn" aria-label="닫기" onClick={() => setUndo(null)}>✕</button>
-        </div>
-      )}
-      {undo?.kind === 'archive' && (
-        <div className="toast" role="status">
-          <span>보관했어요</span>
-          <button type="button" className="text-btn" onClick={() => { const { sessionId } = undo; setUndo(null); postSessionMeta(sessionId, { archived: false }).catch(showError('되돌리기 실패')); }}>되돌리기</button>
-          <button type="button" className="icon-btn" aria-label="닫기" onClick={() => setUndo(null)}>✕</button>
-        </div>
-      )}
-      {newBuild && <button type="button" className="update-pill" onClick={() => location.reload()}>새 버전이 있어요 · 새로고침</button>}
-      <Toasts toasts={toasts} onDismiss={dismissToast} aboveComposer />
-      <div ref={bodyRef} className="body" id="main" tabIndex={-1}>
-        <div ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" data-testid="cards-live" />
-        {phone && drawer && <div className="drawer-backdrop" onClick={() => setDrawer(false)} />}
-        {peekable && <div className="sidebar-hotzone" data-testid="sidebar-hotzone" aria-hidden="true" onMouseEnter={peek ? undefined : armPeek} onMouseLeave={() => { unlatchPeek(); if (!peek) clearPeekTimer(); }} />}
-        <div
-          ref={sidebarWrap}
-          className={`sidebar-wrap ${phone ? 'drawer' : ''} ${drawer ? 'open' : ''} ${tucked ? 'hidden' : ''} ${peek ? 'peek' : ''}`}
-          onMouseEnter={peek ? clearPeekTimer : undefined}
-          onMouseLeave={peekable ? () => { unlatchPeek(); if (peek) leavePeek(); } : undefined}
-        >
-          <Sidebar
-            projects={state.projects}
-            currentSessionId={active.session?.sessionId ?? null}
-            onOpen={(sessionId, cwd, title) => {
-              // Already shown in another pane / card: that one comes forward instead of a second copy here.
-              const shown = active.session?.sessionId === sessionId ? undefined : state.panes.find((p) => p.session?.sessionId === sessionId);
-              if (!shown) { openIn(active.id, sessionId, cwd, title); return; }
-              dispatch({ type: 'focus_pane', paneId: shown.id });
-              setDrawer(false); closePeek();
-              requestFocus(shown.id);
-            }}
-            openPanes={openPanes(state.panes)}
-            onOpenPalette={() => { setDrawer(false); setHelpOpen(false); setPaletteOpen(true); }}
-            onOpenSplit={openSplit}
-            onNew={(cwd, name) => openIn(active.id, null, cwd, `${name} · 새 세션`)}
-            onRefresh={() => send({ type: 'refresh_index' })}
-            pins={state.pins}
-            sessionIcons={state.sessionIcons}
-            {...(has('sessionIcons') ? { onSetSessionIcon: setSessionIcon } : {})}
-            pinShortcut={openPinned}
-            desktop={state.desktop}
-            onTogglePin={togglePin}
-            onReorderPins={(order) => {
-              // Optimistic: the new order shows at once. Only the latest move's answer counts — an older one arriving
-              // late must not undo a newer move (the index broadcast settles those). A failed save puts the old order
-              // back, keeping pins added meanwhile (on top, like a new pin).
-              const seq = ++pinOrderSeq.current;
-              const before = latest.current.pins;
-              dispatch({ type: 'set_pins', pins: order });
-              postPinOrder(order).then(
-                (pins) => { if (seq === pinOrderSeq.current) dispatch({ type: 'set_pins', pins }); },
-                (err: unknown) => {
-                  if (seq !== pinOrderSeq.current) return;
-                  const now = latest.current.pins;
-                  const kept = new Set(before);
-                  const has = new Set(now);
-                  dispatch({ type: 'set_pins', pins: [...now.filter((id) => !kept.has(id)), ...before.filter((id) => has.has(id))] });
-                  dispatch({ type: 'show_error', message: err instanceof Error ? err.message : '고정 순서 변경 실패' });
-                },
-              );
-            }}
-            onRename={renameSession}
-            onArchive={archiveSession}
-            onOpenHit={openHit}
-            onDelete={askDelete}
-            onSetCwd={setCwd}
-            onDuplicate={duplicate}
-            activity={state.activity}
-            unread={state.unread}
-            waiting={[...state.pending, ...state.questions].map((c) => c.sessionId).filter((id): id is string => !!id)}
-            onOpenSettings={() => setSettingsOpen(true)}
-            // The avatar is the person using deck, not the shown session's account (that one is the usage chip's): the
-            // same letter on the new-session screen and in any chat.
-            avatar="D"
-            avatarTitle="AI-MSG"
-            footMenu={[
-              { label: '설정', hint: `${mod},`, run: () => setSettingsOpen(true) },
-              { label: '사용량 기록', run: () => setUsageOpen('history') },
-              { label: `테마: ${THEME_LABEL[prefs.theme]}`, run: () => window.dispatchEvent(new CustomEvent('deck:cycle-theme')) },
-              ...(keyboardless ? [] : [{ label: '단축키', hint: `${mod}/`, run: () => setHelpOpen(true) }]),
-              { label: '새로고침', run: () => location.reload() },
-            ]}
-            onOpenFolder={(cwd) => openIn(active.id, null, cwd, `${cwd.split('/').filter(Boolean).pop() ?? cwd} · 새 세션`)}
-            onNewChat={() => newChat()}
-          />
-        </div>
-        <div ref={panesRef} className="panes" data-count={phone || maxed ? 1 : docked.length} {...(maxed ? { 'data-maxed': maxed } : {})} style={{ '--cols': phone || maxed ? 1 : docked.length, ...(!phone && !maxed && docked.length > 1 ? { gridTemplateColumns: paneColumns(docked.map((p) => paneSize(p.size))) } : {}) } as CSSProperties}>
-          {phone && state.panes.length > 1 && (
-            // 36px strip, 44px presses: "1 · 제목…" (the title cut by CSS), + at the end; press-and-drag reorders.
-            <div className="pane-switch" data-testid="split-tabs" role="group" aria-label="분할" {...tabs.stripProps}>
-              {state.panes.map((p, i) => <button type="button" key={p.id} data-tab={p.id} className={p.id === active.id ? 'on' : ''} aria-pressed={p.id === active.id} {...(p.session ? { title: p.session.title } : {})} onClick={() => { dispatch({ type: 'focus_pane', paneId: p.id }); requestFocus(p.id); }}><span className="tab-pill">{i + 1} · {p.session?.title ?? '새 세션'}</span></button>)}
-              <button type="button" className="add" aria-label="새 분할" title="새 분할" onClick={addPane}><span className="tab-pill">+</span></button>
-            </div>
-          )}
-          {(phone ? [active] : docked).map((p, i, shown) => (
-            <Fragment key={p.id}>
-            {i > 0 && !maxed && (
-              <div className="pane-splitter" role="separator" aria-orientation="vertical" aria-label="패널 폭 조절" title="드래그: 폭 조절 · 더블클릭: 균등"
-                onPointerDown={(e) => startPaneResize(e, shown[i - 1]!.id, p.id)}
-                onDoubleClick={() => dispatch({ type: 'resize_panes', sizes: Object.fromEntries(docked.map((x) => [x.id, 1])) })} />
-            )}
-            <Pane pane={p} app={state} active={p.id === state.activePaneId} closable={state.panes.length > 1} headSlot={(phone || state.panes.length === 1) ? headSlot : null} onAddPane={addPane} dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
-              onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} onStartChatSplit={(cwd, name, text, attachments) => startChatSplit(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions}
-              hidden={!!maxed && p.id !== maxed}
-              {...(!phone && (docked.length > 1 || floats.length > 0) ? { grip: { onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => startPaneDrag(e, p.id), onKeyDown: (e: ReactKeyboardEvent<HTMLButtonElement>) => gripKey(e, p.id) } } : {})}
-              {...(!phone && docked.length > 1 ? { onMaxPane: () => toggleMaxDocked(p.id), paneMaxed: maxed === p.id, onFloat: () => floatPane(p.id), onShift: { ...(i > 0 ? { left: () => dispatch({ type: 'move_pane', paneId: p.id, to: i - 1 }) } : {}), ...(i < shown.length - 1 ? { right: () => dispatch({ type: 'move_pane', paneId: p.id, to: i + 1 }) } : {}) } } : {})}
-              onLayouts={() => setLayouts({ list: listLayouts(), error: null })} onPalette={() => onShortcut.current('palette')} />
-            </Fragment>
-          ))}
-        </div>
-        {!phone && floats.length > 0 && (
-          <div className="floats">
-            {floats.map((p) => (
-              <div key={p.id} className={`float-card${p.id === state.activePaneId ? ' on' : ''}${p.floatCollapsed ? ' collapsed' : ''}`} data-float={p.id} style={{ left: p.float!.x, top: p.float!.y, width: p.float!.w, height: p.floatCollapsed ? COLLAPSED_H : p.float!.h }}
-                onDoubleClick={(e) => { if (onCardHead(e.target)) { if (p.floatCollapsed) toggleCollapseCard(p.id); else toggleMaxCard(p.id); } }}>
-                <Pane pane={p} app={state} active={p.id === state.activePaneId} closable onAddPane={addPane} dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
-                  onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} onStartChatSplit={(cwd, name, text, attachments) => startChatSplit(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions}
-                  floating grip={{ onPointerDown: (e) => startPaneDrag(e, p.id), onKeyDown: (e) => gripKey(e, p.id) }} onDock={() => dockPane(p.id)} {...(floats.length > 1 ? { onArrange: arrangeCards } : {})}
-                  onToggleMax={() => toggleMaxCard(p.id)} maximized={!!p.floatBefore}
-                  collapsed={!!p.floatCollapsed} onToggleCollapse={() => toggleCollapseCard(p.id)} onLayouts={() => setLayouts({ list: listLayouts(), error: null })} onPalette={() => onShortcut.current('palette')} />
-                {!p.floatCollapsed && <div className="float-resize" role="separator" tabIndex={0} aria-label="카드 크기 조절" aria-valuetext={`${p.float!.w} × ${p.float!.h}`} title="드래그: 카드 크기 · 키보드: ←→ 너비, ↑↓ 높이 (Shift: 크게)"
-                  onPointerDown={(e) => startFloatResize(e, p.id)} onKeyDown={(e) => resizeKey(e, p.id)} />}
-              </div>
-            ))}
+      {peekable && <div className="sidebar-hotzone" data-testid="sidebar-hotzone" aria-hidden="true" onMouseEnter={peek ? undefined : armPeek} onMouseLeave={() => { unlatchPeek(); if (!peek) clearPeekTimer(); }} />}
+      {!phone && sidebarEl}
+      <div className="main-col">
+        <header className={`topbar${!phone && !tucked ? ' beside-sidebar' : ''}`}>
+          {phone && <button type="button" className="menu" aria-label="메뉴" aria-expanded={drawer} onClick={() => setDrawer((d) => !d)}><MenuIcon /></button>}
+          {/* Sidebar hidden: the toggle at the bar's start (resting on it peeks the sidebar out). While peeked the toggle rides
+              in the sidebar's head over this spot, so a spacer keeps the chip from jumping left under it. */}
+          {!phone && !toggleInHead && sidebarToggle}
+          {!phone && toggleInHead && tucked && <span className="sidebar-toggle-spacer" aria-hidden="true" />}
+          {/* The session chip of the one pane (desktop) / the shown pane (phone) renders here (Pane → Chat, a portal). */}
+          <div className="topbar-head" ref={setHeadSlot} />
+          {/* Every seat's usage: in the bar, shrinking in steps; when even its narrowest does not fit (and always on a phone)
+              a line of its own under the bar (the slot below, a portal). */}
+          <UsageStrip usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} phone={phone} rowSlot={stripRow} open={usageOpen !== null} onToggle={() => setUsageOpen((v) => (v ? null : 'limits'))} />
+          <div className="topbar-end">
+            {!phone && <button type="button" className="icon-btn split" onClick={addPane} aria-label="새 분할" title={`새 분할 (${mod}⇧O) — 세션 칩을 끌어 순서를 바꾸거나 카드로 떼어낼 수 있어요`}><SplitIcon /></button>}
+            <ActivityButton
+              ready={state.ready} connected={state.connected} downSince={downSince} onRetry={retryNow}
+              pending={state.pending} questions={state.questions}
+              onDecide={(requestId, decision) => send({ type: 'permission_response', requestId, decision })}
+              onAnswer={(requestId, answers) => send({ type: 'question_response', requestId, answers })}
+              activity={state.activity} tasks={has('tasks') ? (state.tasks ?? []) : []}
+              onOpenTask={(t) => { if (t.sessionId && !openById.current(t.sessionId)) openIn(active.id, t.sessionId, t.cwd, t.title); }}
+              onCancelTask={(taskId) => { send({ type: 'cancel_task', taskId }); }}
+              paneBg={state.panes.flatMap((p) => (p.bg ? [p.bg] : []))}
+              onStopTask={(turnId, taskId) => { send({ type: 'stop_task', turnId, taskId }); }}
+              onInterrupt={(turnId) => { send({ type: 'interrupt', turnId }); }}
+              titleOf={titleOf} onOpen={openWorkRow} onNewChat={() => newChat()}
+              serverUpdate={has('serverUpdate')} highlights={has('highlights')} onOpenHighlights={() => setHighlightsOpen(true)}
+              server={{ startedAt: state.serverStartedAt, restartedAt: state.restartedAt, draining: state.draining, onDismissRestart: () => dispatch({ type: 'dismiss_restart' }) }}
+              visibleSessions={phone ? [active.session?.sessionId ?? null] : state.panes.map((p) => p.session?.sessionId ?? null)}
+              onAlert={onActivityAlert}
+            />
+          </div>
+        </header>
+        <div className="usage-strip-slot" ref={setStripRow} />
+        {/* Always there (empty while connected): a live region that appears with its text is often not read the first time. The button stays outside it. */}
+        <div className="sr-only" aria-live="polite" aria-atomic="true" data-testid="conn-live">{connBar ?? ''}</div>
+        {connBar !== null && (
+          <div className="conn-down">
+            <span aria-hidden="true">{connBar}</span>
+            <button type="button" className="text-btn" onClick={retryNow}>{ui().common.retry}</button>
           </div>
         )}
+        {setupBanner && !setupOpen && (
+          <div className="setup-banner" role="status">
+            <span>{ui().setup.bannerText}</span>
+            <button type="button" className="text-btn" onClick={() => { setSetupBanner(false); setSetupOpen(true); }}>{ui().setup.bannerOpen}</button>
+            <button type="button" className="text-btn" aria-label={ui().setup.bannerClose} onClick={() => setSetupBanner(false)}>✕</button>
+          </div>
+        )}
+        {usageOpen && <UsageSheet usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} initialHistory={usageOpen === 'history'} onClose={() => setUsageOpen(null)} />}
+        {highlightsOpen && <Highlights onClose={() => setHighlightsOpen(false)} live={{ waiting: [...state.pending.map((c) => ({ sessionId: c.sessionId, kind: 'permission' as const })), ...state.questions.map((c) => ({ sessionId: c.sessionId, kind: 'question' as const }))], activity: state.activity }} engineOf={(id) => paletteSessions.find((x) => x.sessionId === id)?.engine} onOpenSession={(sessionId, cwd, title) => { setHighlightsOpen(false); if (!openById.current(sessionId)) openIn(active.id, sessionId, cwd, title); }} />}
+        {settingsOpen && <SettingsView build={buildId} onLanguage={(language) => new Promise<void>((resolve) => { const done = () => { clearTimeout(t); if (settingsAck.current === done) settingsAck.current = null; resolve(); }; const t = setTimeout(done, SETTINGS_ACK_MS); settingsAck.current = done; if (!send({ type: 'set_settings', language })) done(); })} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} sameVendorRotation={state.sameVendorRotation} onSameVendorRotation={(sameVendorRotation) => send({ type: 'set_settings', sameVendorRotation })} experimental={state.experimental} onExperimental={(experimental) => send({ type: 'set_settings', experimental })} commanderEnabled={state.commanderEnabled} onCommanderEnabled={(commanderEnabled) => send({ type: 'set_settings', commanderEnabled })} autoRoute={state.autoRoute} onAutoRoute={(patch) => send({ type: 'set_settings', ...patch })} claudeAccounts={state.accounts.filter((a) => !a.retired).length} grokLocked={state.grok?.locked ?? null} onGrokUnlock={() => send({ type: 'grok_unlock' })} taskCap={has('tasks') ? (state.taskCap ?? null) : null} onTaskCap={(taskSoftCap) => send({ type: 'set_settings', taskSoftCap })} onSetup={has('setup') ? () => { setSettingsOpen(false); setSetupOpen(true); } : undefined} cloud={has('cloud')} onClose={() => setSettingsOpen(false)} />}
+        {setupOpen && <SetupWizard activity={state.activity} onDone={() => setSetupOpen(false)} onClose={() => setSetupOpen(false)} />}
+        {paletteOpen && <CommandPalette sessions={paletteSessions} actions={actions} onClose={closePalette} onOpenSession={(s) => openById.current(s.sessionId) || openIn(active.id, s.sessionId, s.cwd, s.title)}
+          onOpenSessionSplit={(s) => openSplit(s.sessionId, s.cwd, s.title)}
+          onOpenSessionFloat={phone ? undefined : (s) => { const before = latest.current.panes.length; openSplit(s.sessionId, s.cwd, s.title); if (latest.current.panes.length > before) floatPane(latest.current.activePaneId); }}
+          onOpenHit={openHit} searchFn={searchTranscripts} />}
+        {helpOpen && <ShortcutHelp mac={MAC} onClose={closeHelp} />}
+        <FastConsentSheet />
+        {layouts && <LayoutsDialog layouts={layouts.list} error={layouts.error} onClose={() => setLayouts(null)} onSave={saveCurrentLayout} onLoad={loadLayout} onDelete={(name) => setLayouts({ list: deleteLayout(name), error: null })} />}
+        {cwdFor && <SessionCwdDialog title={cwdFor.title} cwd={cwdFor.cwd} onClose={() => setCwdFor(null)} onPick={(cwd) => { setCwdFor(null); send({ type: 'set_cwd', sessionId: cwdFor.sessionId, cwd }); }} />}
+        {confirmDelete && (
+          <ConfirmDialog title="대화 삭제" danger confirmLabel="삭제" onCancel={cancelDelete} onConfirm={() => doDelete(confirmDelete.s, confirmDelete.which)}
+            message={`“${confirmDelete.s.title}”${confirmDelete.which ? ` (${confirmDelete.which})` : ''} 을(를) 목록에서 지울까요? 파일은 휴지통(session-trash)으로 옮겨지고 바로 되돌릴 수 있어요.`} />
+        )}
+        {undo?.kind === 'trash' && (
+          <div className="toast" role="status">
+            <span>“{undo.title.length > 40 ? `${undo.title.slice(0, 40)}…` : undo.title}”{undo.which ? ` (${undo.which})` : ''} 삭제됨</span>
+            <button type="button" className="text-btn" onClick={() => { const { trashId } = undo; setUndo(null); restoreSession(trashId).catch(showError('되돌리기 실패')); }}>되돌리기</button>
+            <button type="button" className="icon-btn" aria-label="닫기" onClick={() => setUndo(null)}>✕</button>
+          </div>
+        )}
+        {undo?.kind === 'archive' && (
+          <div className="toast" role="status">
+            <span>보관했어요</span>
+            <button type="button" className="text-btn" onClick={() => { const { sessionId } = undo; setUndo(null); postSessionMeta(sessionId, { archived: false }).catch(showError('되돌리기 실패')); }}>되돌리기</button>
+            <button type="button" className="icon-btn" aria-label="닫기" onClick={() => setUndo(null)}>✕</button>
+          </div>
+        )}
+        {newBuild && <button type="button" className="update-pill" onClick={() => location.reload()}>새 버전이 있어요 · 새로고침</button>}
+        <Toasts toasts={toasts} onDismiss={dismissToast} aboveComposer />
+        <div ref={bodyRef} className="body" id="main" tabIndex={-1}>
+          <div ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" data-testid="cards-live" />
+          {phone && drawer && <div className="drawer-backdrop" onClick={() => setDrawer(false)} />}
+          {phone && sidebarEl}
+          <div ref={panesRef} className="panes" data-count={phone || maxed ? 1 : docked.length} {...(maxed ? { 'data-maxed': maxed } : {})} style={{ '--cols': phone || maxed ? 1 : docked.length, ...(!phone && !maxed && docked.length > 1 ? { gridTemplateColumns: paneColumns(docked.map((p) => paneSize(p.size))) } : {}) } as CSSProperties}>
+            {phone && state.panes.length > 1 && (
+              // 36px strip, 44px presses: "1 · 제목…" (the title cut by CSS), + at the end; press-and-drag reorders.
+              <div className="pane-switch" data-testid="split-tabs" role="group" aria-label="분할" {...tabs.stripProps}>
+                {state.panes.map((p, i) => <button type="button" key={p.id} data-tab={p.id} className={p.id === active.id ? 'on' : ''} aria-pressed={p.id === active.id} {...(p.session ? { title: p.session.title } : {})} onClick={() => { dispatch({ type: 'focus_pane', paneId: p.id }); requestFocus(p.id); }}><span className="tab-pill">{i + 1} · {p.session?.title ?? '새 세션'}</span></button>)}
+                <button type="button" className="add" aria-label="새 분할" title="새 분할" onClick={addPane}><span className="tab-pill">+</span></button>
+              </div>
+            )}
+            {(phone ? [active] : docked).map((p, i, shown) => (
+              <Fragment key={p.id}>
+              {i > 0 && !maxed && (
+                <div className="pane-splitter" role="separator" aria-orientation="vertical" aria-label="패널 폭 조절" title="드래그: 폭 조절 · 더블클릭: 균등"
+                  onPointerDown={(e) => startPaneResize(e, shown[i - 1]!.id, p.id)}
+                  onDoubleClick={() => dispatch({ type: 'resize_panes', sizes: Object.fromEntries(docked.map((x) => [x.id, 1])) })} />
+              )}
+              <Pane pane={p} app={state} active={p.id === state.activePaneId} closable={state.panes.length > 1} headSlot={(phone || state.panes.length === 1) ? headSlot : null} onAddPane={addPane} dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
+                onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} onStartChatSplit={(cwd, name, text, attachments) => startChatSplit(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions}
+                hidden={!!maxed && p.id !== maxed}
+                {...(!phone && (docked.length > 1 || floats.length > 0) ? { grip: { onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => startPaneDrag(e, p.id), onKeyDown: (e: ReactKeyboardEvent<HTMLButtonElement>) => gripKey(e, p.id) } } : {})}
+                {...(!phone && docked.length > 1 ? { onMaxPane: () => toggleMaxDocked(p.id), paneMaxed: maxed === p.id, onFloat: () => floatPane(p.id), onShift: { ...(i > 0 ? { left: () => dispatch({ type: 'move_pane', paneId: p.id, to: i - 1 }) } : {}), ...(i < shown.length - 1 ? { right: () => dispatch({ type: 'move_pane', paneId: p.id, to: i + 1 }) } : {}) } } : {})}
+                onLayouts={() => setLayouts({ list: listLayouts(), error: null })} onPalette={() => onShortcut.current('palette')} />
+              </Fragment>
+            ))}
+          </div>
+          {!phone && floats.length > 0 && (
+            <div className="floats">
+              {floats.map((p) => (
+                <div key={p.id} className={`float-card${p.id === state.activePaneId ? ' on' : ''}${p.floatCollapsed ? ' collapsed' : ''}`} data-float={p.id} style={{ left: p.float!.x, top: p.float!.y, width: p.float!.w, height: p.floatCollapsed ? COLLAPSED_H : p.float!.h }}
+                  onDoubleClick={(e) => { if (onCardHead(e.target)) { if (p.floatCollapsed) toggleCollapseCard(p.id); else toggleMaxCard(p.id); } }}>
+                  <Pane pane={p} app={state} active={p.id === state.activePaneId} closable onAddPane={addPane} dispatch={dispatch} send={send} onClose={() => { apply({ type: 'close_pane', paneId: p.id }); requestFocus(); }} onOpenSession={(sessionId, cwd, title) => openIn(p.id, sessionId, cwd, title)}
+                    onStartChat={(cwd, name, text, attachments) => startChat(p.id, cwd, name, text, attachments)} onStartChatSplit={(cwd, name, text, attachments) => startChatSplit(p.id, cwd, name, text, attachments)} newChatCwd={newChatCwd[p.id] ?? null} sessionActions={sessionActions}
+                    floating grip={{ onPointerDown: (e) => startPaneDrag(e, p.id), onKeyDown: (e) => gripKey(e, p.id) }} onDock={() => dockPane(p.id)} {...(floats.length > 1 ? { onArrange: arrangeCards } : {})}
+                    onToggleMax={() => toggleMaxCard(p.id)} maximized={!!p.floatBefore}
+                    collapsed={!!p.floatCollapsed} onToggleCollapse={() => toggleCollapseCard(p.id)} onLayouts={() => setLayouts({ list: listLayouts(), error: null })} onPalette={() => onShortcut.current('palette')} />
+                  {!p.floatCollapsed && <div className="float-resize" role="separator" tabIndex={0} aria-label="카드 크기 조절" aria-valuetext={`${p.float!.w} × ${p.float!.h}`} title="드래그: 카드 크기 · 키보드: ←→ 너비, ↑↓ 높이 (Shift: 크게)"
+                    onPointerDown={(e) => startFloatResize(e, p.id)} onKeyDown={(e) => resizeKey(e, p.id)} />}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
     </AccountsContext>

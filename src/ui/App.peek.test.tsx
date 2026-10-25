@@ -148,15 +148,32 @@ describe('hidden sidebar peek (desktop)', () => {
     expect(peeking()).toBe(false);
   });
 
-  it('resting on ☰ peeks too; leaving it closes after 300ms', async () => {
+  it('resting on ☰ peeks too; the toggle rides in the peeked head over its spot, and leaving the sidebar closes after 300ms', async () => {
     await boot();
     const menu = screen.getByRole('button', { name: '사이드바 보이기' });
     fireEvent.mouseEnter(menu);
     tick(150);
     expect(peeking()).toBe(true);
-    fireEvent.mouseLeave(menu);
+    const inHead = screen.getByRole('button', { name: '사이드바 보이기' });
+    expect(inHead.closest('.sidebar-head')).not.toBeNull();
+    expect(document.querySelector('.topbar .sidebar-toggle')).toBeNull();
+    // Its spot in the bar is kept (the chip does not jump left under the peeked sidebar).
+    expect(document.querySelector('.topbar .sidebar-toggle-spacer')).not.toBeNull();
+    fireEvent.mouseLeave(wrap());
     tick(300);
     expect(peeking()).toBe(false);
+    expect(screen.getByRole('button', { name: '사이드바 보이기' }).closest('.topbar')).not.toBeNull();
+  });
+
+  it('peeked: the toggle in its head pins the sidebar (aria-pressed follows)', async () => {
+    await bootPeeked();
+    const toggle = screen.getByRole('button', { name: '사이드바 보이기' });
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(toggle);
+    expect(wrap().classList.contains('hidden')).toBe(false);
+    const pinned = screen.getByRole('button', { name: '사이드바 숨기기' });
+    expect(pinned.closest('.sidebar-head')).not.toBeNull();
+    expect(pinned.getAttribute('aria-pressed')).toBe('true');
   });
 
   it('a drag crossing the edge (button held) does not peek', async () => {
@@ -238,11 +255,14 @@ describe('hidden sidebar peek (desktop)', () => {
     expect(peeking()).toBe(true);
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(peeking()).toBe(false);
-    fireEvent.mouseEnter(menu);
+    // Back in the top bar (a new button under the same pointer).
+    const back = screen.getByRole('button', { name: '사이드바 보이기' });
+    expect(back.closest('.topbar')).not.toBeNull();
+    fireEvent.mouseEnter(back);
     tick(500);
     expect(peeking()).toBe(false);
-    fireEvent.mouseLeave(menu);
-    fireEvent.mouseEnter(menu);
+    fireEvent.mouseLeave(back);
+    fireEvent.mouseEnter(back);
     tick(150);
     expect(peeking()).toBe(true);
   });
@@ -289,5 +309,63 @@ describe('hidden sidebar peek (desktop)', () => {
     expect(spy).toHaveBeenCalled();
     expect(vi.getTimerCount()).toBeLessThan(before);
     spy.mockRestore();
+  });
+});
+
+describe('desktop layout: the sidebar a full-height column, its head the brand row', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sock.frames = [];
+    sock.onMessage = null;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+    media();
+  });
+  afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); (window as { matchMedia?: unknown }).matchMedia = undefined; });
+
+  it('sidebar shown: brand and toggle in the sidebar head, the top bar beside it in the body column, focus sidebar → body', async () => {
+    await boot();
+    const head = document.querySelector('.sidebar-wrap .sidebar-head')!;
+    expect(head.querySelector('.sidebar-brand')).not.toBeNull();
+    const toggle = screen.getByRole('button', { name: '사이드바 숨기기' });
+    expect(head.contains(toggle)).toBe(true);
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    // The toggle comes before the brand in the head.
+    expect(toggle.compareDocumentPosition(head.querySelector('.sidebar-brand')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const topbar = document.querySelector('.topbar')!;
+    expect(topbar.querySelector('.sidebar-toggle')).toBeNull();
+    expect(topbar.classList.contains('beside-sidebar')).toBe(true);
+    expect(topbar.parentElement!.classList.contains('main-col')).toBe(true);
+    expect(wrap().parentElement!.classList.contains('app')).toBe(true);
+    // DOM (= focus) order: the sidebar column, then the top bar, then the body (#main).
+    expect(wrap().compareDocumentPosition(topbar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const main = document.getElementById('main')!;
+    expect(main.closest('.main-col')).not.toBeNull();
+    expect(topbar.compareDocumentPosition(main) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(main.querySelector('.panes')).not.toBeNull();
+  });
+
+  it('hidden: the toggle back at the top bar start (aria-pressed false), the bar the full width; the brand stays in the tucked head', async () => {
+    localStorage.setItem('deck.sidebarHidden', '1');
+    await boot();
+    const toggle = screen.getByRole('button', { name: '사이드바 보이기' });
+    expect(toggle.closest('.topbar')).not.toBeNull();
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    expect(document.querySelector('.sidebar-head .sidebar-toggle')).toBeNull();
+    expect(document.querySelector('.topbar')!.classList.contains('beside-sidebar')).toBe(false);
+    expect(document.querySelector('.sidebar-wrap.hidden .sidebar-head .sidebar-brand')).not.toBeNull();
+  });
+
+  it('a press with focus on the toggle keeps focus on it as it moves between the head and the top bar', async () => {
+    await boot();
+    const toggle = screen.getByRole('button', { name: '사이드바 숨기기' });
+    toggle.focus();
+    fireEvent.click(toggle);
+    const moved = screen.getByRole('button', { name: '사이드바 보이기' });
+    expect(moved.closest('.topbar')).not.toBeNull();
+    expect(document.activeElement).toBe(moved);
+    fireEvent.click(moved);
+    const back = screen.getByRole('button', { name: '사이드바 숨기기' });
+    expect(back.closest('.sidebar-head')).not.toBeNull();
+    expect(document.activeElement).toBe(back);
   });
 });
