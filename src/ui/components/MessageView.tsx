@@ -527,20 +527,24 @@ const SelectIcon = () => <svg width="16" height="16" viewBox="0 0 16 16" fill="n
 /**
  * One line's inline markdown as plain text. Code spans and backslash escapes are set aside first (as placeholders) so
  * nothing below touches them: `__init__.py`, `x**2`, `[a](b)` in code stay as written, `\*` keeps its `*`. Then links
- * keep their text (and address), emphasis / strike marks go; `_` / `__` only at word edges (snake_case stays).
+ * keep their text (and address), emphasis / strike marks go; `_` / `__` only at word edges, any script (snake_case,
+ * 변수_name_ stay). The placeholder characters themselves are dropped from the input first.
  */
 function plainInline(s: string): string {
   const kept: string[] = [];
   const keep = (v: string) => `\uE000${kept.push(v) - 1}\uE001`;
   return s
-    .replace(/(?<!`)(`+)(.*?[^`])\1(?!`)/g, (_, _ticks: string, code: string) => keep(code))
-    .replace(/\\([!-/:-@[-`{-~])/g, (_, c: string) => keep(c))
+    .replace(/[\uE000\uE001]/g, '')
+    // One left-to-right pass: an escape (\` too) outside code, or a code span (its backslashes literal, CommonMark's
+    // one space each side stripped).
+    .replace(/\\([!-/:-@[-`{-~])|(`+)(?!`)(.*?[^`])\2(?!`)/g, (_, esc: string | undefined, _ticks: string, code: string) =>
+      keep(esc ?? (/^ .*\S.* $/.test(code) ? code.slice(1, -1) : code)))
     .replace(/!?\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, (_, text: string, url: string) => (text && text !== url ? `${text} (${url})` : url))
     .replace(/\*\*(?=\S)(.+?)(?<=\S)\*\*/g, '$1')
-    .replace(/(?<![A-Za-z0-9_])__(?=\S)(.+?)(?<=\S)__(?![A-Za-z0-9_])/g, '$1')
+    .replace(/(?<![\p{L}\p{N}_])__(?=\S)(.+?)(?<=\S)__(?![\p{L}\p{N}_])/gu, '$1')
     .replace(/~~(?=\S)(.+?)(?<=\S)~~/g, '$1')
     .replace(/(^|[^\w*])\*(?=\S)([^*]+?)(?<=\S)\*(?!\w)/g, '$1$2')
-    .replace(/(?<![A-Za-z0-9_])_(?=\S)([^_]+?)(?<=\S)_(?![A-Za-z0-9_])/g, '$1')
+    .replace(/(?<![\p{L}\p{N}_])_(?=\S)([^_]+?)(?<=\S)_(?![\p{L}\p{N}_])/gu, '$1')
     .replace(/\uE000(\d+)\uE001/g, (_, i: string) => kept[Number(i)]!);
 }
 

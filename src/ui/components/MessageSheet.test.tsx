@@ -229,6 +229,10 @@ describe('message long press (touch)', () => {
     expect(plainOf('~/path 와 ~/other, ~~지움~~')).toBe('~/path 와 ~/other, 지움');
     expect(plainOf('\\*글\\* 과 \\_밑\\_')).toBe('*글* 과 _밑_');
     expect(plainOf('[문서](https://a.b/c) · <x>')).toBe('문서 (https://a.b/c) · <x>');
+    expect(plainOf('변수_name_ 와 값_x_ 입니다')).toBe('변수_name_ 와 값_x_ 입니다');
+    expect(plainOf('a\uE000b\uE0010c `d`')).toBe('ab0c d');
+    expect(plainOf('\\`a\\` 와 `b` 와 `c\\*d`')).toBe('`a` 와 b 와 c\\*d');
+    expect(plainOf('`` a`b `` 와 `  ` 와 `` `x` ``')).toBe('a`b 와    와 `x`');
     expect(plainOf('- [x] 끝\n- [ ] 남음\n- 그냥')).toBe('☑ 끝\n☐ 남음\n• 그냥');
     expect(plainOf('앞\n\n\n\n뒤\n\n```py\na = 1\n\n\n\nb = [a](b)\n```\n\n\n끝')).toBe('앞\n\n뒤\n\na = 1\n\n\n\nb = [a](b)\n\n끝');
   });
