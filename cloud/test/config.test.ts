@@ -7,6 +7,7 @@ describe('checkConfig', () => {
     PUBLIC_ORIGIN: 'https://app.aimsg.app', RELAY_ORIGIN: 'https://relay.aimsg.app', EMAIL_MODE: 'resend', EMAIL_FROM: 'AI msg <login@example.com>',
     RESEND_API_KEY: 'k', DEV_ROUTES: '0', SESSION_SECRET: 's'.repeat(32), EMAIL_HASH_SECRET: 'e'.repeat(32),
     MAX_HOSTS: '3', MAX_DEVICES: '3', TRIAL_DAYS: '7',
+    CHECKOUT_SECRET: 'k'.repeat(32), PADDLE_ENV: 'production', PADDLE_IP_CHECK: '1',
   } as Env;
 
   it('refuses log email or dev routes on a public origin', () => {
@@ -21,6 +22,10 @@ describe('checkConfig', () => {
   it('refuses short secrets, plain http on a public host, a missing sender and junk origins', () => {
     expect(checkConfig({ ...base, SESSION_SECRET: 'short' })).toMatchObject({ ok: false });
     expect(checkConfig({ ...base, EMAIL_HASH_SECRET: 'e'.repeat(31) })).toMatchObject({ ok: false });
+    expect(checkConfig({ ...base, CHECKOUT_SECRET: 'k'.repeat(31) })).toMatchObject({ ok: false });
+    expect(checkConfig({ ...base, CHECKOUT_SECRET: undefined } as unknown as Env)).toMatchObject({ ok: false });
+    expect(checkConfig({ ...base, PADDLE_ENV: 'live' } as unknown as Env)).toMatchObject({ ok: false });
+    expect(checkConfig({ ...base, PADDLE_IP_CHECK: 'yes' } as unknown as Env)).toMatchObject({ ok: false });
     expect(checkConfig({ ...base, RELAY_ORIGIN: 'http://relay.aimsg.app' })).toMatchObject({ ok: false });
     expect(checkConfig({ ...base, EMAIL_FROM: '' })).toMatchObject({ ok: false });
     expect(checkConfig({ ...base, PUBLIC_ORIGIN: 'not a url' })).toMatchObject({ ok: false });

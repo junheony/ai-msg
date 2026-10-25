@@ -1,0 +1,43 @@
+{
+  "event_id": "evt_adjustment.created",
+  "event_type": "adjustment.created",
+  "occurred_at": "2026-10-10T00:00:00.000Z",
+  "notification_id": "ntf_adjustment.created",
+  "data": {
+    "id": "adj_1",
+    "action": "refund",
+    "type": "partial",
+    "transaction_id": "txn_1",
+    "subscription_id": "sub_1",
+    "customer_id": "ctm_1",
+    "reason": "synthetic test refund",
+    "credit_applied_to_balance": null,
+    "currency_code": "USD",
+    "status": "pending_approval",
+    "items": [
+      {
+        "id": "adjitm_1",
+        "item_id": "txnitm_1",
+        "type": "partial",
+        "amount": "500",
+        "proration": null,
+        "totals": {
+          "subtotal": "500",
+          "tax": "0",
+          "total": "500"
+        }
+      }
+    ],
+    "totals": {
+      "subtotal": "500",
+      "tax": "0",
+      "total": "500",
+      "fee": "25",
+      "earnings": "475",
+      "currency_code": "USD"
+    },
+    "payout_totals": null,
+    "created_at": "2026-10-10T00:00:00.000Z",
+    "updated_at": "2026-10-10T00:00:00.000Z"
+  }
+}

@@ -1,37 +1,16 @@
 import { env } from 'cloudflare:workers';
 import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { describe, expect, it, vi } from 'vitest';
-import type { PairClaimReq, PairClaimRes, TicketRes } from '../../src/shared/cloud/api-types';
+import type { PairClaimRes, TicketRes } from '../../src/shared/cloud/api-types';
 import { CLOSE, EnvKind, MAX_FRAME, decodeEnvelope, encodeEnvelope } from '../../src/shared/cloud/envelope';
 import { notifyRelay } from '../src/relay/routes';
 import type { Ctx } from '../src/router';
-import { RELAY, bearer, call, claim, freshIp, linkHost, post, pub, relayPost } from './helpers';
-
-type Sock = { status: number; ws: WebSocket | null; inbox: (string | ArrayBuffer)[]; closes: number[] };
+import { type Sock, RELAY, bearer, call, claim, freshIp, linkHost, openWs, pairedDevice, post, pub, relayPost, waitFor } from './helpers';
 
 const stubFor = (hostId: string) => env.RELAY.get(env.RELAY.idFromName(hostId));
 
-async function waitFor(cond: () => boolean | Promise<boolean>, ms = 3000): Promise<void> {
-  const end = Date.now() + ms;
-  while (!(await cond())) {
-    if (Date.now() > end) throw new Error('waitFor timed out');
-    await new Promise((r) => setTimeout(r, 10));
-  }
-}
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function openWs(path: string, headers: Record<string, string> = {}): Promise<Sock> {
-  const res = await call(path, { headers: { upgrade: 'websocket', ...headers } }, RELAY);
-  const inbox: (string | ArrayBuffer)[] = [];
-  const closes: number[] = [];
-  if (res.status !== 101) return { status: res.status, ws: null, inbox, closes };
-  const ws = res.webSocket!;
-  ws.binaryType = 'arraybuffer'; // workerd's client side defaults to Blob
-  ws.accept();
-  ws.addEventListener('message', (e) => inbox.push(e.data as string | ArrayBuffer));
-  ws.addEventListener('close', (e) => closes.push(e.code));
-  return { status: 101, ws, inbox, closes };
-}
 const texts = (s: Sock) => s.inbox.filter((m): m is string => typeof m === 'string').map((m) => JSON.parse(m) as Record<string, unknown>);
 const binaries = (s: Sock) => s.inbox.filter((m): m is ArrayBuffer => m instanceof ArrayBuffer);
 const hasText = (s: Sock, want: Record<string, unknown>) => texts(s).some((m) => Object.entries(want).every(([k, v]) => m[k] === v));
@@ -39,14 +18,6 @@ const hasText = (s: Sock, want: Record<string, unknown>) => texts(s).some((m) =>
 let seq = 0;
 const email = () => `relay${seq++}@example.test`;
 
-async function pairedDevice(h: { hostToken: string }): Promise<{ deviceId: string; deviceToken: string; pairingId: string; body: PairClaimReq }> {
-  const n = ++seq;
-  const c = await claim({ hostToken: h.hostToken, secret: `secret-${n}`, devicePub: pub(n % 250) });
-  expect(c.res.status).toBe(200);
-  const d = (await c.res.json()) as PairClaimRes;
-  expect((await post(`/v1/pair/${c.pairingId}/confirm`, {}, bearer(h.hostToken))).status).toBe(200);
-  return { deviceId: d.deviceId, deviceToken: d.deviceToken, pairingId: c.pairingId, body: c.body };
-}
 const ticketRes = (deviceToken: string) => relayPost('/v1/relay/ticket', {}, bearer(deviceToken));
 async function ticketFor(deviceToken: string): Promise<string> {
   const r = await ticketRes(deviceToken);

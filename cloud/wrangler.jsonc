@@ -1,6 +1,6 @@
 // AI msg cloud Worker — private (left out of the public export, D11).
 // Two origins on one Worker, split by Host (D18). Secrets (SESSION_SECRET, EMAIL_HASH_SECRET,
-// RESEND_API_KEY) go in with `wrangler secret put`, never here. See README.md.
+// RESEND_API_KEY, CHECKOUT_SECRET, PADDLE_WEBHOOK_SECRET, PADDLE_API_KEY) go in with `wrangler secret put`, never here. See README.md.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "ai-msg-cloud",
@@ -27,7 +27,11 @@
     "DEV_ROUTES": "0",
     "MAX_DEVICES": "3",
     "MAX_HOSTS": "3",
-    "TRIAL_DAYS": "7"
+    "TRIAL_DAYS": "7",
+    // Paddle API host and webhook IP list. Switch to "production" when going live (with live secrets).
+    "PADDLE_ENV": "sandbox",
+    // Webhooks only from Paddle's published IPs (CF-Connecting-IP).
+    "PADDLE_IP_CHECK": "1"
   },
   "routes": [
     { "pattern": "app.aimsg.app", "custom_domain": true },

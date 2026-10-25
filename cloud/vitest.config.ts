@@ -9,6 +9,10 @@ const TEST_VARS = {
   DEV_ROUTES: '1',
   SESSION_SECRET: 's'.repeat(32),
   EMAIL_HASH_SECRET: 'e'.repeat(32),
+  CHECKOUT_SECRET: 'k'.repeat(32),
+  PADDLE_WEBHOOK_SECRET: 'w'.repeat(32),
+  PADDLE_ENV: 'sandbox',
+  PADDLE_IP_CHECK: '0',
 };
 
 export default defineConfig({

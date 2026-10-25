@@ -6,6 +6,8 @@ import { linkApprove, linkGet, linkPoll, linkStart, hostUnlink } from './hosts';
 import { HttpError, clientIp, json, problem } from './http';
 import { APP_HTML_CSP, relayHeaders, sideOf } from './origins';
 import { LINK_JS } from './pages/link';
+import { paddleApi } from './paddle/api';
+import { type WebhookDeps, paddleWebhook } from './paddle/webhook';
 import { pairClaim, pairConfirm, pairReject, pairStart, pairStatus } from './pairing';
 import { relayDevice, relayHost } from './relay/routes';
 import { relayTicket } from './relay/tickets';
@@ -19,8 +21,8 @@ const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
 
 /**
  * Refuses a deployment that would leak or misroute: log mail / dev routes off a local or `.test` origin,
- * short secrets, `resend` without a key or sender, equal origins, a non-https origin off localhost, or a limit
- * (`MAX_HOSTS`·`MAX_DEVICES`·`TRIAL_DAYS`) that is not a positive integer.
+ * short secrets (`CHECKOUT_SECRET` too), `resend` without a key or sender, equal origins, a non-https origin off localhost,
+ * a `PADDLE_ENV`/`PADDLE_IP_CHECK` typo, or a limit (`MAX_HOSTS`·`MAX_DEVICES`·`TRIAL_DAYS`) that is not a positive integer.
  */
 export function checkConfig(env: Env): ConfigCheck {
   let pub: URL, relay: URL;
@@ -36,6 +38,9 @@ export function checkConfig(env: Env): ConfigCheck {
   if (env.EMAIL_MODE === 'resend' && !env.EMAIL_FROM) return { ok: false, reason: 'EMAIL_FROM is missing' };
   if ((env.SESSION_SECRET ?? '').length < 32) return { ok: false, reason: 'SESSION_SECRET must be at least 32 characters' };
   if ((env.EMAIL_HASH_SECRET ?? '').length < 32) return { ok: false, reason: 'EMAIL_HASH_SECRET must be at least 32 characters' };
+  if ((env.CHECKOUT_SECRET ?? '').length < 32) return { ok: false, reason: 'CHECKOUT_SECRET must be at least 32 characters' };
+  if (env.PADDLE_ENV !== 'sandbox' && env.PADDLE_ENV !== 'production') return { ok: false, reason: 'PADDLE_ENV must be sandbox or production' };
+  if (env.PADDLE_IP_CHECK !== '0' && env.PADDLE_IP_CHECK !== '1') return { ok: false, reason: 'PADDLE_IP_CHECK must be 0 or 1' };
   // `Number('x')` is NaN and `count >= NaN` is false — a typo would silently lift the limit.
   for (const key of ['MAX_HOSTS', 'MAX_DEVICES', 'TRIAL_DAYS'] as const) {
     if (!/^[1-9]\d{0,5}$/.test(env[key] ?? '')) return { ok: false, reason: `${key} must be a positive integer` };
@@ -63,6 +68,9 @@ async function devOutbox(c: Ctx): Promise<Response> {
   return json(200, rows.results.map((r) => ({ subject: r.subject, text: r.body, createdAt: r.created_at })));
 }
 
+/** Outside-world dependencies of the Paddle webhook. Tests replace these fields (same isolate) and restore them. */
+export const deps: WebhookDeps = { paddle: (env) => paddleApi(env), db: (env) => env.DB };
+
 const linkJs = async () => new Response(LINK_JS, { headers: { 'content-type': 'text/javascript; charset=utf-8' } });
 
 const ROUTES: readonly Route[] = [
@@ -86,6 +94,7 @@ const ROUTES: readonly Route[] = [
   ['app', 'GET', '/v1/devices', listDevices],
   ['app', 'POST', '/v1/devices/:id/revoke', revokeDevice],
   ['app', 'GET', '/v1/entitlement', entitlement],
+  ['app', 'POST', '/v1/paddle/webhook', (c) => paddleWebhook(c, deps)],
   ['app', 'GET', '/dev/outbox', devOutbox],
   // relay origin — no cookies are read or set here
   ['relay', 'POST', '/v1/pair/claim', pairClaim],

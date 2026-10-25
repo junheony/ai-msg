@@ -1,7 +1,7 @@
 # AI msg cloud (Cloudflare Worker)
 
 AI msg Pro 클라우드 Worker 다. 공개본에는 들어가지 않는다(`.gitattributes` 의 `cloud/** export-ignore`).
-이 문서는 Task 12 에서 완성한다. 지금은 Task 2~3 범위(두 출처·로그인·호스트 연결·QR 페어링·기기 API·릴레이)만 적는다.
+이 문서는 Task 12 에서 완성한다. 지금은 Task 2~3·9 범위(두 출처·로그인·호스트 연결·QR 페어링·기기 API·릴레이·Paddle 웹훅)만 적는다.
 
 ## 구조
 
@@ -18,10 +18,18 @@ AI msg Pro 클라우드 Worker 다. 공개본에는 들어가지 않는다(`.git
   - 깨진 프레임 로그(`bad_frame`)는 소켓당 한 번만 남긴다. 티켓 발급은 기기당 분당 10회(넘으면 429).
   - 다 쓴 `relay_tickets` 행 정리는 Task 12 의 cron 몫이다.
   - 반대편 경로는 404 다. relay 응답에서는 `Set-Cookie` 를 지우고, 엄격한 CSP 를 붙인다.
+- Paddle 웹훅 `POST /v1/paddle/webhook`(app 출처, `src/paddle/`):
+  - 순서: 원문 HMAC(`Paddle-Signature`, 5초) → 401, `PADDLE_IP_CHECK=1` 이면 환경별 Paddle IP 목록 → 403, `event_id` 선조회(중복이면 200 `duplicate`), 변경·알림·이벤트 행을 한 batch 로 쓴다.
+  - 모든 쓰기는 `occurred_at` 으로 막는 upsert 다. 늦게 온 옛 이벤트는 `stale` 로 기록만 한다.
+  - 사용자는 서명된 `custom_data.ref`(`signUserRef(CHECKOUT_SECRET, userId)`)나 이미 연결된 `paddle_customer_id` 로만 찾는다. 서명 없는 `user_id` 는 읽지 않는다.
+  - 업무 충돌(사용자 못 찾음·두 번째 구독·고객 id 충돌·깨진 페이로드)은 200 + `ops_alerts` 행 + `console.error` 한 줄이다. D1 오류만 500(Paddle 이 다시 보낸다).
+  - 전액 환불·차지백이면 커밋 뒤 `ctx.waitUntil` 로 Paddle 즉시 해지 API 를 부른다. 실패하면 `refund_cancel_failed` 알림을 남기고 Task 12 cron 이 `full = 1 AND cancel_done_at IS NULL` 을 다시 시도한다.
+  - 구독이 바뀌면 그 사용자의 호스트 방에 recheck 를 보내 기기 소켓의 `until` 을 새로 읽게 한다.
+- 이용권(`entitled.ts`): active·trialing 은 `period_end + 48시간`, past_due 는 처음 past_due 된 때 `+ 7일`, canceled·paused 는 `canceled_at`(예약 해지가 실행됐고 전액 환불이 없으면 `period_end + 48시간` 까지). 체험·comp 와 견줘 가장 늦은 `until` 이 이긴다(같으면 pro > comp > trial).
 - 저장소는 D1 하나다(`migrations/`). `UI` R2 바인딩은 선언만 해 두었다(Task 7 이 쓴다).
 - 설정이 틀리면 `checkConfig` 가 모든 요청에 503 `misconfigured` 로 답한다.
   - 원인은 `console.error` 로 한 번 남는다.
-  - 검사 항목: https 출처, 두 출처가 서로 다름, 비밀 32자 이상, `resend` 일 때 `RESEND_API_KEY`·`EMAIL_FROM`, `MAX_HOSTS`·`MAX_DEVICES`·`TRIAL_DAYS` 가 양의 정수.
+  - 검사 항목: https 출처, 두 출처가 서로 다름, 비밀(`SESSION_SECRET`·`EMAIL_HASH_SECRET`·`CHECKOUT_SECRET`) 32자 이상, `PADDLE_ENV` 가 `sandbox|production`, `PADDLE_IP_CHECK` 가 `0|1`, `resend` 일 때 `RESEND_API_KEY`·`EMAIL_FROM`, `MAX_HOSTS`·`MAX_DEVICES`·`TRIAL_DAYS` 가 양의 정수.
   - `log`·`DEV_ROUTES=1` 은 localhost·`.test` 출처에서만 허용한다.
 
 ## 보안 메모
@@ -45,9 +53,20 @@ npm --prefix cloud test        # miniflare 안의 workerd, 네트워크 없음
 
 1. `wrangler d1 create ai-msg` 를 실행하고, 나온 `database_id` 를 `wrangler.jsonc` 에 넣는다.
 2. `wrangler d1 migrations apply ai-msg --remote` 로 마이그레이션을 적용한다.
-3. 비밀은 `wrangler secret put` 으로 넣는다: `SESSION_SECRET`, `EMAIL_HASH_SECRET`(각각 32자 이상의 임의 값), `RESEND_API_KEY`.
+3. 비밀은 `wrangler secret put` 으로 넣는다: `SESSION_SECRET`, `EMAIL_HASH_SECRET`, `CHECKOUT_SECRET`(각각 32자 이상의 임의 값), `RESEND_API_KEY`, `PADDLE_WEBHOOK_SECRET`(Paddle 알림 대상의 비밀), `PADDLE_API_KEY`(권한 `subscription.write`, Task 10 부터 `customer_portal_session.write` 도). `PADDLE_WEBHOOK_SECRET` 이 비어 있으면 웹훅은 503 이다.
+   - `vars` 의 `PADDLE_ENV`(`sandbox`/`production`)와 키 환경을 맞춘다. 샌드박스 키는 샌드박스 주소에서만 통한다.
 4. `wrangler.jsonc` 의 `vars` 를 채운다: `EMAIL_FROM`(Resend 에서 검증한 발신 주소), 두 출처. `routes` 에는 두 호스트 이름을 커스텀 도메인으로 적는다.
 5. `wrangler deploy` 로 배포한다.
+
+## 운영 알림 보기
+
+업무 충돌은 `ops_alerts` 에 남는다(종류: `unmatched`, `second_subscription`, `customer_conflict`, `bad_payload`, `invalid_event`, `refund_cancel_failed`). 아직 처리하지 않은 것만 본다.
+
+```sh
+npx --prefix cloud wrangler d1 execute ai-msg --remote --command "SELECT id, kind, ref, detail, created_at FROM ops_alerts WHERE resolved_at IS NULL ORDER BY created_at DESC LIMIT 50"
+```
+
+처리했으면 `UPDATE ops_alerts SET resolved_at = <ms> WHERE id = ?` 로 닫는다.
 
 ## 확인한 버전
 
@@ -88,3 +107,7 @@ npm --prefix cloud test        # miniflare 안의 workerd, 네트워크 없음
   - D1 원격 마이그레이션.
   - `cf-connecting-ip` 의 실제 값.
 - **(미확인)** Resend 발신 도메인 검증 절차와, 오류 응답의 정확한 형태. 지금 코드는 2xx 가 아니면 실패로만 본다.
+- Paddle(2026-10-26, developer.paddle.com 문서로 확인, 실제 호출은 하지 않았다):
+  - 엔터티 필드 경로·조정의 `action`/`type`/`status`·즉시 해지 API(`POST /subscriptions/{id}/cancel`, `effective_from: immediately`, `subscription.write`)·API 주소·키 접두사(`pdl_sdbx_`·`pdl_live_`). 상세는 계획 문서 "근거·미확인" 절.
+  - 테스트 픽스처(`test/fixtures/paddle/`)는 문서 예시 모양을 본뜬 합성 값이다.
+  - **(미확인)** 차지백 조정의 `status`·`type`(지금은 `action = chargeback` 이면 전액으로 본다), 해지 API 응답 본문(2xx 만 본다), 실제 샌드박스 웹훅의 전달 모양.

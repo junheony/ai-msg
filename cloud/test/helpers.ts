@@ -1,5 +1,6 @@
 import { env, exports } from 'cloudflare:workers';
-import type { LinkStartRes, PairClaimReq, PairStartRes } from '../../src/shared/cloud/api-types';
+import { expect } from 'vitest';
+import type { LinkStartRes, PairClaimReq, PairClaimRes, PairStartRes } from '../../src/shared/cloud/api-types';
 import { sha256B64u, toB64u } from '../../src/shared/cloud/b64';
 
 export const APP = 'https://app.test';
@@ -68,4 +69,38 @@ export async function claim(o: { hostToken: string; secret?: string; devicePub?:
   const body: PairClaimReq = { pairingId, claim: secret, devicePub: o.devicePub ?? pub(2), deviceName: 'Phone', mac: 'm' };
   const res = await relayPost('/v1/pair/claim', body, { 'cf-connecting-ip': o.ip ?? freshIp() });
   return { pairingId, body, res };
+}
+
+export async function waitFor(cond: () => boolean | Promise<boolean>, ms = 3000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!(await cond())) {
+    if (Date.now() > end) throw new Error('waitFor timed out');
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+export type Sock = { status: number; ws: WebSocket | null; inbox: (string | ArrayBuffer)[]; closes: number[] };
+
+export async function openWs(path: string, headers: Record<string, string> = {}): Promise<Sock> {
+  const res = await call(path, { headers: { upgrade: 'websocket', ...headers } }, RELAY);
+  const inbox: (string | ArrayBuffer)[] = [];
+  const closes: number[] = [];
+  if (res.status !== 101) return { status: res.status, ws: null, inbox, closes };
+  const ws = res.webSocket!;
+  ws.binaryType = 'arraybuffer'; // workerd's client side defaults to Blob
+  ws.accept();
+  ws.addEventListener('message', (e) => inbox.push(e.data as string | ArrayBuffer));
+  ws.addEventListener('close', (e) => closes.push(e.code));
+  return { status: 101, ws, inbox, closes };
+}
+
+let pairSeq = 0;
+/** A confirmed (active) device of this host. */
+export async function pairedDevice(h: { hostToken: string }): Promise<{ deviceId: string; deviceToken: string; pairingId: string; body: PairClaimReq }> {
+  const n = ++pairSeq;
+  const c = await claim({ hostToken: h.hostToken, secret: `secret-${n}`, devicePub: pub(n % 250) });
+  expect(c.res.status).toBe(200);
+  const d = (await c.res.json()) as PairClaimRes;
+  expect((await post(`/v1/pair/${c.pairingId}/confirm`, {}, bearer(h.hostToken))).status).toBe(200);
+  return { deviceId: d.deviceId, deviceToken: d.deviceToken, pairingId: c.pairingId, body: c.body };
 }

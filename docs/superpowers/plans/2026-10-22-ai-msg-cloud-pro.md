@@ -1798,7 +1798,7 @@ CREATE INDEX subscriptions_user ON subscriptions(user_id, status);
   - `verifyUserRef(secret: string, ref: unknown): Promise<string | null>` — 형식·HMAC 이 맞을 때만 userId, 아니면 null(상수 시간 비교).
   - `checkConfig`(Task 2)에 `CHECKOUT_SECRET` 32자 이상을 더한다.
 - `api.ts`: `interface PaddleApi { cancelSubscription(id: string): Promise<void>; portalSession(customerId: string, subscriptionIds: string[]): Promise<{ url: string }> }`. 이 Task 는 `cancelSubscription` 만 구현한다(`portalSession` 은 Task 10).
-  - `cancelSubscription` 은 `POST <api>/subscriptions/{id}/cancel` 본문 `{ effective_from: 'immediately' }`, 머리 `Authorization: Bearer <PADDLE_API_KEY>` 다. 경로·본문 필드·필요 권한은 **(미확인)** 이라 Step 1 에서 Paddle API 문서로 확인한다. `<api>` 는 `PADDLE_ENV` 로 고른다(샌드박스 주소 **(미확인)**).
+  - `cancelSubscription` 은 `POST <api>/subscriptions/{id}/cancel` 본문 `{ effective_from: 'immediately' }`, 머리 `Authorization: Bearer <PADDLE_API_KEY>` 다. 경로·본문 필드·필요 권한(`subscription.write`)은 Step 1 에서 확인했다(근거 절). `<api>` 는 `PADDLE_ENV` 로 고른다(샌드박스 `https://sandbox-api.paddle.com`, 라이브 `https://api.paddle.com`).
   - 테스트에는 가짜를 주입한다(외부 호출 없음). `index.ts` 가 `deps.paddle` 로 묶는다.
 - `webhook.ts`: `POST /v1/paddle/webhook`(app 출처)
   1. `await req.text()` 로 원문을 그대로 읽는다(JSON 으로 다시 직렬화하지 않음).
@@ -1842,7 +1842,7 @@ WHERE excluded.last_event_at >= subscriptions.last_event_at
     - 부분 환불·크레딧은 기록만(`refund_recorded`).
   - 그 밖의 이벤트는 `ignored` 로 이벤트 행만 남긴다.
   - 상태가 바뀐 user 의 호스트(`hosts.user_id`, `revoked_at IS NULL`)마다 effect `recheck(hostId)`.
-- **Paddle 엔터티 필드 이름은 (미확인)** 이다: `data.status`, `data.customer_id`, `data.custom_data`, `data.current_billing_period.ends_at`, `data.scheduled_change.action`, `data.canceled_at`, `data.items[0].price.id`, adjustment 의 `action`(refund·chargeback 값)·`type`(full/partial)·`status`·`subscription_id`·`transaction_id`. Step 1 에서 문서 예시 페이로드와 맞추고, 픽스처를 그 모양 그대로 만든다. 확인한 것은 웹훅 머리·서명 방식·이벤트 이름·`custom_data` 전달·`event_id`·`occurred_at`(근거 절)이다.
+- **Paddle 엔터티 필드 이름은 Step 1 에서 확인했다**(근거 절, 차지백 세부만 미확인): `data.status`, `data.customer_id`, `data.custom_data`, `data.current_billing_period.ends_at`, `data.scheduled_change.action`, `data.canceled_at`, `data.items[0].price.id`, adjustment 의 `action`(refund·chargeback 값)·`type`(full/partial)·`status`·`subscription_id`·`transaction_id`. Step 1 에서 문서 예시 페이로드와 맞추고, 픽스처를 그 모양 그대로 만든다. 확인한 것은 웹훅 머리·서명 방식·이벤트 이름·`custom_data` 전달·`event_id`·`occurred_at`(근거 절)이다.
 - `entitled.ts` 추가(계약 절 "이용권 계산"): `subscriptions` 를 후보에 넣는다. `active`·`trialing`(해지 예약 포함) → `period_end + 48시간`(필수 7), `past_due` → `past_due_since + 7일`, `canceled`·`paused` → `canceled_at ?? last_event_at`. 단 `canceled` 이고 `scheduled_cancel = 1` 이며 그 구독에 `refunds.full = 1` 행이 없으면 `max(canceled_at, period_end + 48시간)`(예약 해지 유예, 2차 권장). `plan: 'pro'`. 여러 출처 가운데 `until` 이 가장 큰 것을 쓰고, 같으면 표시 우선순위 pro > comp > trial.
 
 - [ ] **Step 1: Paddle 페이로드·API 확인** — Paddle 개발자 문서에서 다음을 확인하고 `cloud/README.md` 에 적는다. 다른 경로가 나오면 `apply.ts`·`api.ts` 와 이 문서의 Interfaces 를 고친다.
@@ -2538,6 +2538,12 @@ it('hello carries pro; a gate change rides on the settings broadcast', async () 
 - Paddle 고객 포털: `POST /customers/{customer_id}/portal-sessions`(선택 `subscription_ids` ≤ 25, 권한 `customer_portal_session.write`, 응답 캐시 금지, `urls.general` 과 구독별 링크).
 - Paddle.js `Checkout.open` 의 `customData` 는 웹훅 `custom_data` 로 전달되고, 거래 → 구독 → 이후 거래로 복사된다. 브라우저가 정하는 값이라 서버는 서명된 `userRef` 만 믿는다(Task 9).
 - Paddle 카드 없는 체험(`requires_payment_method: false`)은 개발자 미리보기·조기 접근 전용이고 Checkout 에서 쓸 수 없다.
+- Paddle 엔터티 필드와 즉시 해지 API (2026-10-26, Task 9 Step 1, developer.paddle.com 의 `webhooks/subscriptions/subscription-updated`·`subscription-canceled`, `webhooks/transactions/transaction-completed`, `webhooks/adjustments/adjustment-created`, `api-reference/subscriptions/cancel-subscription`, `api-reference/about/authentication`):
+  - 구독 `data`: `id`, `status`(`active|canceled|past_due|paused|trialing`), `customer_id`, `custom_data`, `current_billing_period.ends_at`(해지된 구독은 `null`), `scheduled_change.action`(`cancel|pause|resume`), `canceled_at`, `items[].price.id`. 시각은 RFC 3339(소수 6자리까지).
+  - 거래 `data`: `id`, `customer_id`(없을 수 있음), `subscription_id`, `custom_data`.
+  - 조정 `data`: `id`, `action`(`refund|credit|chargeback|chargeback_warning|…`), `type`(`full|partial`, 기본 partial), `status`(`pending_approval|approved|rejected|reversed`), `transaction_id`, `subscription_id`.
+  - 즉시 해지: `POST /subscriptions/{subscription_id}/cancel`, 본문 `{ "effective_from": "immediately" }`(기본은 `next_billing_period`), 권한 `subscription.write`.
+  - API 주소: 샌드박스 `https://sandbox-api.paddle.com`, 라이브 `https://api.paddle.com`. 키는 `Authorization: Bearer`, 환경마다 따로이고 접두사 `pdl_sdbx_`·`pdl_live_`(69자).
 - `web-push` 3.6.7 소스: `generateRequestDetails` 는 `vapidDetails` 가 없으면 `Authorization` 없이 aes128gcm 본문과 머리를 만든다(출시 뒤 Task 6 에서만 쓴다).
 
 **미확인 (해당 Task 첫 단계에서 확인)**
@@ -2557,12 +2563,11 @@ it('hello carries pro; a gate change rides on the settings broadcast', async () 
 | iOS 에서 Safari 와 홈 화면 PWA 의 저장소 공유 여부, 홈 화면 PWA 안의 카메라(`getUserMedia`)·`BarcodeDetector` 지원 — 착수 시 확인 | Task 5 앞 실기 확인 → 5a·5b 페어링 화면, D20 |
 | 저장소의 기존 릴리스 절차(`package.json` scripts·배포 문서) — 착수 시 확인 | Task 5c `scripts/release.sh` |
 | `wrangler dev --persist-to`·`--var`, `wrangler r2 object put` 형태 | Task 5c·11 |
-| Paddle 엔터티 필드 경로(`current_billing_period.ends_at`, `scheduled_change.action`, `canceled_at`, `items[].price.id`, `customer_id`) | Task 9 |
-| Paddle 조정(adjustment) 의 전액/부분·차지백 구분 필드, 구독 즉시 해지 API(경로·`effective_from`·필요 권한) | Task 9 Step 1, D15 |
+| 차지백 조정의 `status`·`type` 이 늘 `approved`·`full` 인지(지금은 `action = chargeback` 이면 모두 전액으로 본다), 차지백 취소 값의 철자(`chargeback_reversal`/`chargeback_reverse` 문서끼리 다름 — 지금은 해지에 쓰지 않는다), 즉시 해지 API 의 응답 본문 형태(지금은 2xx 만 본다) | Task 9 — 실제 샌드박스 웹훅으로 확인(사용자 몫) |
 | Paddle.js 스크립트 주소·`Initialize`·`Environment.set`·`Checkout.open` 의 `items`/`customer`/`customData`, 결제 완료 이벤트 이름, CSP 출처 | Task 10 |
-| 포털 응답 `urls` 하위 키, 샌드박스 API 주소 | Task 10 |
+| 포털 응답 `urls` 하위 키(샌드박스 API 주소는 Task 9 에서 확인) | Task 10 |
 | `cloudflare:test` 의 scheduled 핸들러 helper, `wrangler.jsonc` `triggers.crons` 형태 | Task 12 Step 1 |
-| Paddle API 키 접두사(위생 규칙용) | Task 11 |
+| Paddle API 키 접두사를 위생 규칙에 넣는 일(접두사 자체는 Task 9 에서 확인 — `pdl_sdbx_`·`pdl_live_`) | Task 11 |
 | Workers Ed25519 `importKey` 의 `jwk` 지원 | 출시 뒤 Task 13 |
 | Cloudflare 플랜별 DO 사용 가능 여부와 실제 비용 | 사용자 몫 |
 
