@@ -289,8 +289,10 @@ export type SessionActivity = { sessionId: string; cwd: string; turnId: string; 
  * - heartbeat: a socket that sent `heartbeat` gets `heartbeat` every HEARTBEAT_MS; the UI drops a socket silent for HEARTBEAT_TIMEOUT_MS.
  * - historyImages: GET /api/sessions/<id>/images/<n>/<k> serves image k of user message n in a Claude transcript.
  * - olderHistory: `history.older` says whether the transcript goes back further; `load_older` is answered with `older_history`.
+ * - cloud: GET /api/cloud/status, POST /api/cloud/link/start|unlink|devices/<id>/revoke answer (클라우드 연결 · 폰 기기).
+ *   Advertised only while the cloud client runs (not with DECK_CLOUD=off).
  */
-export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate', 'commander', 'grok', 'tasks', 'setup', 'sessionIcons', 'heartbeat', 'historyImages', 'olderHistory'] as const;
+export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate', 'commander', 'grok', 'tasks', 'setup', 'sessionIcons', 'heartbeat', 'historyImages', 'olderHistory', 'cloud'] as const;
 export type Feature = (typeof FEATURES)[number];
 export type DrainReason = 'restart' | 'stop';
 
@@ -459,8 +461,10 @@ export type ServerMessage =
  * 'commander_bypass' / 'commander_active' / 'commander_engine' / 'commander_disabled' / 'commander_stale_epoch' (총사령탑):
  * the session runs in bypass mode · a commander is already active (stop it first; also: no bypass while one is) · not an
  * existing Claude session · the feature is off · the device's epoch is not the current one (its screen is out of date).
+ * 'mac_confirm_required': a phone over the cloud relay asked for something only the Mac itself may do (raise permissions,
+ * write sandbox, auto-approve, commander) — the Mac's relay bridge answers it and the server never sees the message.
  */
-export type RefusalCode = 'draining' | 'already_accepted' | 'in_flight' | 'not_found' | 'commander_bypass' | 'commander_active' | 'commander_engine' | 'commander_disabled' | 'commander_stale_epoch' | 'grokbot_linked';
+export type RefusalCode = 'draining' | 'already_accepted' | 'in_flight' | 'not_found' | 'commander_bypass' | 'commander_active' | 'commander_engine' | 'commander_disabled' | 'commander_stale_epoch' | 'grokbot_linked' | 'mac_confirm_required';
 
 /** Why `older_history` came back empty (see ServerMessage `older_history`). */
 export type OlderHistoryError = 'bad_cursor' | 'not_found' | 'read_failed';

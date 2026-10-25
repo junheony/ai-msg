@@ -206,6 +206,8 @@ export type WsDeps = {
   serverStartedAt?: number;
   /** 첫 실행 마법사: `hello.setup.needed` and the 'setup' feature. Absent = neither. */
   setup?: { needed: () => boolean };
+  /** The cloud client runs (CloudService exists); absent or false = no 'cloud' in hello.features. */
+  cloud?: () => boolean;
   /** 총사령탑(Commander): the `commander_*` messages, SessionFacts.commander and the idle hook. Absent = no commander. */
   commander?: WsCommander;
   /**
@@ -1426,7 +1428,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   /** The deck turn streaming in this session now (null while idle or only waiting for background work) and its prompt. */
   /** hello.features: 'commander' only while the settings turn it on; 'grok' only with a grok binary. */
   const grokStatusNow = (): GrokStatus | undefined => (typeof deps.grokStatus === 'function' ? deps.grokStatus() : deps.grokStatus);
-  const featureList = () => FEATURES.filter((f) => (f !== 'commander' || deps.commander?.enabled() === true) && (f !== 'grok' || grokStatusNow()?.bin === true) && (f !== 'tasks' || !!deps.tasks) && (f !== 'setup' || !!deps.setup) && (f !== 'sessionIcons' || !!deps.sessionIcons));
+  const featureList = () => FEATURES.filter((f) => (f !== 'commander' || deps.commander?.enabled() === true) && (f !== 'grok' || grokStatusNow()?.bin === true) && (f !== 'tasks' || !!deps.tasks) && (f !== 'setup' || !!deps.setup) && (f !== 'sessionIcons' || !!deps.sessionIcons) && (f !== 'cloud' || deps.cloud?.() === true));
   const runningOf = (sid: string) => {
     const t = turns.get(busy.get(sid) ?? '');
     const current = t?.current ?? null;

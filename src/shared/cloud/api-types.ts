@@ -39,3 +39,15 @@ export type EntitlementRes = {
 
 // app: POST /v1/account/delete
 export type DeleteAccountReq = { confirm: 'DELETE' };
+
+// Mac: GET /api/cloud/status (the local server, not the cloud). Never carries a cloud address, token or device code.
+export type CloudLinkView = { userCode: string; verifyUrl: string; expiresAt: number };
+export type CloudStatus = {
+  enabled: boolean;
+  linked: boolean;
+  email: string | null;
+  relay: 'off' | 'connecting' | 'up' | 'down' | 'not_entitled' | 'unlinked' | 'replaced';
+  link: CloudLinkView | null;
+  devices: { id: string; name: string; addedAt: number }[];
+  plan: EntitlementRes | null;
+};

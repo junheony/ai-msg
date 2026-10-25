@@ -33,6 +33,7 @@ import type { UsageService } from './usage/UsageService';
 import type { ClaudeProfileProbe, SetupStatus } from '../shared/setup-types';
 import { ProfileError } from './setup/profiles';
 import { profileTexts } from './setup/texts';
+import { CloudServiceError, type CloudService } from './cloud/CloudService';
 
 /** Deviation (added per review I5): devOrigins/extraHosts feed the Origin+Host checks below. */
 export type HttpDeps = {
@@ -71,6 +72,8 @@ export type HttpDeps = {
   serverUpdate?: ServerUpdateDeps;
   /** 첫 실행 마법사 (SetupService); absent = no /api/setup*. */
   setup?: SetupDeps;
+  /** Cloud link and phone devices (CloudService); absent (DECK_CLOUD=off) = no /api/cloud*. */
+  cloud?: { service: CloudService };
 };
 
 export type SetupDeps = {
@@ -393,6 +396,32 @@ export function createRequestHandler(deps: HttpDeps) {
               throw err;
             }
             return;
+          }
+          json(res, 404, { error: 'not found' });
+          return;
+        }
+        if (url.pathname === '/api/cloud' || url.pathname.startsWith('/api/cloud/')) {
+          const cloud = deps.cloud?.service;
+          if (!cloud) { json(res, 404, { error: 'not found' }); return; }
+          try {
+            if (url.pathname === '/api/cloud/status' && req.method === 'GET') { json(res, 200, cloud.status()); return; }
+            if (url.pathname === '/api/cloud/link/start' && req.method === 'POST') { json(res, 200, await cloud.startLink()); return; }
+            if (url.pathname === '/api/cloud/unlink' && req.method === 'POST') { await cloud.unlink(); json(res, 200, { ok: true }); return; }
+            const m = /^\/api\/cloud\/devices\/([^/]+)\/revoke$/.exec(url.pathname);
+            if (m && req.method === 'POST') {
+              let id = '';
+              try { id = decodeURIComponent(m[1]!); } catch { /* invalid below */ }
+              if (!/^[\x21-\x7e]{1,64}$/.test(id)) { json(res, 400, { error: 'bad_request' }); return; }
+              await cloud.revokeDevice(id);
+              json(res, 200, { ok: true });
+              return;
+            }
+          } catch (err) {
+            if (err instanceof CloudServiceError) {
+              json(res, err.code === 'disabled' ? 404 : err.code === 'already_linked' ? 409 : 502, { error: err.code });
+              return;
+            }
+            throw err;
           }
           json(res, 404, { error: 'not found' });
           return;

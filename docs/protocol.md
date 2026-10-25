@@ -32,6 +32,7 @@
 | `heartbeat` | 클라이언트가 `hello` 를 받은 뒤 `{type:'heartbeat'}` 를 보내면 그 소켓에만 `HEARTBEAT_MS`(10초)마다 `{type:'heartbeat'}` 를 보낸다(규칙 3). UI 는 아무 메시지 없이 `HEARTBEAT_TIMEOUT_MS`(25초)가 지나면 소켓을 닫고 다시 연결한다(`open_session` 의 답 — history·catchup·그 세션의 error — 을 기다리는 동안은 기한 4배·보낸 뒤 최대 90초, 얼었던 탭이 늦게 깨어나면 5초 유예, 감시로 새로 연 소켓은 첫 메시지(hello)까지 감시 안 함, 열렸는데 hello 가 15초 안에 안 오면 다시 연결). drain 중 `activity` 에는 `drainReason: 'restart' \| 'stop'` 도 싣는다(SIGUSR2·`지금 재시작` = restart, SIGTERM·SIGINT = stop — stop 이면 거절 문구도 "꺼지는 중". install-launchd.sh·`ai-msg service restart` 도 SIGTERM 이라 stop 으로 분류된다: 다시 켜진다는 약속이 없다는 뜻일 뿐이라 문구는 "꺼지는 중 — 다시 켜지면 이어서 보냄" 으로 중립) | 하트비트 감시 없음(조용한 소켓은 브라우저 close 까지 그대로), 끊김 막대는 "다시 연결하는 중…" 으로만 |
 | `historyImages` | `GET /api/sessions/<세션 id>/images/<n>/<k>` 가 Claude 세션 기록의 `n` 번째 사용자 메시지(기록의 `n` 과 같은 셈)에 든 `k` 번째 이미지(base64 PNG·JPEG·GIF·WebP)를 준다. 파일은 세션 색인에서만 찾고(요청 경로를 쓰지 않음), 형식은 바이트로 판별, 그 밖은 `404`. 쿠키·Origin 검사는 다른 `/api/*` 와 같다 | 대화 기록 속 이미지는 `이미지 N장` 알약으로만 |
 | `olderHistory` | `history.older` 에 더 앞쪽 기록의 커서를 싣고(`null` = 처음부터 다 보냄), `load_older{sessionId, before, reqId?}` 에 `older_history` 로 답한다. `open_session.from` 을 받으면 거기부터 보낸다(아래 "앞쪽 기록 이어 불러오기") | 처음 열 때 받은 최근 200개만, 위로 올려도 더 없음 |
+| `cloud` | 클라우드 연결(폰 원격). `GET /api/cloud/status` → `CloudStatus`(`src/shared/cloud/api-types.ts`: `enabled`·`linked`·`email`·`relay`·`link`·`devices`·`plan`, 클라우드 주소·토큰은 싣지 않음), `POST /api/cloud/link/start` → `{ userCode, verifyUrl, expiresAt }`(진행 중이면 같은 값; 이미 연결 `409`, 클라우드 안 닿음 `502`), `POST /api/cloud/unlink` → `{ ok: true }`(클라우드가 못 받아도 여기선 잊음), `POST /api/cloud/devices/<id>/revoke` → `{ ok: true }`(id 는 출력 가능한 ASCII 1~64자, 아니면 `400`; 그 기기의 채널을 바로 닫는다). 쿠키·Host·Origin 검사는 다른 `/api/*` 와 같다. `DECK_CLOUD=off` 면 이 기능을 알리지 않고 `/api/cloud/*` 는 `404`. 릴레이로 온 폰 요청 중 `/api/cloud/status`(GET) 말고는 아래 `mac_confirm_required` 로 막는다 | 설정에 클라우드 연결 항목 없음 |
 
 기능을 더할 때: `FEATURES` 에 이름을 더하고, UI 는 `has()` 로 갈라 쓰고, 이 표에 한 줄 더한다. 배포된 이름은 지우지 않는다.
 
@@ -65,6 +66,13 @@ ws 메시지가 아닌 것: 하이라이트(`GET /api/highlights?hours=6|12|24`,
 | `commander_engine` | deck 이 모르는 세션이거나 Claude 세션이 아님 | deck 에서 돌린 Claude 세션에만 걸 수 있습니다 |
 | `commander_disabled` | 설정에서 꺼져 있음(`commander_stop` 은 꺼져 있어도 듣는다) | 총사령탑이 꺼져 있습니다 — 설정에서 켜세요 |
 | `commander_stale_epoch` | 보낸 `epoch` 이 지금 것과 다름(다른 기기가 다시 걸었음 등) | 화면이 오래됐습니다 — 다시 시도 |
+
+`mac_confirm_required`(RefusalCode, 사령탑과 별개): 클라우드 릴레이로 온 폰 요청 중 Mac 에서 직접 해야 하는 것을 Mac 의 브리지가 답한다 — 로컬 서버에는 닿지 않는다.
+
+| 경로 | 막는 것 | 답 |
+|---|---|---|
+| ws | `set_permission_mode`(acceptEdits·bypassPermissions), `set_settings`(`autoApprove: true`·`defaultPermissionMode` 올림·`commanderEnabled: true`), `send`(`permissionMode` 올림·`sandbox: 'workspace-write'`), `set_sandbox`(`workspace-write`) — 조각난 메시지는 이어 붙인 뒤(최대 1MiB) 본다 | `error{turnId: null, code: 'mac_confirm_required', message, clientRef?, sessionId?}` |
+| HTTP | `/api/restart`·`/api/setup*`·`/api/login`·`/api/logout`, GET 아닌 `/api/server-update*`, `/api/cloud/status`(GET) 밖의 `/api/cloud*` — 경로는 퍼센트 디코딩·정규화한 뒤 보고, 디코딩·정규화로 바뀌는 경로는 아예 `403 forbidden` | `403 { error: 'mac_confirm_required', code: 'mac_confirm_required' }` |
 
 - 켜기·끄기: `set_settings.commanderEnabled`(선택). 답인 `settings` 방송에는 그때만 `features`(새 기능 목록)가 붙는다 — UI 는 그 목록으로 `has('commander')` 를 바꾸고, 목록에서 빠지면 캐시한 칩·거절을 비운다. 끌 때 서버는 활성 사령탑을 모두 `stopped`(사유 `설정에서 꺼짐`, epoch 증가)로 바꿔 방송한 뒤 `settings` 를 보낸다. 상한들(`commanderMaxTurns`·`commanderTokenCap`)은 설정 파일에서만.
 
