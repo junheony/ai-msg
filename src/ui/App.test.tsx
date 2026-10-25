@@ -846,6 +846,24 @@ describe('App phone layout (D10)', () => {
     expect(wrapEl.hasAttribute('inert')).toBe(false);
   });
 
+  it('phone: opening the drawer moves focus to its first button; closing returns it to ☰, not <body>', async () => {
+    mockMatchMedia(true);
+    await boot();
+    const wrapEl = document.querySelector('.sidebar-wrap') as HTMLElement;
+    const menu = screen.getByRole('button', { name: '메뉴' });
+    menu.focus();
+    fireEvent.click(menu);
+    expect(document.activeElement).toBe(wrapEl.querySelector('button'));
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(wrapEl.hasAttribute('inert')).toBe(true);
+    expect(document.activeElement).toBe(menu);
+    // Focus on <body> (what a browser does when inert lands on the focused node) is also handed back to ☰.
+    fireEvent.click(menu);
+    (document.activeElement as HTMLElement).blur();
+    fireEvent.click(document.querySelector('.drawer-backdrop')!);
+    expect(document.activeElement).toBe(menu);
+  });
+
   it('phone with two panes: only the active pane renders, and the pane switcher changes which one renders (PF16)', async () => {
     const mm = mockMatchMedia(false);
     await boot();

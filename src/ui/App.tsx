@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import type { ClientMessage } from '../shared/protocol';
 import type { SessionEntry } from '../shared/session-types';
 import { CommandPalette, type PaletteAction, type PaletteSession } from './components/CommandPalette';
@@ -536,6 +536,21 @@ export function App() {
     else if (step === 'fail') settle(true);
     else if (step === 'miss') openMiss.current = { id: openReq, projects: state.projects, timer: setTimeout(() => settle(true), OPEN_REQUEST_WAIT_MS) };
   }, [openReq, state.connected, state.projects]);
+
+  // Phone drawer focus: in to its first button once inert lifts, back to ☰ on close. Layout effect so the
+  // hand-off lands in the same frame inert goes on — otherwise focus would fall to <body>.
+  const drawerWas = useRef(false);
+  useLayoutEffect(() => {
+    const was = drawerWas.current;
+    drawerWas.current = phone && drawer;
+    if (!phone || was === drawer) return;
+    const wrap = sidebarWrap.current;
+    if (drawer) { wrap?.querySelector<HTMLElement>('button:not([disabled])')?.focus(); return; }
+    const a = document.activeElement;
+    if (!a || a === document.body || wrap?.contains(a)) document.querySelector<HTMLElement>('.topbar .menu')?.focus();
+  }, [phone, drawer]);
+  // A width switch remounts the toggle in a different place — a stale "had focus" flag must not steal focus later.
+  useEffect(() => { toggleFocus.current = false; }, [phone]);
 
   useEffect(() => {
     if (!phone || !drawer) return;
