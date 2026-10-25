@@ -338,7 +338,7 @@ function EngineChips({ value, codexAvailable, gemini, grok, onPick }: { value: E
   const picked = options.findIndex((o) => o.v === value && !o.disabled);
   const stop = picked >= 0 ? picked : pickable[0] ?? -1;
   const arrow = (e: ReactKeyboardEvent, i: number) => {
-    const dir = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+    const dir = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
     if (!dir || pickable.length === 0) return;
     e.preventDefault();
     const at = pickable.indexOf(i);

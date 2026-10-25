@@ -337,7 +337,7 @@ function Usage({ data, usage, now }: { data: HomeData; usage: UsageSnapshot | nu
         ))}
       </div>
     )}>
-      <div role="tabpanel" id={`${base}-panel`} aria-labelledby={`${base}-tab-${tab}`}>
+      <div role="tabpanel" tabIndex={0} id={`${base}-panel`} aria-labelledby={`${base}-tab-${tab}`}>
       {data.rows === null ? <p className="home-failed">{h.failed}</p> : (
         <>
           <div className="home-tiles">
