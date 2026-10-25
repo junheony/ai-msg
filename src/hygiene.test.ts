@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -19,6 +20,14 @@ describe('repository hygiene', () => {
 
   it('has nothing key-shaped (or matching the local rules file) in shipped files or their names', () => {
     expect(scan(ROOT, files, [...GENERIC_RULES, ...LOCAL_RULES])).toEqual([]);
+  });
+
+  it('testOnlySetNonce is imported only by *.test.ts files', () => {
+    const read = (f: string) => { try { return fs.readFileSync(path.join(ROOT, f), 'utf8'); } catch { return ''; } };
+    const offenders = files
+      .filter((f) => /\.(ts|tsx|mts)$/.test(f) && !/\.test\.tsx?$/.test(f) && f !== path.join('src', 'shared', 'cloud', 'noise.ts'))
+      .filter((f) => /\btestOnlySetNonce\b/.test(read(f)));
+    expect(offenders).toEqual([]);
   });
 
   it('generic rules catch key shapes and leave short fixtures and marked examples alone', () => {

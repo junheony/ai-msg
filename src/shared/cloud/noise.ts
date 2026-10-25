@@ -120,6 +120,11 @@ export class CipherState {
   /** Nonce counter (read-only; tests use `testOnlySetNonce`). */
   get n(): bigint { return this.#n; }
 
+  /**
+   * Deliberately outside the `serial` queue: only the owning SymmetricState calls it (MixKey, Split),
+   * strictly before any `encrypt`/`decrypt` is queued on this CipherState, and a Transport never
+   * re-keys a CipherState in use (rekey = a new handshake). Do not call it on a CipherState in use.
+   */
   async initializeKey(key: Uint8Array | null): Promise<void> {
     this.#k = key ? await subtle().importKey('raw', buf(key), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']) : null;
     this.#n = 0n;
