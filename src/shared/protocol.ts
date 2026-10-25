@@ -289,7 +289,7 @@ export type SessionActivity = { sessionId: string; cwd: string; turnId: string; 
  * - heartbeat: a socket that sent `heartbeat` gets `heartbeat` every HEARTBEAT_MS; the UI drops a socket silent for HEARTBEAT_TIMEOUT_MS.
  * - historyImages: GET /api/sessions/<id>/images/<n>/<k> serves image k of user message n in a Claude transcript.
  * - olderHistory: `history.older` says whether the transcript goes back further; `load_older` is answered with `older_history`.
- * - cloud: GET /api/cloud/status, POST /api/cloud/link/start|unlink|devices/<id>/revoke answer (클라우드 연결 · 폰 기기).
+ * - cloud: GET /api/cloud/status, POST /api/cloud/link/start|unlink|plan/refresh|devices/<id>/revoke answer (클라우드 연결 · 폰 기기).
  *   Advertised only while the cloud client runs (not with DECK_CLOUD=off).
  */
 export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate', 'commander', 'grok', 'tasks', 'setup', 'sessionIcons', 'heartbeat', 'historyImages', 'olderHistory', 'cloud'] as const;

@@ -407,6 +407,8 @@ export function createRequestHandler(deps: HttpDeps) {
             if (url.pathname === '/api/cloud/status' && req.method === 'GET') { json(res, 200, cloud.status()); return; }
             if (url.pathname === '/api/cloud/link/start' && req.method === 'POST') { json(res, 200, await cloud.startLink()); return; }
             if (url.pathname === '/api/cloud/unlink' && req.method === 'POST') { await cloud.unlink(); json(res, 200, { ok: true }); return; }
+            // Display only (D6). Through the relay this path is mac_confirm_required (relayPathPolicy); the phone reads status.plan.
+            if (url.pathname === '/api/cloud/plan/refresh' && req.method === 'POST') { json(res, 200, await cloud.refreshPlan()); return; }
             const m = /^\/api\/cloud\/devices\/([^/]+)\/revoke$/.exec(url.pathname);
             if (m && req.method === 'POST') {
               let id = '';

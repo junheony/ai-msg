@@ -16,6 +16,10 @@ const MAX_RESPONSE = 1 << 20;
 const clamp = (v: unknown, min: number, max: number, dflt: number): number =>
   typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : dflt;
 const isId = (v: unknown): v is string => typeof v === 'string' && v.length >= 1 && v.length <= 512;
+const PLANS: ReadonlySet<unknown> = new Set<EntitlementRes['plan']>(['pro', 'trial', 'comp', 'none']);
+const PLAN_STATES: ReadonlySet<unknown> = new Set<EntitlementRes['st']>(['active', 'trialing', 'past_due', 'canceled', 'none']);
+/** A time in ms: an integer from 0 to the largest `Date`. */
+const isMs = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0 && (v as number) <= 8.64e15;
 
 /** The app origin's host API (`/v1/host/*`, `/v1/pair/*`, `/v1/devices*`, `/v1/entitlement`). Never logs tokens. */
 export class CloudApi {
@@ -77,8 +81,12 @@ export class CloudApi {
     await this.json({ method: 'POST', path: `/v1/devices/${encodeURIComponent(id)}/revoke`, token });
   }
 
-  entitlement(token: string): Promise<EntitlementRes> {
-    return this.json({ method: 'GET', path: '/v1/entitlement', token });
+  /** Display only. `plan`·`st` must be known names, `untilMs` an integer ms ≥ 0 and `checkedAt` > 0 (else `bad_response`). */
+  async entitlement(token: string): Promise<EntitlementRes> {
+    const { status, body } = await this.call({ method: 'GET', path: '/v1/entitlement', token });
+    const b = body as Partial<Record<keyof EntitlementRes, unknown>>;
+    if (!PLANS.has(b.plan) || !PLAN_STATES.has(b.st) || !isMs(b.untilMs) || !isMs(b.checkedAt) || b.checkedAt === 0) throw new CloudError(status, 'bad_response');
+    return { plan: b.plan as EntitlementRes['plan'], st: b.st as EntitlementRes['st'], untilMs: b.untilMs, checkedAt: b.checkedAt };
   }
 
   private async json<T>(r: Req): Promise<T> {

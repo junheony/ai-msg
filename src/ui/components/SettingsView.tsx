@@ -10,6 +10,7 @@ import { describeShell } from '../shellFit';
 import { Sheet, SheetHead } from './Dialogs';
 import { TASK_SOFT_CAP_MAX, TASK_SOFT_CAP_MIN } from '../../shared/tasks';
 import { MemoryEditor } from './MemoryEditor';
+import { CloudSection } from './CloudSection';
 import { SETUP_TEXTS } from '../setupTexts';
 import { getLocale, localeFromLanguages, type LangPref, type Locale } from '../../shared/locale';
 import { ui } from '../i18n';
@@ -76,7 +77,7 @@ function Hint({ short, children }: { short: string; children?: ReactNode }) {
 export const SETTINGS_GROUPS = [['screen', '화면'], ['input', '입력'], ['perm', '권한·알림'], ['account', '계정'], ['experimental', '실험적 기능']] as const;
 type GroupId = (typeof SETTINGS_GROUPS)[number][0];
 
-export function SettingsView({ build, onLanguage, reload = () => location.reload(), defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, sameVendorRotation = null, onSameVendorRotation, experimental = null, onExperimental, commanderEnabled = null, onCommanderEnabled, autoRoute = null, onAutoRoute, claudeAccounts = 0, grokLocked = null, onGrokUnlock, taskCap = null, onTaskCap, onSetup, onClose }: {
+export function SettingsView({ build, onLanguage, reload = () => location.reload(), defaultPermMode = null, onDefaultPermMode, routingPolicy = null, onRoutingPolicy, sameVendorRotation = null, onSameVendorRotation, experimental = null, onExperimental, commanderEnabled = null, onCommanderEnabled, autoRoute = null, onAutoRoute, claudeAccounts = 0, grokLocked = null, onGrokUnlock, taskCap = null, onTaskCap, onSetup, cloud = false, onClose }: {
   build: string | null;
   /**
    * A language pick: explicit → the server's fallback language (set_settings.language, for turns no device sends);
@@ -113,6 +114,8 @@ export function SettingsView({ build, onLanguage, reload = () => location.reload
   onTaskCap?: (n: number) => void;
   /** 설치 점검 (a 'setup' server): opens the first-run wizard. */
   onSetup?: () => void;
+  /** The server runs the cloud client (`has('cloud')`): show the plan row (display only). */
+  cloud?: boolean;
   onClose: () => void;
 }) {
   const [prefs, dispatch] = usePrefs();
@@ -262,6 +265,7 @@ export function SettingsView({ build, onLanguage, reload = () => location.reload
           </section>
           <section {...section('account')}>
             {heading('account')}
+            {cloud && <CloudSection />}
             {onSetup && (
               <div className="settings-row">
                 <span>{SETUP_TEXTS.settingsRow}</span>

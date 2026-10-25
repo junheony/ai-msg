@@ -137,6 +137,52 @@ describe('CloudService', () => {
     expect(onDisk.hostKey).toBeTruthy();
   });
 
+  it('refreshPlan: not linked → null with zero cloud requests', async () => {
+    const { calls, fetchImpl } = cloudFetch({});
+    const svc = service({ fetch: fetchImpl });
+    svc.start();
+    expect(await svc.refreshPlan()).toBeNull();
+    expect(svc.status().plan).toBeNull();
+    expect(calls).toEqual([]);
+  });
+
+  it('refreshPlan: linked → the plan in the status; a token the cloud refuses forgets the link', async () => {
+    const plan = { plan: 'trial', st: 'trialing', untilMs: Date.now() + 86_400_000, checkedAt: Date.now() };
+    await linkedState('host-token');
+    const routes: Record<string, [number, unknown]> = { 'GET /v1/entitlement': [200, plan] };
+    const { calls, fetchImpl } = cloudFetch(routes);
+    const logs: string[] = [];
+    const svc = service({ relayUrl: 'http://127.0.0.1:9', fetch: fetchImpl, log: (s) => logs.push(s) });
+    const seen: unknown[] = [];
+    svc.onChange((s) => seen.push(s.plan));
+    expect(await svc.refreshPlan()).toEqual(plan);
+    expect(svc.status().plan).toEqual(plan);
+    expect(seen).toContainEqual(plan);
+    expect(calls.find((c) => c.path === '/v1/entitlement')).toMatchObject({ method: 'GET', auth: 'Bearer host-token' });
+    routes['GET /v1/entitlement'] = [401, { error: 'unauthorized', code: 'unauthorized' }];
+    expect(await svc.refreshPlan()).toBeNull();
+    await eventually(() => !svc.status().linked);
+    expect(svc.status().plan).toBeNull();
+    expect(logs.join('\n')).not.toContain('host-token');
+    expect(logs.join('\n')).not.toContain('a@example.test');
+  });
+
+  it('a new {t:ent} from the relay fetches the plan again', async () => {
+    const relay = await FakeRelay.start();
+    cleanups.push(() => relay.close());
+    await linkedState(relay.token);
+    const plan = { plan: 'pro', st: 'active', untilMs: Date.now() + 86_400_000, checkedAt: Date.now() };
+    const { calls, fetchImpl } = cloudFetch({ 'GET /v1/devices': [200, []], 'GET /v1/entitlement': [200, plan] });
+    const svc = service({ relayUrl: relayOrigin(relay), fetch: fetchImpl });
+    svc.start();
+    await waitFor(() => svc.status().relay === 'up');
+    await eventually(() => svc.status().plan !== null); // start(): one fetch at once
+    await sleep(100); // the first {t:ent} after attach may fetch once more; let it settle
+    const before = calls.filter((c) => c.path === '/v1/entitlement').length;
+    relay.control({ t: 'ent', ok: true, until: Date.now() + 2 * 86_400_000 });
+    await eventually(() => calls.filter((c) => c.path === '/v1/entitlement').length === before + 1);
+  });
+
   it('recheck reaches the relay at most once per 30 s', async () => {
     const relay = await FakeRelay.start();
     cleanups.push(() => relay.close());

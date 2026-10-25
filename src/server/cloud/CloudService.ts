@@ -1,9 +1,10 @@
 import type { WebSocket } from 'ws';
-import type { CloudLinkView, CloudStatus } from '../../shared/cloud/api-types';
+import type { CloudLinkView, CloudStatus, EntitlementRes } from '../../shared/cloud/api-types';
 import { CloudApi, CloudError } from './CloudApi';
 import type { CloudConfig } from './config';
 import { CloudState } from './CloudState';
 import { startLink, type HostLinkHandle } from './HostLink';
+import { PlanView } from './PlanView';
 import { RelayBridge } from './RelayBridge';
 import { RelayClient, type RelayState } from './RelayClient';
 import type { RelayWsContext } from './wsPolicy';
@@ -30,6 +31,9 @@ const UNCONFIRMED_401_RETRY_MS = 60_000;
 export class CloudService {
   private readonly api: CloudApi;
   private state: CloudState | null = null;
+  private plan: PlanView | null = null;
+  /** The last `{t:'ent'}` seen, so only a new one fetches the plan again. */
+  private lastEnt = '';
   private loading: Promise<CloudState | null> | null = null;
   private client: RelayClient | null = null;
   private bridge: RelayBridge | null = null;
@@ -60,13 +64,19 @@ export class CloudService {
   start(): void {
     if (!this.o.cfg.enabled) return;
     this.stopped = false;
-    void this.load().then((st) => { if (st && !this.stopped && st.get().hostToken) this.startRelay(); });
+    void this.load().then((st) => {
+      if (st && !this.stopped && st.get().hostToken) {
+        this.startRelay();
+        this.plan?.start();
+      }
+    });
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
     this.link?.handle.cancel();
     this.link = null;
+    this.plan?.stop();
     this.stopRelay();
   }
 
@@ -79,7 +89,7 @@ export class CloudService {
       relay: this.relay,
       link: this.link?.view ?? null,
       devices: (d?.devices ?? []).map((x) => ({ id: x.id, name: x.name, addedAt: x.addedAt })),
-      plan: d?.hostToken ? d.plan : null,
+      plan: this.plan?.get() ?? null,
     };
   }
 
@@ -94,6 +104,16 @@ export class CloudService {
     if (now - this.lastRecheck < RECHECK_MS) return;
     this.lastRecheck = now;
     this.client?.recheck();
+  }
+
+  /**
+   * The plan for Settings › Accounts, fetched now (`POST /api/cloud/plan/refresh`). Not linked → `null` without asking
+   * the cloud. Display only (D6): nothing here is allowed or refused because of it.
+   */
+  async refreshPlan(): Promise<EntitlementRes | null> {
+    if (!this.o.cfg.enabled) throw new CloudServiceError('disabled');
+    await this.load();
+    return this.plan ? this.plan.refresh() : null;
   }
 
   /** Starts (or returns the running) device-code link; the device code itself never leaves this class. */
@@ -117,7 +137,10 @@ export class CloudService {
       void handle.done.then(
         (r) => {
           if (this.link === link) this.link = null;
-          if (r === 'linked' && !this.stopped) this.startRelay();
+          if (r === 'linked' && !this.stopped) {
+            this.startRelay();
+            this.plan?.start();
+          }
           this.changed();
         },
         (err: unknown) => {
@@ -140,6 +163,7 @@ export class CloudService {
     this.link = null;
     const token = st?.get().hostToken;
     if (!st || !token) return;
+    this.plan?.stop();
     this.stopRelay();
     try {
       await this.api.unlink(token);
@@ -173,7 +197,17 @@ export class CloudService {
   private load(): Promise<CloudState | null> {
     if (this.state) return Promise.resolve(this.state);
     this.loading ??= CloudState.load(this.o.configDir).then(
-      (st) => { this.state = st; return st; },
+      (st) => {
+        this.state = st;
+        this.plan = new PlanView({
+          api: this.api,
+          state: st,
+          relay: { recheck: () => this.recheck() },
+          onChange: () => this.changed(),
+          onError: (err, token) => void this.planFailed(st, err, token),
+        });
+        return st;
+      },
       (err: unknown) => {
         this.loading = null;
         this.o.log(`deck: cloud — could not read the cloud state (${errName(err)})`);
@@ -218,6 +252,12 @@ export class CloudService {
     });
     this.client = client;
     this.bridge = bridge;
+    client.on('entitlement', (e: { ok: boolean; until: number }) => {
+      const key = `${e.ok}:${e.until}`;
+      if (this.client !== client || key === this.lastEnt) return;
+      this.lastEnt = key;
+      void this.plan?.refresh();
+    });
     client.on('state', (s: RelayState) => {
       if (this.client !== client) return;
       if (s !== 'up') bridge.dropAll();
@@ -274,7 +314,19 @@ export class CloudService {
     this.retryTimer.unref?.();
   }
 
+  /** The host API refused the token (401): the link is gone. Anything else keeps the stored plan, logged by name only. */
+  private async planFailed(st: CloudState, err: unknown, token: string): Promise<void> {
+    if (err instanceof CloudError && err.status === 401) {
+      if (st.get().hostToken !== token) return; // relinked meanwhile
+      this.o.log('deck: cloud — the cloud no longer accepts this Mac, link forgotten');
+      await this.forget(st);
+      return;
+    }
+    this.o.log(`deck: cloud — could not fetch the plan, keeping the last one (${errName(err)})`);
+  }
+
   private async forget(st: CloudState): Promise<void> {
+    this.plan?.stop();
     this.stopRelay();
     try {
       await st.reset();

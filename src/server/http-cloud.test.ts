@@ -7,6 +7,8 @@ import WebSocket from 'ws';
 import type { ServerMessage } from '../shared/protocol';
 import { cookieValueFor } from './auth';
 import { CloudService } from './cloud/CloudService';
+import { CloudState } from './cloud/CloudState';
+import { SettingsStore } from './settings';
 import { StubEngine, okResult } from './engine/StubEngine';
 import { createRequestHandler } from './http';
 import { SessionIndex } from './sessions/SessionIndex';
@@ -132,6 +134,19 @@ describe('/api/cloud', () => {
     expect((await fetch(`${withCloud}/api/cloud/nope`, { headers: { cookie } })).status).toBe(404);
   });
 
+  it('plan/refresh: cookie and Origin checked; not linked → null with no cloud request', async () => {
+    const before = cloudCalls.length;
+    expect((await post(withCloud, '/api/cloud/plan/refresh', { cookie: '' })).status).toBe(401);
+    expect((await post(withCloud, '/api/cloud/plan/refresh', { origin: 'https://evil.example' })).status).toBe(403);
+    expect((await fetch(`${withCloud}/api/cloud/plan/refresh`, { method: 'POST', headers: { cookie } })).status).toBe(403);
+    expect((await fetch(`${withCloud}/api/cloud/plan/refresh`, { headers: { cookie } })).status).toBe(404); // GET is not a route
+    const r = await post(withCloud, '/api/cloud/plan/refresh');
+    expect(r.status).toBe(200);
+    expect(await r.json()).toBeNull();
+    expect(cloudCalls.slice(before).filter((p) => p === '/v1/entitlement')).toEqual([]);
+    expect((await post(without, '/api/cloud/plan/refresh')).status).toBe(404);
+  });
+
   it('the cloud feature is advertised only with the service', async () => {
     expect(await helloFeatures(withCloud)).toContain('cloud');
   });
@@ -140,5 +155,58 @@ describe('/api/cloud', () => {
     expect((await fetch(`${without}/api/cloud/status`, { headers: { cookie } })).status).toBe(404);
     expect((await post(without, '/api/cloud/link/start')).status).toBe(404);
     expect(await helloFeatures(without)).not.toContain('cloud');
+  });
+});
+
+describe('the plan is display only (D6)', () => {
+  it('with plan none: rotation, routing, 총사령탑, handoff settings and /api routes work as before', async () => {
+    const d = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-http-plan-'));
+    const none = { plan: 'none', st: 'none', untilMs: 0, checkedAt: Date.now() } as const;
+    const st = await CloudState.load(path.join(d, 'cfg'));
+    await st.update({ hostId: 'h1', hostToken: 'host-token', email: 'a@example.test', plan: none });
+    const plan = new CloudService({
+      cfg: { enabled: true, baseUrl: 'http://127.0.0.1:9', relayUrl: 'http://127.0.0.1:8' },
+      configDir: path.join(d, 'cfg'), port: 1, token: () => TOKEN, hostVersion: '1.2.3', hostName: 'mac', log: () => {},
+      fetch: (async (u: string | URL | Request) => new URL(String(u)).pathname === '/v1/entitlement'
+        ? new Response(JSON.stringify(none), { status: 200 })
+        : new Response('[]', { status: 200 })) as typeof fetch,
+    });
+    const accounts = testRegistry(path.join(d, 'acc'));
+    const roots = rootsOf({ a: path.join(d, 'a') });
+    const index = new SessionIndex({ roots, pinnedFile: path.join(d, 'p.json') });
+    await index.refresh();
+    const usage = new UsageService({ accounts, deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
+    const store = new SessionStateStore(path.join(d, 'state.json'));
+    await store.load();
+    const settings = new SettingsStore(path.join(d, 'settings.json'));
+    await settings.load();
+    const runner = new TurnRunner({ attachments: null, engine: new StubEngine(async () => [okResult('s', 'ok')]), usage, index, store, cooldownDir: path.join(d, 'cd'), protectedAccount: null, auditFile: path.join(d, 'audit.log'), projectsRoots: roots, codex: null, codexSessionsRoot: path.join(d, 'codex'), accounts });
+    const server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: d, usage, index, cloud: { service: plan } }));
+    const wss = attachWebSocket([server], { token: TOKEN, devOrigins: [], runner, index, usage, store, settings, codexAvailable: false, cwdRoots: [d], accounts, cloud: () => true });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    try {
+      const r = await post(base, '/api/cloud/plan/refresh');
+      expect(await r.json()).toEqual(none);
+      expect((await fetch(`${base}/api/bootstrap`, { headers: { cookie } })).status).toBe(200);
+      expect((await fetch(`${base}/api/cloud/status`, { headers: { cookie } })).status).toBe(200);
+
+      const ws = new WebSocket(`${base.replace('http', 'ws')}/ws`, { headers: { cookie, origin: base } });
+      const inbox: ServerMessage[] = [];
+      ws.on('message', (m) => inbox.push(JSON.parse(String(m)) as ServerMessage));
+      await new Promise<void>((resolve, reject) => { ws.on('open', () => resolve()); ws.on('error', reject); });
+      ws.send(JSON.stringify({ type: 'set_settings', sameVendorRotation: true, routingPolicy: 'drain', commanderEnabled: true, crossEngineFailover: true, autoResume: true }));
+      const deadline = Date.now() + 3000;
+      while (!inbox.some((m) => m.type === 'settings') && Date.now() < deadline) await new Promise((res) => setTimeout(res, 10));
+      const got = inbox.find((m) => m.type === 'settings') as Extract<ServerMessage, { type: 'settings' }> | undefined;
+      expect(got?.settings).toMatchObject({ sameVendorRotation: true, routingPolicy: 'drain', commanderEnabled: true, crossEngineFailover: true, autoResume: true });
+      expect(inbox.filter((m) => m.type === 'error')).toEqual([]);
+      ws.close();
+    } finally {
+      await plan.stop();
+      wss.close();
+      server.close();
+      await fs.rm(d, { recursive: true, force: true });
+    }
   });
 });

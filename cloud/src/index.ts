@@ -1,5 +1,6 @@
 import { loginGet, loginPost, magicRequest, verifyGet, verifyPost } from './auth/magic';
 import { listDevices, revokeDevice } from './devices';
+import { entitlement } from './entitlement';
 import type { Env } from './env';
 import { linkApprove, linkGet, linkPoll, linkStart, hostUnlink } from './hosts';
 import { HttpError, clientIp, json, problem } from './http';
@@ -84,6 +85,7 @@ const ROUTES: readonly Route[] = [
   ['app', 'POST', '/v1/pair/:id/reject', pairReject],
   ['app', 'GET', '/v1/devices', listDevices],
   ['app', 'POST', '/v1/devices/:id/revoke', revokeDevice],
+  ['app', 'GET', '/v1/entitlement', entitlement],
   ['app', 'GET', '/dev/outbox', devOutbox],
   // relay origin — no cookies are read or set here
   ['relay', 'POST', '/v1/pair/claim', pairClaim],
