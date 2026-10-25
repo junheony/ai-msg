@@ -783,7 +783,7 @@ export function Chat(p: ChatProps) {
           <div className="pane-notice notice composer-note">
             {p.composerNote && <span className="pane-notice-text" role="status" data-testid="composer-note">{p.composerNote}</span>}
             {p.onPickCwd && <button type="button" className="btn ghost" data-testid="grokbot-handoff-cwd" onClick={p.onPickCwd}>작업 폴더 바꾸기</button>}
-            {p.onGrokBotHandoff && <button type="button" className="btn ghost" data-testid="grokbot-handoff" onClick={p.onGrokBotHandoff}>{p.grokBotHandoffLabel ?? '새 Grok 세션으로 이어가기'}</button>}
+            {p.onGrokBotHandoff && <button type="button" className="btn ghost" data-testid="grokbot-handoff" onClick={p.onGrokBotHandoff}>{p.grokBotHandoffLabel ?? ui().chat.grokBot.continueNew}</button>}
           </div>
         )}
         <Composer

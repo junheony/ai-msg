@@ -316,7 +316,15 @@ export class SessionIndex {
   }
 
   private group(sessions: SessionEntry[], all = false): ProjectEntry[] {
-    return groupProjects(this.mergeGrokBot(all ? sessions : sessions.filter((s) => this.listed(s))).map((s) => this.decorate(s)), this.pinned, this.recentFolders);
+    const ids = new Set(sessions.map((s) => s.sessionId));
+    return groupProjects(this.mergeGrokBot(all ? sessions : sessions.filter((s) => this.listed(s))).map((s) => this.liveGrokBotLink(this.decorate(s), ids)), this.pinned, this.recentFolders);
+  }
+
+  /** A Grok Bot entry's `nextSession` naming a session no list has any more (gone outside deck): dropped — the next send starts anew. */
+  private liveGrokBotLink(s: SessionEntry, ids: Set<string>): SessionEntry {
+    if (!s.nextSession || ids.has(s.nextSession) || (s.source !== 'grokbot' && !s.sessionId.startsWith(GROKBOT_ID_PREFIX))) return s;
+    const { nextSession: _gone, ...rest } = s;
+    return rest;
   }
 
   /**

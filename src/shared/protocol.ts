@@ -449,7 +449,7 @@ export type ServerMessage =
    * send's `clientRef`; `sessionId` is null on a new session.
    */
   | { type: 'route_fit'; turnId: string; sessionId: string | null; engine: EngineKind; need: string; clientRef?: string; pos?: StreamPos }
-  | { type: 'error'; turnId: string | null; message: string; pos?: StreamPos; clientRef?: string; /** Why, when the device should act on it (see RefusalCode). */ code?: RefusalCode; /** The error is about this session (e.g. opening it failed): shown in the panes showing it. */ sessionId?: string; /** An answer to this permission / question card came too late (another device answered it first): the card goes, nothing is shown. */ requestId?: string };
+  | { type: 'error'; turnId: string | null; message: string; pos?: StreamPos; clientRef?: string; /** Why, when the device should act on it (see RefusalCode). */ code?: RefusalCode; /** The error is about this session (e.g. opening it failed): shown in the panes showing it. */ sessionId?: string; /** An answer to this permission / question card came too late (another device answered it first): the card goes, nothing is shown. */ requestId?: string; /** 'grokbot_linked': the session that conversation already continues in (the device sends there instead). */ nextSession?: string };
 
 /**
  * 'draining': the server is about to restart (USR2) — the device sends the refused message again once it reconnects.
@@ -460,7 +460,7 @@ export type ServerMessage =
  * the session runs in bypass mode · a commander is already active (stop it first; also: no bypass while one is) · not an
  * existing Claude session · the feature is off · the device's epoch is not the current one (its screen is out of date).
  */
-export type RefusalCode = 'draining' | 'already_accepted' | 'in_flight' | 'not_found' | 'commander_bypass' | 'commander_active' | 'commander_engine' | 'commander_disabled' | 'commander_stale_epoch';
+export type RefusalCode = 'draining' | 'already_accepted' | 'in_flight' | 'not_found' | 'commander_bypass' | 'commander_active' | 'commander_engine' | 'commander_disabled' | 'commander_stale_epoch' | 'grokbot_linked';
 
 /** Why `older_history` came back empty (see ServerMessage `older_history`). */
 export type OlderHistoryError = 'bad_cursor' | 'not_found' | 'read_failed';

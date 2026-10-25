@@ -85,11 +85,14 @@ export function codexHandoffMessage(oldTitle: string, oldSessionId: string, exce
 }
 
 /** The first message of a deck Grok session continuing a Grok Bot app conversation (prefilled, sent only when the user does). */
+/** The line the Grok Bot handoff message ends on: the user's request follows it. */
+export const GROKBOT_REQUEST_LABEL = '이어서 할 요청:';
+
 export function grokBotHandoffMessage(oldTitle: string, excerpt: string): string {
   return [
     `Grok Bot 앱 대화(${oldTitle})를 AI-MSG Grok 새 세션으로 이어갑니다. 아래는 이전 대화 발췌입니다(도구 호출 제외).`,
     excerpt.trim() || '(발췌할 이전 대화가 없습니다)',
-    '이어서 할 요청:',
+    GROKBOT_REQUEST_LABEL,
     '',
   ].join('\n\n');
 }

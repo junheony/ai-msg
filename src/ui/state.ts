@@ -5,7 +5,7 @@ import { ACCEPTED_REFS_TTL_MS, type AccountInfo, type ClientMessage, type Comman
 import type { BgTaskInfo, TaskStatus, TaskUsage, TurnPhase } from '../shared/turn-types';
 import type { DesktopSession, ProjectEntry, SessionEntry, TranscriptMessage } from '../shared/session-types';
 import type { UsageSnapshot } from '../shared/usage-types';
-import { HANDOFF_PROMPT, codexHandoffExcerpt, codexHandoffMessage, grokBotHandoffMessage, handoffFirstMessage, handoffTitle } from '../shared/handoff';
+import { GROKBOT_REQUEST_LABEL, HANDOFF_PROMPT, codexHandoffExcerpt, codexHandoffMessage, grokBotHandoffMessage, handoffFirstMessage, handoffTitle } from '../shared/handoff';
 import type { PermMode } from '../shared/permission';
 import { coldWriteNote, latestContext, type ContextInfo } from './context';
 import { familyOf } from '../shared/token-usage';
@@ -263,6 +263,8 @@ export type PaneState = {
   grokBotCwd?: string | null;
   /** Grok Bot 보내기 waiting for a folder (none could be chosen by itself): the first message, sent once one is picked (set_new_cwd), back in the composer if the picker is closed. */
   grokBotSend?: { text: string; attachments: UploadedAttachment[] } | null;
+  /** The server refused this new session's first send (`grokbot_linked`): the conversation already continues in `sessionId` — Pane opens it and the request goes there. */
+  grokBotGoto?: { sessionId: string; from: string; text: string; attachments: UploadedAttachment[] } | null;
   /** 백그라운드 작업 sends not yet answered (`ref` = clientRef): a refusal echoing the ref puts the text back in the composer. */
   taskRefs?: { ref: string; text: string }[];
   /** Notes / errors about the session no turn owns (e.g. written outside deck just now): dismissible bars in this pane (newest 3), dropped when the pane shows another session. */
@@ -538,7 +540,7 @@ export type Action =
   | { type: 'codex_handoff'; turnId: string; paneId?: string }
   | { type: 'grokbot_handoff'; paneId?: string }
   /** Grok Bot 대화(`from`)에서 보내기: the text goes on in the Grok session continuing it — the linked one (the pane opens it first), else a new one (excerpt + text). Never to the grokbot- id. */
-  | { type: 'grokbot_send'; from: string; text: string; attachments: UploadedAttachment[]; paneId?: string }
+  | { type: 'grokbot_send'; from: string; text: string; attachments: UploadedAttachment[]; paneId?: string; /** The continuing session the pane just opened (one the projects list may not show). */ to?: string }
   /** The folder picker of a waiting Grok Bot 보내기 was closed without a pick: the message goes back into the composer. */
   | { type: 'grokbot_send_cancel'; paneId?: string }
   /** 작업 폴더 바꾸기 before the first send of a new (not yet created) session — the Grok Bot handoff's folder. Refuses '' and the Grok Bot conversations' home folder. */
@@ -1049,6 +1051,11 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       // A 백그라운드 작업 the server refused (draining, too many waiting, …): its text goes back into the composer.
       const task = msg.clientRef !== undefined ? pane.taskRefs?.find((r) => r.ref === msg.clientRef) : undefined;
       if (task) return { ...pane, taskRefs: pane.taskRefs!.filter((r) => r !== task), prefill: task.text };
+      // Opening the continuing session of a Grok Bot conversation failed: what waited for its history goes back into the composer.
+      if (msg.turnId === null && msg.clientRef === undefined && msg.code !== 'draining' && msg.sessionId !== undefined && msg.sessionId === pane.session?.sessionId && pane.queue.some((q) => q.afterLoad)) {
+        const waiting = pane.queue.filter((q) => q.afterLoad);
+        pane = grokBotBack({ ...pane, queue: pane.queue.filter((q) => !q.afterLoad) }, waiting.map((q) => q.text).join('\n\n'), waiting.flatMap((q) => q.attachments));
+      }
       // This session's open_session failed while messages wait for its history: they stop waiting — ordinary queue items,
       // paused, so nothing hangs on a history that never comes. (Not the drain broadcast: the history still comes.)
       if (msg.turnId === null && msg.clientRef === undefined && msg.code !== 'draining' && msg.sessionId !== undefined && msg.sessionId === pane.session?.sessionId && pane.queue.some((q) => q.restart === 'hello')) {
@@ -1201,6 +1208,18 @@ export function grokBotLinked(projects: ProjectEntry[], grokBotId: string): Sess
 /** The folder a Grok Bot conversation's send starts its new Grok session in: the one picked on the pane, else grokBotHandoffCwd; '' = ask. */
 export function grokBotSendCwd(pane: PaneState, projects: ProjectEntry[]): string {
   return pane.grokBotCwd || grokBotHandoffCwd(projects, grokBotHome(projects, pane.session?.cwd) ?? '');
+}
+
+/** A Grok Bot handoff's first message without its excerpt: the request the user typed (the whole text when there is no excerpt). */
+export function grokBotRequest(text: string): string {
+  const mark = `\n\n${GROKBOT_REQUEST_LABEL}\n\n`;
+  const at = text.lastIndexOf(mark);
+  return at >= 0 ? text.slice(at + mark.length) : text;
+}
+
+/** A Grok Bot message that could not go out: back into the composer (its files back on the pane), never dropped. */
+function grokBotBack(p: PaneState, text: string, attachments: UploadedAttachment[]): PaneState {
+  return { ...p, prefill: text, attachments: [...p.attachments, ...attachments.filter((f) => !p.attachments.some((a) => a.id === f.id))] };
 }
 
 /**
@@ -1468,6 +1487,17 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
       // About one session (e.g. its history could not be read): the bar of the panes showing it, if any; else app-wide.
       // already_accepted: nothing failed (a resent copy was refused) — no error bar.
       if (msg.code === 'already_accepted') return { ...state, panes: mapPanes(state, msg) };
+      // A Grok Bot conversation's new session refused: it already continues in `nextSession` — the request goes there (Pane).
+      const linkedPane = msg.code === 'grokbot_linked' && msg.nextSession && msg.clientRef !== undefined ? state.panes.find((p) => p.awaitingRef === msg.clientRef && p.awaitingSend && p.handoffFrom?.sessionId.startsWith('grokbot-')) : undefined;
+      if (linkedPane) return updatePane(state, linkedPane.id, (p) => {
+        const sent = p.awaitingSend!;
+        const last = p.items[p.items.length - 1];
+        return {
+          ...p, items: last?.kind === 'user' && last.text === sent.text ? p.items.slice(0, -1) : p.items,
+          awaitingStart: false, awaitingRef: null, awaitingSend: null, awaitingBehind: null, ...(p.activeTurnId === null ? { runStartedAt: null, progress: null } : {}),
+          grokBotGoto: { sessionId: msg.nextSession!, from: p.handoffFrom!.sessionId, text: grokBotRequest(sent.text), attachments: sent.attachments.map((f) => ({ ...f, size: 0 })) },
+        };
+      });
       const sid = msg.sessionId;
       // 총사령탑 refusals: said in the sheet / on the chip (CommanderChip REFUSAL_TEXT), not in the pane's bar — while one of
       // them can show it. With the feature off here, or a mode change refused with no commander view, no chip is drawn: the
@@ -1545,7 +1575,9 @@ export function reducer(state: AppState, action: Action): AppState {
               // Another session: its model is its own again (history shows it); a new one starts on the default unless picked.
               // The 자동 engine: 자동 model again (a model 자동 routed to is never sent with engine 자동).
               modelPicked: false, ...(action.sessionId === null && !p.modelPicked ? (p.engine === 'auto' ? { model: 'auto' as const } : engineOf(p.model) === 'claude' ? { model: DEFAULT_MODEL } : {}) : {}) }),
-        handoff: null, handoffFrom: null, prefill: null, notices: [], older: undefined, grokBotCwd: null, grokBotSend: null,
+        handoff: null, handoffFrom: null, prefill: null, notices: [], older: undefined, grokBotCwd: null, grokBotSend: null, grokBotGoto: null,
+        // A Grok Bot message still waiting for its folder: the request goes back into the composer here, not lost.
+        ...(p.grokBotSend ? { prefill: grokBotRequest(p.grokBotSend.text), attachments: p.grokBotSend.attachments } : {}),
       }));
     }
     case 'older_request': {
@@ -1614,13 +1646,17 @@ export function reducer(state: AppState, action: Action): AppState {
       const p = state.panes.find((x) => x.id === (action.paneId ?? state.activePaneId));
       const text = action.text.trim();
       if (!p || !action.from.startsWith('grokbot-') || (!text && !action.attachments.length)) return state;
-      const linked = grokBotLinked(state.projects, action.from);
-      if (linked) {
+      const back = (x: PaneState) => grokBotBack(x, text, action.attachments);
+      const to = action.to ?? grokBotLinked(state.projects, action.from)?.sessionId;
+      if (to) {
         // The pane opened the continuing session first (Pane: onOpenSession); the excerpt went with the first send only.
-        if (p.session?.sessionId !== linked.sessionId) return state;
+        if (p.session?.sessionId !== to) return updatePane(state, p.id, back);
         return updatePane(state, p.id, (x) => ({ ...x, queue: [...x.queue, { id: nextQueueId(), text, attachments: action.attachments, afterLoad: true as const }] }));
       }
-      if (p.session?.sessionId !== action.from) return state;
+      if (p.session?.sessionId !== action.from) return updatePane(state, p.id, back);
+      // Another pane already started the continuing session (its first send not linked yet): the text goes there, not into a second one.
+      const started = state.panes.find((x) => x.id !== p.id && x.session && x.handoffFrom?.sessionId === action.from);
+      if (started) return { ...updatePane(state, started.id, (x) => ({ ...x, queue: [...x.queue, { id: nextQueueId(), text, attachments: action.attachments }] })), activePaneId: started.id };
       const next = grokBotHandoff(p, state.projects);
       // As the manual flow sends it: the prefilled excerpt with the request typed after it.
       const first = { text: `${next.prefill ?? ''}${text}`, attachments: action.attachments };
@@ -1629,15 +1665,13 @@ export function reducer(state: AppState, action: Action): AppState {
         : { ...next, prefill: null, grokBotSend: first };
       return { ...state, panes: state.panes.map((x) => (x.id === p.id ? ready : x)) };
     }
-    case 'grokbot_send_cancel': return updatePane(state, action.paneId, (p) => {
-      const g = p.grokBotSend;
-      return g ? { ...p, grokBotSend: null, prefill: g.text, attachments: [...p.attachments, ...g.attachments.filter((f) => !p.attachments.some((a) => a.id === f.id))] } : p;
-    });
+    case 'grokbot_send_cancel': return updatePane(state, action.paneId, (p) => (p.grokBotSend ? grokBotBack({ ...p, grokBotSend: null }, p.grokBotSend.text, p.grokBotSend.attachments) : p));
     case 'set_new_cwd': {
       const cwd = action.cwd.trim();
       if (!cwd) return state;
       const target = state.panes.find((x) => x.id === (action.paneId ?? state.activePaneId));
-      if (cwd === grokBotHome(state.projects) || cwd === target?.handoffFrom?.grokBotHome) return state;
+      // Never the home folder. A Grok Bot message waiting for the folder goes back into the composer (the picker closed).
+      if (cwd === grokBotHome(state.projects) || cwd === target?.handoffFrom?.grokBotHome) return target?.grokBotSend ? updatePane(state, target.id, (p) => grokBotBack({ ...p, grokBotSend: null }, p.grokBotSend!.text, p.grokBotSend!.attachments)) : state;
       return updatePane(state, action.paneId, (p) => {
         // A Grok Bot conversation: the folder its send will start the new Grok session in.
         if (p.session?.sessionId?.startsWith('grokbot-')) return { ...p, grokBotCwd: cwd };

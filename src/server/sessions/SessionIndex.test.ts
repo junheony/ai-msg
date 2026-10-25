@@ -291,6 +291,8 @@ describe('SessionIndex: one row per Grok Bot conversation', () => {
     expect(ids(false)).toEqual(['g-next', 'g-old', 'grokbot-b']);
     expect(ids(true)).toEqual(['g-next', 'g-old', 'grokbot-b']);
     expect(idx.projects().flatMap((p) => p.sessions).find((s) => s.sessionId === 'g-next')?.prevSession).toBe('grokbot-a');
+    // A stale link (its session is in no list): the shown Grok Bot entry does not name it — the next send starts anew.
+    expect(idx.projects().flatMap((p) => p.sessions).find((s) => s.sessionId === 'grokbot-b')).not.toHaveProperty('nextSession');
     await meta.unlink('g-next');
     idx.regroup();
     expect(ids(false)).toEqual(['g-next', 'g-old', 'grokbot-a', 'grokbot-b']);

@@ -432,6 +432,25 @@ describe('ws', () => {
     a.ws.close();
   });
 
+  it('Grok Bot: a second new continuing session is refused before it exists, naming the linked one; a link to a session gone from every list is replaced', async () => {
+    const SX = '99999999-9999-4999-8999-999999999993';
+    const cwd = await seed(SX, 'grokbot-linked');
+    await meta.link('grokbot-z', SX, 'z (이어서)');
+    await meta.link('grokbot-y', '99999999-9999-4999-8999-0000000000ff', 'y (이어서)');
+    const a = await connect({ Origin: origin, Cookie: COOKIE });
+    await collect(a.ws, (m) => m.type === 'hello');
+    const refused = collect(a.ws, (m) => m.type === 'error');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd, text: 'whereami', handoffFrom: 'grokbot-z', clientRef: 'gb-1' }));
+    expect((await refused).at(-1)).toMatchObject({ type: 'error', turnId: null, clientRef: 'gb-1', code: 'grokbot_linked', nextSession: SX });
+    expect(meta.next('grokbot-z')).toBe(SX);
+    const done = collect(a.ws, (m) => m.type === 'turn_result');
+    a.ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd, text: 'whereami', handoffFrom: 'grokbot-y', clientRef: 'gb-2' }));
+    expect((await done).at(-1)).toMatchObject({ type: 'turn_result', ok: true });
+    await vi.waitFor(() => expect(meta.next('grokbot-y')).toBe('sess-cwd'));
+    expect(meta.prev('99999999-9999-4999-8999-0000000000ff')).toBeNull();
+    a.ws.close();
+  });
+
   it('handoff: a first send that ends without an id links nothing; its retry links once the id arrives, even after the sender disconnected', async () => {
     const SX = '99999999-9999-4999-8999-999999999992';
     const cwd = await seed(SX, 'handoff-retry');

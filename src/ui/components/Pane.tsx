@@ -529,13 +529,21 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const grokBotNew = isNew && !!pane.handoffFrom?.sessionId.startsWith('grokbot-');
   // A Grok Bot conversation is written to by sending: the text goes on in the Grok session continuing it — the one
   // already linked (opened here first: one per conversation), else a new one in grokBotSendCwd ('' = the picker asks).
-  const grokBotNext = grokBot && sid ? grokBotLinked(projects, sid) : undefined;
+  // Linked on the server but not in this device's list (another account's, say): the Grok Bot entry still names it (nextSession).
+  const grokBotNext = (grokBot && sid ? grokBotLinked(projects, sid) : undefined) ?? (grokBot && entry?.nextSession && s ? { sessionId: entry.nextSession, cwd: s.cwd, title: s.title } : undefined);
   const grokBotCwd = grokBot && !grokBotNext ? grokBotSendCwd(pane, projects) : '';
   const grokBotSend = (text: string) => {
     if (!sid) return;
     if (grokBotNext) onOpenSession?.(grokBotNext.sessionId, grokBotNext.cwd, grokBotNext.title);
-    dispatch({ type: 'grokbot_send', from: sid, text, attachments: pane.attachments, paneId: pane.id });
+    dispatch({ type: 'grokbot_send', from: sid, text, attachments: pane.attachments, paneId: pane.id, ...(grokBotNext ? { to: grokBotNext.sessionId } : {}) });
   };
+  // The server refused a second continuing session (grokbot_linked): open the one it named and send the request there.
+  useEffect(() => {
+    const g = pane.grokBotGoto;
+    if (!g || !s) return;
+    onOpenSession?.(g.sessionId, s.cwd, s.title);
+    dispatch({ type: 'grokbot_send', from: g.from, to: g.sessionId, text: g.text, attachments: g.attachments, paneId: pane.id });
+  }, [pane.grokBotGoto]);
   // A terminal `grok` has this conversation open: deck only reads it (sending too would fork it). The server rescans
   // the holders while a browser is connected, so the composer opens again by itself once that grok exits.
   const grokHeld = entry?.engine === 'grok' && !!entry.heldBy;
@@ -669,12 +677,12 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
             dispatch({ type: 'route_fit_resolve', how, paneId: pane.id });
             if (how === 'send') sendFromPane(pane, f.text, f.attachments.map((a) => ({ ...a, size: 0 })), dispatch, send, app.defaultPermMode ?? null, false, undefined, { ignoreFit: true });
           }}
-          composerNote={gone === 'retired' ? '뺀 계정의 세션이라 이어 쓸 수 없습니다 — 기록은 볼 수 있습니다' : gone === 'unknown' ? '설정에 없는 계정의 세션이라 이어 쓸 수 없습니다' : grokBot ? (grokBotNext ? ui().chat.grokBot.linkedNote(grokBotNext.title) : grokBotCwd ? ui().chat.grokBot.cwdNote(grokBotCwd) : ui().chat.grokBot.pickFirst) : grokBotNew ? (pane.grokBotSend ? ui().chat.grokBot.pickThenSend : s.cwd ? `작업 폴더: ${s.cwd} — 보내기 전에 바꿀 수 있어요` : '작업 폴더를 골라 주세요 — 홈 폴더에서는 시작하지 않아요') : grokHeld ? GROK_HELD.note : entry?.imported && entry.engine === 'gemini' && !entry.cwdMissing ? GEMINI_IMPORT_NOTE : null}
+          composerNote={gone === 'retired' ? '뺀 계정의 세션이라 이어 쓸 수 없습니다 — 기록은 볼 수 있습니다' : gone === 'unknown' ? '설정에 없는 계정의 세션이라 이어 쓸 수 없습니다' : grokBot ? (grokBotNext ? ui().chat.grokBot.linkedNote(grokBotNext.title) : grokBotCwd ? ui().chat.grokBot.cwdNote(grokBotCwd) : ui().chat.grokBot.pickFirst) : grokBotNew ? (pane.grokBotSend ? ui().chat.grokBot.pickThenSend : s.cwd ? ui().chat.grokBot.cwdChangeable(s.cwd) : ui().chat.grokBot.pickCwd) : grokHeld ? GROK_HELD.note : entry?.imported && entry.engine === 'gemini' && !entry.cwdMissing ? GEMINI_IMPORT_NOTE : null}
           onGrokBotHandoff={grokBot ? () => (grokBotNext ? onOpenSession?.(grokBotNext.sessionId, grokBotNext.cwd, grokBotNext.title) : dispatch({ type: 'grokbot_handoff', paneId: pane.id })) : undefined}
           grokBotHandoffLabel={grokBotNext ? ui().chat.grokBot.openLinked : undefined}
           onPickCwd={grokBotNew || (grokBot && !grokBotNext) ? () => setCwdPick(true) : undefined}
           idlePlaceholder={grokBot ? (grokBotNext ? ui().chat.grokBot.placeholderLinked : ui().chat.grokBot.placeholderNew) : undefined}
-          readOnly={grokBotNew && !s.cwd ? '작업 폴더를 고른 뒤 보낼 수 있어요' : entry?.codexArchived ? '보관된 Codex 대화라 읽기만 할 수 있어요' : entry?.imported && entry.cwdMissing ? '폴더가 없어 이어서 보낼 수 없어요 · 읽기만 할 수 있어요' : grokHeld ? GROK_HELD.readOnly : null}
+          readOnly={grokBotNew && !s.cwd ? ui().chat.grokBot.pickToSend : entry?.codexArchived ? '보관된 Codex 대화라 읽기만 할 수 있어요' : entry?.imported && entry.cwdMissing ? '폴더가 없어 이어서 보낼 수 없어요 · 읽기만 할 수 있어요' : grokHeld ? GROK_HELD.readOnly : null}
           onInterrupt={interrupt}
           onCancelStart={() => {
             // Waiting in the server's queue (turn_queued): take it back out there too, or it would run after the 취소.

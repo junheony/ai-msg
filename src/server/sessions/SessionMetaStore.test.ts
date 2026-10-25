@@ -150,6 +150,19 @@ describe('SessionMetaStore', () => {
     expect(s.next('grokbot-a')).toBe(ID3);
   });
 
+  it('a stale link (its session gone from every list) is replaced by the next continuation; a live one is kept', async () => {
+    const ID3 = '33333333-3333-4333-8333-333333333333';
+    const s = new SessionMetaStore(path.join(await tmp(), 'm.json'));
+    await s.load();
+    await s.link('grokbot-a', ID2, '여행 (이어서)');
+    await s.link('grokbot-a', ID3, '여행 (이어서)', () => true);
+    expect(s.next('grokbot-a')).toBe(ID2);
+    await s.link('grokbot-a', ID3, '여행 (이어서)', (id) => id !== ID2);
+    expect(s.next('grokbot-a')).toBe(ID3);
+    expect(s.prev(ID3)).toBe('grokbot-a');
+    expect(s.prev(ID2)).toBeNull();
+  });
+
   it('SessionIndex decorates entries with prevSession / nextSession from the links', async () => {
     const dir = await tmp();
     const root = path.join(dir, 'b');

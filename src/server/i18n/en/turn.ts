@@ -13,6 +13,8 @@ export const turn = {
   /** A background continuation moved to another engine: the message it sends there. */
   crossContinue: 'Please continue.',
   crossCarried: 'Only a summary excerpt of the earlier conversation is carried over',
+  /** A new session sent to continue a Grok Bot conversation that already continues in another session (one per conversation). */
+  grokBotLinked: 'This Grok Bot conversation already continues in another session — sending there instead',
   crossNotCarried: 'The earlier conversation could not be carried over',
   /** Continuing the sessions a restart cut (push/restartResume): what deck sends to each session the last restart cut; `tasks`: the cut background work, comma-separated ('' for none). */
   restartResume: {

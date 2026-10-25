@@ -5,7 +5,7 @@ import type { ProjectEntry, SessionEntry } from '../shared/session-types';
 import { deleteBlockedReason } from './components/SessionMenu';
 import { grokBotTags, importTitle, rowTag } from './components/Sidebar';
 import { grokBotLine } from './components/usageSeats';
-import { grokBotHandoffCwd, initialState, nextQueued, reducer, type AppState } from './state';
+import { grokBotHandoffCwd, grokBotRequest, initialState, nextQueued, reducer, type AppState } from './state';
 
 const pane = (s: AppState) => s.panes[0]!;
 const play = (msgs: ServerMessage[], start: AppState) => msgs.reduce((s, msg) => reducer(s, { type: 'server', msg }), start);
@@ -143,8 +143,11 @@ describe('reducer: Grok Bot 대화에서 바로 보내기 (grokbot_send)', () =>
   it('already continued: no new session — the text alone (no excerpt again) is queued in the opened continuing session, sent once its history is in', () => {
     const next = e({ sessionId: 'g-next', imported: false, cwd: '/w/next', title: '여행 계획 (이어서)', prevSession: 'grokbot-a' });
     let s = opened([proj('/h', [bot]), proj('/w/next', [next])]);
-    // Still on the Grok Bot id (the pane did not open the session): nothing.
-    expect(sendIt(s)).toBe(s);
+    // Still on the Grok Bot id (the pane did not open the session): nothing is sent — the text goes back into the composer.
+    const kept = pane(sendIt(s));
+    expect(kept.session?.sessionId).toBe('grokbot-a');
+    expect(kept.queue).toEqual([]);
+    expect(kept.prefill).toBe('다음 달에 갈래');
     s = reducer(s, { type: 'open', sessionId: 'g-next', cwd: '/w/next', title: '여행 계획 (이어서)', paneId: pane(s).id });
     s = sendIt(s, '두 번째');
     const p = pane(s);
@@ -154,6 +157,70 @@ describe('reducer: Grok Bot 대화에서 바로 보내기 (grokbot_send)', () =>
     expect(nextQueued(p)).toBeNull(); // loading
     s = play([{ type: 'history', sessionId: 'g-next', cwd: '/w/next', account: 'x1', engine: 'grok', sandbox: null, runningTurnId: null, messages: [] }], s);
     expect(nextQueued(pane(s))?.text).toBe('두 번째');
+  });
+
+  it('stale link (the list does not show the continuing session, the Grok Bot entry still names it): sent to that session once opened, no new one', () => {
+    let s = opened([proj('/h', [{ ...bot, nextSession: 'g-away' }]), proj('/w/work', [work])]);
+    s = reducer(s, { type: 'open', sessionId: 'g-away', cwd: '/h', title: '여행 계획', paneId: pane(s).id });
+    s = reducer(s, { type: 'grokbot_send', from: 'grokbot-a', to: 'g-away', text: '두 번째', attachments: [], paneId: pane(s).id });
+    expect(pane(s).session?.sessionId).toBe('g-away');
+    expect(pane(s).queue.map((q) => q.text)).toEqual(['두 번째']);
+  });
+
+  it('opening the continuing session fails: the queue stops and the text goes back into the composer', () => {
+    let s = opened([proj('/h', [{ ...bot, nextSession: 'g-away' }])]);
+    s = reducer(s, { type: 'open', sessionId: 'g-away', cwd: '/h', title: '여행 계획', paneId: pane(s).id });
+    s = reducer(s, { type: 'grokbot_send', from: 'grokbot-a', to: 'g-away', text: '두 번째', attachments: [], paneId: pane(s).id });
+    s = play([{ type: 'error', turnId: null, sessionId: 'g-away', message: 'not found', code: 'not_found' }], s);
+    const p = pane(s);
+    expect(p.queue).toEqual([]);
+    expect(nextQueued(p)).toBeNull();
+    expect(p.prefill).toBe('두 번째');
+    expect(p.notices).toHaveLength(1);
+  });
+
+  it('sent again before the first send is linked: another pane already started the continuing session — the text goes there, no second session', () => {
+    const ps = [proj('/h', [bot]), proj('/w/work', [work])];
+    let s = sendIt(opened(ps));
+    s = reducer(s, { type: 'add_pane' });
+    const second = s.panes[1]!.id;
+    s = reducer(s, { type: 'open', sessionId: 'grokbot-a', cwd: '/h', title: '여행 계획', paneId: second });
+    s = reducer(s, { type: 'grokbot_send', from: 'grokbot-a', text: '하나 더', attachments: [], paneId: second });
+    expect(s.panes[1]!.session?.sessionId).toBe('grokbot-a');
+    expect(s.panes[1]!.queue).toEqual([]);
+    expect(s.panes[0]!.queue.map((q) => q.text)).toEqual([first('다음 달에 갈래'), '하나 더']);
+    expect(s.activePaneId).toBe(s.panes[0]!.id);
+  });
+
+  it('the server refuses a second continuing session (grokbot_linked): the bubble goes and the request alone is handed to the session it named', () => {
+    let s = sendIt(opened([proj('/h', [bot]), proj('/w/work', [work])]));
+    const id = pane(s).id;
+    s = reducer(s, { type: 'sent', paneId: id, text: first('다음 달에 갈래'), clientRef: 'r1' });
+    s = play([{ type: 'error', turnId: null, clientRef: 'r1', code: 'grokbot_linked', nextSession: 'g-next', message: '이미 이어짐' }], s);
+    const p = pane(s);
+    expect(p.awaitingRef).toBeNull();
+    expect(p.items).toEqual([]);
+    expect(p.grokBotGoto).toEqual({ sessionId: 'g-next', from: 'grokbot-a', text: '다음 달에 갈래', attachments: [] });
+    expect(s.error).toBeNull();
+    expect(grokBotRequest('그냥 글')).toBe('그냥 글');
+  });
+
+  it('waiting for a folder, then another session is opened: the request goes back into the composer there, not lost', () => {
+    const s = sendIt(opened([proj('/h', [bot])]));
+    const moved = pane(reducer(s, { type: 'open', sessionId: 'X9', cwd: '/w/x', title: 'x', paneId: pane(s).id }));
+    expect(moved.session?.sessionId).toBe('X9');
+    expect(moved.grokBotSend).toBeNull();
+    expect(moved.queue).toEqual([]);
+    expect(moved.prefill).toBe('다음 달에 갈래');
+  });
+
+  it('waiting for a folder, the home folder is picked (refused): the picker closes and the text goes back into the composer', () => {
+    const s = sendIt(opened([proj('/h', [bot])]));
+    const p = pane(reducer(s, { type: 'set_new_cwd', cwd: '/h', paneId: pane(s).id }));
+    expect(p.session?.cwd).toBe('');
+    expect(p.grokBotSend).toBeNull();
+    expect(p.queue).toEqual([]);
+    expect(p.prefill).toBe(first('다음 달에 갈래'));
   });
 });
 

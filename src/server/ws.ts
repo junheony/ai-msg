@@ -23,7 +23,7 @@ import { findGrokSessionDir, readGrokBefore, readGrokFrom, readGrokTranscriptTai
 import type { ByteWindow } from './engine/lineWindow';
 import { cursorOf, fileTag, HISTORY_FROM_MAX, HISTORY_FROM_SCAN_BYTES, parseCursor } from './historyCursor';
 import { elsewhereNotice } from './sessions/elsewhereNotice';
-import { GROKBOT_READONLY_NOTICE, readGrokBotTranscript } from './sessions/GrokBotImports';
+import { GROKBOT_ID_PREFIX, GROKBOT_READONLY_NOTICE, readGrokBotTranscript } from './sessions/GrokBotImports';
 import { grokImportBlockReason } from './sessions/GrokImports';
 import { OWN_LAG_MS, scanForeign } from './sessions/foreignWrites';
 import { deckWrites } from './engine/claudeCli/ownedEntries';
@@ -184,7 +184,7 @@ export type WsDeps = {
   /** Attachment metadata (name, image or not) for the prompt every viewing device is shown. */
   attachments?: { resolve(ids: string[]): { found: { id: string; name: string; isImage: boolean }[] } };
   /** 새 세션으로 이어가기: a new session sent with `handoffFrom` is linked to that session (and titled) here once it has an id. */
-  meta?: Pick<SessionMetaStore, 'link' | 'branch'> & Partial<Pick<SessionMetaStore, 'update' | 'setCwd' | 'title'>>;
+  meta?: Pick<SessionMetaStore, 'link' | 'branch'> & Partial<Pick<SessionMetaStore, 'update' | 'setCwd' | 'title' | 'next'>>;
   /** The send clientRefs / steer ids each session accepted (survives a restart); rides `history` as `acceptedRefs`. */
   acceptedRefs?: Pick<AcceptedRefs, 'add' | 'remove' | 'has' | 'list' | 'since'>;
   /** Process scan behind the index entries' `heldBy` (the same object the SessionIndex reads): rescanned at hello, open, send and on the outside poll. */
@@ -388,6 +388,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   /** Sessions deck started whose CLI named them but whose first turn has not stored them yet (`new:` busy key still held). */
   const ownUnstored = () => [...turns.values()].flatMap((t) => (t.sessionId && busy.get(`new:${t.turnId}`) === t.turnId ? [t.sessionId] : []));
   const projects = () => deps.index.projects(deps.store.codexEntries(), { own: ownUnstored() });
+  /** A session some list still has (headless ones too): a handoff link to one that is not is stale (SessionMetaStore.link). */
+  const sessionListed = (id: string) => deps.index.projects(deps.store.codexEntries(), { all: true, own: ownUnstored() }).some((pr) => pr.sessions.some((e) => e.sessionId === id));
   const pinList = () => deps.pins?.list() ?? [];
   const iconMap = () => deps.sessionIcons?.list() ?? {};
   const indexMsg = (): ServerMessage => ({ type: 'index', projects: projects(), pins: pinList(), sessionIcons: iconMap(), desktop: deps.index.desktop() });
@@ -623,9 +625,12 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     if (!deps.meta) return;
     const old = deps.index.lookup(from)?.title ?? deps.index.codexOwned(deps.store.codexEntries()).find((e) => e.sessionId === from)?.title ?? from.slice(0, 8);
     try {
-      await deps.meta.link(from, to, handoffTitle(old));
+      await deps.meta.link(from, to, handoffTitle(old), sessionListed);
       deps.index.regroup();
       broadcast(indexMsg());
+      // Two first sends raced (another device): the conversation keeps its first continuing session; this one says so.
+      const next = deps.meta.next?.(from);
+      if (from.startsWith(GROKBOT_ID_PREFIX) && next && next !== to) broadcast({ type: 'error', turnId: null, sessionId: to, message: sm().turn.grokBotLinked, code: 'grokbot_linked', nextSession: next });
     } catch (err) {
       console.error('deck: handoff link failed', errMsg(err));
     }
@@ -864,6 +869,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     const fromKnown = isPinnableId(hf) && (!!deps.store.get(hf) || !!deps.index.lookup(hf));
     const badPin = msg.sessionId === null && msg.accountPin && !msg.branch && !fromKnown ? pinRefusal(msg.accountPin) : null;
     if (badPin) { send(ws, { type: 'error', turnId: null, message: badPin, ...ref }); return; }
+    // One continuing session per Grok Bot conversation: a second "new" one (a device that has not seen the link yet) is
+    // refused before it exists, naming the session to send to instead. A link to a session gone from every list is stale.
+    const linkedTo = msg.sessionId === null && hf?.startsWith(GROKBOT_ID_PREFIX) ? deps.meta?.next?.(hf) : null;
+    if (linkedTo && sessionListed(linkedTo)) { send(ws, { type: 'error', turnId: null, message: sm().turn.grokBotLinked, code: 'grokbot_linked', nextSession: linkedTo, ...ref }); return; }
     // Idempotency: a send this session already took (or is taking) under this ref — a resent queue copy, a duplicated tab — runs once.
     const dup = msg.sessionId && msg.clientRef ? refusal(msg.sessionId, msg.clientRef) : undefined;
     if (dup) { send(ws, { type: 'error', turnId: null, ...dup, ...ref }); return; }

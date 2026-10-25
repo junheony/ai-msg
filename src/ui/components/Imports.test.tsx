@@ -170,6 +170,17 @@ describe('Grok Bot conversation: write and send', () => {
     expect(h.sends()).toEqual([expect.objectContaining({ sessionId: 'g-next', text: '두 번째' })]);
     expect(h.sends().filter((m) => m.sessionId === null)).toHaveLength(0);
   });
+
+  it('another device linked first (the server refuses with grokbot_linked): the pane opens the named session and the request alone goes there', () => {
+    const h = setup([...projects([bot]), { cwd: '/w/proj', name: 'proj', pinned: false, sessions: [work] }]);
+    h.type('다음 달에 갈래');
+    const first = h.sends()[0]!;
+    h.act({ type: 'server', msg: { type: 'error', turnId: null, clientRef: first.clientRef, code: 'grokbot_linked', nextSession: 'g-other', message: '이미 이어짐' } });
+    expect(h.opened).toHaveBeenCalledWith('g-other');
+    h.act({ type: 'server', msg: { type: 'history', sessionId: 'g-other', cwd: '/w/other', account: 'x1', engine: 'grok', sandbox: null, runningTurnId: null, messages: [] } });
+    expect(h.sends().slice(1)).toEqual([expect.objectContaining({ sessionId: 'g-other', text: '다음 달에 갈래' })]);
+    expect(h.sends().filter((m) => m.sessionId === null)).toHaveLength(1);
+  });
 });
 
 describe('Sidebar menu on Grok Bot conversations', () => {

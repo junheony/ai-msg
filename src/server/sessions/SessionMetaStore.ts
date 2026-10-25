@@ -109,11 +109,12 @@ export class SessionMetaStore {
 
   /**
    * 새 세션으로 이어가기: `to` continues `from`; `to` is titled `title`. A session continues into one session
-   * only — once `from` has a next session, a link to another is refused (it would orphan the first).
+   * only — once `from` has a next session, a link to another is refused (it would orphan the first). `alive` says whether
+   * a session still exists: a link to one that is gone (deleted outside deck, its account removed) is replaced instead.
    */
-  async link(from: string, to: string, title: string): Promise<SessionMeta> {
+  async link(from: string, to: string, title: string, alive?: (sessionId: string) => boolean): Promise<SessionMeta> {
     const old = this.nextIds.get(from);
-    if (old && old !== to) {
+    if (old && old !== to && (!alive || alive(old))) {
       console.warn(`deck: ${from} already continues in ${old}; not linking ${to}`);
       return this.snapshot();
     }

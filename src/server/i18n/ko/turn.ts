@@ -10,6 +10,7 @@ export const turn: Widen<typeof en> = {
   crossContinue: '이어서 진행해 주세요.',
   crossCarried: '이전 대화는 요약 발췌만 넘어갑니다',
   crossNotCarried: '이전 대화를 넘기지 못했습니다',
+  grokBotLinked: '이 Grok Bot 대화는 이미 다른 세션으로 이어지고 있어요 — 그 세션으로 보내요',
   restartResume: {
     lead: '서버가 다시 시작되면서 이 세션에서 하던 작업이 끊겼습니다.',
     prompt: (tasks: string) =>
