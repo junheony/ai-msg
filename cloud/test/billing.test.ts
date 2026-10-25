@@ -104,8 +104,8 @@ describe('/checkout (app origin)', () => {
     expect((await call('/static/boot.js')).status).toBe(404);
   });
 
-  it('/checkout with an active (or past_due) subscription → /account; intent says already_subscribed', async () => {
-    for (const status of ['active', 'past_due']) {
+  it('/checkout with an active, trialing or past_due subscription → /account; intent says already_subscribed', async () => {
+    for (const status of ['active', 'trialing', 'past_due']) {
       const u = await user();
       await subscribe(u.id, { status });
       const r = await call('/checkout?plan=pro-monthly', web(u));
@@ -115,6 +115,37 @@ describe('/checkout (app origin)', () => {
       expect(i.status).toBe(409);
       expect(await i.json()).toMatchObject({ code: 'already_subscribed' });
     }
+  });
+
+  it('a live subscription blocks checkout even when a longer comp grant wins the plan; the account page offers no Subscribe', async () => {
+    const u = await user();
+    await subscribe(u.id);
+    await env.DB.prepare("INSERT INTO grants (user_id, plan, until) VALUES (?, 'comp', ?)").bind(u.id, Date.now() + 365 * DAY).run();
+    expect((await call('/checkout?plan=pro-yearly', web(u))).headers.get('location')).toBe('/account');
+    const i = await post('/v1/billing/intent', { plan: 'pro-yearly' }, { cookie: u.cookie });
+    expect(i.status).toBe(409);
+    expect(await i.json()).toMatchObject({ code: 'already_subscribed' });
+    expect(await (await call('/account', web(u))).text()).not.toContain('/checkout?plan=');
+  });
+
+  it('a canceled subscription does not block checkout', async () => {
+    const u = await user();
+    await subscribe(u.id, { status: 'canceled' });
+    expect((await post('/v1/billing/intent', { plan: 'pro-monthly' }, { cookie: u.cookie })).status).toBe(200);
+  });
+
+  it('an open intent lasts 60 minutes (time on the Paddle overlay); complete cannot revive an expired one', async () => {
+    const u = await user();
+    expect((await post('/v1/billing/intent', { plan: 'pro-monthly' }, { cookie: u.cookie })).status).toBe(200);
+    const exp = await env.DB.prepare('SELECT expires_at FROM checkout_intents WHERE user_id = ?').bind(u.id).first<number>('expires_at');
+    expect(exp! - Date.now()).toBeGreaterThan(59 * 60_000);
+    expect(exp! - Date.now()).toBeLessThanOrEqual(60 * 60_000);
+    await env.DB.prepare('UPDATE checkout_intents SET expires_at = ? WHERE user_id = ?').bind(Date.now() - 1, u.id).run();
+    const r = await post('/v1/billing/intent/complete', {}, { cookie: u.cookie });
+    expect(r.status).toBe(409);
+    expect(await r.json()).toMatchObject({ code: 'no_intent' });
+    const row = await env.DB.prepare('SELECT completed_at FROM checkout_intents WHERE user_id = ?').bind(u.id).first<number | null>('completed_at');
+    expect(row).toBeNull();
   });
 
   it('completed intent within 15 min → /account?pending=1; intent API returns payment_pending; account shows it', async () => {
@@ -288,6 +319,14 @@ describe('/account', () => {
     expect(await env.DB.prepare('SELECT revoked_at FROM hosts WHERE id = ?').bind(h.hostId).first<number>('revoked_at')).not.toBeNull();
     expect(await (await call('/account', { headers: { cookie: h.cookie } })).text()).not.toContain(`data-host="${h.hostId}"`);
     expect((await post(`/v1/hosts/${h.hostId}/unlink`, {}, { cookie: h.cookie })).status).toBe(404);
+  });
+
+  it('unlink from the account page is rate limited per user (20 an hour)', async () => {
+    const u = await user();
+    for (let i = 0; i < 20; i++) expect((await post('/v1/hosts/hst_none/unlink', {}, { cookie: u.cookie })).status).toBe(404);
+    const r = await post('/v1/hosts/hst_none/unlink', {}, { cookie: u.cookie });
+    expect(r.status).toBe(429);
+    expect(await r.json()).toMatchObject({ code: 'rate_limited' });
   });
 
   it('plan lines: Pro monthly with next payment + Manage billing; past_due; canceled; expired', async () => {

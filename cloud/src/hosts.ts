@@ -155,8 +155,9 @@ export async function hostUnlink(c: Ctx): Promise<Response> {
   return json(200, { ok: true });
 }
 
-/** `POST /v1/hosts/:id/unlink` (account page, cookie route) — the same, for a still-linked host of the signed-in user; else 404. */
+/** `POST /v1/hosts/:id/unlink` (account page, cookie route) — the same, for a still-linked host of the signed-in user; else 404. 20 an hour per user. */
 export const hostUnlinkByUser = cookieRoute({ session: 'required' }, async (c) => {
+  if (!(await hit(c.env.DB, `unlink:user:${c.userId}`, 20, HOUR, c.nowMs))) return problem(429, 'rate_limited');
   const id = await c.env.DB.prepare('SELECT id FROM hosts WHERE id = ? AND user_id = ? AND revoked_at IS NULL').bind(c.params.id, c.userId).first<string>('id');
   if (!id) return problem(404, 'unknown_host');
   await unlink(c, id);

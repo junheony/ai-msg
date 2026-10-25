@@ -66,10 +66,10 @@ npm --prefix cloud test        # miniflare 안의 workerd, 네트워크 없음
 
 - `GET /account`: 이메일, 요금제 줄, 연결된 Mac[Unlink]·폰[Revoke], 구독 버튼(살아 있는 구독·확인 중 결제가 없을 때), [Manage billing](연결된 Paddle customer 가 있을 때), Sign out. 서드파티 스크립트 없음 — 기본 엄격 CSP.
 - `GET /checkout?plan=pro-monthly|pro-yearly`: Paddle.js 오버레이. 이 페이지만 `script-src 'self' https://cdn.paddle.com`·Paddle frame 출처를 허용하는 CSP 를 쓴다. relay 출처에서는 404.
-- 흐름: checkout.js → `POST /v1/billing/intent`(의도 행을 먼저 쓰고 서명된 ref 를 돌려준다, 15분) → `Paddle.Checkout.open`(`customer.email` = 계정 이메일, `settings.allowLogout: false`, `customData` 에는 ref 만) → `checkout.completed` 면 `POST /v1/billing/intent/complete`(15분 더 잠금) → `/account?pending=1`(10초마다 새로 고침, 웹훅이 오면 Task 9 가 의도 행을 지운다).
-- 잠금: 구독이 `active`·`past_due` 이거나 완료한 결제가 확인 중이면 새 결제를 막는다(409 `already_subscribed`·`payment_pending`).
+- 흐름: checkout.js → `POST /v1/billing/intent`(의도 행을 먼저 쓰고 서명된 ref 를 돌려준다, 60분 — 결제 창에 오래 머물러도 웹훅 때 열려 있도록) → `Paddle.Checkout.open`(`customer.email` = 계정 이메일, `settings.allowLogout: false`, `customData` 에는 ref 만) → `checkout.completed` 면 `POST /v1/billing/intent/complete`(아직 열린 의도만, 15분 더 잠금) → `/account?pending=1`(10초마다 새로 고침, 웹훅이 오면 Task 9 가 의도 행을 지운다).
+- 잠금: `subscriptions` 에 `active`·`trialing`·`past_due` 구독이 하나라도 있으면(comp 기간이 더 길어도) 또는 완료한 결제가 확인 중이면 새 결제를 막는다(409 `already_subscribed`·`payment_pending`). 계정 페이지의 구독 버튼도 같은 헬퍼(`liveSubscription`)로 판단한다.
 - `POST /v1/billing/portal`: 그 사용자에게 연결된 customer 와, 그 customer 아래 그 사용자의 살아 있는 구독만 넘긴다(`no-store`). 연결된 customer 가 없으면 409 `no_customer` + "결제 때 쓴 이메일이 계정 이메일과 다를 수 있다 — 지원에 문의" 안내(영문). Paddle 실패는 502.
-- `POST /v1/hosts/:id/unlink`(쿠키), `POST /logout`(폼). 정적 파일 `/static/{checkout,account}.js`·`pages.css` 는 ASSETS 바인딩이 없어서 TS 문자열로 내보낸다.
+- `POST /v1/hosts/:id/unlink`(쿠키, 사용자당 시간 20회), `POST /logout`(폼). 정적 파일 `/static/{checkout,account}.js`·`pages.css` 는 ASSETS 바인딩이 없어서 TS 문자열로 내보낸다.
 - 로컬 앱의 설정 > 클라우드 행: [Pro 구독]·[구독 관리] 는 `/api/cloud/web/{checkout,account}` 로 열고, 로컬 서버가 클라우드 주소로 302 한다(상태 응답에 클라우드 주소를 싣지 않기 위해). 돌아오면 요금제를 한 번 다시 읽는다.
 
 ## 운영 알림 보기

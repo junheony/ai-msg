@@ -1,7 +1,7 @@
 import { cookieRoute, endSession } from '../auth/session';
 import { type Entitled, entitledState } from '../entitled';
 import type { Env } from '../env';
-import { NO_CUSTOMER_MESSAGE } from '../billing';
+import { NO_CUSTOMER_MESSAGE, liveSubscription } from '../billing';
 import { redirect } from '../http';
 import { PRO_LINE, day, esc, page } from './layout';
 
@@ -43,7 +43,7 @@ export const accountGet = cookieRoute({ session: 'page' }, async (c) => {
     db.prepare('SELECT (EXISTS (SELECT 1 FROM trials WHERE user_id = ?1) OR EXISTS (SELECT 1 FROM subscriptions WHERE user_id = ?1) OR EXISTS (SELECT 1 FROM grants WHERE user_id = ?1)) AS x').bind(c.userId),
   ]);
   const u = user!.results[0] as { email: string; paddle_customer_id: string | null } | undefined;
-  const live = e.plan === 'pro' && (e.st === 'active' || e.st === 'past_due' || e.st === 'trialing');
+  const live = await liveSubscription(db, c.userId); // same rule as checkoutBlock
   const isPending = !live && pending!.results.length > 0;
   const hostRows = hosts!.results as { id: string; name: string; created_at: number }[];
   const deviceRows = devices!.results as { id: string; name: string; created_at: number }[];
@@ -60,7 +60,7 @@ export const accountGet = cookieRoute({ session: 'page' }, async (c) => {
     u?.paddle_customer_id ? '<button type="button" id="manage-billing">Manage billing</button>' : '',
   ].join('');
   // A subscription with no linked customer (paid under someone else's Paddle customer): say so instead of a dead button.
-  const unlinked = !u?.paddle_customer_id && e.plan === 'pro' ? `<p class="muted" id="billing-unavailable">${esc(NO_CUSTOMER_MESSAGE)}</p>` : '';
+  const unlinked = !u?.paddle_customer_id && live ? `<p class="muted" id="billing-unavailable">${esc(NO_CUSTOMER_MESSAGE)}</p>` : '';
 
   return page('Account', `<h1>Your account</h1>
 <p>Signed in as <strong>${esc(u?.email ?? '')}</strong></p>
