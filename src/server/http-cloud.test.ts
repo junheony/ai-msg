@@ -147,6 +147,21 @@ describe('/api/cloud', () => {
     expect((await post(without, '/api/cloud/plan/refresh')).status).toBe(404);
   });
 
+  it('web/account and web/checkout redirect to the app origin (fixed targets only), cookie needed', async () => {
+    const before = cloudCalls.length;
+    const go = (p: string, headers: Record<string, string> = { cookie }) => fetch(`${withCloud}${p}`, { headers, redirect: 'manual' });
+    const a = await go('/api/cloud/web/account');
+    expect(a.status).toBe(302);
+    expect(a.headers.get('location')).toBe('http://127.0.0.1:9/account');
+    expect(a.headers.get('cache-control')).toBe('no-store');
+    expect((await go('/api/cloud/web/checkout')).headers.get('location')).toBe('http://127.0.0.1:9/checkout?plan=pro-monthly');
+    expect((await go('/api/cloud/web/account', {})).status).toBe(401);
+    expect((await go('/api/cloud/web/evil')).status).toBe(404);
+    expect((await go('/api/cloud/web/account?next=https://evil.example')).headers.get('location')).toBe('http://127.0.0.1:9/account');
+    expect((await fetch(`${without}/api/cloud/web/account`, { headers: { cookie }, redirect: 'manual' })).status).toBe(404);
+    expect(cloudCalls.length).toBe(before); // a redirect, not a cloud request
+  });
+
   it('the cloud feature is advertised only with the service', async () => {
     expect(await helloFeatures(withCloud)).toContain('cloud');
   });

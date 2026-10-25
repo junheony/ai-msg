@@ -11,6 +11,7 @@ describe('relayPathPolicy', () => {
     ['POST', '/api/cloud/unlink', 'mac_confirm_required'], ['POST', '/api/cloud/pair/start', 'mac_confirm_required'],
     ['POST', '/api/cloud/devices/d1/revoke', 'mac_confirm_required'],
     ['POST', '/api/cloud/plan/refresh', 'mac_confirm_required'], ['GET', '/api/cloud/plan/refresh', 'mac_confirm_required'],
+    ['GET', '/api/cloud/web/account', 'mac_confirm_required'], ['GET', '/api/cloud/web/checkout', 'mac_confirm_required'],
     ['GET', '/api/../etc', 'deny'], ['GET', '/api/%2E%2E/x', 'deny'], ['GET', '/api\\..\\x', 'deny'],
     ['GET', '//evil.test/api/me', 'deny'], ['GET', '/index.html', 'deny'],
   ])('%s %s → %s', (m, p, want) => expect(relayPathPolicy(m, p)).toBe(want));

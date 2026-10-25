@@ -65,4 +65,45 @@ describe('CloudSection plan row', () => {
     expect(fetchFn.mock.calls[0]![0]).toBe('/api/cloud/status');
     expect(screen.queryByRole('button', { name: T.refresh })).toBeNull();
   });
+
+  it('구독 관리 opens the app-origin account page on this device', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json(ent({ plan: 'pro', st: 'active', untilMs: Date.now() + 30 * DAY }))));
+    const open = vi.fn(() => null);
+    vi.stubGlobal('open', open);
+    render(<CloudSection />);
+    fireEvent.click(await screen.findByRole('button', { name: T.manage }));
+    // The local server answers 302 → <app origin>/account (src/server/http-cloud.test.ts); the UI holds no cloud address.
+    expect(open).toHaveBeenCalledWith('/api/cloud/web/account', '_blank', 'noopener');
+    expect(screen.queryByRole('button', { name: T.subscribe })).toBeNull();
+  });
+
+  it('after trial: Pro 구독 opens checkout; coming back refreshes the plan once', async () => {
+    const fetchFn = vi.fn(async () => json(ent({ plan: 'trial', st: 'trialing', untilMs: Date.now() - DAY })));
+    vi.stubGlobal('fetch', fetchFn);
+    const open = vi.fn(() => null);
+    vi.stubGlobal('open', open);
+    render(<CloudSection />);
+    fireEvent.click(await screen.findByRole('button', { name: T.subscribe }));
+    expect(open).toHaveBeenCalledWith('/api/cloud/web/checkout', '_blank', 'noopener');
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    const visible = vi.spyOn(document, 'visibilityState', 'get');
+    visible.mockReturnValue('hidden');
+    document.dispatchEvent(new Event('visibilitychange'));
+    visible.mockReturnValue('visible');
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
+    expect(fetchFn).toHaveBeenLastCalledWith('/api/cloud/plan/refresh', expect.objectContaining({ method: 'POST' }));
+    document.dispatchEvent(new Event('visibilitychange'));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fetchFn).toHaveBeenCalledTimes(2); // once per trip to the checkout, not on every focus
+    visible.mockRestore();
+  });
+
+  it('relay mode (the phone): no subscription buttons', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({ enabled: true, linked: true, plan: ent({}) })));
+    render(<CloudSection readOnly />);
+    await screen.findByTestId('plan-row');
+    expect(screen.queryByRole('button', { name: T.subscribe })).toBeNull();
+    expect(screen.queryByRole('button', { name: T.manage })).toBeNull();
+  });
 });

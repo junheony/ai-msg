@@ -13,6 +13,9 @@ const TEST_VARS = {
   PADDLE_WEBHOOK_SECRET: `pdl_ntfset_${'a'.repeat(26)}_${'w'.repeat(32)}`,
   PADDLE_ENV: 'sandbox',
   PADDLE_IP_CHECK: '0',
+  PADDLE_CLIENT_TOKEN: 'test_client_token',
+  PADDLE_PRICE_MONTHLY: 'pri_monthly_test',
+  PADDLE_PRICE_YEARLY: 'pri_yearly_test',
 };
 
 export default defineConfig({

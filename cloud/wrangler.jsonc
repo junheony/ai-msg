@@ -31,7 +31,13 @@
     // Paddle API host and webhook IP list. Switch to "production" when going live (with live secrets).
     "PADDLE_ENV": "sandbox",
     // Webhooks only from Paddle's published IPs (CF-Connecting-IP).
-    "PADDLE_IP_CHECK": "1"
+    "PADDLE_IP_CHECK": "1",
+    // Checkout (Task 10). Public values, filled in by the operator: the Paddle.js client-side token (`test_…` for
+    // sandbox, `live_…` for production — checkConfig refuses a mismatch) and the two price ids (`pri_…`).
+    // Empty → /checkout answers 503. PADDLE_DISCOUNT_FOUNDING (optional) prefills a discount code.
+    "PADDLE_CLIENT_TOKEN": "",
+    "PADDLE_PRICE_MONTHLY": "",
+    "PADDLE_PRICE_YEARLY": ""
   },
   "routes": [
     { "pattern": "app.aimsg.app", "custom_domain": true },

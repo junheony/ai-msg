@@ -58,7 +58,19 @@ npm --prefix cloud test        # miniflare 안의 workerd, 네트워크 없음
 3. 비밀은 `wrangler secret put` 으로 넣는다: `SESSION_SECRET`, `EMAIL_HASH_SECRET`, `CHECKOUT_SECRET`(각각 32자 이상의 임의 값), `RESEND_API_KEY`, `PADDLE_WEBHOOK_SECRET`(Paddle 알림 대상의 비밀), `PADDLE_API_KEY`(권한 `subscription.write`, Task 10 부터 `customer_portal_session.write` 도). `PADDLE_WEBHOOK_SECRET` 이 비었거나 32자 미만이면 웹훅 경로만 503 이고(나머지는 정상), `pdl_ntfset_` 로 시작하지 않으면 경고 로그만 남긴다. Paddle 알림 대상은 `subscription.*`·`transaction.completed`·`adjustment.*` 와 함께 **`customer.created`·`customer.updated`** 도 구독해야 한다(빠지면 customer 연결이 보류에서 멈춘다).
    - `vars` 의 `PADDLE_ENV`(`sandbox`/`production`)와 키 환경을 맞춘다. 샌드박스 키는 샌드박스 주소에서만 통한다.
 4. `wrangler.jsonc` 의 `vars` 를 채운다: `EMAIL_FROM`(Resend 에서 검증한 발신 주소), 두 출처. `routes` 에는 두 호스트 이름을 커스텀 도메인으로 적는다.
+   - 결제(Task 10): `PADDLE_CLIENT_TOKEN`(클라이언트 토큰, 샌드박스는 `test_`·실서비스는 `live_` — `PADDLE_ENV` 와 안 맞으면 checkConfig 가 막는다), `PADDLE_PRICE_MONTHLY`·`PADDLE_PRICE_YEARLY`(가격 id), 선택 `PADDLE_DISCOUNT_FOUNDING`. 비어 있으면 `/checkout` 은 503 이다.
+   - Paddle 대시보드에서 app 출처 도메인(예: `app.aimsg.app`)의 결제 승인(checkout domain approval)은 사용자가 한다.
 5. `wrangler deploy` 로 배포한다.
+
+## 계정·결제 페이지 (Task 10, app 출처에서만)
+
+- `GET /account`: 이메일, 요금제 줄, 연결된 Mac[Unlink]·폰[Revoke], 구독 버튼(살아 있는 구독·확인 중 결제가 없을 때), [Manage billing](연결된 Paddle customer 가 있을 때), Sign out. 서드파티 스크립트 없음 — 기본 엄격 CSP.
+- `GET /checkout?plan=pro-monthly|pro-yearly`: Paddle.js 오버레이. 이 페이지만 `script-src 'self' https://cdn.paddle.com`·Paddle frame 출처를 허용하는 CSP 를 쓴다. relay 출처에서는 404.
+- 흐름: checkout.js → `POST /v1/billing/intent`(의도 행을 먼저 쓰고 서명된 ref 를 돌려준다, 15분) → `Paddle.Checkout.open`(`customer.email` = 계정 이메일, `settings.allowLogout: false`, `customData` 에는 ref 만) → `checkout.completed` 면 `POST /v1/billing/intent/complete`(15분 더 잠금) → `/account?pending=1`(10초마다 새로 고침, 웹훅이 오면 Task 9 가 의도 행을 지운다).
+- 잠금: 구독이 `active`·`past_due` 이거나 완료한 결제가 확인 중이면 새 결제를 막는다(409 `already_subscribed`·`payment_pending`).
+- `POST /v1/billing/portal`: 그 사용자에게 연결된 customer 와, 그 customer 아래 그 사용자의 살아 있는 구독만 넘긴다(`no-store`). 연결된 customer 가 없으면 409 `no_customer` + "결제 때 쓴 이메일이 계정 이메일과 다를 수 있다 — 지원에 문의" 안내(영문). Paddle 실패는 502.
+- `POST /v1/hosts/:id/unlink`(쿠키), `POST /logout`(폼). 정적 파일 `/static/{checkout,account}.js`·`pages.css` 는 ASSETS 바인딩이 없어서 TS 문자열로 내보낸다.
+- 로컬 앱의 설정 > 클라우드 행: [Pro 구독]·[구독 관리] 는 `/api/cloud/web/{checkout,account}` 로 열고, 로컬 서버가 클라우드 주소로 302 한다(상태 응답에 클라우드 주소를 싣지 않기 위해). 돌아오면 요금제를 한 번 다시 읽는다.
 
 ## 운영 알림 보기
 
@@ -113,3 +125,10 @@ npx --prefix cloud wrangler d1 execute ai-msg --remote --command "SELECT id, kin
   - 엔터티 필드 경로·조정의 `action`/`type`/`status`·즉시 해지 API(`POST /subscriptions/{id}/cancel`, `effective_from: immediately`, `subscription.write`)·API 주소·키 접두사(`pdl_sdbx_`·`pdl_live_`). 상세는 계획 문서 "근거·미확인" 절.
   - 테스트 픽스처(`test/fixtures/paddle/`)는 문서 예시 모양을 본뜬 합성 값이다.
   - **(미확인)** 차지백 조정의 `status`·`type`(지금은 `action = chargeback` 이면 전액으로 본다), 해지 API 응답 본문(2xx 만 본다), 실제 샌드박스 웹훅의 전달 모양.
+- Paddle.js·포털(2026-10-26, developer.paddle.com 문서로 확인, 실제 호출은 하지 않았다):
+  - 스크립트 `https://cdn.paddle.com/paddle/v2/paddle.js`(include-paddlejs). 샌드박스는 `Paddle.Environment.set('sandbox')` 를 `Paddle.Initialize({ token, eventCallback })` 보다 먼저 부른다(paddle-environment-set·paddle-initialize).
+  - `Paddle.Checkout.open({ items: [{ priceId, quantity }], customer: { email } | { id }, customData, discountCode, settings: { displayMode, allowLogout } })`(paddle-checkout-open). `customer` 는 `email` 과 `id` 중 하나만. `settings.allowLogout`: "Whether the user can change their email once on the checkout", 기본 `true`.
+  - 이벤트 `checkout.completed`·`checkout.closed`(paddlejs events overview).
+  - 포털: `POST /customers/{customer_id}/portal-sessions`, 본문 `subscription_ids`(선택, 최대 25), 권한 `customer_portal_session.write`, 201 의 `data.urls.general.overview`. 링크는 임시 토큰을 담으니 캐시하지 않는다(create-customer-portal-session).
+  - **(미확인)** `allowLogout: false` 가 `customer.email` 로 연 결제에서도 이메일 변경을 완전히 막는지(문서 예시는 `customer.id`). 못 막더라도 Task 9 가 이메일이 다른 customer 는 연결하지 않는다.
+  - **(미확인)** 결제 frame 출처(`sandbox-buy.paddle.com`·`buy.paddle.com`)와 Paddle.js 가 인라인 스타일·추가 출처를 쓰는지 — CSP 는 실제 샌드박스에서 콘솔 위반을 보고 조정해야 한다. 실제 샌드박스 결제도 아직 안 해 봤다.

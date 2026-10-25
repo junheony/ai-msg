@@ -12,4 +12,6 @@ export const cloud = {
   checkedAt: (when: string) => `Last checked ${when}`,
   refresh: 'Refresh',
   refreshing: 'Checking…',
+  subscribe: 'Subscribe to Pro',
+  manage: 'Manage subscription',
 };

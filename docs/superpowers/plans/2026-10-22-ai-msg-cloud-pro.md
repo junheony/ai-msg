@@ -2549,6 +2549,11 @@ it('hello carries pro; a gate change rides on the settings broadcast', async () 
   - 고객 이메일은 계정 안에서 유일하고, 체크아웃에서 이미 있는 고객의 이메일을 넣으면 Paddle 은 새 고객을 만들지 않고 그 고객 엔터티를 쓴다(`build/customers/create-update-customers`). 그래서 남의 이메일로 결제하면 남의 `customer_id` 가 웹훅에 실린다 → Task 9 는 user↔customer 연결을 "서명된 ref + 그 사용자의 `checkout_intents` 가 `occurred_at` 에 열려 있음 + 다른 사용자가 쓰지 않는 customer + **Paddle customer 이메일 = 계정 이메일**" 일 때만 새로 만든다(의도는 사용자가 아무 때나 열 수 있어 이메일 비교가 실제 방어다).
   - `customer.created`/`customer.updated` 의 `data` 에 `id`(`ctm_`)·`email` 이 있고, 이메일은 바뀔 수 있다(`webhooks/customers/customer-updated`). Task 9 는 이 이벤트로 `paddle_customers(id, email_key)` 를 `occurred_at` 가드 upsert 한다. 원문은 저장하지 않고 `emailKey(EMAIL_HASH_SECRET, …)`(정규화 뒤 HMAC)만 둔다. customer 이벤트가 늦게 오면 연결은 `paddle_link_pending` 에 보류(`customer_pending`)했다가 그 이벤트가 올 때 이메일이 맞으면 연결, 다르면 `customer_unlinked` 알림. 연결된 뒤 이메일이 바뀌어도 끊지 않는다. 결제 창 이메일을 계정 이메일로 고정하는 일은 Task 10 몫.
   - 웹훅 비밀 `endpoint_secret_key` 는 `pdl_ntfset_` 접두사, 형식 `^pdl_ntfset_[a-zA-Z0-9]{26}_[a-zA-Z0-9]{32}$`(`api-reference/notification-settings/get-notification-setting`). 형식이 바뀔 수 있어 Worker 전체를 막지 않는다: 접두사가 다르면 경고 로그만, 비었거나 32자 미만이면 웹훅 경로만 503.
+- Paddle.js 와 포털 (2026-10-26, Task 10, developer.paddle.com 의 `paddlejs/include-paddlejs`·`paddlejs/methods/paddle-initialize`·`paddlejs/methods/paddle-environment-set`·`paddlejs/methods/paddle-checkout-open`·`paddlejs/events/overview`·`api-reference/customer-portals/create-customer-portal-session`):
+  - 스크립트 `https://cdn.paddle.com/paddle/v2/paddle.js`. 샌드박스는 `Paddle.Environment.set('sandbox')` 를 `Paddle.Initialize({ token, eventCallback })` 앞에서 부른다. 토큰은 클라이언트 토큰(`test_`·`live_`).
+  - `Checkout.open({ items: [{ priceId, quantity }], customer: { email } | { id }(둘 중 하나만), customData, discountCode, settings: { displayMode: 'overlay', allowLogout } })`. `settings.allowLogout` 은 "Whether the user can change their email once on the checkout", 기본 `true` → Task 10 은 계정 이메일을 넣고 `false` 로 둔다.
+  - 이벤트 이름 `checkout.completed`·`checkout.closed`.
+  - 포털 응답: 201, `data.urls.general.overview`(Task 10 은 이것만 쓴다). 링크에 임시 토큰이 있어 캐시하지 않는다.
 - `web-push` 3.6.7 소스: `generateRequestDetails` 는 `vapidDetails` 가 없으면 `Authorization` 없이 aes128gcm 본문과 머리를 만든다(출시 뒤 Task 6 에서만 쓴다).
 
 **미확인 (해당 Task 첫 단계에서 확인)**
@@ -2569,8 +2574,8 @@ it('hello carries pro; a gate change rides on the settings broadcast', async () 
 | 저장소의 기존 릴리스 절차(`package.json` scripts·배포 문서) — 착수 시 확인 | Task 5c `scripts/release.sh` |
 | `wrangler dev --persist-to`·`--var`, `wrangler r2 object put` 형태 | Task 5c·11 |
 | 차지백 조정의 `status`·`type` 이 늘 `approved`·`full` 인지(지금은 `action = chargeback` 이면 모두 전액으로 본다), 차지백 취소 값의 철자(`chargeback_reversal`/`chargeback_reverse` 문서끼리 다름 — 지금은 해지에 쓰지 않는다), 즉시 해지 API 의 응답 본문 형태(지금은 2xx 만 본다) | Task 9 — 실제 샌드박스 웹훅으로 확인(사용자 몫) |
-| Paddle.js 스크립트 주소·`Initialize`·`Environment.set`·`Checkout.open` 의 `items`/`customer`/`customData`, 결제 완료 이벤트 이름, CSP 출처 | Task 10 |
-| 포털 응답 `urls` 하위 키(샌드박스 API 주소는 Task 9 에서 확인) | Task 10 |
+| Paddle.js 의 CSP 출처(결제 frame `sandbox-buy.paddle.com`·`buy.paddle.com`, 인라인 스타일·추가 연결 출처 여부)와 실제 샌드박스 결제 — 스크립트 주소·`Checkout.open`·이벤트 이름은 2026-10-26 확인 | Task 10 → 실제 샌드박스에서 확인(사용자 몫) |
+| `allowLogout: false` 가 `customer.email` 로 연 결제에서도 이메일 변경을 완전히 막는지(문서 예시는 `customer.id`) — 못 막아도 Task 9 가 이메일이 다른 customer 를 연결하지 않는다 | Task 10 → 실제 샌드박스에서 확인(사용자 몫) |
 | `cloudflare:test` 의 scheduled 핸들러 helper, `wrangler.jsonc` `triggers.crons` 형태 | Task 12 Step 1 |
 | Paddle API 키 접두사를 위생 규칙에 넣는 일(접두사 자체는 Task 9 에서 확인 — `pdl_sdbx_`·`pdl_live_`) | Task 11 |
 | Workers Ed25519 `importKey` 의 `jwk` 지원 | 출시 뒤 Task 13 |

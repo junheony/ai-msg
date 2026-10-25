@@ -34,6 +34,14 @@ export async function sessionUser(c: Ctx): Promise<string | null> {
   return row?.user_id ?? null;
 }
 
+/** Deletes the request's web session row (if any); returns the `Set-Cookie` value that clears the cookie. */
+export async function endSession(c: Ctx): Promise<string> {
+  const v = cookieValue(c.req);
+  const dot = v?.indexOf('.') ?? -1;
+  if (v && dot > 0) await c.env.DB.prepare('DELETE FROM web_sessions WHERE id_hash = ?').bind(await hashToken(v.slice(0, dot))).run();
+  return `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`;
+}
+
 export type CookieCtx = Ctx & { userId: string };
 type CookieOpts = {
   /** `required` (API: 401 without a session), `page` (GET page: redirect to /login), `none` (sign-in itself). */

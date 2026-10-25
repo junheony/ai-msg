@@ -13,4 +13,6 @@ export const cloud: Widen<typeof en> = {
   checkedAt: (when: string) => `마지막 확인 ${when}`,
   refresh: '새로고침',
   refreshing: '확인 중…',
+  subscribe: 'Pro 구독',
+  manage: '구독 관리',
 };

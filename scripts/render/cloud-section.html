@@ -1,7 +1,8 @@
 <!doctype html><html lang="ko"><head><meta charset="utf-8">
 <!-- 설정 › 계정 · 요금제 행 fixture for scripts/render-check.sh (keep in step with CloudSection.tsx): four states —
-     체험 중 · 3일 남음, Pro · 사용 중, 결제 확인 필요 (past_due), Community (none) — then the phone's read-only row
-     (no 새로고침 button: through the relay plan/refresh is refused).
+     체험 중 · 3일 남음, Pro · 사용 중, 결제 확인 필요 (past_due), Community (none — trial over: Pro 구독 too) — each with
+     구독 관리 (opens the app-origin account page in a new tab) — then the phone's read-only row
+     (no 새로고침 or subscription buttons: through the relay plan/refresh is refused).
        scripts/render-check.sh cloud-section 412 1440 -->
 <link rel="stylesheet" href="../../src/ui/styles.css">
 <style>
@@ -20,15 +21,19 @@
       <h3 id="g-account">계정</h3>
       <p class="fx-name">체험</p>
       <div class="settings-row"><span>요금제</span><span>체험 중 · 3일 남음</span><button type="button" class="btn ghost">새로고침</button></div>
+      <div class="settings-row"><button type="button" class="btn ghost">구독 관리</button></div>
       <div class="settings-hint"><p>Pro: 집 밖에서 폰으로 보고 승인하는 클라우드 릴레이와 폰 알림 · 마지막 확인 2026. 10. 26. 오후 12:00:00</p></div>
       <p class="fx-name">Pro</p>
       <div class="settings-row"><span>요금제</span><span>Pro · 사용 중</span><button type="button" class="btn ghost">새로고침</button></div>
+      <div class="settings-row"><button type="button" class="btn ghost">구독 관리</button></div>
       <div class="settings-hint"><p>Pro: 집 밖에서 폰으로 보고 승인하는 클라우드 릴레이와 폰 알림 · 마지막 확인 2026. 10. 26. 오후 12:00:00</p></div>
       <p class="fx-name">past_due</p>
       <div class="settings-row"><span>요금제</span><span>결제 확인 필요 · 2026. 11. 2.까지 유지</span><button type="button" class="btn ghost" disabled>확인 중…</button></div>
+      <div class="settings-row"><button type="button" class="btn ghost">구독 관리</button></div>
       <div class="settings-hint"><p>Pro: 집 밖에서 폰으로 보고 승인하는 클라우드 릴레이와 폰 알림 · 마지막 확인 2026. 10. 26. 오후 12:00:00</p></div>
       <p class="fx-name">Community</p>
       <div class="settings-row"><span>요금제</span><span>Community — 폰 릴레이는 Pro 에서</span><button type="button" class="btn ghost">새로고침</button></div>
+      <div class="settings-row"><button type="button" class="btn primary">Pro 구독</button><button type="button" class="btn ghost">구독 관리</button></div>
       <div class="settings-hint"><p>Pro: 집 밖에서 폰으로 보고 승인하는 클라우드 릴레이와 폰 알림 · 마지막 확인 2026. 10. 26. 오후 12:00:00</p></div>
       <p class="fx-name">폰 (릴레이, 읽기 전용)</p>
       <div class="settings-row"><span>요금제</span><span>체험 중 · 3일 남음</span></div>

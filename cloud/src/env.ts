@@ -22,8 +22,15 @@ export interface Env {
   PADDLE_ENV: 'sandbox' | 'production';
   /** `1` → webhooks only from Paddle's published IPs (`CF-Connecting-IP`). */
   PADDLE_IP_CHECK: '0' | '1';
-  /** Paddle API key (`subscription.write`; Task 10 adds `customer_portal_session.write`). */
+  /** Paddle API key: `subscription.write` (Task 9) and `customer_portal_session.write` (Task 10). */
   PADDLE_API_KEY?: string;
   /** Signs the checkout `customData.ref` (userRef). At least 32 characters (checkConfig). */
   CHECKOUT_SECRET: string;
+  /** Paddle.js client-side token (public; `test_` sandbox, `live_` production — checkConfig). Empty → /checkout answers 503. */
+  PADDLE_CLIENT_TOKEN?: string;
+  /** Paddle price ids (`pri_…`) of the two plans. Empty → /checkout answers 503. */
+  PADDLE_PRICE_MONTHLY?: string;
+  PADDLE_PRICE_YEARLY?: string;
+  /** Optional discount code prefilled at checkout (founding offer). */
+  PADDLE_DISCOUNT_FOUNDING?: string;
 }

@@ -124,6 +124,12 @@ export class CloudService {
     return this.plan ? this.plan.refresh() : null;
   }
 
+  /** The app-origin page Settings opens in a new tab: the account page, or the monthly checkout (D16 · D18). */
+  webUrl(page: 'account' | 'checkout'): string {
+    if (!this.o.cfg.enabled) throw new CloudServiceError('disabled');
+    return new URL(page === 'account' ? '/account' : '/checkout?plan=pro-monthly', this.o.cfg.baseUrl).href;
+  }
+
   /** Starts (or returns the running) device-code link; the device code itself never leaves this class. */
   startLink(): Promise<CloudLinkView> {
     if (!this.o.cfg.enabled) return Promise.reject(new CloudServiceError('disabled'));

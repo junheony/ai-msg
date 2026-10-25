@@ -28,6 +28,8 @@ export function CloudSection({ readOnly = false, now = Date.now }: { readOnly?: 
   const [plan, setPlan] = useState<EntitlementRes | null>(null);
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
+  /** Set when a cloud page was opened in a new tab; the next return to this tab refreshes the plan once. */
+  const away = useRef(false);
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -47,7 +49,26 @@ export function CloudSection({ readOnly = false, now = Date.now }: { readOnly?: 
     return () => { alive.current = false; };
   }, [load]);
 
+  useEffect(() => {
+    if (readOnly) return;
+    const back = () => {
+      if (document.visibilityState !== 'visible' || !away.current) return;
+      away.current = false;
+      void load(); // the cloud changed → PlanView tells the relay to recheck (Task 7)
+    };
+    document.addEventListener('visibilitychange', back);
+    return () => document.removeEventListener('visibilitychange', back);
+  }, [load, readOnly]);
+
+  /** The local server redirects to the app origin (account page / monthly checkout), so the UI holds no cloud address. */
+  const openWeb = (page: 'account' | 'checkout') => {
+    away.current = true;
+    window.open(`/api/cloud/web/${page}`, '_blank', 'noopener');
+  };
+
   if (!plan) return null;
+  // Linked (the row only shows then) and nothing live: the first link already gave the trial (D8), so offer Pro.
+  const offerPro = plan.plan === 'none' || plan.untilMs <= now();
   return (
     <>
       <div className="settings-row" data-testid="plan-row">
@@ -57,6 +78,12 @@ export function CloudSection({ readOnly = false, now = Date.now }: { readOnly?: 
           <button type="button" className="btn ghost" disabled={busy} onClick={() => void load()}>{busy ? T.refreshing : T.refresh}</button>
         )}
       </div>
+      {!readOnly && (
+        <div className="settings-row" data-testid="plan-actions">
+          {offerPro && <button type="button" className="btn primary" onClick={() => openWeb('checkout')}>{T.subscribe}</button>}
+          <button type="button" className="btn ghost" onClick={() => openWeb('account')}>{T.manage}</button>
+        </div>
+      )}
       <div className="settings-hint"><p>{T.proLine} · {T.checkedAt(formatDateTime(plan.checkedAt))}</p></div>
     </>
   );

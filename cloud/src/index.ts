@@ -1,10 +1,14 @@
 import { loginGet, loginPost, magicRequest, verifyGet, verifyPost } from './auth/magic';
+import { billingIntent, billingIntentComplete, billingPortal } from './billing';
 import { listDevices, revokeDevice } from './devices';
 import { entitlement } from './entitlement';
 import type { Env } from './env';
-import { linkApprove, linkGet, linkPoll, linkStart, hostUnlink } from './hosts';
+import { linkApprove, linkGet, linkPoll, linkStart, hostUnlink, hostUnlinkByUser } from './hosts';
 import { HttpError, clientIp, json, problem } from './http';
 import { APP_HTML_CSP, relayHeaders, sideOf } from './origins';
+import { ACCOUNT_JS, accountGet, signOut } from './pages/account';
+import { CHECKOUT_JS, checkoutGet } from './pages/checkout';
+import { PAGES_CSS } from './pages/css';
 import { LINK_JS } from './pages/link';
 import { paddleApi } from './paddle/api';
 import { type WebhookDeps, paddleWebhook, webhookSecretProblem } from './paddle/webhook';
@@ -22,7 +26,7 @@ const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
 /**
  * Refuses a deployment that would leak or misroute: log mail / dev routes off a local or `.test` origin,
  * short secrets (`CHECKOUT_SECRET` too), `resend` without a key or sender, equal origins, a non-https origin off localhost,
- * a `PADDLE_ENV`/`PADDLE_IP_CHECK` typo, or a limit (`MAX_HOSTS`·`MAX_DEVICES`·`TRIAL_DAYS`) that is not a positive integer.
+ * a `PADDLE_ENV`/`PADDLE_IP_CHECK` typo, a Paddle client token of the other environment, or a limit (`MAX_HOSTS`·`MAX_DEVICES`·`TRIAL_DAYS`) that is not a positive integer.
  */
 export function checkConfig(env: Env): ConfigCheck {
   let pub: URL, relay: URL;
@@ -41,6 +45,8 @@ export function checkConfig(env: Env): ConfigCheck {
   if ((env.CHECKOUT_SECRET ?? '').length < 32) return { ok: false, reason: 'CHECKOUT_SECRET must be at least 32 characters' };
   if (env.PADDLE_ENV !== 'sandbox' && env.PADDLE_ENV !== 'production') return { ok: false, reason: 'PADDLE_ENV must be sandbox or production' };
   if (env.PADDLE_IP_CHECK !== '0' && env.PADDLE_IP_CHECK !== '1') return { ok: false, reason: 'PADDLE_IP_CHECK must be 0 or 1' };
+  // A sandbox token on the live checkout (or the reverse) fails at the customer, so refuse it here.
+  if (env.PADDLE_CLIENT_TOKEN && !env.PADDLE_CLIENT_TOKEN.startsWith(env.PADDLE_ENV === 'production' ? 'live_' : 'test_')) return { ok: false, reason: 'PADDLE_CLIENT_TOKEN must match PADDLE_ENV (live_ / test_)' };
   // `Number('x')` is NaN and `count >= NaN` is false — a typo would silently lift the limit.
   for (const key of ['MAX_HOSTS', 'MAX_DEVICES', 'TRIAL_DAYS'] as const) {
     if (!/^[1-9]\d{0,5}$/.test(env[key] ?? '')) return { ok: false, reason: `${key} must be a positive integer` };
@@ -73,7 +79,9 @@ async function devOutbox(c: Ctx): Promise<Response> {
 /** Outside-world dependencies of the Paddle webhook. Tests replace these fields (same isolate) and restore them. */
 export const deps: WebhookDeps = { paddle: (env) => paddleApi(env), db: (env) => env.DB };
 
-const linkJs = async () => new Response(LINK_JS, { headers: { 'content-type': 'text/javascript; charset=utf-8' } });
+/** The app pages' static files, served from the bundle (this Worker has no `assets` binding). Only these names. */
+const asset = (body: string, type: string) => async () => new Response(body, { headers: { 'content-type': `${type}; charset=utf-8` } });
+const JS = 'text/javascript';
 
 const ROUTES: readonly Route[] = [
   // app origin — pages
@@ -82,13 +90,20 @@ const ROUTES: readonly Route[] = [
   ['app', 'GET', '/auth/verify', verifyGet],
   ['app', 'POST', '/auth/verify', verifyPost],
   ['app', 'GET', '/link', linkGet],
-  ['app', 'GET', '/static/link.js', linkJs],
+  ['app', 'GET', '/account', accountGet],
+  ['app', 'POST', '/logout', signOut],
+  ['app', 'GET', '/checkout', checkoutGet],
+  ['app', 'GET', '/static/link.js', asset(LINK_JS, JS)],
+  ['app', 'GET', '/static/account.js', asset(ACCOUNT_JS, JS)],
+  ['app', 'GET', '/static/checkout.js', asset(CHECKOUT_JS, JS)],
+  ['app', 'GET', '/static/pages.css', asset(PAGES_CSS, 'text/css')],
   // app origin — API
   ['app', 'POST', '/v1/auth/magic', magicRequest],
   ['app', 'POST', '/v1/host/link/start', linkStart],
   ['app', 'POST', '/v1/host/link/approve', linkApprove],
   ['app', 'POST', '/v1/host/link/poll', linkPoll],
   ['app', 'POST', '/v1/host/unlink', hostUnlink],
+  ['app', 'POST', '/v1/hosts/:id/unlink', hostUnlinkByUser],
   ['app', 'POST', '/v1/pair/start', pairStart],
   ['app', 'GET', '/v1/pair/:id', pairStatus],
   ['app', 'POST', '/v1/pair/:id/confirm', pairConfirm],
@@ -96,6 +111,9 @@ const ROUTES: readonly Route[] = [
   ['app', 'GET', '/v1/devices', listDevices],
   ['app', 'POST', '/v1/devices/:id/revoke', revokeDevice],
   ['app', 'GET', '/v1/entitlement', entitlement],
+  ['app', 'POST', '/v1/billing/intent', billingIntent],
+  ['app', 'POST', '/v1/billing/intent/complete', billingIntentComplete],
+  ['app', 'POST', '/v1/billing/portal', billingPortal(deps)],
   ['app', 'POST', '/v1/paddle/webhook', (c) => paddleWebhook(c, deps)],
   ['app', 'GET', '/dev/outbox', devOutbox],
   // relay origin — no cookies are read or set here
@@ -132,7 +150,8 @@ export default {
     if (side === 'relay') relayHeaders(out.headers);
     else {
       out.headers.set('referrer-policy', 'same-origin'); // see pages/layout.ts — `no-referrer` would make form POSTs `Origin: null`
-      if ((out.headers.get('content-type') ?? '').startsWith('text/html')) out.headers.set('content-security-policy', APP_HTML_CSP);
+      // A page may bring its own policy (only /checkout does, for Paddle.js); every other HTML page gets the strict one.
+      if ((out.headers.get('content-type') ?? '').startsWith('text/html') && !out.headers.has('content-security-policy')) out.headers.set('content-security-policy', APP_HTML_CSP);
     }
     return out;
   },

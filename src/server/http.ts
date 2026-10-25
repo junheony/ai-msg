@@ -409,6 +409,14 @@ export function createRequestHandler(deps: HttpDeps) {
             if (url.pathname === '/api/cloud/unlink' && req.method === 'POST') { await cloud.unlink(); json(res, 200, { ok: true }); return; }
             // Display only (D6). Through the relay this path is mac_confirm_required (relayPathPolicy); the phone reads status.plan.
             if (url.pathname === '/api/cloud/plan/refresh' && req.method === 'POST') { json(res, 200, await cloud.refreshPlan()); return; }
+            // Settings › Accounts opens the app-origin account / checkout page in a new tab through here, so the UI
+            // never holds a cloud address. Fixed targets only (no open redirect); through the relay it is mac_confirm_required.
+            const web = /^\/api\/cloud\/web\/(account|checkout)$/.exec(url.pathname);
+            if (web && (req.method === 'GET' || req.method === 'HEAD')) {
+              res.writeHead(302, { location: cloud.webUrl(web[1] as 'account' | 'checkout'), 'cache-control': 'no-store' });
+              res.end();
+              return;
+            }
             const m = /^\/api\/cloud\/devices\/([^/]+)\/revoke$/.exec(url.pathname);
             if (m && req.method === 'POST') {
               let id = '';

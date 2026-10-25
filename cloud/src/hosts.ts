@@ -136,16 +136,29 @@ export async function linkPoll(c: Ctx): Promise<Response> {
   return json(200, { state: 'linked', hostId, hostToken, email: email ?? '' } satisfies LinkPollRes);
 }
 
+/** One batch: the host token stops working, every device of the host is revoked, open pairings expire; then its room closes all (4401). */
+async function unlink(c: Ctx, hostId: string): Promise<void> {
+  const db = c.env.DB;
+  await db.batch([
+    db.prepare('UPDATE hosts SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').bind(c.nowMs, hostId),
+    db.prepare("UPDATE devices SET state = 'revoked' WHERE host_id = ?").bind(hostId),
+    db.prepare("UPDATE pairings SET state = 'expired' WHERE host_id = ? AND state IN ('open', 'claimed')").bind(hostId),
+  ]);
+  notifyRelay(c, hostId, 'unlink');
+}
+
 /** `POST /v1/host/unlink` (host) — the token stops working, every device of the host is revoked and its relay room closes all (4401). */
 export async function hostUnlink(c: Ctx): Promise<Response> {
   const host = await hostAuth(c.env, c.req);
   if (!host) return problem(401, 'unauthorized');
-  const db = c.env.DB;
-  await db.batch([
-    db.prepare('UPDATE hosts SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').bind(c.nowMs, host.id),
-    db.prepare("UPDATE devices SET state = 'revoked' WHERE host_id = ?").bind(host.id),
-    db.prepare("UPDATE pairings SET state = 'expired' WHERE host_id = ? AND state IN ('open', 'claimed')").bind(host.id),
-  ]);
-  notifyRelay(c, host.id, 'unlink');
+  await unlink(c, host.id);
   return json(200, { ok: true });
 }
+
+/** `POST /v1/hosts/:id/unlink` (account page, cookie route) — the same, for a still-linked host of the signed-in user; else 404. */
+export const hostUnlinkByUser = cookieRoute({ session: 'required' }, async (c) => {
+  const id = await c.env.DB.prepare('SELECT id FROM hosts WHERE id = ? AND user_id = ? AND revoked_at IS NULL').bind(c.params.id, c.userId).first<string>('id');
+  if (!id) return problem(404, 'unknown_host');
+  await unlink(c, id);
+  return json(200, { ok: true });
+});
