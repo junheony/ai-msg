@@ -93,4 +93,21 @@ describe('CloudState', () => {
     expect(s.get().hostKey).toBe(key);
     expect((await CloudState.load(dir)).get()).toMatchObject({ hostKey: key, hostId: 'h' });
   });
+
+  it('a stored plan of the wrong shape is dropped (null); the rest of the state stays and the file is not moved aside', async () => {
+    const dir = await tmp();
+    const s = await CloudState.load(dir);
+    await s.update({ hostId: 'h', hostToken: 't', email: 'e@example.test' });
+    const good = { plan: 'pro', st: 'active', untilMs: 5, checkedAt: 5 };
+    const file = path.join(dir, 'cloud', 'state.json');
+    const base = JSON.parse(await fs.readFile(file, 'utf8')) as Record<string, unknown>;
+    for (const plan of [{ ...good, plan: 'enterprise' }, { ...good, untilMs: -1 }, { ...good, checkedAt: 0 }, { ...good, st: 'p'.repeat(5000) }, 'pro', 7, []]) {
+      await fs.writeFile(file, JSON.stringify({ ...base, plan }));
+      const again = await CloudState.load(dir);
+      expect(again.get()).toMatchObject({ hostId: 'h', hostToken: 't', email: 'e@example.test', hostKey: s.get().hostKey, plan: null });
+      expect((await fs.readdir(path.join(dir, 'cloud'))).some((n) => n.startsWith('state.json.broken-'))).toBe(false);
+    }
+    await fs.writeFile(file, JSON.stringify({ ...base, plan: { ...good, extra: 1 } }));
+    expect((await CloudState.load(dir)).get().plan).toEqual(good);
+  });
 });

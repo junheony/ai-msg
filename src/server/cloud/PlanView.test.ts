@@ -21,6 +21,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   await fs.rm(dir, { recursive: true, force: true });
 });
 
@@ -71,6 +72,25 @@ describe('PlanView', () => {
     const { pv } = view(async () => { throw new CloudError(401, 'unauthorized'); }, { onError: (e) => errors.push(e) });
     expect(await pv.refresh()).toBeNull();
     expect(errors).toEqual([expect.objectContaining({ status: 401 })]);
+  });
+
+  it('a bare 401 (no unauthorized code, e.g. a proxy) keeps the stored plan', async () => {
+    await state.update({ plan: pro });
+    const { pv } = view(async () => { throw new CloudError(401); });
+    expect(await pv.refresh()).toEqual(pro);
+  });
+
+  it('a failed state write goes to onError instead of throwing (no onChange, no recheck)', async () => {
+    await state.update({ plan: none });
+    const errors: unknown[] = [];
+    const onChange = vi.fn();
+    const { pv, recheck } = view(async () => pro, { onError: (e) => errors.push(e), onChange });
+    const boom = new Error('disk full');
+    vi.spyOn(state, 'update').mockRejectedValueOnce(boom);
+    expect(await pv.refresh()).toEqual(none); // what the state holds (the mocked write changed nothing)
+    expect(errors).toEqual([boom]);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(recheck).not.toHaveBeenCalled();
   });
 
   it('not linked: null and no request at all', async () => {

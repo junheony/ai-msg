@@ -33,15 +33,16 @@ function cloudFetch(routes: Record<string, [number, unknown]>) {
     const method = init?.method ?? 'GET';
     calls.push({ method, path: u.pathname, auth: (init?.headers as Record<string, string> | undefined)?.authorization ?? null });
     const [status, body] = routes[`${method} ${u.pathname}`] ?? [404, { error: 'not_found', code: 'not_found' }];
-    return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+    // body undefined = no body at all (a proxy's bare 401)
+    return new Response(body === undefined ? null : JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
   }) as typeof fetch;
   return { calls, fetchImpl };
 }
 
-function service(o: { relayUrl?: string; fetch?: typeof fetch; port?: number; log?: (s: string) => void }): CloudService {
+function service(o: { relayUrl?: string; fetch?: typeof fetch; port?: number; log?: (s: string) => void; now?: () => number }): CloudService {
   const svc = new CloudService({
     cfg: { enabled: true, baseUrl: 'http://127.0.0.1:9', relayUrl: o.relayUrl ?? 'http://127.0.0.1:9' },
-    configDir: dir, port: o.port ?? 9, token: () => 'tok', hostVersion: '1.2.3', hostName: 'mac', log: o.log ?? (() => {}), fetch: o.fetch,
+    configDir: dir, port: o.port ?? 9, token: () => 'tok', hostVersion: '1.2.3', hostName: 'mac', log: o.log ?? (() => {}), fetch: o.fetch, now: o.now,
   });
   cleanups.push(() => svc.stop());
   return svc;
@@ -146,7 +147,7 @@ describe('CloudService', () => {
     expect(calls).toEqual([]);
   });
 
-  it('refreshPlan: linked → the plan in the status; a token the cloud refuses forgets the link', async () => {
+  it('refreshPlan: linked → the plan in the status; unauthorized from entitlement and then devices forgets the link', async () => {
     const plan = { plan: 'trial', st: 'trialing', untilMs: Date.now() + 86_400_000, checkedAt: Date.now() };
     await linkedState('host-token');
     const routes: Record<string, [number, unknown]> = { 'GET /v1/entitlement': [200, plan] };
@@ -160,11 +161,98 @@ describe('CloudService', () => {
     expect(seen).toContainEqual(plan);
     expect(calls.find((c) => c.path === '/v1/entitlement')).toMatchObject({ method: 'GET', auth: 'Bearer host-token' });
     routes['GET /v1/entitlement'] = [401, { error: 'unauthorized', code: 'unauthorized' }];
+    routes['GET /v1/devices'] = [401, { error: 'unauthorized', code: 'unauthorized' }];
     expect(await svc.refreshPlan()).toBeNull();
     await eventually(() => !svc.status().linked);
+    expect(calls.filter((c) => c.path === '/v1/devices')).toHaveLength(1); // the second refusal confirmed it
     expect(svc.status().plan).toBeNull();
     expect(logs.join('\n')).not.toContain('host-token');
     expect(logs.join('\n')).not.toContain('a@example.test');
+  });
+
+  it('entitlement 401 without the unauthorized code (a proxy) keeps the link and asks nothing more', async () => {
+    await linkedState('host-token', ['d1']);
+    const { calls, fetchImpl } = cloudFetch({ 'GET /v1/entitlement': [401, undefined], 'GET /v1/devices': [401, { error: 'unauthorized', code: 'unauthorized' }] });
+    const svc = service({ fetch: fetchImpl });
+    await svc.refreshPlan();
+    await sleep(50);
+    expect(svc.status()).toMatchObject({ linked: true, devices: [{ id: 'd1' }] });
+    expect(calls.map((c) => c.path)).toEqual(['/v1/entitlement']);
+    const onDisk = JSON.parse(await fs.readFile(path.join(dir, 'cloud', 'state.json'), 'utf8')) as { hostToken: string | null };
+    expect(onDisk.hostToken).toBe('host-token');
+  });
+
+  it('entitlement unauthorized but devices still accepts the token (or answers a bare 401): the link stays', async () => {
+    for (const devices of [[200, []], [401, undefined]] as [number, unknown][]) {
+      await linkedState('host-token', ['d1']);
+      const { calls, fetchImpl } = cloudFetch({ 'GET /v1/entitlement': [401, { error: 'unauthorized', code: 'unauthorized' }], 'GET /v1/devices': devices });
+      const svc = service({ fetch: fetchImpl });
+      await svc.refreshPlan();
+      await eventually(() => calls.some((c) => c.path === '/v1/devices'));
+      await sleep(50);
+      expect(svc.status()).toMatchObject({ linked: true, devices: [{ id: 'd1' }] });
+      await svc.stop();
+    }
+  });
+
+  it('upgrade 401 with a bare 401 from devices too (no code): the link stays', async () => {
+    const relay = await FakeRelay.start({ token: 'other' });
+    cleanups.push(() => relay.close());
+    await linkedState('host-token', ['d1']);
+    const { calls, fetchImpl } = cloudFetch({ 'GET /v1/devices': [401, undefined] });
+    const svc = service({ relayUrl: relayOrigin(relay), fetch: fetchImpl });
+    svc.start();
+    await eventually(() => calls.some((c) => c.path === '/v1/devices'));
+    await sleep(50);
+    expect(svc.status()).toMatchObject({ linked: true, devices: [{ id: 'd1' }] });
+  });
+
+  it('the same plan fetch failure is logged once until a fetch succeeds', async () => {
+    await linkedState('host-token');
+    const plan = { plan: 'pro', st: 'active', untilMs: Date.now() + 86_400_000, checkedAt: Date.now() };
+    const routes: Record<string, [number, unknown]> = { 'GET /v1/entitlement': [503, { error: 'x', code: 'unavailable' }] };
+    const { fetchImpl } = cloudFetch(routes);
+    const logs: string[] = [];
+    const svc = service({ fetch: fetchImpl, log: (s) => logs.push(s) });
+    const failures = () => logs.filter((l) => l.includes('could not fetch the plan')).length;
+    await svc.refreshPlan();
+    await svc.refreshPlan();
+    await svc.refreshPlan();
+    expect(failures()).toBe(1);
+    routes['GET /v1/entitlement'] = [200, plan];
+    await svc.refreshPlan();
+    routes['GET /v1/entitlement'] = [503, { error: 'x', code: 'unavailable' }];
+    await svc.refreshPlan();
+    expect(failures()).toBe(2);
+  });
+
+  it('{t:ent} refetches at most once per 30 s, even when two values alternate', async () => {
+    const relay = await FakeRelay.start();
+    cleanups.push(() => relay.close());
+    await linkedState(relay.token);
+    const plan = { plan: 'pro', st: 'active', untilMs: Date.now() + 86_400_000, checkedAt: Date.now() };
+    const { calls, fetchImpl } = cloudFetch({ 'GET /v1/devices': [200, []], 'GET /v1/entitlement': [200, plan] });
+    const clock = { t: Date.now() };
+    const svc = service({ relayUrl: relayOrigin(relay), fetch: fetchImpl, now: () => clock.t });
+    svc.start();
+    await waitFor(() => svc.status().relay === 'up');
+    await eventually(() => svc.status().plan !== null);
+    await sleep(100);
+    clock.t += 31_000;
+    const ents = () => calls.filter((c) => c.path === '/v1/entitlement').length;
+    const before = ents();
+    const a = Date.now() + 2 * 86_400_000;
+    relay.control({ t: 'ent', ok: true, until: a });
+    await eventually(() => ents() === before + 1);
+    for (const until of [a + 1, a, a + 1]) { // each one after the last fetch is done, so no in-flight sharing hides a call
+      await sleep(60);
+      relay.control({ t: 'ent', ok: true, until });
+    }
+    await sleep(150);
+    expect(ents()).toBe(before + 1);
+    clock.t += 31_000;
+    relay.control({ t: 'ent', ok: true, until: a + 2 });
+    await eventually(() => ents() === before + 2);
   });
 
   it('a new {t:ent} from the relay fetches the plan again', async () => {
@@ -173,11 +261,13 @@ describe('CloudService', () => {
     await linkedState(relay.token);
     const plan = { plan: 'pro', st: 'active', untilMs: Date.now() + 86_400_000, checkedAt: Date.now() };
     const { calls, fetchImpl } = cloudFetch({ 'GET /v1/devices': [200, []], 'GET /v1/entitlement': [200, plan] });
-    const svc = service({ relayUrl: relayOrigin(relay), fetch: fetchImpl });
+    const clock = { t: Date.now() };
+    const svc = service({ relayUrl: relayOrigin(relay), fetch: fetchImpl, now: () => clock.t });
     svc.start();
     await waitFor(() => svc.status().relay === 'up');
     await eventually(() => svc.status().plan !== null); // start(): one fetch at once
     await sleep(100); // the first {t:ent} after attach may fetch once more; let it settle
+    clock.t += 31_000; // past the 30 s gap between ent-started fetches
     const before = calls.filter((c) => c.path === '/v1/entitlement').length;
     relay.control({ t: 'ent', ok: true, until: Date.now() + 2 * 86_400_000 });
     await eventually(() => calls.filter((c) => c.path === '/v1/entitlement').length === before + 1);

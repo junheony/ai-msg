@@ -32,8 +32,14 @@ export class CloudService {
   private readonly api: CloudApi;
   private state: CloudState | null = null;
   private plan: PlanView | null = null;
-  /** The last `{t:'ent'}` seen, so only a new one fetches the plan again. */
+  /** The last `{t:'ent'}` acted on, so only a new one fetches the plan again — at most once per RECHECK_MS. */
   private lastEnt = '';
+  private lastEntFetch = 0;
+  private entTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingEnt = '';
+  /** The last plan fetch failure logged (by name), so a repeating one is logged once until a fetch succeeds. */
+  private lastPlanError = '';
+  private readonly now: () => number;
   private loading: Promise<CloudState | null> | null = null;
   private client: RelayClient | null = null;
   private bridge: RelayBridge | null = null;
@@ -57,8 +63,10 @@ export class CloudService {
     WebSocketImpl?: typeof WebSocket;
     /** The Mac's current settings, for the relay's socket policy. */
     settings?: () => RelayWsContext;
+    now?: () => number;
   }) {
     this.api = new CloudApi({ baseUrl: o.cfg.baseUrl, fetch: o.fetch });
+    this.now = o.now ?? Date.now;
   }
 
   start(): void {
@@ -100,7 +108,7 @@ export class CloudService {
 
   /** Asks the relay to recompute the entitlement (after a payment) — at most once per 30 s. */
   recheck(): void {
-    const now = Date.now();
+    const now = this.now();
     if (now - this.lastRecheck < RECHECK_MS) return;
     this.lastRecheck = now;
     this.client?.recheck();
@@ -203,7 +211,7 @@ export class CloudService {
           api: this.api,
           state: st,
           relay: { recheck: () => this.recheck() },
-          onChange: () => this.changed(),
+          onChange: () => { this.lastPlanError = ''; this.changed(); },
           onError: (err, token) => void this.planFailed(st, err, token),
         });
         return st;
@@ -253,10 +261,8 @@ export class CloudService {
     this.client = client;
     this.bridge = bridge;
     client.on('entitlement', (e: { ok: boolean; until: number }) => {
-      const key = `${e.ok}:${e.until}`;
-      if (this.client !== client || key === this.lastEnt) return;
-      this.lastEnt = key;
-      void this.plan?.refresh();
+      if (this.client !== client) return;
+      this.entChanged(`${e.ok}:${e.until}`);
     });
     client.on('state', (s: RelayState) => {
       if (this.client !== client) return;
@@ -272,8 +278,33 @@ export class CloudService {
     client.start();
   }
 
+  /**
+   * A `{t:'ent'}` from the relay: a new value fetches the plan — at most once per RECHECK_MS (the cloud allows 6 a
+   * minute). One that comes sooner is fetched when the gap is over, so the last value is never missed.
+   */
+  private entChanged(key: string): void {
+    if (key === this.lastEnt) return;
+    const wait = this.lastEntFetch + RECHECK_MS - this.now();
+    if (wait > 0) {
+      this.pendingEnt = key;
+      this.entTimer ??= setTimeout(() => {
+        this.entTimer = null;
+        if (this.client) this.entChanged(this.pendingEnt);
+      }, wait);
+      this.entTimer.unref?.();
+      return;
+    }
+    if (this.entTimer) clearTimeout(this.entTimer);
+    this.entTimer = null;
+    this.lastEnt = key;
+    this.lastEntFetch = this.now();
+    void this.plan?.refresh();
+  }
+
   private stopRelay(): void {
     this.clearRetry();
+    if (this.entTimer) clearTimeout(this.entTimer);
+    this.entTimer = null;
     const client = this.client;
     const bridge = this.bridge;
     this.client = null;
@@ -295,16 +326,7 @@ export class CloudService {
     this.stopRelay();
     if (!st || !token || this.stopped) return;
     this.setRelay('down');
-    try {
-      await this.api.devices(token);
-    } catch (err) {
-      if (err instanceof CloudError && err.status === 401) {
-        if (st.get().hostToken !== token) return;
-        this.o.log('deck: cloud — the cloud no longer accepts this Mac, link forgotten');
-        await this.forget(st);
-        return;
-      }
-    }
+    if (await this.forgetIfRefused(st, token)) return;
     if (this.stopped || st.get().hostToken !== token) return;
     this.o.log('deck: cloud — relay refused the link but the cloud still accepts it, retrying later');
     this.retryTimer = setTimeout(() => {
@@ -314,15 +336,35 @@ export class CloudService {
     this.retryTimer.unref?.();
   }
 
-  /** The host API refused the token (401): the link is gone. Anything else keeps the stored plan, logged by name only. */
-  private async planFailed(st: CloudState, err: unknown, token: string): Promise<void> {
-    if (err instanceof CloudError && err.status === 401) {
-      if (st.get().hostToken !== token) return; // relinked meanwhile
-      this.o.log('deck: cloud — the cloud no longer accepts this Mac, link forgotten');
-      await this.forget(st);
-      return;
+  /**
+   * A second, independent refusal: the host API (`GET /v1/devices`) answers 401 with the cloud's own `unauthorized`
+   * code. Only then is the link (and the phone list) forgotten — a proxy's bare 401 never does it. True = forgotten.
+   */
+  private async forgetIfRefused(st: CloudState, token: string): Promise<boolean> {
+    try {
+      await this.api.devices(token);
+      return false;
+    } catch (err) {
+      if (!refused(err) || st.get().hostToken !== token) return false;
     }
-    this.o.log(`deck: cloud — could not fetch the plan, keeping the last one (${errName(err)})`);
+    this.o.log('deck: cloud — the cloud no longer accepts this Mac, link forgotten');
+    await this.forget(st);
+    return true;
+  }
+
+  /**
+   * The plan fetch failed. The cloud's `unauthorized` is confirmed with the host API before the link is forgotten;
+   * anything else keeps the stored plan, logged by name only and once while the same failure repeats.
+   */
+  private async planFailed(st: CloudState, err: unknown, token: string): Promise<void> {
+    if (refused(err)) {
+      if (st.get().hostToken !== token) return; // relinked meanwhile
+      if (await this.forgetIfRefused(st, token)) return;
+    }
+    const name = errName(err);
+    if (name === this.lastPlanError) return;
+    this.lastPlanError = name;
+    this.o.log(`deck: cloud — could not fetch the plan, keeping the last one (${name})`);
   }
 
   private async forget(st: CloudState): Promise<void> {
@@ -375,6 +417,11 @@ export class CloudService {
     this.changed();
     await write;
   }
+}
+
+/** The cloud itself refused the token: a 401 carrying its `unauthorized` code (a proxy's bare 401 does not count). */
+function refused(err: unknown): boolean {
+  return err instanceof CloudError && err.status === 401 && err.code === 'unauthorized';
 }
 
 /** An error's class name (and a cloud error's code) only: messages may carry addresses. */

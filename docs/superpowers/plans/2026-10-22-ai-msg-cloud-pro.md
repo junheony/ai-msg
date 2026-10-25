@@ -1704,8 +1704,8 @@ it('no stored version (first visit / home-screen app) goes to latest; junk is ig
 **Interfaces:**
 - `[app] GET /v1/entitlement`(host Bearer) → `EntitlementRes = { plan: 'pro' | 'trial' | 'comp' | 'none'; st: 'active' | 'trialing' | 'past_due' | 'canceled' | 'none'; untilMs: number; checkedAt: number }`.
   - `entitledState(db, userId, now)` 를 그대로 옮기고 `checkedAt = now` 를 붙인다. `cache-control: no-store`.
-  - 해제된 호스트·틀린 토큰은 401 `{code:'revoked'}`. 호스트당 분당 6회(넘으면 429).
-- `CloudApi.entitlement(token): Promise<EntitlementRes>` — 401 이면 `CloudAuthError`(Task 4a 의 기존 처리로 `unlinked`).
+  - 해제된 호스트·틀린 토큰은 401 `{code:'unauthorized'}`(기존 호스트 API 관례). 호스트당 분당 6회(넘으면 429).
+- `CloudApi.entitlement(token): Promise<EntitlementRes>` — 401 이면 `CloudError(401, code)`. `code === 'unauthorized'` 일 때만 `GET /v1/devices` 로 한 번 더 확인하고, 거기서도 401 `unauthorized` 면 연결을 잊는다(`confirmUnlinked` 와 같은 규칙 — 프록시의 본문 없는 401 로는 잊지 않는다).
 - `PlanView.ts`: `class PlanView`
   - 생성자: `constructor(o: { api: CloudApi; state: CloudState; relay: { recheck(): void }; now?: () => number; setTimer?: typeof setTimeout })`
   - 메서드: `start()`(연결돼 있으면 즉시 한 번, 그 뒤 6시간 ±30분마다), `refresh(): Promise<EntitlementRes | null>`, `get(): EntitlementRes | null`, `stop()`
@@ -1737,7 +1737,7 @@ it('trial host → trial/trialing with the trial end', async () => {
 });
 it('comp grant wins when its until is later', async () => { /* grants 행 → plan comp */ });
 it('nothing → none / 0', async () => { /* trials.ends_at 과거 */ });
-it('revoked host → 401; relay origin → 404', async () => { /* … */ });
+it('revoked host → 401 unauthorized; relay origin → 404', async () => { /* … */ });
 
 // src/server/cloud/PlanView.test.ts
 it('stores the plan and calls relay.recheck when it changes to a live plan', async () => {

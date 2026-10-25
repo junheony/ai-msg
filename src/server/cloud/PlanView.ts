@@ -11,7 +11,7 @@ const JITTER_MS = 30 * 60_000;
  *
  * - Not linked → no request, `null`.
  * - A failed fetch (network, 5xx, 429, a malformed answer) keeps the stored plan; the screen shows its `checkedAt`.
- *   Every failure goes to `onError` (the owner forgets the link on a 401).
+ *   Every failure goes to `onError` (the owner confirms the cloud's `unauthorized` before forgetting the link).
  * - When `plan`·`st`·`untilMs` change to something still running, the relay is asked to recheck (a payment reaches the
  *   relay without waiting for its next alarm).
  */
@@ -83,12 +83,17 @@ export class PlanView {
       next = await this.o.api.entitlement(token);
     } catch (err) {
       this.o.onError?.(err, token);
-      return err instanceof CloudError && err.status === 401 ? null : this.get();
+      return err instanceof CloudError && err.status === 401 && err.code === 'unauthorized' ? null : this.get();
     }
     if (st.get().hostToken !== token) return this.get(); // unlinked or relinked meanwhile
     const prev = st.get().plan;
     const changed = !prev || prev.plan !== next.plan || prev.st !== next.st || prev.untilMs !== next.untilMs;
-    await st.update({ plan: next });
+    try {
+      await st.update({ plan: next });
+    } catch (err) {
+      this.o.onError?.(err, token);
+      return this.get();
+    }
     this.o.onChange?.();
     if (changed && next.untilMs > this.now()) this.o.relay.recheck();
     return next;

@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { EntitlementRes } from '../../shared/cloud/api-types';
 import { exportStaticPrivate, generateStaticKey, importStaticPrivate } from '../../shared/cloud/noise';
+import { toEntitlement } from './entitlement';
 
 export type TrustedDevice = { id: string; name: string; pub: string /* X25519 32B b64u */; addedAt: number };
 export type CloudStateData = {
@@ -51,7 +52,8 @@ export class CloudState {
       try { parsed = JSON.parse(text); } catch { /* broken */ }
       if (await valid(parsed)) {
         const p = parsed as CloudStateData;
-        return new CloudState(file, { ...blank(p.hostKey), ...p });
+        // A plan of the wrong shape is only display data: drop it, keep the link.
+        return new CloudState(file, { ...blank(p.hostKey), ...p, plan: toEntitlement(p.plan) });
       }
       await fs.rename(file, `${file}.broken-${Date.now()}`);
     }
