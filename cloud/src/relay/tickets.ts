@@ -2,6 +2,7 @@ import type { TicketRes } from '../../../src/shared/cloud/api-types';
 import { deviceAuth, hashToken, newToken } from '../auth/tokens';
 import { entitledState } from '../entitled';
 import { json, problem } from '../http';
+import { MINUTE, hit } from '../rate';
 import type { Ctx } from '../router';
 
 export const TICKET_TTL_MS = 60_000;
@@ -11,6 +12,8 @@ export const TICKET_TTL_MS = 60_000;
  * - unknown token, revoked device or unlinked host → 401 `revoked` (the phone offers re-pairing);
  * - `claimed` while its pairing is still waiting for the Mac → 403 `pending_confirm` (the phone asks again);
  *   once that pairing expired the device can never be confirmed → 401 `pairing_expired`, not an endless 403;
+ * - more than 10 tickets per device per minute → 429 `rate_limited` (keeps `relay_tickets` from being flooded;
+ *   expired rows are deleted by the Task 12 cleanup cron);
  * - no entitlement (`untilMs` already carries the 48 h / 7 day grace) → 402 `not_entitled`;
  * - else a 60 s one-time ticket for `GET /relay/device?ticket=`. Only its sha256 is stored.
  */
@@ -24,6 +27,7 @@ export async function relayTicket(c: Ctx): Promise<Response> {
       .bind(dev.id, c.nowMs).first();
     return waiting ? problem(403, 'pending_confirm') : problem(401, 'pairing_expired');
   }
+  if (!(await hit(db, `relay:ticket:dev:${dev.id}`, 10, MINUTE, c.nowMs))) return problem(429, 'rate_limited');
   const ent = await entitledState(db, dev.userId, c.nowMs);
   if (!(ent.untilMs > c.nowMs)) return problem(402, 'not_entitled');
   const ticket = newToken();

@@ -3,10 +3,17 @@ import { CLOSE, MAX_FRAME, decodeEnvelope, encodeEnvelope } from '../../../src/s
 import { entitledState } from '../entitled';
 import type { Env } from '../env';
 
-/** Per-socket state; survives hibernation (serializeAttachment). Every socket of one room has the same `user`. */
-type Att = { role: 'host' | 'device'; host: string; dev?: string; user: string; until: number; lastRecheck: number };
+/**
+ * Per-socket state; survives hibernation (serializeAttachment). Every socket of one room has the same `user`.
+ * `tok`/`tokAt` are the frame token bucket, `bad` marks that this socket's malformed frame was already logged.
+ * A socket without an attachment is one still being checked (or refused) by `upgrade`: it routes nothing.
+ */
+type Att = { role: 'host' | 'device'; host: string; dev?: string; user: string; until: number; lastRecheck: number; tok: number; tokAt: number; bad?: true };
 
 const RECHECK_GAP_MS = 30_000;
+/** Frame limit per socket: 200 frames/s sustained, bursts of 400 — far above a terminal stream; past it, 4429. */
+const FRAME_RATE = 200;
+const FRAME_BURST = 400;
 const OPEN = 1; // WebSocket.READY_STATE_OPEN
 
 /** The only log line the relay writes: metadata, never a payload (Global Constraints "클라우드는 평문을 보지 않는다"). */
@@ -17,6 +24,7 @@ export function relayLog(ev: string, f: { host?: string; dev?: string; bytes?: n
 
 const sendText = (ws: WebSocket, msg: Record<string, unknown>) => { try { ws.send(JSON.stringify(msg)); } catch { /* closing */ } };
 const closeWs = (ws: WebSocket, code: number, reason: string) => { try { ws.close(code, reason); } catch { /* already closed */ } };
+const sendBin = (ws: WebSocket, bytes: Uint8Array) => { try { ws.send(bytes); } catch { /* closing */ } };
 
 /**
  * One relay room per host (`idFromName(hostId)`), Hibernation WebSocket API only — no timers, no in-memory state.
@@ -31,15 +39,15 @@ export class RelayRoom extends DurableObject<Env> {
   }
 
   private open(tag?: string): WebSocket[] {
-    return this.ctx.getWebSockets(tag).filter((ws) => ws.readyState === OPEN);
+    return this.ctx.getWebSockets(tag).filter((ws) => ws.readyState === OPEN && att(ws) !== null);
   }
   private devices(): WebSocket[] {
-    return this.open().filter((ws) => att(ws).role === 'device');
+    return this.open().filter((ws) => att(ws)!.role === 'device');
   }
 
   /** Arms the alarm at the earliest future `until`, unless an earlier one (a pending recheck) is already set. */
   private async armAlarm(now: number): Promise<void> {
-    const untils = this.open().map((ws) => att(ws).until).filter((u) => u > now);
+    const untils = this.open().map((ws) => att(ws)!.until).filter((u) => u > now);
     if (untils.length === 0) return; // only a not-entitled host: the next check comes from a recheck
     const at = Math.min(...untils);
     const cur = await this.ctx.storage.getAlarm();
@@ -54,7 +62,7 @@ export class RelayRoom extends DurableObject<Env> {
       for (const ws of this.ctx.getWebSockets(`dev:${dev}`)) closeWs(ws, CLOSE.revoked, 'revoked');
       const host = this.open('host')[0];
       if (host) sendText(host, { t: 'revoked', dev });
-      relayLog('revoke', { host: host ? att(host).host : undefined, dev, code: CLOSE.revoked });
+      relayLog('revoke', { host: host ? att(host)!.host : undefined, dev, code: CLOSE.revoked });
       return new Response(null, { status: 204 });
     }
     if (path === '/internal/unlink') {
@@ -91,7 +99,20 @@ export class RelayRoom extends DurableObject<Env> {
     const client = pair[0];
     const server = pair[1];
     this.ctx.acceptWebSocket(server, [tag]);
-    const a: Att = role === 'host' ? { role, host, user, until, lastRecheck: 0 } : { role, host, dev: dev!, user, until, lastRecheck: 0 };
+    // A revoke/unlink can commit between the Worker's ticket/token check and this accept; its notice then found
+    // nothing to close. Re-read D1 now that the socket is visible to later notices: not active → close at once.
+    const live = role === 'host'
+      ? await this.env.DB.prepare('SELECT 1 FROM hosts WHERE id = ? AND revoked_at IS NULL').bind(host).first()
+      : await this.env.DB.prepare("SELECT 1 FROM devices WHERE id = ? AND host_id = ? AND state = 'active'").bind(dev, host).first();
+    if (!live) {
+      const code = role === 'host' ? CLOSE.unauthorized : CLOSE.revoked;
+      closeWs(server, code, role === 'host' ? 'unlinked' : 'revoked');
+      relayLog('refused', { host, dev: dev ?? undefined, code });
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    const t0 = Date.now();
+    const base = { host, user, until, lastRecheck: 0, tok: FRAME_BURST, tokAt: t0 };
+    const a: Att = role === 'host' ? { role, ...base } : { role, dev: dev!, ...base };
     server.serializeAttachment(a);
     // Socket replacement between ticket-authenticated sockets only; the Mac keeps its own Noise session rule.
     for (const ws of old) closeWs(ws, CLOSE.replaced, 'replaced');
@@ -111,7 +132,17 @@ export class RelayRoom extends DurableObject<Env> {
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    const a = att(ws);
+    const prev = att(ws);
+    if (!prev) return; // still being checked by upgrade, or refused
+    const now = Date.now();
+    const tok = Math.min(FRAME_BURST, prev.tok + ((now - prev.tokAt) * FRAME_RATE) / 1000);
+    if (tok < 1) {
+      relayLog('flood', { host: prev.host, dev: prev.dev, code: CLOSE.rateLimited });
+      closeWs(ws, CLOSE.rateLimited, 'too many frames');
+      return;
+    }
+    const a: Att = { ...prev, tok: tok - 1, tokAt: now };
+    ws.serializeAttachment(a);
     if (typeof message === 'string') {
       // `ping` is answered by the auto-response; the host's `{"t":"recheck"}` is the only other text that means anything.
       const text = message;
@@ -119,7 +150,6 @@ export class RelayRoom extends DurableObject<Env> {
       let m: unknown;
       try { m = JSON.parse(text); } catch { return; }
       if ((m as { t?: unknown } | null)?.t !== 'recheck') return;
-      const now = Date.now();
       if (now - a.lastRecheck < RECHECK_GAP_MS) return;
       ws.serializeAttachment({ ...a, lastRecheck: now } satisfies Att);
       await this.ctx.storage.setAlarm(now);
@@ -133,22 +163,25 @@ export class RelayRoom extends DurableObject<Env> {
     }
     const e = decodeEnvelope(new Uint8Array(message));
     if (!e) {
+      if (a.bad) return; // logged once per socket: a stream of junk does not flood the log
       relayLog('bad_frame', { host: a.host, dev: a.dev, bytes });
+      ws.serializeAttachment({ ...a, bad: true } satisfies Att);
       return;
     }
     if (a.role === 'host') {
       const target = this.open(`dev:${e.peer}`)[0];
       if (!target) sendText(ws, { t: 'peer', dev: e.peer, up: false });
-      else target.send(encodeEnvelope({ ...e, peer: 'host' }));
+      else sendBin(target, encodeEnvelope({ ...e, peer: 'host' }));
     } else {
       const hostWs = this.open('host')[0];
       if (!hostWs) sendText(ws, { t: 'host', up: false });
-      else hostWs.send(encodeEnvelope({ ...e, peer: a.dev! })); // never the peer the phone wrote
+      else sendBin(hostWs, encodeEnvelope({ ...e, peer: a.dev! })); // never the peer the phone wrote
     }
   }
 
   async webSocketClose(ws: WebSocket, code: number): Promise<void> {
     const a = att(ws);
+    if (!a) return; // refused in upgrade: it was never announced, so nobody is told it left
     relayLog('close', { host: a.host, dev: a.dev, code });
     // A socket replaced by a newer one with the same tag does not read as "gone".
     if (this.open(a.role === 'host' ? 'host' : `dev:${a.dev}`).length > 0) return;
@@ -165,9 +198,9 @@ export class RelayRoom extends DurableObject<Env> {
     const all = this.open();
     if (all.length === 0) return;
     const now = Date.now();
-    const { untilMs } = await entitledState(this.env.DB, att(all[0]!).user, now);
+    const { untilMs } = await entitledState(this.env.DB, att(all[0]!)!.user, now);
     const ok = untilMs > now;
-    for (const ws of all) ws.serializeAttachment({ ...att(ws), until: untilMs } satisfies Att);
+    for (const ws of all) ws.serializeAttachment({ ...att(ws)!, until: untilMs } satisfies Att);
     const hostWs = this.open('host')[0];
     if (hostWs) sendText(hostWs, { t: 'ent', ok, until: untilMs });
     if (ok) {
@@ -175,12 +208,12 @@ export class RelayRoom extends DurableObject<Env> {
       return;
     }
     for (const d of this.devices()) {
-      relayLog('not_entitled', { host: att(d).host, dev: att(d).dev, code: CLOSE.notEntitled });
+      relayLog('not_entitled', { host: att(d)!.host, dev: att(d)!.dev, code: CLOSE.notEntitled });
       closeWs(d, CLOSE.notEntitled, 'not entitled');
     }
   }
 }
 
-function att(ws: WebSocket): Att {
-  return ws.deserializeAttachment() as Att;
+function att(ws: WebSocket): Att | null {
+  return (ws.deserializeAttachment() as Att | null) ?? null;
 }

@@ -44,19 +44,37 @@ describe('repository hygiene', () => {
     expect(shared.length).toBeGreaterThan(0);
     const allowed = new Set(shared);
     const cloudSrc = path.join(cloud, 'src');
-    const walk = (d: string): string[] => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(path.join(d, e.name)) : /\.ts$/.test(e.name) ? [path.join(d, e.name)] : []);
+    const CODE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
+    const walk = (d: string): string[] => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(path.join(d, e.name)) : CODE.test(e.name) ? [path.join(d, e.name)] : []);
     const worker = walk(cloudSrc);
     expect(worker.length).toBeGreaterThan(0);
+    const isFile = (p: string) => fs.existsSync(p) && fs.statSync(p).isFile();
+    /** The file a relative specifier really names (as written, with an extension, `.js`→`.ts`, or `index.*`), else null. */
+    const resolve = (from: string, spec: string): string | null => {
+      const base = path.resolve(path.dirname(from), spec);
+      const exts = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'];
+      const cands = [base, ...exts.map((e) => base + e), base.replace(/\.(m|c)?js$/, (_m, p: string | undefined) => `.${p ?? ''}ts`), ...exts.map((e) => path.join(base, `index${e}`))];
+      return cands.find(isFile) ?? null;
+    };
     const bad: string[] = [];
     // The shared files import only each other; the Worker's own code also imports itself and `cloudflare:*`.
     for (const file of [...shared, ...worker]) {
       const rel = path.relative(ROOT, file);
       const own = !shared.includes(file);
-      for (const m of fs.readFileSync(file, 'utf8').matchAll(/\b(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g)) {
-        const spec = m[1]!;
+      const src = fs.readFileSync(file, 'utf8');
+      const specs: string[] = [];
+      for (const m of src.matchAll(/\b(?:from|import)\s*['"]([^'"]+)['"]/g)) specs.push(m[1]!);
+      // Dynamic import(…) and require(…): only a plain string literal can be checked; anything else fails.
+      for (const m of src.matchAll(/\b(import|require)\s*\(\s*([^)]*?)\s*\)/g)) {
+        const lit = /^(['"`])([^'"`$]*)\1$/.exec(m[2]!);
+        if (!lit || (lit[1] === '`' && m[2]!.includes('${'))) bad.push(`${rel}: ${m[1]}(${m[2]}) (not a plain string literal)`);
+        else specs.push(lit[2]!);
+      }
+      for (const spec of specs) {
         if (own && spec.startsWith('cloudflare:')) continue;
         if (!spec.startsWith('./') && !spec.startsWith('../')) { bad.push(`${rel}: ${spec}`); continue; }
-        const target = path.resolve(path.dirname(file), spec.endsWith('.ts') ? spec : `${spec}.ts`);
+        const target = resolve(file, spec);
+        if (!target) { bad.push(`${rel}: ${spec} (no such file)`); continue; }
         if (allowed.has(target)) continue;
         if (own && target.startsWith(cloudSrc + path.sep)) continue;
         bad.push(`${rel}: ${spec} (not cloud/src nor in cloud/tsconfig.json include)`);

@@ -40,6 +40,28 @@ describe('the cloud never sees plaintext', () => {
     expect(parses).toEqual(['text']);
   });
 
+  it('nothing reaches the payload by index or destructuring either', () => {
+    for (const [name, src] of Object.entries(relaySources)) {
+      expect(src, name).not.toMatch(/\[\s*['"`]payload['"`]\s*\]/);
+      expect(src, name).not.toMatch(/\{\s*payload\b/);
+    }
+  });
+
+  it('the relay stores nothing and calls out nowhere except the listed DO hand-offs', () => {
+    // Every line using fetch( must be one of these; storage writes and SQL storage are not allowed at all.
+    const allowedFetch: Record<string, RegExp[]> = {
+      'RelayRoom.ts': [/^\s*async fetch\(req: Request\): Promise<Response> \{$/],
+      'routes.ts': [/c\.env\.RELAY\.get\(c\.env\.RELAY\.idFromName\(hostId\)\)\.fetch\(new Request\(/, /stub\.fetch\(`https:\/\/relay\/internal\/\$\{what\}`/],
+      'tickets.ts': [],
+    };
+    for (const [name, src] of Object.entries(relaySources)) {
+      expect(src, name).not.toMatch(/storage\.(put|sql)|sql\.exec/);
+      for (const line of src.split('\n').filter((l) => /\bfetch\(/.test(l))) {
+        expect(allowedFetch[name]!.some((re) => re.test(line)), `${name}: ${line.trim()}`).toBe(true);
+      }
+    }
+  });
+
   it('the Worker routes never read WebSocket traffic; they only hand the upgrade to the DO', () => {
     expect(routesSrc).not.toMatch(/addEventListener|\.accept\(|WebSocketPair/);
     expect(ticketsSrc).not.toMatch(/addEventListener|WebSocketPair/);

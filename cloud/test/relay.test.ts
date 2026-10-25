@@ -1,8 +1,10 @@
 import { env } from 'cloudflare:workers';
 import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { PairClaimReq, PairClaimRes, TicketRes } from '../../src/shared/cloud/api-types';
 import { CLOSE, EnvKind, MAX_FRAME, decodeEnvelope, encodeEnvelope } from '../../src/shared/cloud/envelope';
+import { notifyRelay } from '../src/relay/routes';
+import type { Ctx } from '../src/router';
 import { RELAY, bearer, call, claim, freshIp, linkHost, post, pub, relayPost } from './helpers';
 
 type Sock = { status: number; ws: WebSocket | null; inbox: (string | ArrayBuffer)[]; closes: number[] };
@@ -113,6 +115,18 @@ describe('relay ticket', () => {
     expect((await openWs(`/relay/device?ticket=${await ticketFor(d.deviceToken)}`, { origin: 'https://evil.test' })).status).toBe(403);
     const seen = await env.DB.prepare('SELECT last_seen FROM devices WHERE id = ?').bind(d.deviceId).first<number>('last_seen');
     expect(seen).toBeGreaterThan(0);
+  });
+
+  it('tickets are limited to 10 per device per minute (429), so the table cannot be flooded', async () => {
+    const h = await linkHost(email());
+    const d = await pairedDevice(h);
+    for (let i = 0; i < 10; i++) expect((await ticketRes(d.deviceToken)).status).toBe(200);
+    const over = await ticketRes(d.deviceToken);
+    expect(over.status).toBe(429);
+    expect(await over.json()).toMatchObject({ code: 'rate_limited' });
+    expect(await env.DB.prepare('SELECT count(*) AS n FROM relay_tickets WHERE device_id = ?').bind(d.deviceId).first('n')).toBe(10);
+    const other = await pairedDevice(h); // per device, not per host
+    expect((await ticketRes(other.deviceToken)).status).toBe(200);
   });
 
   it('relay routes are 404 on the app origin', async () => {
@@ -344,6 +358,35 @@ describe('relay routing', () => {
     await waitFor(() => binaries(p1).length > 0);
   });
 
+  it('a frame flood closes the socket with 4429; a malformed-frame log line is written once per socket', async () => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
+    try {
+      const h = await linkHost(email());
+      const host = await openHost(h.hostToken);
+      await waitFor(() => texts(host).length > 0);
+      for (let i = 0; i < 1200 && host.closes.length === 0; i++) {
+        try { host.ws!.send(new Uint8Array([200, 1, 2, 3])); } catch { break; }
+      }
+      await waitFor(() => host.closes.length > 0);
+      expect(host.closes).toEqual([CLOSE.rateLimited]);
+      expect(lines.filter((l) => l.includes('"ev":"bad_frame"'))).toHaveLength(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('a normal burst (300 frames at once) passes the frame limit', async () => {
+    const h = await linkHost(email());
+    const d1 = await pairedDevice(h);
+    const host = await openHost(h.hostToken);
+    const p1 = await openDevice(d1.deviceToken);
+    await waitFor(() => hasText(host, { t: 'peer', dev: d1.deviceId, up: true }));
+    for (let i = 0; i < 300; i++) p1.ws!.send(encodeEnvelope({ kind: EnvKind.Data, peer: 'host', payload: new Uint8Array([i & 255]) }));
+    await waitFor(() => binaries(host).length === 300);
+    expect(p1.closes).toEqual([]);
+  });
+
   it('oversized frame closes with 4413', async () => {
     const h = await linkHost(email());
     const host = await openHost(h.hostToken);
@@ -410,8 +453,86 @@ describe('relay revoke and unlink', () => {
     expect((await openHost(h.hostToken)).status).toBe(401);
   });
 
+  /** Opens a socket on the DO directly, as the Worker does after the ticket/token check (the revoke lands in between). */
+  async function openOnRoom(hostId: string, relay: Record<string, string>): Promise<Sock> {
+    const res = await stubFor(hostId).fetch('https://relay/relay/x', { headers: { upgrade: 'websocket', 'x-relay-host': hostId, 'x-relay-until': String(Date.now() + 86_400_000), ...relay } });
+    const inbox: (string | ArrayBuffer)[] = [];
+    const closes: number[] = [];
+    if (res.status !== 101) return { status: res.status, ws: null, inbox, closes };
+    const ws = res.webSocket!;
+    ws.accept();
+    ws.addEventListener('message', (e) => inbox.push(e.data as string | ArrayBuffer));
+    ws.addEventListener('close', (e) => closes.push(e.code));
+    return { status: 101, ws, inbox, closes };
+  }
+  const userOf = async (hostId: string) => (await env.DB.prepare('SELECT user_id FROM hosts WHERE id = ?').bind(hostId).first<string>('user_id'))!;
+
+  it('race: a device revoked after its ticket was used but before the DO accepted is closed with 4403 right after accept', async () => {
+    const h = await linkHost(email());
+    const d1 = await pairedDevice(h);
+    const host = await openHost(h.hostToken);
+    await waitFor(() => texts(host).length > 0);
+    // The revoke commits in D1 while the upgrade is in flight; its DO notice found nothing to close.
+    await env.DB.prepare("UPDATE devices SET state = 'revoked' WHERE id = ?").bind(d1.deviceId).run();
+    const p1 = await openOnRoom(h.hostId, { 'x-relay-role': 'device', 'x-relay-device': d1.deviceId, 'x-relay-user': await userOf(h.hostId) });
+    expect(p1.status).toBe(101);
+    await waitFor(() => p1.closes.length > 0);
+    expect(p1.closes).toEqual([CLOSE.revoked]);
+    await sync(host);
+    expect(hasText(host, { t: 'peer', dev: d1.deviceId, up: true })).toBe(false);
+  });
+
+  it('race: a host unlinked after its token check but before the DO accepted is closed with 4401 right after accept', async () => {
+    const h = await linkHost(email());
+    const d1 = await pairedDevice(h);
+    const p1 = await openDevice(d1.deviceToken);
+    await waitFor(() => hasText(p1, { t: 'host', up: false }));
+    await env.DB.prepare('UPDATE hosts SET revoked_at = ? WHERE id = ?').bind(Date.now(), h.hostId).run();
+    const host = await openOnRoom(h.hostId, { 'x-relay-role': 'host', 'x-relay-user': await userOf(h.hostId) });
+    expect(host.status).toBe(101);
+    await waitFor(() => host.closes.length > 0);
+    expect(host.closes).toEqual([CLOSE.unauthorized]);
+    await sleep(50);
+    expect(hasText(p1, { t: 'host', up: true })).toBe(false);
+  });
+
   it('the DO refuses an upgrade without the headers the Worker adds', async () => {
     const res = await stubFor('nobody').fetch('https://relay/relay/host', { headers: { upgrade: 'websocket', 'x-relay-role': 'host' } });
     expect(res.status).toBe(500);
+  });
+});
+
+describe('notifyRelay', () => {
+  const fakeCtx = (fetch: () => Promise<Response>) => {
+    const waits: Promise<unknown>[] = [];
+    let calls = 0;
+    const stub = { fetch: () => { calls++; return fetch(); } };
+    const c = { env: { RELAY: { idFromName: (n: string) => n, get: () => stub } }, exec: { waitUntil: (p: Promise<unknown>) => { waits.push(p); } } } as unknown as Ctx;
+    return { c, done: () => Promise.all(waits), calls: () => calls };
+  };
+
+  it('a failed notice is sent once more', async () => {
+    let n = 0;
+    const f = fakeCtx(async () => { if (n++ === 0) throw new Error('reset'); return new Response(null, { status: 204 }); });
+    notifyRelay(f.c, 'host-a', 'revoke', 'dev-a');
+    await f.done();
+    expect(f.calls()).toBe(2);
+  });
+
+  it('a notice that fails twice (thrown or non-2xx) leaves one metadata-only log line', async () => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
+    try {
+      let n = 0;
+      const f = fakeCtx(async () => { if (n++ === 0) throw new Error('secret-detail'); return new Response('boom', { status: 500 }); });
+      notifyRelay(f.c, 'host-b', 'unlink');
+      await f.done();
+      expect(f.calls()).toBe(2);
+      expect(lines).toHaveLength(1);
+      expect(JSON.parse(lines[0]!)).toEqual({ ev: 'notify_failed_unlink', host: 'host-b' });
+      expect(lines[0]).not.toContain('secret-detail');
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

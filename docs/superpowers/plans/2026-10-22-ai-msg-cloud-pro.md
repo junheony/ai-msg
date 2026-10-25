@@ -286,6 +286,7 @@ relay 출처는 쿠키를 읽지도 심지도 않는다. 폰 UI 가 app 출처�
 | 4408 | 핸드셰이크 시간 초과 |
 | 4409 | 같은 호스트·기기의 새 연결로 대체됨 |
 | 4413 | 프레임 1MiB 초과 |
+| 4429 | 프레임 폭주(소켓당 초당 200·버스트 400 초과, 릴레이가 닫음) |
 
 **이용권 표시 (출시 1차)** — `GET /v1/entitlement`(host Bearer)는 서명 없는 JSON `{plan: 'pro'|'trial'|'comp'|'none', st: 'active'|'trialing'|'past_due'|'canceled'|'none', untilMs, checkedAt}` 을 준다. 로컬은 **표시만** 한다(Task 7). Ed25519 JWS·로컬 검증·오프라인 유예는 출시 뒤 Task 13 이다.
 
@@ -413,7 +414,7 @@ relay 출처는 쿠키를 읽지도 심지도 않는다. 폰 UI 가 app 출처�
   - `encodeEnvelope(e: { kind: EnvKind; peer: string; payload: Uint8Array }): Uint8Array`, `decodeEnvelope(u8: Uint8Array): { kind: EnvKind; peer: string; payload: Uint8Array } | null`(peer 가 64자를 넘거나 ASCII 가 아니면 null)
   - `TunnelFrame`(zod 판별 유니온 — `ready`, `ws.open`, `ws.msg{s,d,more?}`, `ws.close`, `http.req`, `http.res`, `http.chunk`, `http.abort`), `parseTunnelFrame(json: unknown): TunnelFrame | null`, `encodeTunnel(f: TunnelFrame): Uint8Array`(UTF-8 결과가 `NOISE_MAX_PLAINTEXT` 를 넘으면 `RangeError`)
   - `chunkBytes(u8: Uint8Array, size = TUNNEL_CHUNK): Uint8Array[]`, `chunkString(s: string, size = TUNNEL_CHUNK): string[]`(UTF-16 대리쌍을 자르지 않는다)
-  - `const TUNNEL_CHUNK = 32768`, `const CLOSE = { unauthorized: 4401, notEntitled: 4402, revoked: 4403, hsTimeout: 4408, replaced: 4409, tooLarge: 4413 } as const`, `const MAX_FRAME = 1 << 20`
+  - `const TUNNEL_CHUNK = 32768`, `const CLOSE = { unauthorized: 4401, notEntitled: 4402, revoked: 4403, hsTimeout: 4408, replaced: 4409, tooLarge: 4413, rateLimited: 4429 } as const`, `const MAX_FRAME = 1 << 20`
 - `pairing.ts`:
   - `type PairQr = { v: 2; pairingId: string; claim: string; auth: string; hostPub: string; hostVersion: string; relayOrigin: string }`
   - `encodePairUrl(q: PairQr): string`, `parsePairHash(hash: string): Omit<PairQr, 'relayOrigin' | 'hostVersion'> | null`(v1 형식·글자 수가 다른 `hostPub` 은 null)
@@ -2063,7 +2064,7 @@ it('after trial: Pro 구독 opens checkout; coming back refreshes the plan', asy
 
 ```sql
 CREATE INDEX magic_links_exp ON magic_links(expires_at);
-CREATE INDEX relay_tickets_exp ON relay_tickets(expires_at);
+-- relay_tickets(expires_at) 색인은 Task 3 의 0002_relay.sql(relay_tickets_expires)에 이미 있다.
 CREATE INDEX pairings_exp ON pairings(expires_at);
 CREATE INDEX host_links_exp ON host_links(expires_at);
 CREATE INDEX web_sessions_exp ON web_sessions(expires_at);

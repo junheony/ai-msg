@@ -8,7 +8,7 @@ export const NOISE_MAX_PLAINTEXT = 65519;
 export const TUNNEL_CHUNK = 32768;
 /** Largest envelope (header + payload) either side or the relay accepts; bigger is closed with 4413. */
 export const MAX_FRAME = 1 << 20;
-export const CLOSE = { unauthorized: 4401, notEntitled: 4402, revoked: 4403, hsTimeout: 4408, replaced: 4409, tooLarge: 4413 } as const;
+export const CLOSE = { unauthorized: 4401, notEntitled: 4402, revoked: 4403, hsTimeout: 4408, replaced: 4409, tooLarge: 4413, rateLimited: 4429 } as const;
 
 export enum EnvKind { Data = 1, HsInit = 2, HsAck = 3, Close = 4 }
 

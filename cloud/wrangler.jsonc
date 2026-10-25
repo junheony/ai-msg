@@ -6,8 +6,8 @@
   "name": "ai-msg-cloud",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-15",
-  // The runtime answers a client's Close frame itself, so RelayRoom.webSocketClose never has to.
-  "compatibility_flags": ["web_socket_auto_reply_to_close"],
+  // web_socket_auto_reply_to_close (the runtime answers a client's Close frame, so RelayRoom.webSocketClose never
+  // has to) is the default since 2026-04-07, which this date covers — no flag needed.
   "d1_databases": [
     // database_id: filled in by the operator at deploy time (`wrangler d1 create ai-msg`).
     { "binding": "DB", "database_name": "ai-msg", "migrations_dir": "migrations" }

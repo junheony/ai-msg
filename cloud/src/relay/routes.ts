@@ -48,13 +48,23 @@ export async function relayDevice(c: Ctx): Promise<Response> {
 }
 
 /**
- * Tells the host's room after the D1 write (`ctx.waitUntil`, the response does not wait): `revoke` closes the
+ * Tells the host's room after the D1 write (`ctx.waitUntil`, the response does not wait; a failure is retried once): `revoke` closes the
  * device with 4403 and tells the host, `unlink` closes everything with 4401, `recheck` re-reads the entitlement.
  */
 export function notifyRelay(c: Ctx, hostId: string, what: 'revoke' | 'unlink' | 'recheck', dev?: string): void {
   const stub = c.env.RELAY.get(c.env.RELAY.idFromName(hostId));
-  c.exec.waitUntil(
-    stub.fetch(`https://relay/internal/${what}`, { method: 'POST', body: JSON.stringify(dev ? { dev } : {}) })
-      .then((r) => r.body?.cancel(), () => relayLog(`notify_failed_${what}`, { host: hostId, dev })),
-  );
+  const once = async (): Promise<boolean> => {
+    try {
+      const r = await stub.fetch(`https://relay/internal/${what}`, { method: 'POST', body: JSON.stringify(dev ? { dev } : {}) });
+      await r.body?.cancel();
+      return r.ok;
+    } catch {
+      return false;
+    }
+  };
+  // One retry; a notice lost twice is only logged (metadata) — the DO's own D1 re-read on accept covers new sockets.
+  c.exec.waitUntil((async () => {
+    if ((await once()) || (await once())) return;
+    relayLog(`notify_failed_${what}`, { host: hostId, dev });
+  })());
 }
