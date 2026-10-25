@@ -40,7 +40,9 @@ function fakeCloud(devices: string[]) {
 
 type Setup = { relay: FakeRelay; loop: FakeLoopback; state: CloudState; device: FakeDevice; dir: string; bridge: RelayBridge | null; svc: CloudService | null; cloud: ReturnType<typeof fakeCloud>['c'] };
 
-async function setup(o: { withService?: boolean; trusted?: boolean; cloudDevices?: string[] } = {}): Promise<Setup> {
+type BridgeExtra = Partial<Pick<ConstructorParameters<typeof RelayBridge>[0], 'limits' | 'log' | 'settings'>>;
+
+async function setup(o: { withService?: boolean; trusted?: boolean; cloudDevices?: string[]; bridge?: BridgeExtra; buffered?: () => number } = {}): Promise<Setup> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deck-bridge-'));
   cleanups.push(() => fs.rm(dir, { recursive: true, force: true }));
   const relay = await FakeRelay.start();
@@ -63,7 +65,10 @@ async function setup(o: { withService?: boolean; trusted?: boolean; cloudDevices
     return { relay, loop, state, device, dir, bridge: null, svc, cloud: c };
   }
   const client = new RelayClient({ url: relay.url, token: () => relay.token });
-  const bridge = new RelayBridge({ relay: client, state, loopback: { port: loop.port, token: () => 'tok' }, hostVersion: '1.2.3' });
+  const relayPort = o.buffered
+    ? { send: (e: Uint8Array) => client.send(e), on: client.on.bind(client), bufferedAmount: o.buffered }
+    : client;
+  const bridge = new RelayBridge({ relay: relayPort as RelayClient, state, loopback: { port: loop.port, token: () => 'tok' }, hostVersion: '1.2.3', ...o.bridge });
   cleanups.push(() => { client.stop(); bridge.close(); });
   client.start();
   await new Promise<void>((r) => client.once('state', function on(s) { if (s === 'up') r(); else client.once('state', on); }));
@@ -321,4 +326,88 @@ describe('RelayBridge', () => {
     const sentAfter = relay.binReceived.slice(n).map((b) => decodeEnvelope(b)!);
     expect(sentAfter.map((e) => [e.kind, e.peer])).toEqual([[EnvKind.Close, device.id]]);
   });
+
+  it('x-deck-filename reaches the loopback (attachment uploads)', async () => {
+    const { device, loop } = await connected();
+    const r = await device.http('POST', '/api/echo', { h: { 'X-Deck-Filename': 'a%20b.png', 'x-evil': '1' }, body: 'x' });
+    expect(r.status).toBe(200);
+    expect(loop.lastHeaders['x-deck-filename']).toBe('a%20b.png');
+    expect(loop.lastHeaders['x-evil']).toBeUndefined();
+  });
+
+  it('request bodies in flight are capped per session: the one that crosses gets 413', async () => {
+    const { device, loop } = await connected({ bridge: { limits: { sessionBodyBytes: 64 * 1024 } } });
+    const kib = (n: number) => Buffer.alloc(n * 1024, 1);
+    const a = device.httpChunks('POST', '/api/echo', [kib(30), kib(10)], { end: false }); // held open, 40 KiB
+    const b = await device.httpChunks('POST', '/api/echo', [kib(20), kib(10)]); // 70 KiB in flight at its second chunk
+    expect(b.status).toBe(413);
+    void a.catch(() => undefined);
+    // the cap frees with the stream: the session still works
+    expect((await device.http('POST', '/api/echo', { body: 'ok' })).status).toBe(200);
+    expect(loop.hits).toBe(1);
+  });
+
+  it('a request whose last chunk never comes times out with 504 and is dropped', async () => {
+    const { device, loop } = await connected({ bridge: { limits: { httpTimeoutMs: 200 } } });
+    const r = await device.httpChunks('POST', '/api/echo', [Buffer.from('half')], { end: false });
+    expect(r.status).toBe(504);
+    expect(loop.hits).toBe(0);
+    // a late last chunk for that id does nothing
+    await device.frame({ t: 'http.chunk', id: 1, b: '', more: false });
+    await sleep(50);
+    expect(loop.hits).toBe(0);
+  });
+
+  it('the 60 s limit runs until the response starts, then it is an idle limit', async () => {
+    const { device } = await connected({ bridge: { limits: { httpTimeoutMs: 250 } } });
+    const r = await device.http('GET', '/api/trickle?n=6&gap=100'); // 600 ms in all, never 250 ms quiet
+    expect(r.status).toBe(200);
+    expect(r.body).toBe('tttttt');
+  });
+
+  it('a response that goes quiet past the idle limit is aborted', async () => {
+    const { device, loop } = await connected({ bridge: { limits: { httpTimeoutMs: 200 } } });
+    await expect(device.http('GET', '/api/stall')).rejects.toThrow('aborted');
+    await waitFor(() => loop.aborted === 1);
+  });
+
+  it('a response over the size cap is cut off', async () => {
+    const { device } = await connected({ bridge: { limits: { responseBytes: 64 * 1024 } } });
+    await expect(device.http('GET', '/api/big')).rejects.toThrow('aborted'); // 100 KiB
+  });
+
+  it('the response stops reading while the relay socket is backed up', async () => {
+    let backed = true;
+    const { device } = await connected({ buffered: () => (backed ? 8 << 20 : 0) });
+    let done = false;
+    const r = device.http('GET', '/api/big').then((x) => { done = true; return x; });
+    await sleep(200);
+    expect(done).toBe(false);
+    expect(device.framesReceived.filter((f) => f.t === 'http.chunk')).toHaveLength(0);
+    backed = false;
+    expect((await r).body.length).toBe(100 * 1024);
+  });
+
+  it('autoConsent: widening is refused, narrowing goes through (from the Mac settings)', async () => {
+    const { device, loop } = await connected({ bridge: { settings: () => ({ autoConsent: ['gemini'] }) } });
+    const s = await device.wsOpen();
+    s.send(JSON.stringify({ type: 'set_settings', autoConsent: ['gemini', 'grok'] }));
+    expect(JSON.parse(await s.next())).toMatchObject({ code: 'mac_confirm_required' });
+    s.send(JSON.stringify({ type: 'set_settings', autoConsent: ['gemini'] }));
+    expect(await s.next()).toBe('echo:{"type":"set_settings","autoConsent":["gemini"]}');
+    expect(loop.wsReceived).toHaveLength(1);
+  });
+
+  it('untrusted handshakes are logged a few times a minute at most', async () => {
+    const logs: string[] = [];
+    const { relay, state } = await setup({ trusted: false, bridge: { log: (l) => logs.push(l) } });
+    const device = await FakeDevice.create(relay);
+    for (let i = 0; i < 20; i++) void device.connect(state).catch(() => undefined);
+    await sleep(300);
+    expect(device.hsAcks).toBe(0);
+    const n = logs.filter((l) => l.includes('not trusted')).length;
+    expect(n).toBeGreaterThan(0);
+    expect(n).toBeLessThanOrEqual(5);
+  });
 });
+

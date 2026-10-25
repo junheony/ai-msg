@@ -48,7 +48,8 @@
 - 서버 재시작·업데이트: `POST /api/restart`, `/api/server-update*`
 - 첫 실행 마법사: `/api/setup` 아래 전부
 - 로그인·로그아웃·클라우드 설정: `/api/login`, `/api/logout`, `/api/cloud/*`(단 `GET /api/cloud/status` 는 읽기만 허용)
-- 권한 모드 상향(ws): `set_permission_mode` 의 `acceptEdits`·`bypassPermissions`, `set_settings` 의 `autoApprove: true`·`defaultPermissionMode` 상향·`commanderEnabled: true`, `send` 의 `permissionMode` 상향·`sandbox: 'workspace-write'`(복제한 새 세션 포함), `set_sandbox` 의 `workspace-write`
+- 권한 모드 상향·영속 설정(ws): `set_permission_mode` 의 `acceptEdits`·`bypassPermissions`, `set_settings` 의 `autoApprove: true`·`defaultPermissionMode` 상향·`commanderEnabled: true`·`experimental` 안의 값을 `true` 로·`autoConsent` 넓히기(켜기·추가), `send` 의 `permissionMode` 상향·기존 세션(`sessionId` 있음)의 `sandbox: 'workspace-write'`(새 세션은 Mac 기본 샌드박스라 허용), `set_sandbox` 의 `workspace-write`, `grok_unlock`
+- 모든 세션에 남는 지시: GET 아닌 `/api/memory*`
 - 기기 해제: 폰에서 `/api/cloud/devices/:id/revoke` 는 막는다(다른 기기 해제는 Mac 이나 계정 페이지에서)
 - 새 기기 페어링 확정: Mac 화면에서 확인 코드 6자리를 보고 [허용] 을 눌러야 한다
 
@@ -1183,8 +1184,9 @@ it('https only; http only for loopback; same origin for app and relay → disabl
 - `wsPolicy.ts`: `relayWsPolicy(msg: unknown): 'allow' | 'mac_confirm_required'` — `ClientMsg` 스키마로 파싱하지 않고 `type` 과 아래 필드만 본다(파싱 실패한 메시지는 루프백 서버가 기존대로 거절하게 `allow`).
   - `RAISED = new Set(['acceptEdits', 'bypassPermissions'])`
   - `set_permission_mode` 의 `mode ∈ RAISED`
-  - `set_settings` 의 `autoApprove === true`, `defaultPermissionMode ∈ RAISED`, `commanderEnabled === true` 가운데 하나라도
-  - `send` 의 `permissionMode ∈ RAISED` 또는 `sandbox === 'workspace-write'`(새 세션 생성 — 복제도 서버가 준 `session_duplicate` 값을 폰이 `send` 로 보내므로 여기서 걸린다)
+  - `set_settings` 의 `autoApprove === true`, `defaultPermissionMode ∈ RAISED`, `commanderEnabled === true`, `experimental` 안에 `true` 인 값, `autoConsent` 가 지금 값(`ctx.autoConsent`, 모르면 `[]`)에 없는 엔진을 담음 가운데 하나라도 — 그래서 시그니처는 `relayWsPolicy(msg, ctx?: { autoConsent? })`
+  - `send` 의 `permissionMode ∈ RAISED` 또는 기존 세션(`sessionId !== null`)의 `sandbox === 'workspace-write'`. 새 세션(`sessionId: null`)의 `workspace-write` 는 Mac 기본값(`DEFAULT_SANDBOX`)이라 허용하고, 샌드박스 없는 새 세션·`start_task` 도 Mac 기본값을 쓰므로 허용
+  - `grok_unlock` 은 언제나
   - `set_sandbox` 의 `sandbox === 'workspace-write'`
   - 내리는 쪽(`default`·`plan`·`read-only`·`false`)은 `allow` 다.
 - `CloudService.ts`: `class CloudService`
@@ -1232,7 +1234,8 @@ it.each([
   [{ type: 'set_settings', commanderEnabled: true }, 'mac_confirm_required'],
   [{ type: 'set_settings', routingPolicy: 'drain' }, 'allow'],
   [{ type: 'send', text: 'hi', permissionMode: 'bypassPermissions' }, 'mac_confirm_required'],
-  [{ type: 'send', text: 'hi', sandbox: 'workspace-write' }, 'mac_confirm_required'],
+  [{ type: 'send', text: 'hi', sessionId: 's', sandbox: 'workspace-write' }, 'mac_confirm_required'],
+  [{ type: 'send', text: 'hi', sessionId: null, sandbox: 'workspace-write' }, 'allow'],
   [{ type: 'send', text: 'hi' }, 'allow'],
   [{ type: 'set_sandbox', sessionId: 's', sandbox: 'workspace-write' }, 'mac_confirm_required'],
   [{ type: 'set_sandbox', sessionId: 's', sandbox: 'read-only' }, 'allow'],
@@ -2470,7 +2473,7 @@ it('hello carries pro; a gate change rides on the settings broadcast', async () 
 | D16 | 클라우드 주소·환경 변수 이름 | **app `https://app.aimsg.app`, relay `https://relay.aimsg.app`(도메인 확보 뒤 확정), `DECK_CLOUD_URL`·`DECK_RELAY_URL`·`DECK_CLOUD`(리네임이 접두사를 바꾸면 따라감)** | 랜딩과 같은 호스트(`aimsg.app`) | 랜딩(정적)·앱(쿠키·결제)·릴레이(폰 UI·기기 키)를 서브도메인으로 나누면 쿠키·CSP·스크립트가 섞이지 않는다. 바뀌면 상수와 `wrangler.jsonc` 의 `PUBLIC_ORIGIN`·`RELAY_ORIGIN` 만 고친다 |
 | D17 | 사용자당 Mac 수 | **3대(`MAX_HOSTS`)**, 기기 3대(스펙)와 별도 | 무제한 / 1대 | 개인 개발자 기준으로 집·회사·서버 정도면 충분하다. 계정 공유 남용을 막는다. 변수라서 바꾸기 쉽다 |
 | D18 | 출처를 나누나 | **둘로 나눈다 — app(로그인·계정·결제·법적 페이지, 쿠키·Paddle.js)과 relay(폰 UI·폰 API·릴레이 WS, 쿠키 없음·제3자 스크립트 없음).** Worker 하나가 `Host` 로 나누고 반대쪽 출처 요청은 404 | 한 출처(옛 구조) / Worker 두 개 | 같은 출처면 Paddle.js 같은 제3자 스크립트나 계정 페이지 XSS 가 폰 UI 의 IndexedDB 기기 키에 닿는다(검토 필수 2). Worker 하나면 D1·DO 바인딩과 배포가 하나로 유지된다 |
-| D19 | 폰에서 Mac 확인이 필요한 동작(재시작·설정 마법사·로그인·클라우드 연결 해제·권한 모드 상향) | **출시 1차는 폰에서 거절(`mac_confirm_required`)하고 Mac 앞에서 하게 한다** | "폰 요청 → Mac 에 [허용] 대화상자"(출시 뒤) | 악성 UI(D1 한계)나 훔친 폰이 Mac 을 원격으로 재설정·권한 상향하는 길을 막는다(검토 필수 1). 대화상자는 Mac 앞에 사람이 있어야 의미가 있어 원격 사용 이점이 작고, 만들면 UI·프로토콜 일이 커진다 |
+| D19 | 폰에서 Mac 확인이 필요한 동작(재시작·설정 마법사·로그인·클라우드 연결 해제·권한 모드 상향) | **출시 1차는 폰에서 거절(`mac_confirm_required`)하고 Mac 앞에서 하게 한다** | "폰 요청 → Mac 에 [허용] 대화상자"(출시 뒤) | 원칙: 폰은 Mac 이 정해 둔 기본값으로 세션을 쓸 수 있고(폰이 Claude 의 도구 확인에 직접 답할 수 있으니 턴 단위 기본 권한을 막아 얻는 보안은 없다), 기존 세션 권한 상향과 모든 세션에 남는 영속 설정·안전 스위치·지시 변경만 Mac 에서 한다. 악성 UI(D1 한계)나 훔친 폰이 Mac 을 원격으로 재설정·권한 상향하는 길을 막는다(검토 필수 1). 대화상자는 Mac 앞에 사람이 있어야 의미가 있어 원격 사용 이점이 작고, 만들면 UI·프로토콜 일이 커진다 |
 | D20 | 홈 화면 PWA 안 [스캔] 에 JS QR 디코더를 들이나 | **들이지 않는다.** `BarcodeDetector` 가 있을 때만 [스캔] 을 보이고, 없으면 페어링 코드 붙여 넣기만 둔다 | JS QR 디코더(이름·라이선스는 착수 시 확인)를 relay UI 번들에 넣기 | Mac 에서 [복사] 한 코드를 iPhone 에 붙여 넣는 경로(같은 Apple 계정의 공유 클립보드)로 같은 일을 할 수 있고, 번들·의존성·검토 범위가 늘지 않는다. Task 5 앞 실기 확인에서 붙여 넣기가 불편하다고 나오면 의존성 승인과 함께 다시 정한다 |
 
 ## 사용자 몫 (이 계획의 작업이 아님)

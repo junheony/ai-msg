@@ -28,4 +28,12 @@ describe('relayPathPolicy', () => {
     ['GET', '/api/%252e%252e/x', 'deny'], ['GET', '/api/%zz', 'deny'], ['GET', '/api/a%5Cb', 'deny'],
     ['GET', 'https://evil.test/api/me', 'deny'], ['GET', 'api/me', 'deny'], ['GET', '', 'deny'], ['GET', '/api', 'deny'],
   ])('%s %s → %s (normalised)', (m, p, want) => expect(relayPathPolicy(m, p)).toBe(want));
+
+  it.each([
+    ['GET', '/api/memory', 'allow'],
+    ['PUT', '/api/memory', 'mac_confirm_required'],
+    ['POST', '/api/memory', 'mac_confirm_required'],
+    ['DELETE', '/api/memory/x', 'mac_confirm_required'],
+    ['GET', '/api/memory?x=1', 'allow'],
+  ])('memory (an instruction every session gets): %s %s → %s', (m, p, want) => expect(relayPathPolicy(m, p)).toBe(want));
 });

@@ -29,6 +29,8 @@ export function relayPathPolicy(method: string, path: string): RelayPathVerdict 
   const m = method.toUpperCase();
   if (under(p, '/api/restart') || under(p, '/api/setup') || under(p, '/api/login') || under(p, '/api/logout')) return 'mac_confirm_required';
   if (p.startsWith('/api/server-update') && m !== 'GET') return 'mac_confirm_required';
+  // Memory: an instruction every session gets. Reading it is fine.
+  if (under(p, '/api/memory') && m !== 'GET' && m !== 'HEAD') return 'mac_confirm_required';
   if (under(p, '/api/cloud')) return m === 'GET' && p === '/api/cloud/status' ? 'allow' : 'mac_confirm_required';
   return 'allow';
 }

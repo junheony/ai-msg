@@ -89,6 +89,11 @@ export class RelayClient extends EventEmitter {
     return true;
   }
 
+  /** Bytes queued on the relay socket and not yet written out (0 while not connected). */
+  bufferedAmount(): number {
+    return this.ws?.bufferedAmount ?? 0;
+  }
+
   entitled(): { ok: boolean; until: number } | null {
     return this.ent;
   }

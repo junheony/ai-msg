@@ -71,8 +71,8 @@ ws 메시지가 아닌 것: 하이라이트(`GET /api/highlights?hours=6|12|24`,
 
 | 경로 | 막는 것 | 답 |
 |---|---|---|
-| ws | `set_permission_mode`(acceptEdits·bypassPermissions), `set_settings`(`autoApprove: true`·`defaultPermissionMode` 올림·`commanderEnabled: true`), `send`(`permissionMode` 올림·`sandbox: 'workspace-write'`), `set_sandbox`(`workspace-write`) — 조각난 메시지는 이어 붙인 뒤(최대 1MiB) 본다 | `error{turnId: null, code: 'mac_confirm_required', message, clientRef?, sessionId?}` |
-| HTTP | `/api/restart`·`/api/setup*`·`/api/login`·`/api/logout`, GET 아닌 `/api/server-update*`, `/api/cloud/status`(GET) 밖의 `/api/cloud*` — 경로는 퍼센트 디코딩·정규화한 뒤 보고, 디코딩·정규화로 바뀌는 경로는 아예 `403 forbidden` | `403 { error: 'mac_confirm_required', code: 'mac_confirm_required' }` |
+| ws | `set_permission_mode`(acceptEdits·bypassPermissions), `set_settings`(`autoApprove: true`·`defaultPermissionMode` 올림·`commanderEnabled: true`·`experimental` 값을 `true` 로·`autoConsent` 넓히기), `send`(`permissionMode` 올림·기존 세션의 `sandbox: 'workspace-write'` — 새 세션은 Mac 기본값이라 허용), `set_sandbox`(`workspace-write`), `grok_unlock` — 조각난 메시지는 이어 붙인 뒤(최대 1MiB) 본다 | `error{turnId: null, code: 'mac_confirm_required', message, clientRef?, sessionId?}` |
+| HTTP | `/api/restart`·`/api/setup*`·`/api/login`·`/api/logout`, GET 아닌 `/api/server-update*`·`/api/memory*`, `/api/cloud/status`(GET) 밖의 `/api/cloud*` — 경로는 퍼센트 디코딩·정규화한 뒤 보고, 디코딩·정규화로 바뀌는 경로는 아예 `403 forbidden` | `403 { error: 'mac_confirm_required', code: 'mac_confirm_required' }` |
 
 - 켜기·끄기: `set_settings.commanderEnabled`(선택). 답인 `settings` 방송에는 그때만 `features`(새 기능 목록)가 붙는다 — UI 는 그 목록으로 `has('commander')` 를 바꾸고, 목록에서 빠지면 캐시한 칩·거절을 비운다. 끌 때 서버는 활성 사령탑을 모두 `stopped`(사유 `설정에서 꺼짐`, epoch 증가)로 바꿔 방송한 뒤 `settings` 를 보낸다. 상한들(`commanderMaxTurns`·`commanderTokenCap`)은 설정 파일에서만.
 

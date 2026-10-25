@@ -147,7 +147,7 @@ export async function waitFor(cond: () => boolean, maxTurns = 20_000): Promise<v
  * Stand-in for the Mac's own server on 127.0.0.1 as the bridge sees it: answers only requests carrying the server
  * cookie, a loopback Host and the matching Origin (the real `checkUpgrade` for `/ws`). Routes: `GET /api/me` (200),
  * `GET /api/big` (100 KiB), `GET /api/slow` (never answers; counted in `aborted` when the bridge gives up),
- * `POST /api/echo` (body and headers back), `/ws` echoes each text as `echo:<text>`.
+ * `/api/trickle?n=&gap=` (one byte per `gap` ms), `/api/stall` (one byte, then nothing), `POST /api/echo` (body and headers back), `/ws` echoes each text as `echo:<text>`.
  */
 export class FakeLoopback {
   readonly port: number;
@@ -193,6 +193,24 @@ export class FakeLoopback {
     if (req.url === '/api/me') { res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': 'x=y' }).end('{"ok":true}'); return; }
     if (req.url === '/api/big') { res.writeHead(200, { 'content-type': 'application/octet-stream' }).end(Buffer.alloc(100 * 1024, 7)); return; }
     if (req.url === '/api/slow') { res.on('close', () => { if (!res.writableEnded) this.aborted++; }); return; }
+    if (req.url?.startsWith('/api/trickle')) {
+      // Starts at once, then one byte every `gap` ms, `n` bytes in all (?n=&gap=).
+      const q = new URL(req.url, 'http://x').searchParams;
+      const n = Number(q.get('n') ?? 5);
+      const gap = Number(q.get('gap') ?? 100);
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.write('t');
+      let sent = 1;
+      const timer = setInterval(() => { if (++sent >= n) { clearInterval(timer); res.end('t'); } else res.write('t'); }, gap);
+      res.on('close', () => clearInterval(timer));
+      return;
+    }
+    if (req.url === '/api/stall') {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.write('s');
+      res.on('close', () => { if (!res.writableEnded) this.aborted++; });
+      return;
+    }
     if (req.url === '/api/echo' && req.method === 'POST') {
       const parts: Buffer[] = [];
       req.on('data', (c: Buffer) => parts.push(c));
@@ -299,6 +317,18 @@ export class FakeDevice {
     const res = new Promise<DeviceHttpRes>((resolve, reject) => { this.httpReqs.set(id, { frames: [], parts: [], resolve, reject }); });
     const b = o.body === undefined ? undefined : Buffer.from(o.body).toString('base64');
     void this.frame({ t: 'http.req', id, m, p, h: o.h ?? {}, ...(b === undefined ? {} : { b }), more: false }).catch(() => undefined);
+    return res;
+  }
+
+  /** An `http.req` with its body in `http.chunk`s; `end: false` never sends the last one. */
+  httpChunks(m: string, p: string, chunks: Buffer[], o: { h?: Record<string, string>; end?: boolean } = {}): Promise<DeviceHttpRes> {
+    const id = this.nextReq++;
+    const res = new Promise<DeviceHttpRes>((resolve, reject) => { this.httpReqs.set(id, { frames: [], parts: [], resolve, reject }); });
+    void this.frame({ t: 'http.req', id, m, p, h: o.h ?? {}, more: true }).catch(() => undefined);
+    chunks.forEach((c, i) => {
+      const last = i === chunks.length - 1 && o.end !== false;
+      void this.frame({ t: 'http.chunk', id, b: c.toString('base64'), more: !last }).catch(() => undefined);
+    });
     return res;
   }
 

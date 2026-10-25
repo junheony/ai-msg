@@ -6,6 +6,7 @@ import { CloudState } from './CloudState';
 import { startLink, type HostLinkHandle } from './HostLink';
 import { RelayBridge } from './RelayBridge';
 import { RelayClient, type RelayState } from './RelayClient';
+import type { RelayWsContext } from './wsPolicy';
 
 export class CloudServiceError extends Error {
   override name = 'CloudServiceError';
@@ -50,6 +51,8 @@ export class CloudService {
     log: (s: string) => void;
     fetch?: typeof fetch;
     WebSocketImpl?: typeof WebSocket;
+    /** The Mac's current settings, for the relay's socket policy. */
+    settings?: () => RelayWsContext;
   }) {
     this.api = new CloudApi({ baseUrl: o.cfg.baseUrl, fetch: o.fetch });
   }
@@ -211,6 +214,7 @@ export class CloudService {
       hostVersion: this.o.hostVersion,
       log: this.o.log,
       onDevicesChanged: () => this.changed(),
+      settings: this.o.settings,
     });
     this.client = client;
     this.bridge = bridge;
