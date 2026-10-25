@@ -574,6 +574,8 @@ export type Action =
   | { type: 'resize_panes'; sizes: Record<string, number> }
   | { type: 'dismiss_error' }
   | { type: 'dismiss_restart' }
+  /** The home's mark-all-read: drops these sessions' unread dots (an empty or unknown list changes nothing). */
+  | { type: 'mark_read'; sessionIds: string[] }
   /** A new route_preview ask went out: the last answer (for another ask) is dropped until its own comes. */
   | { type: 'clear_route_preview' }
   /** `message` omitted = all of the pane's bars. */
@@ -1755,6 +1757,10 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case 'dismiss_error': return { ...state, error: null };
     case 'dismiss_restart': return { ...state, restartedAt: null };
+    case 'mark_read': {
+      const drop = new Set(action.sessionIds);
+      return state.unread.some((u) => drop.has(u)) ? { ...state, unread: state.unread.filter((u) => !drop.has(u)) } : state;
+    }
     case 'clear_route_preview': return state.routePreview ? { ...state, routePreview: null } : state;
     case 'commander_refusal_clear': {
       if (!(action.sessionId in state.commanderRefusals)) return state;

@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DEFAULT_SANDBOX, type CodexSandbox, type Effort, type EngineChoice, type ModelChoice } from '../../shared/models';
 import type { PermMode } from '../../shared/permission';
-import type { GeminiStatus, GrokStatus } from '../../shared/protocol';
+import type { GeminiStatus, GrokStatus, SessionActivity } from '../../shared/protocol';
+import type { UsageSnapshot } from '../../shared/usage-types';
 import type { ProjectEntry } from '../../shared/session-types';
-import type { UploadedAttachment } from '../state';
+import type { PendingPermission, PendingQuestion, UploadedAttachment } from '../state';
 import { ATTACHMENT_ONLY_TEXT, filesFrom, replaceAttachment, uploadFile, usePasteUploads, type UploadFn } from '../upload';
 import { AttachmentBar } from './AttachmentBar';
 import { Composer } from './Composer';
 import { SessionChip } from './SessionChip';
-import { EngineMark, engineOf } from './EngineMark';
+import { EngineBadge, EngineMark, engineOf } from './EngineMark';
 import { BrandMark } from './BrandMark';
 import { has } from '../features';
 import { modelChoices, touchEnterIsNewline } from './Chat';
@@ -19,23 +20,31 @@ import { isMacPlatform } from '../shortcuts';
 import { usePrefs } from '../usePrefs';
 import { FolderPicker } from './FolderPicker';
 import { ui } from '../i18n';
+import { agoParts } from '../home';
+import { HomeFrame, homeGreeting, type HomeData } from './HomeBoard';
 
 const RECENT_CARDS = 10;
 const baseName = (cwd: string) => cwd.split('/').filter(Boolean).pop() ?? cwd;
 
-export function greeting(hour: number): string {
-  if (hour >= 5 && hour < 11) return '좋은 아침이에요';
-  if (hour >= 11 && hour < 17) return '좋은 오후예요';
-  if (hour >= 17 && hour < 22) return '좋은 저녁이에요';
-  return '늦은 시간까지 수고 많아요';
-}
+export const greeting = homeGreeting;
 
 function ago(ms: number, now = Date.now()): string {
-  const d = now - ms;
-  if (d < 3_600_000) return `${Math.max(1, Math.floor(d / 60_000))}분 전`;
-  if (d < 86_400_000) return `${Math.floor(d / 3_600_000)}시간 전`;
-  return `${Math.floor(d / 86_400_000)}일 전`;
+  const p = agoParts(ms, now);
+  const t = ui().home.ago;
+  return t[p.unit === 'now' ? 'minutes' : p.unit](Math.max(1, p.n));
 }
+
+/** The home's extra store slices (Pane passes them only to a single docked pane): absent = the plain new-chat screen. */
+export type NewChatHome = {
+  activity: readonly SessionActivity[];
+  unread: readonly string[];
+  pending: readonly PendingPermission[];
+  questions: readonly PendingQuestion[];
+  usage: UsageSnapshot | null;
+  onMarkRead?: (sessionIds: string[]) => void;
+  /** A render fixture's data (no fetch). */
+  data?: HomeData;
+};
 
 /** The engine and sandbox the new session opens with (D3: the engine is fixed once it exists; a GPT sandbox can change later). */
 export type NewChatOptions = { engine: EngineChoice; sandbox: CodexSandbox };
@@ -45,8 +54,10 @@ export type NewChatOptions = { engine: EngineChoice; sandbox: CodexSandbox };
  * above the auto-growing text; [+] · mic · ↑ in its bottom row), the pinned sessions (pin order) and the latest others as compact cards. Everything is reachable here, so the phone does not need
  * the drawer to start or resume. Attachments upload as soon as they are picked and ride the first message.
  */
-export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit, onOpenSession, now, uploadFn, models, model = 'auto', effort = null, onModel, onEffort, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, gemini = null, grok = null, onEngine, onSandbox, defaultPerm = null, fetchFn = fetch, loaded = false }: {
+export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit, onOpenSession, now, uploadFn, models, model = 'auto', effort = null, onModel, onEffort, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, gemini = null, grok = null, onEngine, onSandbox, defaultPerm = null, fetchFn = fetch, loaded = false, home = null }: {
   projects: ProjectEntry[];
+  /** The home dashboard (the only, docked pane): lists, providers and usage around the composer. */
+  home?: NewChatHome | null;
   /** No projects yet (first run): 폴더 고르기 (FolderPicker) and the home folder lookup go through this. */
   fetchFn?: typeof fetch;
   /** The server's project list has arrived (hello): until then an empty list says nothing, so no first-run screen. */
@@ -203,59 +214,73 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit
   );
   const sendLabel = ui().chat.newChat.send;
 
+  const firstSection = firstRun && (
+    <section className="newchat-first" aria-label={ui().chat.newChat.firstLabel} data-testid="newchat-first">
+      <p className="newchat-first-intro">{ui().chat.newChat.intro}</p>
+      {picking
+        ? <FolderPicker fetchFn={fetchFn} onOpen={(dir) => { setPicking(false); begin(dir, baseName(dir), false); }} onClose={() => setPicking(false)} />
+        : <button type="button" className="btn primary newchat-pick" data-testid="newchat-pick" onClick={() => setPicking(true)}>{ui().chat.newChat.pick}</button>}
+      <p className="newchat-first-or muted">{ui().chat.newChat.orHome}</p>
+      {homeError && <p className="error" role="alert">{homeError}</p>}
+    </section>
+  );
+  const pickEngine = (v: EngineChoice) => { setEngine(v); onEngine?.(v); };
+  const form = (
+    <form className="newchat-box" onSubmit={(e) => { e.preventDefault(); start(); }}
+      onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
+      onDrop={(e) => { e.preventDefault(); setDrag(false); const files = filesFrom(e.dataTransfer); if (files.length) void addFiles(files); }}>
+      {home && engineSelect && <EngineChips value={engine} codexAvailable={codexAvailable} gemini={gemini} grok={grok} onPick={pickEngine} />}
+      <Composer
+        dragover={drag}
+        chip={(
+          <SessionChip
+            isNew
+            defaultPerm={defaultPerm}
+            folder={firstRun ? ui().chat.newChat.home : project?.name ?? null}
+            folderPicker={firstRun ? undefined : (
+              <label className="ss-project" title={cwd ?? ''}>
+                <span className="sr-only">프로젝트</span>
+                <select value={cwd ?? ''} onChange={(e) => setPicked(e.target.value)} onKeyDown={(e) => startKey(e, !e.shiftKey && !e.altKey, true)} aria-label="프로젝트">
+                  {pinned.length > 0 && <optgroup label="고정">{pinned.map(option)}</optgroup>}
+                  {others.length > 0 && <optgroup label="최근">{others.map(option)}</optgroup>}
+                </select>
+              </label>
+            )}
+            engine={engine}
+            engines={{ codexAvailable, gemini, grok, onEngine: pickEngine }}
+            sandbox={engineSelect ? { value: sandbox, onChange: (v) => { setSandbox(v); onSandbox?.(v); } } : null}
+            models={models ?? modelChoices(engine)} model={model} effort={effort} onModel={(m) => onModel?.(m)} onEffort={(e) => onEffort?.(e)}
+          />
+        )}
+        files={(attachments.length > 0 || uploading > 0 || error)
+          ? <AttachmentBar attachments={attachments} uploading={uploading} error={error} onRemove={remove} onReplace={replace} pastedTexts={pastedTexts} />
+          : null}
+        onFiles={(f) => void addFiles(f)}
+        text={text}
+        onText={edit}
+        action={<button type="submit" className="send" disabled={!canStart || !hasDraft} title={sendLabel} aria-label={sendLabel}><span aria-hidden="true">↑</span></button>}
+      >
+        <textarea ref={taRef} value={text} onChange={(e) => edit(e.target.value)} rows={2} placeholder="무엇을 도와드릴까요?" aria-label="첫 메시지"
+          name="deck-message" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-1p-ignore="" data-lpignore="true"
+          onPaste={onPaste}
+          onKeyDown={(e) => startKey(e, !e.shiftKey && !e.altKey && !touchEnterIsNewline())} />
+      </Composer>
+    </form>
+  );
+
+  if (home) {
+    return (
+      <HomeFrame home={home} projects={projects} pins={pins} now={t} fetchFn={fetchFn} onOpenSession={onOpenSession}
+        codexAvailable={codexAvailable} gemini={gemini} grok={grok} first={firstSection} form={form} />
+    );
+  }
+
   return (
     <div className="newchat">
       <div className="newchat-inner">
         <h1 className="newchat-greeting"><BrandMark className="spark" />{greeting(new Date(t).getHours())}</h1>
-        {firstRun && (
-          <section className="newchat-first" aria-label={ui().chat.newChat.firstLabel} data-testid="newchat-first">
-            <p className="newchat-first-intro">{ui().chat.newChat.intro}</p>
-            {picking
-              ? <FolderPicker fetchFn={fetchFn} onOpen={(dir) => { setPicking(false); begin(dir, baseName(dir), false); }} onClose={() => setPicking(false)} />
-              : <button type="button" className="btn primary newchat-pick" data-testid="newchat-pick" onClick={() => setPicking(true)}>{ui().chat.newChat.pick}</button>}
-            <p className="newchat-first-or muted">{ui().chat.newChat.orHome}</p>
-            {homeError && <p className="error" role="alert">{homeError}</p>}
-          </section>
-        )}
-        <form className="newchat-box" onSubmit={(e) => { e.preventDefault(); start(); }}
-          onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
-          onDrop={(e) => { e.preventDefault(); setDrag(false); const files = filesFrom(e.dataTransfer); if (files.length) void addFiles(files); }}>
-          <Composer
-            dragover={drag}
-            chip={(
-              <SessionChip
-                isNew
-                defaultPerm={defaultPerm}
-                folder={firstRun ? ui().chat.newChat.home : project?.name ?? null}
-                folderPicker={firstRun ? undefined : (
-                  <label className="ss-project" title={cwd ?? ''}>
-                    <span className="sr-only">프로젝트</span>
-                    <select value={cwd ?? ''} onChange={(e) => setPicked(e.target.value)} onKeyDown={(e) => startKey(e, !e.shiftKey && !e.altKey, true)} aria-label="프로젝트">
-                      {pinned.length > 0 && <optgroup label="고정">{pinned.map(option)}</optgroup>}
-                      {others.length > 0 && <optgroup label="최근">{others.map(option)}</optgroup>}
-                    </select>
-                  </label>
-                )}
-                engine={engine}
-                engines={{ codexAvailable, gemini, grok, onEngine: (v) => { setEngine(v); onEngine?.(v); } }}
-                sandbox={engineSelect ? { value: sandbox, onChange: (v) => { setSandbox(v); onSandbox?.(v); } } : null}
-                models={models ?? modelChoices(engine)} model={model} effort={effort} onModel={(m) => onModel?.(m)} onEffort={(e) => onEffort?.(e)}
-              />
-            )}
-            files={(attachments.length > 0 || uploading > 0 || error)
-              ? <AttachmentBar attachments={attachments} uploading={uploading} error={error} onRemove={remove} onReplace={replace} pastedTexts={pastedTexts} />
-              : null}
-            onFiles={(f) => void addFiles(f)}
-            text={text}
-            onText={edit}
-            action={<button type="submit" className="send" disabled={!canStart || !hasDraft} title={sendLabel} aria-label={sendLabel}><span aria-hidden="true">↑</span></button>}
-          >
-            <textarea ref={taRef} value={text} onChange={(e) => edit(e.target.value)} rows={2} placeholder="무엇을 도와드릴까요?" aria-label="첫 메시지"
-              name="deck-message" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-1p-ignore="" data-lpignore="true"
-              onPaste={onPaste}
-              onKeyDown={(e) => startKey(e, !e.shiftKey && !e.altKey && !touchEnterIsNewline())} />
-          </Composer>
-        </form>
+        {firstSection}
+        {form}
         {pinnedCards.length > 0 && onOpenSession && (
           <section className="newchat-recent newchat-pinned" aria-label="고정된 대화">
             <h2 className="muted">고정됨</h2>
@@ -269,6 +294,36 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit
           </section>
         )}
       </div>
+    </div>
+  );
+}
+
+const CHIP_NAME: Record<Exclude<EngineChoice, 'auto'>, string> = { claude: 'Claude', codex: 'GPT', gemini: 'Gemini', grok: 'Grok' };
+
+/**
+ * The home's engine row: one tap picks the new session's engine (the session chip keeps the same choice, and the
+ * sandbox). Same availability rules as SessionChip: Gemini needs a login, Grok needs its CLI, 자동 needs Codex.
+ */
+function EngineChips({ value, codexAvailable, gemini, grok, onPick }: { value: EngineChoice; codexAvailable: boolean; gemini: GeminiStatus | null; grok: GrokStatus | null; onPick: (e: EngineChoice) => void }) {
+  const h = ui().home;
+  const geminiReady = !!gemini && (gemini.loggedIn.g1 || gemini.loggedIn.g2);
+  const grokReady = has('grok');
+  const options: { v: EngineChoice; label: string; disabled?: boolean; title?: string }[] = [
+    { v: 'claude', label: CHIP_NAME.claude },
+    ...(codexAvailable ? [{ v: 'codex' as const, label: CHIP_NAME.codex }] : []),
+    ...(gemini?.available ? [{ v: 'gemini' as const, label: CHIP_NAME.gemini, disabled: !geminiReady, ...(geminiReady ? {} : { title: h.engineNeedsLogin(CHIP_NAME.gemini) }) }] : []),
+    ...(grokReady || grok ? [{ v: 'grok' as const, label: CHIP_NAME.grok, disabled: !grokReady, ...(grokReady ? {} : { title: h.engineNeedsInstall(CHIP_NAME.grok) }) }] : []),
+    ...(codexAvailable ? [{ v: 'auto' as const, label: h.engineAuto }] : []),
+  ];
+  return (
+    <div className="home-engines" role="radiogroup" aria-label={h.engineLabel}>
+      {options.map((o) => (
+        <button key={o.v} type="button" role="radio" aria-checked={value === o.v} className={`home-engine${value === o.v ? ' on' : ''}`}
+          disabled={o.disabled} title={o.title} onClick={() => onPick(o.v)}>
+          {o.v === 'auto' ? <span className="home-engine-auto" aria-hidden="true">✦</span> : <EngineBadge engine={o.v} className="home-engine-badge" />}
+          {o.label}
+        </button>
+      ))}
     </div>
   );
 }

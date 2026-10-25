@@ -131,7 +131,7 @@ const BASELINE: Record<string, number> = {
   'src/ui/components/MemoryEditor.tsx': 9,
   'src/ui/components/MessageView.tsx': 69,
   'src/ui/components/ModelPicker.tsx': 10,
-  'src/ui/components/NewChat.tsx': 17,
+  'src/ui/components/NewChat.tsx': 10,
   'src/ui/components/NotifyMenu.tsx': 15,
   'src/ui/components/OpenInDesktop.tsx': 3,
   'src/ui/components/Pane.tsx': 51,
