@@ -4,7 +4,7 @@ import { verifyUserRef } from './userRef';
 
 /** A verified, parsed webhook event. `occurred_at` is ms. */
 export type PaddleEvent = { event_id: string; event_type: string; occurred_at: number; data: unknown };
-export type Outcome = 'applied' | 'stale' | 'unmatched' | 'customer_conflict' | 'second_subscription' | 'refund_recorded' | 'refund_cancel' | 'ignored' | 'invalid';
+export type Outcome = 'applied' | 'stale' | 'unmatched' | 'customer_conflict' | 'customer_unlinked' | 'second_subscription' | 'refund_recorded' | 'refund_cancel' | 'ignored' | 'invalid';
 /** Work done after the batch commits (`ctx.waitUntil`): a room recheck, or the immediate cancel after a full refund/chargeback. */
 export type Effect = { kind: 'recheck'; hostId: string } | { kind: 'cancel'; subscriptionId: string; adjustmentId: string };
 export type EventPlan = { outcome: Outcome; stmts: D1PreparedStatement[]; alerts: D1PreparedStatement[]; effects: Effect[] };
@@ -27,10 +27,10 @@ const ACTIVE = ['active', 'trialing', 'past_due'];
 const UPSERT_SUBSCRIPTION = `INSERT INTO subscriptions (id, user_id, customer_id, status, price_id, period_end, canceled_at, past_due_since, scheduled_cancel, last_event_at, updated_at)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CASE WHEN ?4 = 'past_due' THEN ?8 END, ?9, ?8, ?10)
 ON CONFLICT(id) DO UPDATE SET
-  user_id = COALESCE(excluded.user_id, subscriptions.user_id),
+  user_id = COALESCE(subscriptions.user_id, excluded.user_id),
   customer_id = excluded.customer_id, status = excluded.status, price_id = excluded.price_id,
   period_end = COALESCE(excluded.period_end, subscriptions.period_end), canceled_at = excluded.canceled_at,
-  past_due_since = CASE WHEN excluded.status = 'past_due' THEN COALESCE(subscriptions.past_due_since, excluded.last_event_at) END,
+  past_due_since = CASE WHEN excluded.status = 'past_due' THEN MIN(COALESCE(subscriptions.past_due_since, excluded.last_event_at), excluded.last_event_at) END,
   scheduled_cancel = CASE WHEN excluded.status = 'canceled' THEN MAX(subscriptions.scheduled_cancel, excluded.scheduled_cancel) ELSE excluded.scheduled_cancel END,
   last_event_at = excluded.last_event_at, updated_at = excluded.updated_at
 WHERE excluded.last_event_at >= subscriptions.last_event_at`;
@@ -45,15 +45,36 @@ WHERE excluded.last_event_at >= refunds.last_event_at`;
 type PlanEnv = Pick<Env, 'DB' | 'CHECKOUT_SECRET'>;
 
 /**
- * The user an event belongs to: the server-signed `custom_data.ref` (userRef), else the user that already owns
- * `customer_id`. An unsigned `custom_data.user_id` is never read. A ref of a deleted user does not count.
+ * The user the server-signed `custom_data.ref` (userRef) names, if it verifies and the user still exists. An unsigned
+ * `custom_data.user_id` is never read.
  */
-async function findUser(env: PlanEnv, d: Obj): Promise<string | null> {
+async function refUser(env: PlanEnv, d: Obj): Promise<string | null> {
   const byRef = await verifyUserRef(env.CHECKOUT_SECRET, isObj(d.custom_data) ? d.custom_data.ref : undefined);
-  if (byRef && (await env.DB.prepare('SELECT 1 FROM users WHERE id = ?').bind(byRef).first())) return byRef;
-  const customer = idStr(d.customer_id);
+  return byRef && (await env.DB.prepare('SELECT 1 FROM users WHERE id = ?').bind(byRef).first()) ? byRef : null;
+}
+
+async function customerOwner(db: D1Database, customer: string | null): Promise<string | null> {
   if (!customer) return null;
-  return (await env.DB.prepare('SELECT id FROM users WHERE paddle_customer_id = ?').bind(customer).first<string>('id')) ?? null;
+  return (await db.prepare('SELECT id FROM users WHERE paddle_customer_id = ?').bind(customer).first<string>('id')) ?? null;
+}
+
+/**
+ * Whether `customer` may be linked to `userId` (who came from a verified ref). Paddle reuses a customer whose email
+ * matches at checkout, so anyone can end up holding someone else's customer id: a new link needs a checkout intent of
+ * this user that was open when the event happened, and never takes a customer id another user holds.
+ */
+async function customerLink(db: D1Database, userId: string, customer: string, at: number): Promise<{ stmt: D1PreparedStatement | null; problem: 'owned' | 'other' | 'no_intent' | null }> {
+  const ownerId = await customerOwner(db, customer);
+  if (ownerId && ownerId !== userId) return { stmt: null, problem: 'owned' };
+  const current = await db.prepare('SELECT paddle_customer_id FROM users WHERE id = ?').bind(userId).first<string | null>('paddle_customer_id');
+  if (current === customer) return { stmt: null, problem: null };
+  if (current) return { stmt: null, problem: 'other' };
+  if (!(await db.prepare('SELECT 1 FROM checkout_intents WHERE user_id = ? AND expires_at > ?').bind(userId, at).first())) return { stmt: null, problem: 'no_intent' };
+  // Same conditions again inside the write, so a concurrent event cannot slip past them.
+  const stmt = db.prepare(`UPDATE users SET paddle_customer_id = ?1 WHERE id = ?2 AND paddle_customer_id IS NULL
+    AND NOT EXISTS (SELECT 1 FROM users WHERE paddle_customer_id = ?1)
+    AND EXISTS (SELECT 1 FROM checkout_intents WHERE user_id = ?2 AND expires_at > ?3)`).bind(customer, userId, at);
+  return { stmt, problem: null };
 }
 
 async function rechecks(db: D1Database, userId: string | null): Promise<Effect[]> {
@@ -87,15 +108,33 @@ export async function planEvent(env: PlanEnv, ev: PaddleEvent, now: number): Pro
     const item = Array.isArray(d.items) && isObj(d.items[0]) && isObj(d.items[0].price) ? idStr(d.items[0].price.id) : null;
 
     const existing = await db.prepare('SELECT user_id, last_event_at FROM subscriptions WHERE id = ?').bind(id).first<{ user_id: string | null; last_event_at: number }>();
-    const userId = (await findUser(env, d)) ?? existing?.user_id ?? null;
+    const byRef = await refUser(env, d);
+    // An owned subscription keeps its owner for good (the upsert's COALESCE too): a ref that stops verifying
+    // (CHECKOUT_SECRET rotated) must not hand it to whoever holds the customer id.
+    const owner = existing?.user_id ?? null;
+    const userId = owner ?? byRef ?? (await customerOwner(db, customer));
     const upsert = db.prepare(UPSERT_SUBSCRIPTION).bind(id, userId, customer, status, item, period, canceledAt, ev.occurred_at, scheduled, now);
-    if (existing && existing.last_event_at > ev.occurred_at) return plan('stale', [upsert]); // the WHERE blocks it too
+    if (existing && existing.last_event_at > ev.occurred_at) {
+      // The WHERE blocks the upsert. A late past_due may still only move past_due_since earlier, never later.
+      const stmts = [upsert];
+      if (status === 'past_due') stmts.push(db.prepare(`UPDATE subscriptions SET past_due_since = ?1 WHERE id = ?2 AND status = 'past_due' AND past_due_since > ?1`).bind(ev.occurred_at, id));
+      return plan('stale', stmts);
+    }
     if (!userId) return plan('unmatched', [upsert], [alertStmt(db, 'unmatched', id, ev.event_type, now)]);
 
     const stmts = [upsert];
     const alerts: D1PreparedStatement[] = [];
     let outcome: Outcome = 'applied';
+    if (owner && byRef && byRef !== owner) {
+      outcome = 'customer_conflict';
+      alerts.push(alertStmt(db, 'customer_conflict', id, 'ref names another user than the subscription owner', now));
+    }
     if (ACTIVE.includes(status)) {
+      if (byRef === userId && customer) {
+        const link = await customerLink(db, userId, customer, ev.occurred_at);
+        if (link.stmt) stmts.push(link.stmt); // before the intent is deleted below
+        if (link.problem === 'owned') alerts.push(alertStmt(db, 'customer_conflict', id, 'customer id owned by another user', now));
+      }
       const other = await db.prepare(`SELECT id FROM subscriptions WHERE user_id = ? AND id <> ? AND status IN ('active','trialing','past_due') LIMIT 1`)
         .bind(userId, id).first<string>('id');
       if (other) {
@@ -113,21 +152,18 @@ export async function planEvent(env: PlanEnv, ev: PaddleEvent, now: number): Pro
     if (!txn) return invalid('data.id');
     const customer = idStr(d.customer_id);
     if (!customer) return plan('ignored');
-    const userId = await findUser(env, d);
-    if (!userId) return plan('unmatched', [], [alertStmt(db, 'unmatched', txn, ev.event_type, now)]);
-    const [owner, mine] = await db.batch<{ id: string; paddle_customer_id: string | null }>([
-      db.prepare('SELECT id FROM users WHERE paddle_customer_id = ?').bind(customer),
-      db.prepare('SELECT paddle_customer_id FROM users WHERE id = ?').bind(userId),
-    ]);
-    const ownerId = owner!.results[0]?.id;
-    const current = mine!.results[0]?.paddle_customer_id ?? null;
-    if ((ownerId && ownerId !== userId) || (current && current !== customer)) {
-      // Never overwrite, and never let the UNIQUE index turn this into a 500 (Paddle would retry for days).
-      return plan('customer_conflict', [], [alertStmt(db, 'customer_conflict', txn, ownerId && ownerId !== userId ? 'customer id owned by another user' : 'user has another customer id', now)]);
+    const userId = await refUser(env, d);
+    if (!userId) {
+      // Without a verified ref nothing is linked; a customer already linked is fine as it is.
+      return (await customerOwner(db, customer)) ? plan('applied') : plan('unmatched', [], [alertStmt(db, 'unmatched', txn, ev.event_type, now)]);
     }
-    return plan('applied', [
-      db.prepare('UPDATE users SET paddle_customer_id = ?1 WHERE id = ?2 AND paddle_customer_id IS NULL AND NOT EXISTS (SELECT 1 FROM users WHERE paddle_customer_id = ?1)').bind(customer, userId),
-    ]);
+    const link = await customerLink(db, userId, customer, ev.occurred_at);
+    // Never overwrite, and never let the UNIQUE index turn this into a 500 (Paddle would retry for days).
+    if (link.problem === 'owned' || link.problem === 'other') {
+      return plan('customer_conflict', [], [alertStmt(db, 'customer_conflict', txn, link.problem === 'owned' ? 'customer id owned by another user' : 'user has another customer id', now)]);
+    }
+    if (link.problem === 'no_intent') return plan('customer_unlinked', [], [alertStmt(db, 'customer_unlinked', txn, 'no checkout intent open at occurred_at', now)]);
+    return plan('applied', link.stmt ? [link.stmt] : []);
   }
 
   if (ev.event_type === 'adjustment.created' || ev.event_type === 'adjustment.updated') {
@@ -138,14 +174,16 @@ export async function planEvent(env: PlanEnv, ev: PaddleEvent, now: number): Pro
     if (!id || !action || !status) return invalid('data.id/action/status');
     const type = d.type === 'full' ? 'full' : 'partial'; // Paddle's default is partial
     const sub = idStr(d.subscription_id);
-    const full = (action === 'refund' && type === 'full' && status === 'approved') || action === 'chargeback';
+    // A chargeback cancels unless it was rejected/reversed. Reversal actions (`chargeback_reverse` and
+    // `chargeback_reversal` — the docs spell it both ways) and `chargeback_warning` only get recorded.
+    const full = (action === 'refund' && type === 'full' && status === 'approved') || (action === 'chargeback' && status !== 'rejected' && status !== 'reversed');
     const existing = await db.prepare('SELECT last_event_at, cancel_done_at FROM refunds WHERE adjustment_id = ?').bind(id).first<{ last_event_at: number; cancel_done_at: number | null }>();
     const upsert = db.prepare(UPSERT_REFUND).bind(id, idStr(d.transaction_id), sub, action, status, full ? 1 : 0, ev.occurred_at);
     if (existing && existing.last_event_at > ev.occurred_at) return plan('stale', [upsert]);
     if (!full || !sub) return plan('refund_recorded', [upsert]);
     // A full refund also ends the scheduled-cancel grace (entitled.ts), so the user's rooms recheck now.
     const owner = await db.prepare('SELECT user_id FROM subscriptions WHERE id = ?').bind(sub).first<string | null>('user_id');
-    const effects = await rechecks(db, owner ?? (await findUser(env, d)));
+    const effects = await rechecks(db, owner ?? (await refUser(env, d)) ?? (await customerOwner(db, idStr(d.customer_id))));
     if (existing?.cancel_done_at == null) effects.push({ kind: 'cancel', subscriptionId: sub, adjustmentId: id });
     return plan('refund_cancel', [upsert], [], effects);
   }

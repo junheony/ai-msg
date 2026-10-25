@@ -1809,7 +1809,7 @@ CREATE INDEX subscriptions_user ON subscriptions(user_id, status);
   6. `const plan = await planEvent(env, ev, now)` — 읽기만 하고 쓸 문장을 만든다. 데이터 모양이 틀리면 던지지 않고 `outcome:'invalid'` 를 돌려준다.
   7. `env.DB.batch([...plan.stmts, ...plan.alerts, insertEvent])` — `insertEvent` 는 `INSERT INTO paddle_events … ON CONFLICT(event_id) DO NOTHING`. 모든 반영 문장이 upsert 라서, 같은 이벤트가 동시에 두 번 들어와도 결과가 같다.
   8. batch 가 던지면(D1 일시 오류) **500** — 이벤트 행도 남지 않아 Paddle 재시도가 처음부터 다시 한다. 그 밖에는 **200** `{outcome}`.
-  9. 커밋 뒤 `ctx.waitUntil` 로 `plan.effects` 를 실행한다: 호스트 DO 마다 `/internal/recheck`, 전액 환불·차지백이면 `paddle.cancelSubscription`(성공하면 `refunds.cancel_done_at`, 실패하면 `alert('refund_cancel_failed')` — Task 12 cron 이 다시 시도).
+  9. 커밋 뒤 `ctx.waitUntil` 로 `plan.effects` 를 실행한다: 호스트 DO 마다 `/internal/recheck`, 전액 환불·차지백이면 먼저 `UPDATE refunds SET cancel_done_at = -now WHERE … AND cancel_done_at IS NULL` 로 선점하고(`changes === 1` 일 때만 진행 — 동시 중복 전달에도 한 번만 부른다) `paddle.cancelSubscription`(성공하면 `cancel_done_at = now`, 실패하면 음수 선점값을 남기고 `alert('refund_cancel_failed')` — Task 12 cron 이 다시 시도). *(보안 리뷰 반영)*
   10. 응답은 5초 안에 낸다(D1 몇 줄과 SELECT 몇 개다).
 - `apply.ts`: `planEvent(env, ev, now): Promise<{ outcome: Outcome; stmts: D1PreparedStatement[]; alerts: D1PreparedStatement[]; effects: Effect[] }>`
   - `Outcome = 'applied' | 'stale' | 'unmatched' | 'customer_conflict' | 'second_subscription' | 'refund_recorded' | 'refund_cancel' | 'ignored' | 'invalid'`
@@ -2094,7 +2094,7 @@ CREATE INDEX trial_claims_user ON trial_claims(user_id);
 | `paddle_events` | `received_at < now − 90일`(Paddle 재시도는 약 2일) |
 | `ops_alerts` | `resolved_at IS NOT NULL` 이거나 `created_at < now − 90일` |
 
-  - 이어서 `refunds` 가운데 `full = 1 AND cancel_done_at IS NULL AND last_event_at < now − 10분` 인 행에 `paddle.cancelSubscription` 을 다시 시도한다(Task 9). 성공하면 `cancel_done_at`, 실패하면 `refund_cancel_failed` 알림(같은 행은 하루 한 번만).
+  - 이어서 `refunds` 가운데 `full = 1 AND (cancel_done_at IS NULL OR cancel_done_at < 0) AND last_event_at < now − 10분` 인 행에(음수는 Task 9 의 선점값 — 실패했거나 처리 중, 다시 시도 전에 같은 조건부 UPDATE 로 선점한다) `paddle.cancelSubscription` 을 다시 시도한다(Task 9). 성공하면 `cancel_done_at`, 실패하면 `refund_cancel_failed` 알림(같은 행은 하루 한 번만).
   - 결과는 `console.log(JSON.stringify({ cron: 'cleanup', ...counts }))` 로 남긴다(개수만, 식별자 없음).
 - `index.ts`: `scheduled(controller, env, ctx) { ctx.waitUntil(runCleanup(env, Date.now(), deps)) }`. `wrangler.jsonc`: `triggers: { crons: ["17 3 * * *"] }`(하루 한 번, UTC 03:17).
 - 데이터 보관 기간은 위 표가 기준이고, Task 11 의 `docs/privacy-data-inventory.md` 와 `docs/legal/privacy*.md` 가 같은 값을 말해야 한다(다르면 사용자에게 보고).
@@ -2544,6 +2544,9 @@ it('hello carries pro; a gate change rides on the settings broadcast', async () 
   - 조정 `data`: `id`, `action`(`refund|credit|chargeback|chargeback_warning|…`), `type`(`full|partial`, 기본 partial), `status`(`pending_approval|approved|rejected|reversed`), `transaction_id`, `subscription_id`.
   - 즉시 해지: `POST /subscriptions/{subscription_id}/cancel`, 본문 `{ "effective_from": "immediately" }`(기본은 `next_billing_period`), 권한 `subscription.write`.
   - API 주소: 샌드박스 `https://sandbox-api.paddle.com`, 라이브 `https://api.paddle.com`. 키는 `Authorization: Bearer`, 환경마다 따로이고 접두사 `pdl_sdbx_`·`pdl_live_`(69자).
+- Paddle 고객과 웹훅 비밀 (2026-10-26, Task 9 보안 리뷰):
+  - 고객 이메일은 계정 안에서 유일하고, 체크아웃에서 이미 있는 고객의 이메일을 넣으면 Paddle 은 새 고객을 만들지 않고 그 고객 엔터티를 쓴다(`build/customers/create-update-customers`). 그래서 남의 이메일로 결제하면 남의 `customer_id` 가 웹훅에 실린다 → Task 9 는 user↔customer 연결을 "서명된 ref + 그 사용자의 `checkout_intents` 가 `occurred_at` 에 열려 있음 + 다른 사용자가 쓰지 않는 customer" 일 때만 새로 만든다.
+  - 웹훅 비밀 `endpoint_secret_key` 는 `pdl_ntfset_` 접두사, 형식 `^pdl_ntfset_[a-zA-Z0-9]{26}_[a-zA-Z0-9]{32}$`(`api-reference/notification-settings/get-notification-setting`). `checkConfig` 가 이 형식을 검사한다.
 - `web-push` 3.6.7 소스: `generateRequestDetails` 는 `vapidDetails` 가 없으면 `Authorization` 없이 aes128gcm 본문과 머리를 만든다(출시 뒤 Task 6 에서만 쓴다).
 
 **미확인 (해당 Task 첫 단계에서 확인)**

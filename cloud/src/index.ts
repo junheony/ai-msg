@@ -22,7 +22,7 @@ const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
 /**
  * Refuses a deployment that would leak or misroute: log mail / dev routes off a local or `.test` origin,
  * short secrets (`CHECKOUT_SECRET` too), `resend` without a key or sender, equal origins, a non-https origin off localhost,
- * a `PADDLE_ENV`/`PADDLE_IP_CHECK` typo, or a limit (`MAX_HOSTS`·`MAX_DEVICES`·`TRIAL_DAYS`) that is not a positive integer.
+ * a `PADDLE_WEBHOOK_SECRET` not in Paddle's format, a `PADDLE_ENV`/`PADDLE_IP_CHECK` typo, or a limit (`MAX_HOSTS`·`MAX_DEVICES`·`TRIAL_DAYS`) that is not a positive integer.
  */
 export function checkConfig(env: Env): ConfigCheck {
   let pub: URL, relay: URL;
@@ -39,6 +39,8 @@ export function checkConfig(env: Env): ConfigCheck {
   if ((env.SESSION_SECRET ?? '').length < 32) return { ok: false, reason: 'SESSION_SECRET must be at least 32 characters' };
   if ((env.EMAIL_HASH_SECRET ?? '').length < 32) return { ok: false, reason: 'EMAIL_HASH_SECRET must be at least 32 characters' };
   if ((env.CHECKOUT_SECRET ?? '').length < 32) return { ok: false, reason: 'CHECKOUT_SECRET must be at least 32 characters' };
+  // Paddle's endpoint_secret_key format (notification settings API). Unset is allowed: the webhook answers 503.
+  if (env.PADDLE_WEBHOOK_SECRET !== undefined && !/^pdl_ntfset_[a-zA-Z0-9]{26}_[a-zA-Z0-9]{32}$/.test(env.PADDLE_WEBHOOK_SECRET)) return { ok: false, reason: 'PADDLE_WEBHOOK_SECRET must be a Paddle endpoint secret (pdl_ntfset_…)' };
   if (env.PADDLE_ENV !== 'sandbox' && env.PADDLE_ENV !== 'production') return { ok: false, reason: 'PADDLE_ENV must be sandbox or production' };
   if (env.PADDLE_IP_CHECK !== '0' && env.PADDLE_IP_CHECK !== '1') return { ok: false, reason: 'PADDLE_IP_CHECK must be 0 or 1' };
   // `Number('x')` is NaN and `count >= NaN` is false — a typo would silently lift the limit.

@@ -15,7 +15,7 @@ import subscriptionUpdated from './fixtures/paddle/subscription.updated.json?raw
 import transactionCompleted from './fixtures/paddle/transaction.completed.json?raw';
 import { APP, call, linkHost, openWs, pairedDevice, relayPost, waitFor } from './helpers';
 
-const WEBHOOK_SECRET = 'w'.repeat(32); // TEST_VARS
+const WEBHOOK_SECRET = `pdl_ntfset_${'a'.repeat(26)}_${'w'.repeat(32)}`; // TEST_VARS (synthetic, Paddle's format)
 const CHECKOUT_SECRET = 'k'.repeat(32); // TEST_VARS
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -78,6 +78,10 @@ async function newUser(customerId: string | null = null): Promise<string> {
   return id;
 }
 /** Unique subscription / customer ids per test (storage is shared inside this file). */
+/** A checkout intent that was open when the event happened (Task 10 writes these). */
+const intent = (userId: string, expiresAt = Date.now() + HOUR) =>
+  env.DB.prepare("INSERT INTO checkout_intents (user_id, plan, expires_at) VALUES (?, 'month', ?) ON CONFLICT(user_id) DO UPDATE SET expires_at = excluded.expires_at").bind(userId, expiresAt).run();
+const customerOf = (userId: string) => env.DB.prepare('SELECT paddle_customer_id FROM users WHERE id = ?').bind(userId).first<string | null>('paddle_customer_id');
 const ids = () => { const n = seq++; return { sub: `sub_t${n}`, ctm: `ctm_t${n}`, adj: `adj_t${n}`, txn: `txn_t${n}` }; };
 
 class FakePaddle implements PaddleApi {
@@ -177,6 +181,20 @@ describe('Paddle webhook — delivery', () => {
     expect(await alerts()).toContainEqual(expect.objectContaining({ kind: 'invalid_event', ref: ev.event_id }));
   });
 
+  it('body over 64 KB → 413 before anything is stored, even when signed', async () => {
+    const before = [await count('paddle_events'), await count('ops_alerts')];
+    const ev = fx('subscription.activated', { id: ids().sub, pad: 'x'.repeat(70_000) });
+    const r = await deliver(ev);
+    expect(r.status).toBe(413);
+    expect([await count('paddle_events'), await count('ops_alerts')]).toEqual(before);
+  });
+
+  it('signature covers the raw bytes (non-ASCII body)', async () => {
+    const u = await newUser();
+    const r = await deliver(fx('subscription.activated', { ref: await refFor(u), id: ids().sub, note: 'é—한글' }));
+    expect(await r.json()).toEqual({ outcome: 'applied' });
+  });
+
   it('D1 failure during apply → 500 and no paddle_events row', async () => {
     const failing = new Proxy(env.DB, {
       get(t, k) {
@@ -237,6 +255,53 @@ describe('Paddle webhook — subscriptions', () => {
     expect(await (await deliver(fx('subscription.activated', { ref: forged, id: y.sub, customer_id: y.ctm }))).json()).toEqual({ outcome: 'unmatched' });
   });
 
+  it('an owned subscription never changes user: another ref → customer_conflict alert; a lost ref keeps the owner, not the customer owner', async () => {
+    const a = await newUser();
+    const b = await newUser();
+    const x = ids();
+    await deliver(fx('subscription.activated', { ref: await refFor(a), id: x.sub, customer_id: x.ctm }));
+    const r = await deliver(fx('subscription.updated', { ref: await refFor(b), id: x.sub, customer_id: x.ctm, scheduled_change: null }));
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ outcome: 'customer_conflict' });
+    expect(await sub(x.sub)).toMatchObject({ user_id: a, status: 'active' });
+    expect(await alerts()).toContainEqual(expect.objectContaining({ kind: 'customer_conflict', ref: x.sub }));
+    expect((await entitledState(env.DB, b, Date.now())).plan).toBe('none');
+
+    // CHECKOUT_SECRET rotated (ref no longer verifies) and the customer id belongs to someone else
+    const y = ids();
+    const a2 = await newUser();
+    const c = await newUser(y.ctm);
+    await deliver(fx('subscription.activated', { ref: await refFor(a2), id: y.sub, customer_id: x.ctm }));
+    const r2 = await deliver(fx('subscription.updated', { ref: await signUserRef('z'.repeat(32), a2), id: y.sub, customer_id: y.ctm, scheduled_change: null }));
+    expect(await r2.json()).toEqual({ outcome: 'applied' });
+    expect(await sub(y.sub)).toMatchObject({ user_id: a2 });
+    expect((await entitledState(env.DB, c, Date.now())).plan).toBe('none');
+  });
+
+  it('subscription with a ref and an open checkout intent links the customer id; without the intent it does not', async () => {
+    const u = await newUser();
+    const x = ids();
+    await intent(u);
+    await deliver(fx('subscription.activated', { ref: await refFor(u), id: x.sub, customer_id: x.ctm }));
+    expect(await customerOf(u)).toBe(x.ctm);
+    const v = await newUser();
+    const y = ids();
+    expect(await (await deliver(fx('subscription.activated', { ref: await refFor(v), id: y.sub, customer_id: y.ctm }))).json()).toEqual({ outcome: 'applied' });
+    expect(await customerOf(v)).toBeNull();
+    expect(await sub(y.sub)).toMatchObject({ user_id: v }); // the subscription itself still counts
+  });
+
+  it('past_due delivered out of order keeps the earliest past_due_since', async () => {
+    const u = await newUser();
+    const x = ids();
+    const T = Date.now() - 2 * DAY;
+    const period = { starts_at: iso(T - 31 * DAY), ends_at: iso(T - DAY) };
+    await deliver(fx('subscription.past_due', { ref: await refFor(u), id: x.sub, customer_id: x.ctm, at: T + DAY, current_billing_period: period }));
+    expect(await (await deliver(fx('subscription.past_due', { ref: await refFor(u), id: x.sub, customer_id: x.ctm, at: T, current_billing_period: period }))).json()).toEqual({ outcome: 'stale' });
+    expect(await sub(x.sub)).toMatchObject({ status: 'past_due', past_due_since: T, last_event_at: T + DAY });
+    expect((await entitledState(env.DB, u, Date.now())).untilMs).toBe(T + 7 * DAY);
+  });
+
   it('a known paddle_customer_id finds the user without a ref', async () => {
     const x = ids();
     const u = await newUser(x.ctm);
@@ -282,9 +347,17 @@ describe('Paddle webhook — subscriptions', () => {
 });
 
 describe('Paddle webhook — transactions', () => {
-  it('links the customer id to the user once', async () => {
+  it('links the customer id only with a signed ref and an intent open at occurred_at', async () => {
     const u = await newUser();
     const x = ids();
+    const r0 = await deliver(fx('transaction.completed', { ref: await refFor(u), id: x.txn, customer_id: x.ctm, subscription_id: x.sub }));
+    expect(await r0.json()).toEqual({ outcome: 'customer_unlinked' });
+    expect(await customerOf(u)).toBeNull();
+    expect(await alerts()).toContainEqual(expect.objectContaining({ kind: 'customer_unlinked', ref: x.txn }));
+    await intent(u, Date.now() - HOUR); // expired before the event
+    expect(await (await deliver(fx('transaction.completed', { ref: await refFor(u), id: x.txn, customer_id: x.ctm }))).json()).toEqual({ outcome: 'customer_unlinked' });
+    expect(await customerOf(u)).toBeNull();
+    await intent(u);
     const r = await deliver(fx('transaction.completed', { ref: await refFor(u), id: x.txn, customer_id: x.ctm, subscription_id: x.sub }));
     expect(await r.json()).toEqual({ outcome: 'applied' });
     expect(await env.DB.prepare('SELECT paddle_customer_id FROM users WHERE id = ?').bind(u).first('paddle_customer_id')).toBe(x.ctm);
@@ -294,6 +367,7 @@ describe('Paddle webhook — transactions', () => {
     const x = ids();
     const owner = await newUser(x.ctm);
     const other = await newUser();
+    await intent(other);
     const r = await deliver(fx('transaction.completed', { ref: await refFor(other), id: x.txn, customer_id: x.ctm }));
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual({ outcome: 'customer_conflict' });
@@ -303,6 +377,7 @@ describe('Paddle webhook — transactions', () => {
 
     // the user already has a different customer id → unchanged too
     const y = ids();
+    await intent(owner);
     const r2 = await deliver(fx('transaction.completed', { ref: await refFor(owner), id: y.txn, customer_id: y.ctm }));
     expect(await r2.json()).toEqual({ outcome: 'customer_conflict' });
     expect(await env.DB.prepare('SELECT paddle_customer_id FROM users WHERE id = ?').bind(owner).first('paddle_customer_id')).toBe(x.ctm);
@@ -329,14 +404,44 @@ describe('Paddle webhook — refunds', () => {
     expect(paddle.calls).toHaveLength(1);
   });
 
-  it('chargeback → cancel; cancel failure → refund_cancel_failed alert, cancel_done_at stays null', async () => {
+  it('chargeback → cancel; cancel failure → refund_cancel_failed alert, negative claim left for the cron', async () => {
     paddle.fail = true;
     const x = ids();
     const r = await deliver(fx('adjustment.created', { id: x.adj, action: 'chargeback', type: 'full', status: 'approved', subscription_id: x.sub, customer_id: x.ctm }));
     expect(await r.json()).toEqual({ outcome: 'refund_cancel' });
     await waitFor(async () => (await alerts()).some((a) => a.kind === 'refund_cancel_failed' && a.ref === x.sub));
     expect(paddle.calls).toEqual([['cancelSubscription', x.sub]]);
-    expect(await refund(x.adj)).toMatchObject({ full: 1, cancel_done_at: null });
+    expect(Number((await refund(x.adj))!.cancel_done_at)).toBeLessThan(0); // claimed, failed: the Task 12 cron retries
+  });
+
+  it('chargeback rejected/reversed and chargeback reversals do not cancel', async () => {
+    const out: unknown[] = [];
+    for (const [action, status] of [['chargeback', 'rejected'], ['chargeback', 'reversed'], ['chargeback_reverse', 'approved'], ['chargeback_reversal', 'approved'], ['chargeback_warning', 'approved']]) {
+      const x = ids();
+      out.push(await (await deliver(fx('adjustment.created', { id: x.adj, action, type: 'full', status, subscription_id: x.sub }))).json());
+      expect(await refund(x.adj)).toMatchObject({ full: 0 });
+    }
+    expect(out.every((o) => (o as Json).outcome === 'refund_recorded')).toBe(true);
+    await new Promise((res) => setTimeout(res, 50));
+    expect(paddle.calls).toEqual([]);
+  });
+
+  it('the same full refund delivered twice at once → cancel called once, one alert at most', async () => {
+    const x = ids();
+    const ev = fx('adjustment.created', { id: x.adj, action: 'refund', type: 'full', status: 'approved', subscription_id: x.sub });
+    await Promise.all([deliver(ev), deliver(ev)]);
+    await waitFor(async () => Number((await refund(x.adj))?.cancel_done_at) > 0);
+    await new Promise((res) => setTimeout(res, 50));
+    expect(paddle.calls).toEqual([['cancelSubscription', x.sub]]);
+
+    paddle.fail = true;
+    const y = ids();
+    const ev2 = fx('adjustment.created', { id: y.adj, action: 'chargeback', type: 'full', status: 'approved', subscription_id: y.sub });
+    await Promise.all([deliver(ev2), deliver({ ...ev2, event_id: `evt_t${seq++}` })]);
+    await waitFor(async () => (await alerts()).some((a) => a.kind === 'refund_cancel_failed' && a.ref === y.sub));
+    await new Promise((res) => setTimeout(res, 50));
+    expect(paddle.calls.filter(([, id]) => id === y.sub)).toHaveLength(1);
+    expect((await alerts()).filter((a) => a.kind === 'refund_cancel_failed' && a.ref === y.sub)).toHaveLength(1);
   });
 
   it('refund event delivered twice → one refunds row, no SQL error', async () => {

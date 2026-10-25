@@ -22,6 +22,28 @@ export function paddleIpAllowed(env: Pick<Env, 'PADDLE_IP_CHECK' | 'PADDLE_ENV'>
   return ip !== null && list.includes(ip.trim());
 }
 
+/** Paddle events are a few KB; anything larger is refused before the HMAC and before any write. */
+export const MAX_WEBHOOK_BYTES = 64 * 1024;
+
+/** The body bytes, or `null` once more than `max` arrive (stops reading; `content-length` may be absent or lie). */
+async function readCapped(req: Request, max: number): Promise<Uint8Array | null> {
+  if (!req.body) return new Uint8Array(0);
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > max) { await reader.cancel(); return null; }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(n);
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.byteLength; }
+  return out;
+}
+
 async function sha256Hex16(s: string): Promise<string> {
   const h = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)));
   return [...h.slice(0, 8)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -38,14 +60,20 @@ function parseEvent(raw: string): PaddleEvent | null {
   return { event_id: o.event_id, event_type: o.event_type, occurred_at: at, data: o.data };
 }
 
+/**
+ * A cancel is claimed first: `cancel_done_at` goes from NULL to `-claimedAt` in one conditional UPDATE, so of two
+ * concurrent deliveries only one calls Paddle. Success writes `+doneAt`. A failure leaves the negative claim and an
+ * alert; the Task 12 cron retries `full = 1 AND (cancel_done_at IS NULL OR cancel_done_at < 0)`.
+ */
 async function runEffects(c: Ctx, db: D1Database, paddle: PaddleApi, effects: Effect[]): Promise<void> {
   for (const e of effects) {
     if (e.kind === 'recheck') { notifyRelay(c, e.hostId, 'recheck'); continue; }
     try {
+      const claim = await db.prepare('UPDATE refunds SET cancel_done_at = ? WHERE adjustment_id = ? AND cancel_done_at IS NULL').bind(-Date.now(), e.adjustmentId).run();
+      if (claim.meta.changes !== 1) continue; // another delivery has it (or it is done)
       await paddle.cancelSubscription(e.subscriptionId);
       await db.prepare('UPDATE refunds SET cancel_done_at = ? WHERE adjustment_id = ?').bind(Date.now(), e.adjustmentId).run();
     } catch (err) {
-      // The Task 12 cron retries refunds with full = 1 AND cancel_done_at IS NULL.
       const why = err instanceof Error ? err.message.slice(0, 200) : 'error';
       try { await alertStmt(db, 'refund_cancel_failed', e.subscriptionId, `${e.adjustmentId}: ${why}`, Date.now()).run(); } catch { /* the console line is still there */ }
     }
@@ -53,19 +81,23 @@ async function runEffects(c: Ctx, db: D1Database, paddle: PaddleApi, effects: Ef
 }
 
 /**
- * `POST /v1/paddle/webhook` (app origin). Synchronous (D14): raw-body HMAC → IP list (optional) → parse →
+ * `POST /v1/paddle/webhook` (app origin). Synchronous (D14): body ≤ 64 KB (413) → raw-body HMAC → IP list (optional) → parse →
  * `event_id` look-up → `planEvent` → one batch (changes + alerts + event row) → 200 `{outcome}`. Only a D1 error
  * is 500, and then nothing was written, so Paddle's retry starts over. Effects run after the commit.
  */
 export async function paddleWebhook(c: Ctx, deps: WebhookDeps): Promise<Response> {
   const secret = c.env.PADDLE_WEBHOOK_SECRET ?? '';
   if (!secret) return problem(503, 'misconfigured');
-  const raw = await c.req.text(); // the exact bytes Paddle signed — never re-serialize
-  if (!(await verifyPaddleSignature(c.req.headers.get('paddle-signature'), raw, secret, Math.floor(Date.now() / 1000)))) return problem(401, 'bad_signature');
+  const declared = Number(c.req.headers.get('content-length') ?? '0');
+  if (!(declared <= MAX_WEBHOOK_BYTES)) return problem(413, 'too_large'); // NaN fails too
+  const bytes = await readCapped(c.req, MAX_WEBHOOK_BYTES); // the exact bytes Paddle signed — never re-serialize
+  if (!bytes) return problem(413, 'too_large');
+  if (!(await verifyPaddleSignature(c.req.headers.get('paddle-signature'), bytes, secret, Math.floor(Date.now() / 1000)))) return problem(401, 'bad_signature');
   if (!paddleIpAllowed(c.env, c.req.headers.get('cf-connecting-ip'))) return problem(403, 'forbidden');
   const db = deps.db(c.env);
   const now = c.nowMs;
   try {
+    const raw = new TextDecoder().decode(bytes);
     const ev = parseEvent(raw);
     if (!ev) {
       // Signed but unusable: a retry would be the same bytes, so 200 and an alert instead of 500.

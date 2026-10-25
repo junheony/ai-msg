@@ -26,6 +26,11 @@ describe('checkConfig', () => {
     expect(checkConfig({ ...base, CHECKOUT_SECRET: undefined } as unknown as Env)).toMatchObject({ ok: false });
     expect(checkConfig({ ...base, PADDLE_ENV: 'live' } as unknown as Env)).toMatchObject({ ok: false });
     expect(checkConfig({ ...base, PADDLE_IP_CHECK: 'yes' } as unknown as Env)).toMatchObject({ ok: false });
+    // Paddle's endpoint_secret_key format: pdl_ntfset_<26>_<32>. Unset is allowed (the webhook answers 503).
+    expect(checkConfig({ ...base, PADDLE_WEBHOOK_SECRET: 'short' })).toMatchObject({ ok: false });
+    expect(checkConfig({ ...base, PADDLE_WEBHOOK_SECRET: 'w'.repeat(70) })).toMatchObject({ ok: false });
+    expect(checkConfig({ ...base, PADDLE_WEBHOOK_SECRET: `pdl_ntfset_${'a'.repeat(26)}_${'b'.repeat(32)}` })).toMatchObject({ ok: true });
+    expect(checkConfig({ ...base, PADDLE_WEBHOOK_SECRET: undefined })).toMatchObject({ ok: true });
     expect(checkConfig({ ...base, RELAY_ORIGIN: 'http://relay.aimsg.app' })).toMatchObject({ ok: false });
     expect(checkConfig({ ...base, EMAIL_FROM: '' })).toMatchObject({ ok: false });
     expect(checkConfig({ ...base, PUBLIC_ORIGIN: 'not a url' })).toMatchObject({ ok: false });

@@ -1,4 +1,4 @@
-export type OpsKind = 'unmatched' | 'customer_conflict' | 'second_subscription' | 'invalid_event' | 'bad_payload' | 'refund_cancel_failed';
+export type OpsKind = 'unmatched' | 'customer_conflict' | 'customer_unlinked' | 'second_subscription' | 'invalid_event' | 'bad_payload' | 'refund_cancel_failed';
 
 /**
  * The statement that records an operator alert (`ops_alerts`, put it in the same batch as the change it is about),
