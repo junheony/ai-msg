@@ -9,8 +9,15 @@ export const RELAY = 'https://relay.test';
 let ipSeq = Math.floor(Math.random() * 60000);
 export const freshIp = () => { const n = ipSeq++; return `198.18.${Math.floor(n / 250) % 256}.${(n % 250) + 1}`; };
 
-/** `redirect: 'manual'` — the entrypoint fetch would otherwise follow our 303s. */
-export const call = (path: string, init: RequestInit = {}, origin = APP) => exports.default.fetch(new Request(`${origin}${path}`, { redirect: 'manual', ...init }));
+/**
+ * `redirect: 'manual'` — the entrypoint fetch would otherwise follow our 303s. A fresh client IP unless the
+ * caller sets `cf-connecting-ip`, so GETs do not share one per-IP counter either.
+ */
+export const call = (path: string, init: RequestInit = {}, origin = APP) => {
+  const headers = new Headers(init.headers);
+  if (!headers.has('cf-connecting-ip')) headers.set('cf-connecting-ip', freshIp());
+  return exports.default.fetch(new Request(`${origin}${path}`, { redirect: 'manual', ...init, headers }));
+};
 
 /**
  * JSON POST with `Origin` set to the target origin and a fresh client IP unless `cf-connecting-ip` is given.

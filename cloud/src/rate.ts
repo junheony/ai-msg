@@ -1,6 +1,6 @@
 /** Fixed-window counters in D1 (`rate` table). Windows are aligned to multiples of `windowMs`. */
 
-const windowStart = (windowMs: number, nowMs: number) => nowMs - (nowMs % windowMs);
+export const windowStart = (windowMs: number, nowMs: number) => nowMs - (nowMs % windowMs);
 
 /** The statement that counts one hit; returns the new count via `RETURNING count`. Usable inside a batch. */
 export function hitStmt(db: D1Database, key: string, windowMs: number, nowMs: number): D1PreparedStatement {
@@ -18,12 +18,6 @@ export function hitStmt(db: D1Database, key: string, windowMs: number, nowMs: nu
 export async function hit(db: D1Database, key: string, limit: number, windowMs: number, nowMs: number): Promise<boolean> {
   const n = await hitStmt(db, key, windowMs, nowMs).first<number>('count');
   return (n ?? 0) <= limit;
-}
-
-/** The hits counted so far in this window, without counting one. */
-export async function peek(db: D1Database, key: string, windowMs: number, nowMs: number): Promise<number> {
-  const row = await db.prepare('SELECT window_start, count FROM rate WHERE key = ?').bind(key).first<{ window_start: number; count: number }>();
-  return row && row.window_start === windowStart(windowMs, nowMs) ? row.count : 0;
 }
 
 export const MINUTE = 60_000;

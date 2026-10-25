@@ -84,7 +84,7 @@
 - 접속할 때마다 **Noise KK**(`Noise_KK_25519_AESGCM_SHA256`, prologue 에 프로토콜 버전·기기 id·호스트 id) 핸드셰이크를 한다. 버전 정보는 핸드셰이크 페이로드로 인증된다.
 - 전송은 Noise 가 나눈 방향별 CipherState 로 한다(논스가 곧 카운터라 재전송·순서 바꿈은 복호화 실패).
 
-복호화는 Mac(Node)과 폰(브라우저)만 한다. Worker 는 봉투만 다룬다. 그래서 `src/shared/cloud/noise.ts` 는 Node·브라우저 공통이고, `cloud/` 는 `frames.ts`(봉투)만 가져다 쓴다.
+복호화는 Mac(Node)과 폰(브라우저)만 한다. Worker 는 봉투만 다룬다. 그래서 `src/shared/cloud/noise.ts` 는 Node·브라우저 공통이고, `cloud/` 는 `envelope.ts`(봉투, zod 없음)만 가져다 쓴다.
 
 Mac 쪽 `RelayBridge` 는 복호화한 요청을 **자기 서버의 루프백**(`http://127.0.0.1:<port>`, `ws://127.0.0.1:<port>/ws`)으로 프록시한다. 기존 인증·라우트·ws 처리기는 바꾸지 않는다. 다만 "Mac 확인이 필요한 동작" 은 브리지가 루프백에 닿기 전에 막는다(HTTP 는 `relayPathPolicy`, ws 는 `relayWsPolicy`). 폰 UI 는 같은 React 앱을 relay 출처의 `/v/<버전>/` 에서 연다. 이때 `src/ui/transport.ts` 가 `fetch`·WebSocket 을 터널로 바꿔 끼운다. 폰 알림은 Mac 이 자기 VAPID 키로 직접 보낸다(기존 `PushNotifier`, 클라우드 경유 없음).
 
@@ -125,7 +125,7 @@ Paddle 은 웹훅(서명 검증, `event_id` 로 멱등, `occurred_at` 으로 순
   - 루트는 `ws`·`zod`·`web-push` 셋에 **최대 하나**만 더한다: Task 1 Step 1 에서 고른 Noise 구현, 또는 WebCrypto X25519 가 없는 런타임을 위한 `@noble/curves`(착수 시 확인). 둘 다 필요 없으면 늘리지 않는다. 더하기 전에 사용자 승인을 받는다(D3). 새 devDependency 는 `qrcode-generator` 하나다(D10).
   - `cloud/` 는 런타임 의존성 0. devDependency 는 `wrangler`·`@cloudflare/vitest-plugin`·`vitest`·`typescript`·`@cloudflare/workers-types` 다.
   - `cloud/` 는 루트 npm 패키지(`files: dist`)에 들어가지 않는다.
-- **공유 코드 규칙:** `src/shared/cloud/*.ts` 는 `node:` import 와 DOM 전용 API 를 쓰지 않는다. `globalThis.crypto`·`TextEncoder`·`Uint8Array`(와 D3 에서 승인한 의존성 하나)만 쓴다. `noise.ts`·`pairing.ts` 는 Node·브라우저만 쓰고, `cloud/` 는 `frames.ts`·`b64.ts`·`api-types.ts` 만 상대 경로로 import 한다(`cloud/tsconfig.json` 의 `include` 에 그 세 파일). Worker 는 복호화하지 않는다.
+- **공유 코드 규칙:** `src/shared/cloud/*.ts` 는 `node:` import 와 DOM 전용 API 를 쓰지 않는다. `globalThis.crypto`·`TextEncoder`·`Uint8Array`(와 D3 에서 승인한 의존성 하나)만 쓴다. `noise.ts`·`pairing.ts` 는 Node·브라우저만 쓰고, `cloud/` 는 `envelope.ts`·`b64.ts`·`api-types.ts` 만 상대 경로로 import 한다(`cloud/tsconfig.json` 의 `include` 에 그 세 파일). 이 세 파일은 서로만 상대 경로로 import 하고 패키지(zod 등)는 쓰지 않는다 — Worker 번들에 들어가기 때문이다(`src/hygiene.test.ts` 가 검사). 봉투는 `envelope.ts` 에 있고 `frames.ts` 가 다시 export 한다. Worker 는 복호화하지 않는다.
 - **검증 명령:**
   - 모든 Task 공통:
     - `npx tsc --noEmit -p .`
@@ -309,7 +309,8 @@ relay 출처는 쿠키를 읽지도 심지도 않는다. 폰 UI 가 app 출처�
 | `src/shared/cloud/b64.ts` | base64url 인코드·디코드, `randomToken(bytes)`, `sha256B64u`, `timingSafeEqual`, `lp(...)` |
 | `src/shared/cloud/noise.ts` | Noise KK(`Noise_KK_25519_AESGCM_SHA256`) — `X25519Key`, `deviceHandshake`·`hostHandshake`, `Transport`(encrypt/decrypt), 오류 클래스. Task 1 Step 1 에서 고른 라이브러리를 감싸거나 사양 그대로 구현 |
 | `src/shared/cloud/noise.fixtures/kk-vectors.json` | 공식 테스트 벡터에서 이 계획이 쓰는 KK 항목만 옮긴 것(출처·라이선스 머리말 포함) |
-| `src/shared/cloud/frames.ts` | 봉투 encode/decode, 터널 프레임 zod 스키마, `chunkBytes`, 상수(`TUNNEL_CHUNK`, `NOISE_MAX_PLAINTEXT`, 종료 코드) |
+| `src/shared/cloud/envelope.ts` | 봉투 encode/decode, 상수(`TUNNEL_CHUNK`, `NOISE_MAX_PLAINTEXT`, `MAX_FRAME`, 종료 코드) — zod 없음, Worker 가 쓴다 |
+| `src/shared/cloud/frames.ts` | 터널 프레임 zod 스키마, `chunkBytes`, `envelope.ts` 다시 export |
 | `src/shared/cloud/pairing.ts` | QR 주소 encode/parse, `pairingMac`, `confirmCode`, `claimHash` |
 | `src/shared/cloud/api-types.ts` | 클라우드 HTTP API 요청·응답 타입(Worker 와 로컬 클라이언트가 공유) |
 
@@ -953,7 +954,7 @@ it('trial and comp: larger until wins; expired → none', async () => { /* … *
 // cloud/test/relay.test.ts
 import { env } from 'cloudflare:workers';
 import { runDurableObjectAlarm, evictDurableObject, runInDurableObject } from 'cloudflare:test';
-import { EnvKind, decodeEnvelope, encodeEnvelope, CLOSE } from '../../src/shared/cloud/frames';
+import { EnvKind, decodeEnvelope, encodeEnvelope, CLOSE } from '../../src/shared/cloud/envelope';
 
 const stubFor = (hostId: string) => env.RELAY.get(env.RELAY.idFromName(hostId));
 

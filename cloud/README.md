@@ -12,8 +12,16 @@ AI msg Pro 클라우드 Worker 다. 공개본에는 들어가지 않는다(`.git
 - 저장소는 D1 하나다(`migrations/`). `UI` R2 바인딩은 선언만 해 두었다(Task 7 이 쓴다).
 - 설정이 틀리면 `checkConfig` 가 모든 요청에 503 `misconfigured` 로 답한다.
   - 원인은 `console.error` 로 한 번 남는다.
-  - 검사 항목: https 출처, 두 출처가 서로 다름, 비밀 32자 이상, `resend` 일 때 `RESEND_API_KEY`·`EMAIL_FROM`.
+  - 검사 항목: https 출처, 두 출처가 서로 다름, 비밀 32자 이상, `resend` 일 때 `RESEND_API_KEY`·`EMAIL_FROM`, `MAX_HOSTS`·`MAX_DEVICES`·`TRIAL_DAYS` 가 양의 정수.
   - `log`·`DEV_ROUTES=1` 은 localhost·`.test` 출처에서만 허용한다.
+
+## 보안 메모
+
+- 웹 세션 쿠키를 쓰는 POST 의 CSRF 방어는 `Origin === PUBLIC_ORIGIN` 검사가 전부다. 두 출처가 같은 사이트(eTLD+1)라서 `SameSite=Lax` 로는 막히지 않는다. 이 검사는 절대 느슨하게 하지 않는다(`null`·누락·Referer 대체 모두 거절).
+- 그래서 app 페이지의 referrer 정책은 `same-origin` 이다. `no-referrer` 로 두면 브라우저가 폼 POST 에 `Origin: null` 을 보내서 로그인이 막힌다. relay 출처는 `no-referrer` 를 유지한다.
+- 매직링크 토큰이 URL 쿼리(`/auth/verify?t=`)에 있어서 Cloudflare 요청 로그에 남는다. GET 은 토큰을 쓰지 않고 POST 만 쓰지만, 프래그먼트(`#t=`)로 옮기는 것은 나중에 검토한다.
+- IP 기준 제한의 키는 IPv4 는 주소 그대로, IPv6 는 /64 다(`ipKey`).
+- 한도(MAX_HOSTS·MAX_DEVICES·체험 IP 한도)는 쓰는 문장의 WHERE 안에서 센다. 그래서 동시 요청이 낡은 개수로 통과하지 못한다.
 
 ## 로컬
 

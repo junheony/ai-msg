@@ -14,7 +14,8 @@ const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
 
 /**
  * Refuses a deployment that would leak or misroute: log mail / dev routes off a local or `.test` origin,
- * short secrets, `resend` without a key or sender, equal origins, or a non-https origin off localhost.
+ * short secrets, `resend` without a key or sender, equal origins, a non-https origin off localhost, or a limit
+ * (`MAX_HOSTS`·`MAX_DEVICES`·`TRIAL_DAYS`) that is not a positive integer.
  */
 export function checkConfig(env: Env): ConfigCheck {
   let pub: URL, relay: URL;
@@ -30,6 +31,10 @@ export function checkConfig(env: Env): ConfigCheck {
   if (env.EMAIL_MODE === 'resend' && !env.EMAIL_FROM) return { ok: false, reason: 'EMAIL_FROM is missing' };
   if ((env.SESSION_SECRET ?? '').length < 32) return { ok: false, reason: 'SESSION_SECRET must be at least 32 characters' };
   if ((env.EMAIL_HASH_SECRET ?? '').length < 32) return { ok: false, reason: 'EMAIL_HASH_SECRET must be at least 32 characters' };
+  // `Number('x')` is NaN and `count >= NaN` is false — a typo would silently lift the limit.
+  for (const key of ['MAX_HOSTS', 'MAX_DEVICES', 'TRIAL_DAYS'] as const) {
+    if (!/^[1-9]\d{0,5}$/.test(env[key] ?? '')) return { ok: false, reason: `${key} must be a positive integer` };
+  }
   return { ok: true };
 }
 
@@ -105,7 +110,10 @@ export default {
     out.headers.set('cache-control', 'no-store');
     out.headers.set('x-content-type-options', 'nosniff');
     if (side === 'relay') relayHeaders(out.headers);
-    else if ((out.headers.get('content-type') ?? '').startsWith('text/html')) out.headers.set('content-security-policy', APP_HTML_CSP);
+    else {
+      out.headers.set('referrer-policy', 'same-origin'); // see pages/layout.ts — `no-referrer` would make form POSTs `Origin: null`
+      if ((out.headers.get('content-type') ?? '').startsWith('text/html')) out.headers.set('content-security-policy', APP_HTML_CSP);
+    }
     return out;
   },
 } satisfies ExportedHandler<Env>;

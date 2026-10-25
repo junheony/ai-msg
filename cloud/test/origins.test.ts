@@ -43,6 +43,25 @@ describe('two origins (D18)', () => {
     expect(await r.text()).not.toMatch(/<script>|<script [^>]*>[^<]/);
   });
 
+  it('app pages send same-origin referrers (so form POSTs carry Origin); relay stays no-referrer; Origin null is refused', async () => {
+    const r = await call('/login');
+    expect(r.headers.get('referrer-policy')).toBe('same-origin');
+    const html = await r.text();
+    expect(html).toContain('<meta name="referrer" content="same-origin">');
+    expect(html).not.toContain('no-referrer');
+    expect((await call('/nothing-here', {}, RELAY)).headers.get('referrer-policy')).toBe('no-referrer');
+
+    const form = (origin: string | null) => {
+      const headers: Record<string, string> = { 'content-type': 'application/x-www-form-urlencoded' };
+      if (origin !== null) headers.origin = origin;
+      return call('/login', { method: 'POST', headers, body: 'email=n%40example.test' });
+    };
+    expect((await form('null')).status).toBe(403);
+    expect((await form(null)).status).toBe(403);
+    expect((await form('https://app.test')).status).toBe(200);
+    expect((await post('/auth/verify', { t: 'x' }, { origin: 'null' })).status).toBe(403);
+  });
+
   it('dev outbox is open only with DEV_ROUTES=1 and log mail', async () => {
     await post('/v1/auth/magic', { email: 'outbox@example.test' });
     const r = await call('/dev/outbox?to=outbox@example.test');

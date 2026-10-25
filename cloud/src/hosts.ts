@@ -4,8 +4,8 @@ import { emailKey } from './auth/email';
 import { cookieRoute } from './auth/session';
 import { hashToken, hostAuth, isB64uBytes, newId, newToken, newUserCode } from './auth/tokens';
 import { HttpError, json, problem, readBody, str } from './http';
-import { linkMissingPage, linkPage } from './pages/link';
-import { DAY, HOUR, hit, hitStmt, peek } from './rate';
+import { linkLimitedPage, linkMissingPage, linkPage } from './pages/link';
+import { DAY, HOUR, hit, windowStart } from './rate';
 import type { Ctx } from './router';
 
 const LINK_TTL_MS = 600_000;
@@ -43,8 +43,14 @@ async function fingerprint(hostPub: string): Promise<string> {
   return hex.match(/.{4}/g)!.join(' ');
 }
 
-/** `GET /link?code=` */
+/**
+ * `GET /link?code=` — says whether a code exists, so it is limited like approve (20/h per user, 40/h per IP,
+ * wrong codes included; own counters, so viewing then approving does not eat the approve budget).
+ */
 export const linkGet = cookieRoute({ session: 'page' }, async (c) => {
+  const userOk = await hit(c.env.DB, `link:view:user:${c.userId}`, 20, HOUR, c.nowMs);
+  const ipOk = await hit(c.env.DB, `link:view:ip:${c.ip}`, 40, HOUR, c.nowMs);
+  if (!userOk || !ipOk) return linkLimitedPage();
   const link = await pendingLink(c, normCode(c.url.searchParams.get('code')));
   if (!link) return linkMissingPage();
   return linkPage({ userCode: link.user_code, hostName: link.host_name, fingerprint: await fingerprint(link.host_pub) });
@@ -53,6 +59,12 @@ export const linkGet = cookieRoute({ session: 'page' }, async (c) => {
 /**
  * `POST /v1/host/link/approve {userCode}` (web session + Origin). 10/h per user and 20/h per IP, wrong codes
  * included. Grants the trial once per normalized email and at most 3 per IP per day.
+ *
+ * Every limit is checked inside the statement that writes, so concurrent approvals cannot pass a stale count:
+ * - the approve UPDATE carries the MAX_HOSTS count in its WHERE (0 rows → `host_limit`, or the code went to
+ *   someone else → 409 `link_taken`; no trial is looked at before this succeeds);
+ * - the trial claim INSERT carries the per-IP count in its WHERE, and the trial row and the counter bump are
+ *   conditional on that claim row in the same batch (one transaction).
  */
 export const linkApprove = cookieRoute({ session: 'required' }, async (c) => {
   const userOk = await hit(c.env.DB, `link:approve:user:${c.userId}`, 10, HOUR, c.nowMs);
@@ -63,36 +75,38 @@ export const linkApprove = cookieRoute({ session: 'required' }, async (c) => {
   if (!link) return problem(404, 'unknown_code');
 
   const db = c.env.DB;
-  const used = await db.prepare(
-    `SELECT (SELECT count(*) FROM hosts WHERE user_id = ?1 AND revoked_at IS NULL)
-          + (SELECT count(*) FROM host_links WHERE user_id = ?1 AND state = 'approved' AND expires_at > ?2) AS n`,
-  ).bind(c.userId, c.nowMs).first<number>('n');
-  if ((used ?? 0) >= Number(c.env.MAX_HOSTS)) return problem(409, 'host_limit');
+  const approved = await db.prepare(
+    `UPDATE host_links SET state = 'approved', user_id = ?1
+      WHERE device_code_hash = ?2 AND state = 'pending' AND expires_at > ?3
+        AND (SELECT count(*) FROM hosts WHERE user_id = ?1 AND revoked_at IS NULL)
+          + (SELECT count(*) FROM host_links WHERE user_id = ?1 AND state = 'approved' AND expires_at > ?3) < ?4`,
+  ).bind(c.userId, link.device_code_hash, c.nowMs, Number(c.env.MAX_HOSTS)).run();
+  if (approved.meta.changes !== 1) return (await pendingLink(c, link.user_code)) ? problem(409, 'host_limit') : problem(409, 'link_taken');
 
-  const approve = db.prepare("UPDATE host_links SET state = 'approved', user_id = ? WHERE device_code_hash = ? AND state = 'pending'").bind(c.userId, link.device_code_hash);
   const email = await db.prepare('SELECT email FROM users WHERE id = ?').bind(c.userId).first<string>('email');
   const key = await emailKey(c.env.EMAIL_HASH_SECRET, email ?? '');
+  if (await db.prepare('SELECT 1 FROM trial_claims WHERE email_key = ?').bind(key).first()) return json(200, { trial: 'already_used' } satisfies LinkApproveRes);
   const ipKey = `trial:ip:${c.ip}`;
-  let trial: LinkApproveRes['trial'];
-  if (await db.prepare('SELECT 1 FROM trial_claims WHERE email_key = ?').bind(key).first()) trial = 'already_used';
-  else if ((await peek(db, ipKey, DAY, c.nowMs)) >= TRIALS_PER_IP_PER_DAY) trial = 'unavailable';
-  else {
-    const endsAt = c.nowMs + Number(c.env.TRIAL_DAYS) * DAY;
-    try {
-      await db.batch([
-        db.prepare('INSERT INTO trial_claims (email_key, user_id, claimed_at) VALUES (?, ?, ?)').bind(key, c.userId, c.nowMs),
-        db.prepare('INSERT INTO trials (user_id, started_at, ends_at) VALUES (?, ?, ?)').bind(c.userId, c.nowMs, endsAt),
-        hitStmt(db, ipKey, DAY, c.nowMs),
-        approve,
-      ]);
-      return json(200, { trial: 'granted' } satisfies LinkApproveRes);
-    } catch (e) {
-      if (!/UNIQUE/i.test(String(e))) throw e;
-      trial = 'already_used'; // lost a race with another approval for the same person
-    }
+  const claimed = 'EXISTS (SELECT 1 FROM trial_claims WHERE email_key = ?1 AND user_id = ?2 AND claimed_at = ?3)';
+  try {
+    const [claim] = await db.batch([
+      db.prepare(
+        `INSERT INTO trial_claims (email_key, user_id, claimed_at) SELECT ?1, ?2, ?3
+          WHERE COALESCE((SELECT count FROM rate WHERE key = ?4 AND window_start = ?5), 0) < ?6`,
+      ).bind(key, c.userId, c.nowMs, ipKey, windowStart(DAY, c.nowMs), TRIALS_PER_IP_PER_DAY),
+      db.prepare(`INSERT INTO trials (user_id, started_at, ends_at) SELECT ?2, ?3, ?4 WHERE ${claimed}`)
+        .bind(key, c.userId, c.nowMs, c.nowMs + Number(c.env.TRIAL_DAYS) * DAY),
+      db.prepare(
+        `INSERT INTO rate (key, window_start, count) SELECT ?4, ?5, 1 WHERE ${claimed}
+           ON CONFLICT(key) DO UPDATE SET count = CASE WHEN window_start = excluded.window_start THEN count + 1 ELSE 1 END,
+                                          window_start = excluded.window_start`,
+      ).bind(key, c.userId, c.nowMs, ipKey, windowStart(DAY, c.nowMs)),
+    ]);
+    return json(200, { trial: claim!.meta.changes === 1 ? 'granted' : 'unavailable' } satisfies LinkApproveRes);
+  } catch (e) {
+    if (!/UNIQUE/i.test(String(e))) throw e;
+    return json(200, { trial: 'already_used' } satisfies LinkApproveRes); // lost a race with another approval for the same person
   }
-  await approve.run();
-  return json(200, { trial } satisfies LinkApproveRes);
 });
 
 /** `POST /v1/host/link/poll {deviceCode}` — 202 pending, 200 linked (token once), 429 slow_down, 410 gone. */

@@ -12,6 +12,9 @@ export const linkPage = (o: { userCode: string; hostName: string; fingerprint: s
 export const linkMissingPage = (): Response =>
   page('Code not found', '<h1>This code is not valid</h1><p>It may have expired. Start linking again from AI msg on your Mac.</p>', { status: 404 });
 
+export const linkLimitedPage = (): Response =>
+  page('Too many attempts', '<h1>Too many attempts</h1><p>Wait an hour, then open the link from AI msg on your Mac again.</p>', { status: 429 });
+
 /** `/static/link.js` — posts JSON (cookie routes take JSON only) with the page's own Origin. */
 export const LINK_JS = `(() => {
   const form = document.getElementById('link');

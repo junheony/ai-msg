@@ -101,6 +101,38 @@ describe('host link (device code)', () => {
     }
   });
 
+  it('the link page is rate limited per user (20/h) and per IP (40/h), wrong codes included', async () => {
+    const s = await start();
+    const cookie = await loginAs('peek@example.test');
+    for (let i = 0; i < 20; i++) expect((await call('/link?code=ZZZZ-ZZZZ', { headers: { cookie } })).status).toBe(404);
+    const limited = await call(`/link?code=${s.userCode}`, { headers: { cookie } });
+    expect(limited.status).toBe(429);
+    expect(await limited.text()).not.toContain('Test Mac');
+
+    const ip = freshIp();
+    for (let u = 0; u < 3; u++) {
+      const c = await loginAs(`peekip${u}@example.test`);
+      for (let i = 0; i < 15; i++) expect((await call('/link?code=ZZZZ-ZZZZ', { headers: { cookie: c, 'cf-connecting-ip': ip } })).status).toBe(u * 15 + i < 40 ? 404 : 429);
+    }
+  });
+
+  it('two users approving the same code at once: one wins, only the winner can get the trial', async () => {
+    const s = await start();
+    const [ca, cb] = [await loginAs('racea@example.test'), await loginAs('raceb@example.test')];
+    const rs = await Promise.all([ca, cb].map((cookie) => post('/v1/host/link/approve', { userCode: s.userCode }, { cookie })));
+    const st = rs.map((r) => r.status).sort();
+    expect(st[0]).toBe(200);
+    expect([404, 409]).toContain(st[1]);
+    const trials = await env.DB.prepare('SELECT count(*) AS n FROM trials t JOIN users u ON u.id = t.user_id WHERE u.email IN (?, ?)').bind('racea@example.test', 'raceb@example.test').first('n');
+    expect(trials).toBe(1);
+  });
+
+  it('per-IP trial limit groups IPv6 by /64', async () => {
+    for (const n of [1, 2, 3]) expect((await linkHost(`v6${n}@example.test`, `2001:db8:9:9::${n}`)).trial).toBe('granted');
+    expect((await linkHost('v64@example.test', '2001:db8:9:9:ffff::1')).trial).toBe('unavailable');
+    expect((await linkHost('v65@example.test', '2001:db8:9:a::1')).trial).toBe('granted');
+  });
+
   it('MAX_HOSTS', async () => {
     for (let i = 0; i < 3; i++) await linkHost('many@example.test');
     const s = await start();

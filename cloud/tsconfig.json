@@ -14,8 +14,8 @@
   "include": [
     "src",
     "test",
-    "../src/shared/cloud/frames.ts",
     "../src/shared/cloud/b64.ts",
-    "../src/shared/cloud/api-types.ts"
+    "../src/shared/cloud/api-types.ts",
+    "../src/shared/cloud/envelope.ts"
   ]
 }

@@ -6,6 +6,7 @@ describe('checkConfig', () => {
   const base = {
     PUBLIC_ORIGIN: 'https://app.aimsg.app', RELAY_ORIGIN: 'https://relay.aimsg.app', EMAIL_MODE: 'resend', EMAIL_FROM: 'AI msg <login@example.com>',
     RESEND_API_KEY: 'k', DEV_ROUTES: '0', SESSION_SECRET: 's'.repeat(32), EMAIL_HASH_SECRET: 'e'.repeat(32),
+    MAX_HOSTS: '3', MAX_DEVICES: '3', TRIAL_DAYS: '7',
   } as Env;
 
   it('refuses log email or dev routes on a public origin', () => {
@@ -24,5 +25,13 @@ describe('checkConfig', () => {
     expect(checkConfig({ ...base, EMAIL_FROM: '' })).toMatchObject({ ok: false });
     expect(checkConfig({ ...base, PUBLIC_ORIGIN: 'not a url' })).toMatchObject({ ok: false });
     expect(checkConfig({ ...base, PUBLIC_ORIGIN: 'https://app.test', RELAY_ORIGIN: 'https://relay.test', EMAIL_MODE: 'log', DEV_ROUTES: '1' })).toEqual({ ok: true });
+  });
+
+  it('limits must be positive integers (NaN would lift them)', () => {
+    const ok = { ...base, MAX_HOSTS: '3', MAX_DEVICES: '3', TRIAL_DAYS: '7' } as Env;
+    expect(checkConfig(ok)).toEqual({ ok: true });
+    for (const key of ['MAX_HOSTS', 'MAX_DEVICES', 'TRIAL_DAYS'] as const) {
+      for (const bad of [undefined, '', 'x', '0', '-1', '1.5', '3abc']) expect(checkConfig({ ...ok, [key]: bad } as Env)).toMatchObject({ ok: false });
+    }
   });
 });

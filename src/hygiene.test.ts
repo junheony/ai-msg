@@ -30,6 +30,25 @@ describe('repository hygiene', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('the shared files cloud/ compiles in import only each other by relative path (no zod or other packages in the Worker)', () => {
+    let tsconfig: { include?: string[] };
+    try { tsconfig = JSON.parse(fs.readFileSync(path.join(ROOT, 'cloud', 'tsconfig.json'), 'utf8')) as { include?: string[] }; } catch { return; } // public export: no cloud/
+    const shared = (tsconfig.include ?? []).filter((p) => p.startsWith('../')).map((p) => path.resolve(ROOT, 'cloud', p));
+    expect(shared.length).toBeGreaterThan(0);
+    const allowed = new Set(shared);
+    const bad: string[] = [];
+    for (const file of shared) {
+      const src = fs.readFileSync(file, 'utf8');
+      for (const m of src.matchAll(/\b(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g)) {
+        const spec = m[1]!;
+        const rel = path.relative(ROOT, file);
+        if (!spec.startsWith('./') && !spec.startsWith('../')) bad.push(`${rel}: ${spec}`);
+        else if (!allowed.has(path.resolve(path.dirname(file), spec.endsWith('.ts') ? spec : `${spec}.ts`))) bad.push(`${rel}: ${spec} (not in cloud/tsconfig.json include)`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
   it('generic rules catch key shapes and leave short fixtures and marked examples alone', () => {
     const hit = (s: string) => violations(s, GENERIC_RULES).length > 0;
     const run = (n: number) => 'aB3'.repeat(n);

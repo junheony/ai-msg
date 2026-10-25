@@ -90,14 +90,24 @@ describe('QR pairing', () => {
   });
 
   it('the same phone resending the same claim (lost response) gets the same deviceId and a fresh token, not a burn', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
     const h = await linkHost('resend@example.test');
     const first = await claim({ hostToken: h.hostToken });
     const a = (await first.res.json()) as PairClaimRes;
+    // Within 10 s of the token being issued: no second token (two racing resends must not both rotate it).
+    const soon = await relayPost('/v1/pair/claim', first.body);
+    expect(soon.status).toBe(409);
+    expect(await soon.json()).toMatchObject({ code: 'retry' });
+    expect((await ticket(a.deviceToken)).status).toBe(403); // still the first token
+    vi.advanceTimersByTime(10_001);
     const again = await relayPost('/v1/pair/claim', first.body);
     expect(again.status).toBe(200);
     const b = (await again.json()) as PairClaimRes;
     expect(b.deviceId).toBe(a.deviceId);
     expect(b.deviceToken).not.toBe(a.deviceToken);
+    const third = await relayPost('/v1/pair/claim', first.body);
+    expect(third.status).toBe(409);
+    expect(await third.json()).toMatchObject({ code: 'retry' });
     expect((await status(first.pairingId, h.hostToken)).body.state).toBe('claimed');
     expect((await ticket(a.deviceToken)).status).toBe(401); // old token gone
     const pending = await ticket(b.deviceToken);
@@ -108,6 +118,32 @@ describe('QR pairing', () => {
     expect(late.status).toBe(409);
     expect(await late.json()).toMatchObject({ code: 'already_paired' });
     expect((await status(first.pairingId, h.hostToken)).body.state).toBe('confirmed');
+  });
+
+  it('two simultaneous resends from the same phone rotate the token at most once', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const h = await linkHost('resend2@example.test');
+    const first = await claim({ hostToken: h.hostToken });
+    vi.advanceTimersByTime(10_001);
+    const rs = await Promise.all([relayPost('/v1/pair/claim', first.body), relayPost('/v1/pair/claim', first.body)]);
+    expect(rs.map((r) => r.status).sort()).toEqual([200, 409]);
+  });
+
+  it('a claimed pairing expires 5 minutes after the claim: not counted toward the device limit, confirm is 410', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const h = await linkHost('stale@example.test');
+    const stale = [];
+    for (const fill of [2, 3, 4]) stale.push(await claim({ hostToken: h.hostToken, devicePub: pub(fill) }));
+    expect((await claim({ hostToken: h.hostToken, devicePub: pub(5) })).res.status).toBe(409); // limit
+    vi.advanceTimersByTime(4 * 60_000);
+    expect((await status(stale[0]!.pairingId, h.hostToken)).body.state).toBe('claimed'); // the claim restarted the clock
+    vi.advanceTimersByTime(60_000 + 1);
+    expect((await status(stale[0]!.pairingId, h.hostToken)).body.state).toBe('expired');
+    const late = await confirm(stale[0]!.pairingId, h.hostToken);
+    expect(late.status).toBe(410);
+    expect(await late.json()).toMatchObject({ code: 'expired' });
+    expect((await relayPost('/v1/pair/claim', stale[1]!.body)).status).toBe(410);
+    expect((await claim({ hostToken: h.hostToken, devicePub: pub(6) })).res.status).toBe(200);
   });
 
   it('cookie routes need Origin === PUBLIC_ORIGIN and JSON; Bearer routes ignore cookies', async () => {
