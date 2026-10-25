@@ -15,13 +15,17 @@
 | 1 | Task 1 | Noise KK 기반 공유 릴레이 프로토콜(검증 라이브러리 또는 사양 그대로 구현 + 공식 테스트 벡터), 봉투·터널 프레임, 페어링 MAC·확인 코드 |
 | 2 | Task 2 | 클라우드 패키지 뼈대 — 두 출처(app·relay), 매직링크, 호스트 연결, 페어링(두 번 claim 폐기), 기기 API, 체험(이메일 정규화·IP 제한) |
 | 3 | Task 3 | 릴레이 DO — Hibernation WS, 일회용 티켓, 출처 덮어쓰기, 이용권 alarm(48시간 유예), 해제 통지 |
-| 4 | Task 4 | 로컬 클라우드 클라이언트 — 장치 코드 연결, RelayClient(402/4402 는 5분부터 백오프), RelayBridge(Mac 확인 필요 동작 차단, 해제 즉시 종료) |
-| 5 | Task 5 | 페어링 QR(확인 코드 + Mac [허용])과 폰 UI 전송 계층 — 분리 출처, 제3자 스크립트·쿠키 없음, Mac VAPID 직접 푸시, 재페어링 흐름 |
-| 6 | Task 7 | 요금제 표시 — `/v1/entitlement` 표시용 응답과 설정 › 계정의 요금제 행(서명·로컬 게이트 없음) |
-| 7 | Task 9 | Paddle 웹훅 — 전부 upsert, 업무 충돌은 200+기록+알림, 서명된 user 참조, past_due 는 `occurred_at`+7일, 전액 환불·차지백이면 해지 |
-| 8 | Task 10 | 결제·계정 화면 — app 출처에서만 Paddle.js, 이중 구독 방지 |
-| 9 | Task 12 | 법적 페이지 게시(`docs/legal/*.md` 빌드)·비제휴 고지·계정 삭제(체험 이메일 해시 보존)·만료 행 정리 cron |
-| 10 | Task 11 | 보안·장애 테스트와 문서(보안 모델·데이터 목록·배포 절차), 로컬 서버 방어 회귀 테스트 |
+| 4 | Task 4a | 로컬 클라우드 클라이언트 ① — 장치 코드 연결, 상태 파일, RelayClient(이용권은 연결을 유지한 채 `ent` 제어로, 끊기면 최대 5분 간격) |
+| 5 | Task 4b | 로컬 클라우드 클라이언트 ② — RelayBridge(Mac 확인 필요 동작 차단, 해제 즉시 종료), `/api/cloud` |
+| 6 | Task 5 앞 실기 확인 | iOS 홈 화면 PWA 저장소 분리·카메라·푸시 탐침(탐침은 실행자, iPhone 확인은 사용자 몫) — 결과로 5a·5b 페어링 화면을 확정 |
+| 7 | Task 5a | Mac 쪽 페어링 — QR·확인 코드·[허용]/[거부]·페어링 코드 [복사] |
+| 8 | Task 5b | 폰 UI 전송 계층 — apiFetch·터널 WS·RelayConnection(402 는 5초부터 최대 5분)·PWA 안 페어링(코드 붙여 넣기·스캔)·Mac VAPID 직접 푸시·재페어링 흐름 |
+| 9 | Task 5c | relay 출처 UI 배포 — 분리 출처, 제3자 스크립트·쿠키 없음, boot 최신 폴백, 릴리스 스크립트, e2e 이정표 |
+| 10 | Task 7 | 요금제 표시 — `/v1/entitlement` 표시용 응답과 설정 › 계정의 요금제 행(서명·로컬 게이트 없음) |
+| 11 | Task 9 | Paddle 웹훅 — 전부 upsert, 업무 충돌은 200+기록+알림, 서명된 user 참조, past_due 는 `occurred_at`+7일, 전액 환불·차지백이면 해지 |
+| 12 | Task 10 | 결제·계정 화면 — app 출처에서만 Paddle.js, 이중 구독 방지 |
+| 13 | Task 12 | 법적 페이지 게시(`docs/legal/*.md` 빌드)·비제휴 고지·계정 삭제(체험 이메일 해시 보존)·만료 행 정리 cron |
+| 14 | Task 11 | 보안·장애 테스트와 문서(보안 모델·데이터 목록·배포 절차), 로컬 서버 방어 회귀 테스트 |
 
 **출시 뒤 — 지우지 않고 맨 끝 "출시 뒤" 절에 둔다**
 
@@ -111,7 +115,7 @@ Paddle 은 웹훅(서명 검증, `event_id` 로 멱등, `occurred_at` 으로 순
   - `startServer` 는 클라우드 호출을 기다리지 않는다. `CloudService.start()` 는 listen 과 `attachWebSocket` 이 끝난 **뒤에** 시작하고, 그 안의 오류는 모두 잡아 상태(`relay: 'down'`)와 로그 한 줄로만 남긴다.
   - 클라우드에 연결하지 않은 설치는 클라우드로 요청을 하나도 보내지 않는다(테스트로 고정).
   - `DECK_CLOUD=off` 면 `/api/cloud/*` 가 404 이고 기능 이름 `cloud` 도 알리지 않는다.
-- **유료 기능은 클라우드만 판단한다(출시 1차).** 릴레이 티켓·호스트 WS·DO alarm 이 이용권을 확인한다. 로컬에는 Pro 게이트·오프라인 유예가 없다(출시 뒤 Task 13). 로컬 기능(다계정·자동 분배·인계·병목·재시도·총사령탑)은 Community 와 똑같이 동작한다.
+- **유료 기능은 클라우드만 판단한다(출시 1차).** 릴레이 티켓과 DO alarm 이 이용권을 확인한다(호스트 WS 는 이용권 없이도 붙고 `{t:'ent'}` 로 상태만 받는다 — 2차 필수 1). 로컬에는 Pro 게이트·오프라인 유예가 없다(출시 뒤 Task 13). 로컬 기능(다계정·자동 분배·인계·병목·재시도·총사령탑)은 Community 와 똑같이 동작한다.
 - **Pro 문구는 릴레이·푸시만.** 같은 벤더 여러 계정 순환(`accounts`)·리셋 승격(`routeFull`)은 유료 게이트에 넣지 않는다 — 한도 회피를 파는 모양이 된다(출시 점검 L8). 랜딩·계정 페이지·결제 페이지 문구도 같다.
 - **클라우드는 평문을 보지 않는다.** Worker·DO 코드는 터널 프레임을 해석하지 않는다. 봉투의 머리(종류·기기 id)만 읽는다. 로그에는 메타데이터(사용자 id·호스트 id·기기 id·바이트 수·종료 코드)만 남긴다(스펙 §6). 이것은 Task 3 테스트로 고정한다. 단, 폰 UI 코드를 클라우드가 내려 주는 한계는 "보안 모델과 한계" 대로 문서·랜딩에 적는다.
 - **출처 분리(D18).** 폰 UI·폰 API·릴레이 WS 는 relay 출처에만, 로그인·계정·결제·법적 페이지는 app 출처에만 있다. 반대쪽 출처로 오면 404 다. relay 출처 응답은 `Set-Cookie` 를 절대 내지 않고, CSP 는 `script-src 'self'` 이며 제3자 출처를 하나도 허용하지 않는다. app 출처 쿠키는 `Domain` 속성 없이(호스트 전용) 심는다.
@@ -153,16 +157,16 @@ Paddle 은 웹훅(서명 검증, `event_id` 로 멱등, `occurred_at` 으로 순
 
 ## Review Focus
 
-1. **페어링 때 클라우드가 폰 공개키를 바꿔치기하거나, 누가 QR 을 엿봤다.** 기대: QR 에만 있는 `authSecret` 으로 만든 HMAC(`pairingMac`)이 Mac 에서 맞지 않으면 거절·해제한다. MAC 이 맞아도 Mac 은 확인 코드 6자리(`confirmCode`)를 보여 주고 사용자가 [허용] 을 눌러야 확정한다. 같은 페어링에 올바른 claim 이 두 번 오면 클라우드가 페어링을 `burned` 로 바꾸고 두 기기를 모두 해제한다. → Task 1 `pairing.test.ts`, Task 2 `pairing.test.ts`, Task 5 `Pairing.test.ts`.
-2. **재전송·순서 바꿈·방향 혼동 프레임, 핸드셰이크 전사 변조.** 기대: Noise CipherState 논스가 맞지 않거나 비트가 바뀌었으면 복호화 실패로 세션을 닫는다. prologue(버전·기기 id·호스트 id)나 핸드셰이크 메시지가 바뀌면 핸드셰이크가 실패한다. 공식 테스트 벡터를 통과한다. → Task 1 `noise.test.ts`·`noise.vectors.test.ts`, Task 4 `RelayBridge.test.ts`.
-3. **폰이 다른 기기 id 를 사칭한다.** 기대: DO 가 봉투의 출처 id 를 소켓 태그(`dev:<id>`)로 덮어쓴다. Mac 은 로컬 신뢰 목록(`<configDir>/cloud/state.json` 의 `devices`)에 있는 공개키로만 핸드셰이크를 받는다. → Task 3 `relay.test.ts`, Task 4.
-4. **클라우드 장애·미연결 상태로 시작한다.** 기대: 서버가 정상으로 뜨고, 무료 기능(세션·승인·LAN 접속·로컬 푸시)이 그대로이며, 클라우드 요청은 0건(미연결) 또는 백오프 재시도(연결됨)다. → Task 4 `CloudService.test.ts`, Task 11 장애 테스트.
-5. **구독 갱신 순간에 릴레이가 끊긴다.** 기대: `active` 의 이용권은 `period_end + 48시간` 까지라 갱신 웹훅이 늦어도 끊기지 않는다. 402/4402 를 받은 RelayClient 는 5분부터 백오프로 다시 시도한다. → Task 9 `paddle.webhook.test.ts`, Task 4 `RelayClient.test.ts`.
+1. **페어링 때 클라우드가 폰 공개키를 바꿔치기하거나, 누가 QR 을 엿봤다.** 기대: QR 에만 있는 `authSecret` 으로 만든 HMAC(`pairingMac`)이 Mac 에서 맞지 않으면 거절·해제한다. MAC 이 맞아도 Mac 은 확인 코드 6자리(`confirmCode`)를 보여 주고 사용자가 [허용] 을 눌러야 확정한다. 같은 페어링에 올바른 claim 이 두 번 오면 클라우드가 페어링을 `burned` 로 바꾸고 두 기기를 모두 해제한다. → Task 1 `pairing.test.ts`, Task 2 `pairing.test.ts`, Task 5a `Pairing.test.ts`.
+2. **재전송·순서 바꿈·방향 혼동 프레임, 핸드셰이크 전사 변조.** 기대: Noise CipherState 논스가 맞지 않거나 비트가 바뀌었으면 복호화 실패로 세션을 닫는다. prologue(버전·기기 id·호스트 id)나 핸드셰이크 메시지가 바뀌면 핸드셰이크가 실패한다. 공식 테스트 벡터를 통과한다. → Task 1 `noise.test.ts`·`noise.vectors.test.ts`, Task 4b `RelayBridge.test.ts`.
+3. **폰이 다른 기기 id 를 사칭한다.** 기대: DO 가 봉투의 출처 id 를 소켓 태그(`dev:<id>`)로 덮어쓴다. Mac 은 로컬 신뢰 목록(`<configDir>/cloud/state.json` 의 `devices`)에 있는 공개키로만 핸드셰이크를 받는다. → Task 3 `relay.test.ts`, Task 4b.
+4. **클라우드 장애·미연결 상태로 시작한다.** 기대: 서버가 정상으로 뜨고, 무료 기능(세션·승인·LAN 접속·로컬 푸시)이 그대로이며, 클라우드 요청은 0건(미연결) 또는 백오프 재시도(연결됨)다. → Task 4b `CloudService.test.ts`, Task 11 장애 테스트.
+5. **구독 갱신 순간에 릴레이가 끊긴다.** 기대: `active` 의 이용권은 `period_end + 48시간` 까지라 갱신 웹훅이 늦어도 끊기지 않는다. 이용권이 없는 동안에도 Mac 은 릴레이에 붙어 있고, 결제 웹훅의 recheck 가 `{t:'ent',ok:true}` 로 바로 알려 폰이 수 초 안에 티켓을 받는다(2차 필수 1). → Task 9 `paddle.webhook.test.ts`, Task 3 `relay.test.ts`, Task 4a `RelayClient.test.ts`.
 6. **Paddle 웹훅 중복·순서 역전·서명 위조·결정적 오류.** 기대: 같은 `event_id` 는 한 번만 기록하고, 반영은 전부 upsert 라 두 번 와도 같다. 더 오래된 `occurred_at` 은 상태를 되돌리지 못한다. 서명 오차가 5초를 넘거나 원문이 바뀌었으면 401 이다. 고객 id 충돌 같은 업무 충돌은 200 + `outcome` 기록 + 알림이고 재시도를 부르지 않는다. 브라우저가 보낸 `user_id` 는 믿지 않는다(서버 서명 토큰만). → Task 9.
-7. **폰(릴레이 기기)이 Mac 확인이 필요한 동작을 한다.** 폰이 `/api/restart`·`/api/setup/*`·`/api/login`·`/api/cloud/unlink` 를 부르거나, ws 로 권한 모드를 올리는 경우다. 기대: `relayPathPolicy`·`relayWsPolicy` 가 `mac_confirm_required` 로 막고 루프백에는 닿지 않는다. 폰이 보낸 `cookie`·`authorization`·`origin`·`host` 머리는 버린다. → Task 4 `pathPolicy.test.ts`·`wsPolicy.test.ts`.
-8. **기기를 해제했는데 열린 채널이 살아 있다.** 기대: Mac 에서 해제하면 그 기기의 Noise 세션과 루프백 스트림이 즉시 닫힌다. 계정 페이지(클라우드)에서 해제하면 DO 가 호스트에게 `{t:'revoked',dev}` 를 보내고 Mac 이 로컬 신뢰 목록에서도 지운다. → Task 4 `RelayBridge.test.ts`, Task 3 `relay.test.ts`.
-9. **Mac 과 폰 UI 버전이 다르거나, 릴레이 탈취자가 옛 UI 로 끌고 간다.** 기대: `hostVersion` 은 Noise 두 번째 메시지 페이로드로 인증되고, 폰은 `ready` 를 검증한 뒤에만 `/v/<hostVersion>/` 로 옮긴다. 버전 문자열은 semver 모양만 받는다. → Task 1, Task 5 `RelayConnection.test.ts`.
-10. **같은 출처의 제3자 스크립트가 기기 키에 닿는다.** 기대: 폰 UI 는 relay 출처에만 있고, relay 출처 응답에는 `Set-Cookie` 가 없으며 CSP 가 제3자 출처를 허용하지 않는다. `/checkout`·`/account` 는 relay 출처에서 404 다. → Task 2 `origins.test.ts`, Task 5 `ui.test.ts`, Task 11 `security.test.ts`.
+7. **폰(릴레이 기기)이 Mac 확인이 필요한 동작을 한다.** 폰이 `/api/restart`·`/api/setup/*`·`/api/login`·`/api/cloud/unlink` 를 부르거나, ws 로 권한 모드를 올리는 경우다. 기대: `relayPathPolicy`·`relayWsPolicy` 가 `mac_confirm_required` 로 막고 루프백에는 닿지 않는다. 폰이 보낸 `cookie`·`authorization`·`origin`·`host` 머리는 버린다. → Task 4b `pathPolicy.test.ts`·`wsPolicy.test.ts`.
+8. **기기를 해제했는데 열린 채널이 살아 있다.** 기대: Mac 에서 해제하면 그 기기의 Noise 세션과 루프백 스트림이 즉시 닫힌다. 계정 페이지(클라우드)에서 해제하면 DO 가 호스트에게 `{t:'revoked',dev}` 를 보내고 Mac 이 로컬 신뢰 목록에서도 지운다. → Task 4b `RelayBridge.test.ts`, Task 3 `relay.test.ts`.
+9. **Mac 과 폰 UI 버전이 다르거나, 릴레이 탈취자가 옛 UI 로 끌고 간다.** 기대: `hostVersion` 은 Noise 두 번째 메시지 페이로드로 인증되고, 폰은 `ready` 를 검증한 뒤에만 `/v/<hostVersion>/` 로 옮긴다. 버전 문자열은 semver 모양만 받는다. → Task 1, Task 5b `RelayConnection.test.ts`.
+10. **같은 출처의 제3자 스크립트가 기기 키에 닿는다.** 기대: 폰 UI 는 relay 출처에만 있고, relay 출처 응답에는 `Set-Cookie` 가 없으며 CSP 가 제3자 출처를 허용하지 않는다. `/checkout`·`/account` 는 relay 출처에서 404 다. → Task 2 `origins.test.ts`, Task 5c `ui.test.ts`, Task 11 `security.test.ts`.
 11. **DO 가 잠들지 못해 비용이 폭증한다.** 기대: DO 안에 `setInterval`·`setTimeout` 상주 타이머가 없다. 핑은 `setWebSocketAutoResponse` 로 깨우지 않고 답하고, 이용권 만료는 alarm 으로 처리한다. → Task 3 코드 검사 테스트(부하 스크립트는 출시 뒤 Task 14).
 
 ---
@@ -171,42 +175,42 @@ Paddle 은 웹훅(서명 검증, `event_id` 로 멱등, `occurred_at` 으로 순
 
 | 위치 | 결합 | 처리 |
 |---|---|---|
-| `src/server/server.ts:350` | `attachWebSocket(servers, {...})` — 모든 서버 쪽 조립의 끝 | Task 4: 그 뒤에 `CloudService` 를 만들고 `start()`(대기 없음), `cleanup` 에 `stop()` |
+| `src/server/server.ts:350` | `attachWebSocket(servers, {...})` — 모든 서버 쪽 조립의 끝 | Task 4b: 그 뒤에 `CloudService` 를 만들고 `start()`(대기 없음), `cleanup` 에 `stop()` |
 | `src/server/server.ts:273`, `:326` | `sameVendorRotation: () => settings.get().sameVendorRotation` | 출시 1차에서는 건드리지 않는다. 출시 뒤 Task 8 도 이 줄을 게이트하지 않는다(필수 6, L8) |
 | `src/server/server.ts:303-311` | `new BottleneckWatch({ sendPush, retry, … })` | 출시 뒤 Task 8 |
 | `src/server/server.ts:337` | Commander `enabled: () => settings.get().commanderEnabled === true` | 출시 뒤 Task 8(D7 재검토) |
-| `src/server/http.ts:32-66` | `HttpDeps` — 기능별 선택 의존성 | Task 4: `cloud?: CloudHttpDeps`(없으면 `/api/cloud/*` 없음) |
-| `src/server/http.ts:580-598` | `/api/push/{key,subscribe,unsubscribe,status,test}` | Task 5: 변경 없음 — 폰이 터널로 `key`·`subscribe` 를 부르고 Mac 이 직접 푸시한다. (클라우드 경유는 출시 뒤 Task 6) |
+| `src/server/http.ts:32-66` | `HttpDeps` — 기능별 선택 의존성 | Task 4b: `cloud?: CloudHttpDeps`(없으면 `/api/cloud/*` 없음) |
+| `src/server/http.ts:580-598` | `/api/push/{key,subscribe,unsubscribe,status,test}` | Task 5b: 변경 없음 — 폰이 터널로 `key`·`subscribe` 를 부르고 Mac 이 직접 푸시한다. (클라우드 경유는 출시 뒤 Task 6) |
 | `src/server/push/PushNotifier.ts:126-129`, `:176-191` | 기본 `send` = `webpush.sendNotification`, `deliver` 의 404/410 정리 | 출시 1차 변경 없음(출시 뒤 Task 6) |
 | `src/server/push/SubscriptionStore.ts:4`, `:26` | `PushSub = { endpoint, keys }`, `parseSubscription` | 출시 1차 변경 없음(출시 뒤 Task 6) |
-| `src/server/auth.ts` | `COOKIE_NAME = 'deck_session'`, `cookieValueFor(token)`, `checkUpgrade`(Host·Origin 루프백 허용) | Task 4: `RelayBridge` 가 루프백 요청에 이 쿠키·Origin 을 붙인다(코드 변경 없음). Task 11: `SameSite=Strict`(`:70`) 회귀 테스트 |
-| `src/server/bind.ts` | 바인드 주소에 항상 `127.0.0.1` 포함 | Task 4: 루프백 프록시의 전제(변경 없음, 테스트로 고정) |
+| `src/server/auth.ts` | `COOKIE_NAME = 'deck_session'`, `cookieValueFor(token)`, `checkUpgrade`(Host·Origin 루프백 허용) | Task 4b: `RelayBridge` 가 루프백 요청에 이 쿠키·Origin 을 붙인다(코드 변경 없음). Task 11: `SameSite=Strict`(`:70`) 회귀 테스트 |
+| `src/server/bind.ts` | 바인드 주소에 항상 `127.0.0.1` 포함 | Task 4b: 루프백 프록시의 전제(변경 없음, 테스트로 고정) |
 | `src/server/routing/AutoRoute.ts:295`, `:485`, `:522` | `RouteInput`, `const cell = cellOf(...)`, 리셋 승격 | 건드리지 않는다(필수 6 — `routeFull` 은 게이트 대상이 아니다) |
 | `src/server/turn/TurnRunner.ts:1603`, `:1609`, `:1613`, `:1951` | `claudeAccounts`(순환/고정), Gemini `loggedIn: { g1, g2 }`, `chooseRoute(...)`, `previewRoute` | 건드리지 않는다(필수 6 — `accounts` 는 게이트 대상이 아니다) |
 | `src/server/ws.ts` `send` 처리(`msg.handoff`), `:1653`(commander), 계정 고정 검사 | 인계·총사령탑·계정 고정 | 출시 뒤 Task 8(인계·총사령탑만) |
-| `src/shared/protocol.ts:239`, `:270`, `:272` | `FEATURES`, `hello`, `settings` | Task 4: `'cloud'` / 출시 뒤 Task 13: `'pro'`, `hello.pro?`, `settings.pro?` |
-| `src/ui/ws.ts:25`, `:36` | `${proto}://${location.host}/ws`, 닫힐 때 `fetch('/api/me')` | Task 5: 릴레이 모드면 `openTunnelSocket()`·`apiFetch` |
-| `src/ui/push.ts` | SW `/sw.js` scope `/` 등록, `/api/push/*` 호출 | Task 5: `apiFetch`(릴레이 모드에서도 Mac 의 `publicKey` 로 구독) |
-| `src/ui/components/Lightbox.tsx:4`, `src/ui/sessionApi.ts:143`, `src/ui/components/FileMenu.tsx:246`, `src/ui/components/ShareMenu.tsx:13` | 브라우저가 직접 여는 `/api/attachments/:id`·`/api/file?…raw=1` 주소, `window.open` | Task 5: 릴레이 모드는 터널로 받아 blob URL(`useApiUrl`) |
-| `src/ui/` 의 `fetchFn = fetch` 기본값과 직접 `fetch(` 호출(`sessionApi.ts`·`pins.ts`·`upload.ts`·`ActivityButton.tsx`·`FolderPicker.tsx`·`ComposerSuggest.tsx`·`MemoryEditor.tsx`·`SessionCwdDialog.tsx`·`Sidebar.tsx`·`ActivitySheet.tsx`·`UsageSheet.tsx`·`Highlights.tsx`·`UsageView.tsx` 등) | 같은 출처 HTTP 가정 | Task 5: 기본값을 `apiFetch` 로 바꾸고 `transport.guard.test.ts` 로 고정 |
-| `src/ui/components/SettingsView.tsx` `SETTINGS_GROUPS` | `['account','계정']` 묶음 | Task 5: `CloudSection` / Task 7: 요금제 행 / Task 10: [구독 관리] |
+| `src/shared/protocol.ts:239`, `:270`, `:272` | `FEATURES`, `hello`, `settings` | Task 4b: `'cloud'` / 출시 뒤 Task 13: `'pro'`, `hello.pro?`, `settings.pro?` |
+| `src/ui/ws.ts:25`, `:36` | `${proto}://${location.host}/ws`, 닫힐 때 `fetch('/api/me')` | Task 5b: 릴레이 모드면 `openTunnelSocket()`·`apiFetch` |
+| `src/ui/push.ts` | SW `/sw.js` scope `/` 등록, `/api/push/*` 호출 | Task 5b: `apiFetch`(릴레이 모드에서도 Mac 의 `publicKey` 로 구독) |
+| `src/ui/components/Lightbox.tsx:4`, `src/ui/sessionApi.ts:143`, `src/ui/components/FileMenu.tsx:246`, `src/ui/components/ShareMenu.tsx:13` | 브라우저가 직접 여는 `/api/attachments/:id`·`/api/file?…raw=1` 주소, `window.open` | Task 5b: 릴레이 모드는 터널로 받아 blob URL(`useApiUrl`) |
+| `src/ui/` 의 `fetchFn = fetch` 기본값과 직접 `fetch(` 호출(`sessionApi.ts`·`pins.ts`·`upload.ts`·`ActivityButton.tsx`·`FolderPicker.tsx`·`ComposerSuggest.tsx`·`MemoryEditor.tsx`·`SessionCwdDialog.tsx`·`Sidebar.tsx`·`ActivitySheet.tsx`·`UsageSheet.tsx`·`Highlights.tsx`·`UsageView.tsx` 등) | 같은 출처 HTTP 가정 | Task 5b: 기본값을 `apiFetch` 로 바꾸고 `transport.guard.test.ts` 로 고정 |
+| `src/ui/components/SettingsView.tsx` `SETTINGS_GROUPS` | `['account','계정']` 묶음 | Task 5a: `CloudSection` / Task 7: 요금제 행 / Task 10: [구독 관리] |
 | `src/ui/components/Pane.tsx:120-122`, `src/ui/components/ContextGauge.tsx`(ContextHint) | 원클릭 인계 `send{handoff:true}` | 출시 뒤 Task 8 |
-| `vite.config.ts` | root `src/ui`, base 기본값, `__DECK_VERSION__` | Task 5: `--mode relay` 면 `__AIMSG_RELAY__ = true`(base 는 `--base /v/<ver>/`) |
-| `src/ui/public/sw.js`, `manifest.webmanifest` | 루트 scope SW | Task 5: 클라우드가 relay 출처 루트에서 `/sw.js`·`/manifest.webmanifest` 를 내보낸다 |
-| `src/server/paths.ts` `resolveConfigDir` | 설정 폴더 | Task 4: `<configDir>/cloud/state.json` |
+| `vite.config.ts` | root `src/ui`, base 기본값, `__DECK_VERSION__` | Task 5a: `--mode relay` 면 `__AIMSG_RELAY__ = true`(base 는 `--base /v/<ver>/`) |
+| `src/ui/public/sw.js`, `manifest.webmanifest` | 루트 scope SW | Task 5c: 클라우드가 relay 출처 루트에서 `/sw.js`·`/manifest.webmanifest` 를 내보낸다 |
+| `src/server/paths.ts` `resolveConfigDir` | 설정 폴더 | Task 4a: `<configDir>/cloud/state.json` |
 | `src/server/http.ts:320`(`isAllowedHost`), `:325`(`stateChangingOriginOk`) | 로컬 서버의 Host 허용 목록·상태 변경 Origin 검사 | Task 11: `/api/cloud/*` 회귀 테스트(코드 변경 없음) |
-| `src/server/http.ts:360`(`/api/restart`), `:377`(`/api/setup*`) | 재시작·첫 실행 마법사 | Task 4: `relayPathPolicy` 가 `mac_confirm_required` |
-| `src/shared/protocol.ts:138`(`set_permission_mode`), `:140`(`set_sandbox`), `:147`(`set_settings`), `:52`(`send.permissionMode`), `src/shared/permission.ts:6`(`PERM_MODES`) | 권한 모드·샌드박스·자동 승인 | Task 4: `relayWsPolicy` 가 상향을 `mac_confirm_required` |
+| `src/server/http.ts:360`(`/api/restart`), `:377`(`/api/setup*`) | 재시작·첫 실행 마법사 | Task 4b: `relayPathPolicy` 가 `mac_confirm_required` |
+| `src/shared/protocol.ts:138`(`set_permission_mode`), `:140`(`set_sandbox`), `:147`(`set_settings`), `:52`(`send.permissionMode`), `src/shared/permission.ts:6`(`PERM_MODES`) | 권한 모드·샌드박스·자동 승인 | Task 4b: `relayWsPolicy` 가 상향을 `mac_confirm_required` |
 | `.gitattributes`, `scripts/export-public.sh:35` | 공개본 제외 목록(두 곳) | Task 2: `cloud` 추가(D11) |
 
-## 프로토콜 계약 (Task 1·2·3·4·5 가 지키는 기준)
+## 프로토콜 계약 (Task 1·2·3·4a·4b·5a·5b·5c 가 지키는 기준)
 
 **두 출처 (D18)** — Worker 하나가 `Host` 머리로 나눈다. 반대쪽 출처로 온 요청은 404 다.
 
 | 출처 | 경로 |
 |---|---|
 | app (`PUBLIC_ORIGIN`, 기본 `https://app.aimsg.app`) | `/login`·`/auth/*`·`/link`·`/account`·`/checkout`·`/legal/*`·`/static/*`(페이지용), `/v1/auth/*`, `/v1/host/*`, `/v1/pair/start`, `/v1/pair/:id`(+`/confirm`·`/reject`), `/v1/devices*`, `/v1/entitlement`, `/v1/billing/*`, `/v1/account/*`, `/v1/paddle/webhook`, `/dev/outbox` |
-| relay (`RELAY_ORIGIN`, 기본 `https://relay.aimsg.app`) | `/`(부트스트랩)·`/boot.js`·`/v/<ver>/*`·`/sw.js`·`/manifest.webmanifest`·`/icons/*`, `/v1/pair/claim`, `/v1/relay/ticket`, `/relay/host`, `/relay/device` |
+| relay (`RELAY_ORIGIN`, 기본 `https://relay.aimsg.app`) | `/`(부트스트랩)·`/boot.js`·`/version.json`·`/v/<ver>/*`·`/sw.js`·`/manifest.webmanifest`·`/icons/*`, `/v1/pair/claim`, `/v1/relay/ticket`, `/relay/host`, `/relay/device` |
 
 relay 출처는 쿠키를 읽지도 심지도 않는다. 폰 UI 가 app 출처의 페이지(계정·법적 페이지)를 열 때는 새 탭 링크로만 연다.
 
@@ -221,10 +225,12 @@ relay 출처는 쿠키를 읽지도 심지도 않는다. 폰 UI 가 app 출처�
 **페어링 (QR 일회용, 5분, Mac [허용] 필수)**
 1. Mac 이 app 출처에 `POST /v1/pair/start {claimHash}` 를 보내 `{pairingId, expiresAt}` 를 받는다.
 2. Mac 이 QR 을 띄운다. 주소는 `https://<relay>/v/<hostVersion>/#pair=2.<pairingId>.<claimSecret>.<authSecret>.<hostPub>` 이고(조각이라 서버 로그에 남지 않음), `hostPub` 은 X25519 공개키 32바이트 base64url 이다.
+   - QR 아래에 같은 내용의 **페어링 코드** `2.<pairingId>.<claimSecret>.<authSecret>.<hostPub>`(= `#pair=` 뒤 문자열) 를 [복사] 버튼과 함께 보여 준다. iOS 홈 화면 PWA 는 Safari 와 저장소를 따로 쓸 수 있어서(실기 확인 전 추정), 이미 설치한 PWA 안에서 이 코드를 붙여 넣거나 앱 안 스캔으로 페어링할 수 있어야 한다(2차 필수 2, Task 5a·5b).
 3. 폰이 X25519 기기 정적 키를 만든다(가능하면 추출 불가 `CryptoKey`, Task 1 D3). 그다음 relay 출처에 `POST /v1/pair/claim {pairingId, claim, devicePub, deviceName, mac}` 을 보내 `{deviceId, deviceToken, hostId}` 를 받는다.
    - `mac = HMAC-SHA256(authSecret, lp("aimsg-pair-v2") ‖ lp(pairingId) ‖ lp(devicePub) ‖ lp(hostPub))`
    - 폰은 받은 직후 **확인 코드** `confirmCode = u32be(sha256(lp("aimsg-sas-v1") ‖ lp(pairingId) ‖ lp(devicePub) ‖ lp(hostPub))[0..4)) mod 1 000 000` 을 6자리(앞 0 채움)로 크게 보여 주고 "Mac 화면의 숫자와 같으면 Mac 에서 [허용] 을 누르세요" 라고 쓴다.
 4. 클라우드는 같은 페어링에 **올바른 claim 이 두 번째로 오면** 페어링을 `burned` 로 바꾸고 그 페어링으로 만든 기기를 모두 `revoked` 로 바꾼 뒤 409 `{code:'pairing_burned'}` 를 준다. 틀린 claim 은 지금처럼 `bad_claims` 를 세고 5회면 `expired` 다.
+   - **예외 — 같은 폰의 재전송(멱등):** 두 번째 claim 의 `devicePub`·`mac` 이 첫 claim 과 같고 상태가 아직 `claimed` 면 태우지 않는다. 같은 `deviceId` 로 `deviceToken` 을 새로 발급해(`token_hash` 교체 — 첫 응답을 못 받았으니 옛 토큰은 아무도 갖고 있지 않다) 200 을 준다. 응답이 사라져 폰이 다시 보내도 자기 페어링을 태우지 않는다. `devicePub`·`mac` 이 같은데 이미 `confirmed` 면 409 `{code:'already_paired'}`(태우지 않음)이고, 폰은 저장된 기기 정보가 없으면 "새 QR 로 다시 연결하세요" 를 보인다.
 5. Mac 이 `GET /v1/pair/:id` 를 폴링해 `devicePub`·`mac`·`deviceName` 을 받는다.
    - MAC 이 틀리면 `POST /v1/pair/:id/reject`(클라우드가 기기 해제)하고 끝낸다.
    - MAC 이 맞으면 **확정하지 않고** PairSheet 에 기기 이름과 같은 공식의 확인 코드를 보여 주며 [허용]·[거부] 를 기다린다(`awaiting_approval`).
@@ -257,7 +263,9 @@ relay 출처는 쿠키를 읽지도 심지도 않는다. 폰 UI 가 app 출처�
 | 나머지 | payload(Noise 메시지) |
 
 - DO 는 폰이 보낸 `peer` 를 무시하고 태그의 기기 id 로 덮어쓴다.
-- DO 제어 메시지는 텍스트 JSON 이다: `{t:'peer', dev, up}`·`{t:'revoked', dev}`(호스트에게), `{t:'host', up}`(폰에게). 핑은 텍스트 `ping` → `pong`(auto-response)이다.
+- DO 제어 메시지는 텍스트 JSON 이다: `{t:'peer', dev, up}`·`{t:'revoked', dev}`·`{t:'ent', ok, until}`(호스트에게), `{t:'host', up}`(폰에게). 핑은 텍스트 `ping` → `pong`(auto-response)이다.
+- **호스트 WS 는 이용권과 무관하게 붙는다**(2차 필수 1). 유효하고 해제되지 않은 hostToken 이면 업그레이드를 받고, DO 는 연결 직후·alarm·`/internal/recheck` 때마다 `{t:'ent', ok, until}` 를 호스트에게 보낸다. 이용권이 없으면 **티켓만** 402 로 막고, alarm 은 기기 소켓만 4402 로 닫는다. 그래서 폰에서 결제해도 웹훅 → `/internal/recheck` 가 이미 붙어 있는 Mac 에 바로 닿는다.
+- 호스트 → DO 텍스트 `{"t":"recheck"}` 는 DO 가 이용권을 다시 계산하게 한다(attachment 의 `lastRecheck` 로 30초에 한 번까지, 넘으면 무시).
 
 **터널 프레임 (Noise 전송 메시지 안의 평문 JSON, zod 로 검증)**
 - `ready`
@@ -282,9 +290,9 @@ relay 출처는 쿠키를 읽지도 심지도 않는다. 폰 UI 가 app 출처�
 **이용권 계산 (`entitledState`, 클라우드)** — 출처별 `until` 가운데 가장 큰 값을 쓴다.
 - 체험: `trials.ends_at`.
 - comp: `grants.until`.
-- 구독 `active`(해지 예약 포함): `period_end + 48시간`(갱신 웹훅 지연 유예, 필수 7).
+- 구독 `active`(해지 예약 포함): `period_end + 48시간`(갱신 웹훅 지연 유예, 필수 7). **해지를 예약한 구독은 `period_end + 48시간` 까지 쓸 수 있다**(2차 권장). 예약만으로는 `until` 이 줄지 않는다. 기간 끝에 `canceled` 웹훅이 와도, 그 전에 `scheduled_cancel = 1` 이었고 전액 환불·차지백(`refunds.full = 1`)이 없으면 `until = max(canceled_at, period_end + 48시간)` 를 유지한다. 이 유예는 `docs/legal/refund*.md` 3절에 적었다.
 - 구독 `past_due`: `past_due 로 바뀐 이벤트의 occurred_at + 7일`(권장 5).
-- 구독 `canceled`·`paused`: `canceled_at ?? occurred_at`.
+- 구독 `canceled`·`paused`(위 예약 해지 예외 밖): `canceled_at ?? occurred_at`.
 
 ---
 
@@ -366,11 +374,11 @@ relay 출처는 쿠키를 읽지도 심지도 않는다. 폰 UI 가 app 출처�
 | `src/ui/cloudTexts.ts` 또는 `src/ui/i18n/{en,ko}/cloud.ts` | UI 문구 |
 | `src/ui/transport.guard.test.ts` | `fetch(`·`= fetch` 직접 사용 금지 검사 |
 
-새 파일 — 스크립트·문서: `scripts/smoke/relay-e2e.sh`, `scripts/smoke/relay-phone.ts`, `scripts/render/cloud-section.html`, `scripts/render/pair-sheet.html`, `docs/security-model.md`, `docs/privacy-data-inventory.md`.
+새 파일 — 스크립트·문서: `scripts/release.sh`(5c), `scripts/probe/ios-pwa/*`(Task 5 앞 실기 확인), `scripts/smoke/relay-e2e.sh`, `scripts/smoke/relay-phone.ts`, `scripts/render/cloud-section.html`, `scripts/render/pair-sheet.html`, `docs/security-model.md`, `docs/privacy-data-inventory.md`.
 
 수정하는 파일은 다음과 같다.
 - 서버: `src/server/server.ts`, `src/server/http.ts`, `src/shared/protocol.ts`(`FEATURES` 에 `cloud`, error 코드 `mac_confirm_required` 설명)
-- UI: `src/ui/ws.ts`, `src/ui/push.ts`, `src/ui/App.tsx`, `src/ui/sessionApi.ts`, `src/ui/components/{SettingsView,Lightbox,FileMenu,ShareMenu}.tsx`, Task 5 표의 `fetchFn` 기본값 파일들
+- UI: `src/ui/ws.ts`, `src/ui/push.ts`, `src/ui/App.tsx`, `src/ui/sessionApi.ts`, `src/ui/components/{SettingsView,Lightbox,FileMenu,ShareMenu}.tsx`, Task 5b 표의 `fetchFn` 기본값 파일들
 - 설정·문서·검사: `vite.config.ts`, `package.json`, `package-lock.json`, `.gitignore`, `.gitattributes`(D11), `docs/protocol.md`, `src/hygiene.ts`, `scripts/contrast-check.mjs`, `scripts/export-public.sh`(D11), `README.md`
 
 ---
@@ -666,7 +674,11 @@ CREATE INDEX devices_pairing ON devices(pairing_id);
 CREATE INDEX hosts_user ON hosts(user_id);
 ```
 
-- 라우트(`api-types.ts` 타입 사용, 각 줄의 `[app]`·`[relay]` 는 출처). 상태를 바꾸는 app 웹 라우트는 `Origin === PUBLIC_ORIGIN` 을 검사한다. API 라우트는 Bearer 를 쓰고 쿠키는 보지 않는다. relay 라우트는 쿠키를 읽지 않는다.
+- 라우트(`api-types.ts` 타입 사용, 각 줄의 `[app]`·`[relay]` 는 출처). 인증은 라우트마다 셋 중 하나로 정해져 있고 섞지 않는다(2차 권장 — 옛 문구 "API 는 Bearer 만" 은 아래 쿠키 라우트와 맞지 않았다).
+  - **쿠키(웹 세션) 라우트 — 이 목록만 `__Host-aimsg_web` 을 읽는다.** `POST /auth/verify`(쿠키를 심는 쪽), `GET /link`·`GET /account`·`GET /checkout`(페이지), `POST /v1/host/link/approve`, `POST /v1/billing/intent`·`/v1/billing/intent/complete`·`/v1/billing/portal`(Task 10), `POST /v1/account/delete`(Task 12), `POST /v1/devices/:id/revoke`(웹 세션으로 부를 때).
+  - **쿠키 라우트의 CSRF:** GET 이 아닌 요청은 `Origin === PUBLIC_ORIGIN` 이어야 하고, `Origin` 이 없거나 다르면 403 `{code:'bad_origin'}` 이다(`Referer` 로 대신하지 않는다). 본문은 `Content-Type: application/json` 만 받아 단순 폼 POST 를 막는다(`POST /auth/verify` 는 같은 출처 페이지의 폼이라 `application/x-www-form-urlencoded` 도 받되 Origin 검사는 같다). 쿠키는 `SameSite=Lax` 라 이 검사가 주 방어다. `cookieRoute(handler)` 래퍼 하나로 묶어 빠뜨리지 않는다.
+  - **Bearer 라우트(host·device 토큰):** 그 밖의 `/v1/*` 전부. 쿠키는 보지 않는다. 쿠키만 있고 Bearer 가 없으면 401 이다. `POST /v1/devices/:id/revoke` 는 Bearer 가 있으면 Bearer 로, 없으면 쿠키 라우트 규칙(Origin 검사)으로 처리한다.
+  - **relay 라우트:** 쿠키를 읽지 않는다(`/v1/pair/claim` 은 인증 없음 + `Origin === RELAY_ORIGIN`, `/v1/relay/ticket` 은 device Bearer).
   - `[app] POST /v1/auth/magic {email, next?}`
     - 항상 200 `{ok:true}` 를 돌려준다(가입 여부를 드러내지 않음).
     - 속도 제한: 이메일(정규화 키)당 시간당 5회, IP(`CF-Connecting-IP`)당 시간당 20회.
@@ -691,13 +703,14 @@ CREATE INDEX hosts_user ON hosts(user_id);
   - `[app] POST /v1/pair/start {claimHash}`(host) → `{pairingId, expiresAt}`(5분). 호스트당 열린 페어링은 3개까지다.
   - `[relay] POST /v1/pair/claim {pairingId, claim, devicePub, deviceName, mac}`(인증 없음, `Origin === RELAY_ORIGIN`, IP 당 분당 10회)
     - `sha256(claim)` 를 상수 시간으로 비교한다. 틀리면 `bad_claims++` 하고, 5회가 되면 `expired` 로 바꾼다. 404·410 은 페어링이 없거나 만료·거절·폐기일 때다.
-    - **맞는데 상태가 `claimed`·`confirmed` 면**(같은 QR 의 두 번째 사용, 필수 3): 한 batch 로 페어링을 `burned`, `pairing_id` 가 같은 기기를 모두 `revoked` 로 바꾸고 409 `{code:'pairing_burned'}` 를 준다. Task 3 이 DO 통지를 더한다.
+    - **맞는데 `devicePub`·`mac` 이 그 페어링의 기기와 같으면(같은 폰의 재전송, 2차 권장 — 멱등):** 상태가 `claimed` 면 태우지 않고 `UPDATE devices SET token_hash = ? WHERE id = ? AND state = 'claimed'` 로 `deviceToken` 을 새로 발급해 200 `{deviceId, deviceToken, hostId}`(같은 `deviceId`)를 준다. 상태가 `confirmed` 면 409 `{code:'already_paired'}`(태우지 않음). 비교는 저장된 `devices.pub`·`pairings.mac` 과 상수 시간으로 한다. 이 분기는 `bad_claims` 를 세지 않는다.
+    - **맞는데 상태가 `claimed`·`confirmed` 이고 `devicePub`·`mac` 이 다르면**(같은 QR 의 두 번째 사용, 필수 3): 한 batch 로 페어링을 `burned`, `pairing_id` 가 같은 기기를 모두 `revoked` 로 바꾸고 409 `{code:'pairing_burned'}` 를 준다. Task 3 이 DO 통지를 더한다.
     - 상태가 `open` 이고 활성·claimed 기기 수가 `MAX_DEVICES` 이상이면 409 `{code:'device_limit'}`.
     - 상태가 `open` 이면 `devices(state='claimed', pairing_id)` 를 만들고 페어링을 `claimed` 로 바꾼 뒤 `{deviceId, deviceToken, hostId}` 를 준다. `devicePub` 은 32바이트 base64url 이어야 한다.
   - `[app] GET /v1/pair/:id`(host, 자기 호스트 것만) → `{state, deviceId?, devicePub?, deviceName?, mac?}`.
   - `[app] POST /v1/pair/:id/confirm`(host) → 상태가 `claimed` 일 때만 페어링 `confirmed`·기기 `active`, 그 밖에는 409 `{code: state}`. `POST /v1/pair/:id/reject`(host) → 페어링 `rejected`·기기 `revoked`.
   - `[app] GET /v1/devices`(host) → `DeviceInfo[]`(자기 호스트의 활성 기기). `[app] POST /v1/devices/:id/revoke` 는 host 토큰이나 웹 세션으로 부른다.
-  - `[app] GET /dev/outbox?to=` 는 `DEV_ROUTES === '1'` 이고 `EMAIL_MODE === 'log'` 일 때만 열린다(Task 5 e2e 용). 그 밖에는 404 다.
+  - `[app] GET /dev/outbox?to=` 는 `DEV_ROUTES === '1'` 이고 `EMAIL_MODE === 'log'` 일 때만 열린다(Task 5c e2e 용). 그 밖에는 404 다.
 - `entitled.ts`: `entitledState(db, userId, nowMs): Promise<{ plan: 'trial' | 'comp' | 'pro' | 'none'; st: 'trialing' | 'active' | 'past_due' | 'canceled' | 'none'; untilMs: number }>`. 이 Task 에서는 `trials`·`grants` 만 본다. 둘 다 유효하면 `until` 이 큰 쪽을 쓰고, 둘 다 없거나 지났으면 `none`/0 이다. Task 9 가 구독을 더한다(계약 절 "이용권 계산").
 - `email.ts`: `interface EmailSender { send(m: { to: string; subject: string; text: string }): Promise<void> }`.
   - `log` 모드는 `outbox` 테이블에 쓴다(위 `checkConfig` 때문에 로컬·`.test` 출처에서만).
@@ -836,6 +849,29 @@ it('a second correct claim burns the pairing and revokes every device it made', 
   expect(st.state).toBe('burned');
   expect((await post(`/v1/pair/${first.pairingId}/confirm`, {}, { authorization: `Bearer ${h.hostToken}` })).status).toBe(409);
 });
+it('the same phone resending the same claim (lost response) gets the same deviceId and a fresh token, not a burn', async () => {
+  const h = await linkHost();
+  const first = await claim({ hostToken: h.hostToken });                 // devicePub·mac 고정
+  const a = await first.res.json() as PairClaimRes;
+  const again = await relayPost('/v1/pair/claim', first.body);            // 같은 본문 그대로 재전송
+  expect(again.status).toBe(200);
+  const b = await again.json() as PairClaimRes;
+  expect(b.deviceId).toBe(a.deviceId);
+  expect(b.deviceToken).not.toBe(a.deviceToken);                          // token_hash 교체
+  const st = await (await call(`/v1/pair/${first.pairingId}`, { headers: { authorization: `Bearer ${h.hostToken}` } })).json() as PairStatusRes;
+  expect(st.state).toBe('claimed');                                       // burned 아님
+  expect((await relayPost('/v1/relay/ticket', {}, { authorization: `Bearer ${a.deviceToken}` })).status).toBe(401); // 옛 토큰 무효
+  await post(`/v1/pair/${first.pairingId}/confirm`, {}, { authorization: `Bearer ${h.hostToken}` });
+  const late = await relayPost('/v1/pair/claim', first.body);
+  expect(late.status).toBe(409); expect(await late.json()).toMatchObject({ code: 'already_paired' });
+});
+it('cookie routes need Origin === PUBLIC_ORIGIN and JSON; Bearer routes ignore cookies', async () => {
+  const cookie = await loginAs('c@example.test');
+  expect((await post('/v1/host/link/approve', { userCode: 'AAAA-AAAA' }, { cookie, origin: 'https://evil.test' })).status).toBe(403);
+  expect((await post('/v1/host/link/approve', { userCode: 'AAAA-AAAA' }, { cookie, origin: null })).status).toBe(403); // Origin 없음
+  expect((await post('/v1/pair/start', { claimHash: 'x' }, { cookie })).status).toBe(401); // 쿠키만으로는 Bearer 라우트 불가
+  // /v1/billing/*·/v1/account/delete 는 Task 10·12 테스트와 Task 11 security.test.ts 출처 행렬이 같은 래퍼(cookieRoute)를 확인한다
+});
 it('host sees devicePub+mac, confirm activates only from claimed, reject revokes', async () => { /* … */ });
 it('a host cannot read another host’s pairing', async () => { /* 404 */ });
 
@@ -871,49 +907,53 @@ it('trial and comp: larger until wins; expired → none', async () => { /* … *
   - `compatibility_flags: ["web_socket_auto_reply_to_close"]`
 - `0002_relay.sql`: `CREATE TABLE relay_tickets (ticket_hash TEXT PRIMARY KEY, device_id TEXT NOT NULL, host_id TEXT NOT NULL, user_id TEXT NOT NULL, expires_at INTEGER NOT NULL, used_at INTEGER);`
 - `POST /v1/relay/ticket`(device Bearer, `Origin === RELAY_ORIGIN`)
-  - 토큰이 없거나 기기가 `revoked`·호스트가 해제됐으면 401 `{code:'revoked'}`(폰은 재페어링 안내, Task 5).
+  - 토큰이 없거나 기기가 `revoked`·호스트가 해제됐으면 401 `{code:'revoked'}`(폰은 재페어링 안내, Task 5b).
   - 기기가 `claimed`(Mac 이 아직 [허용] 안 함)면 403 `{code:'pending_confirm'}`.
   - `entitledState(...).untilMs > now` 가 아니면 402 `{code:'not_entitled'}`. `untilMs` 에는 이미 `active` 48시간·`past_due` 7일 유예가 들어 있다(계약 절, Task 9).
   - 통과하면 `{ticket, hostId, expiresIn: 60}` 를 준다.
 - `GET /relay/host`(Upgrade, host Bearer)
   - 클라이언트가 보낸 `x-relay-*` 머리는 지운다.
-  - 이용권이 없으면 업그레이드 전에 402 로 거절한다.
-  - 통과하면 `env.RELAY.get(env.RELAY.idFromName(hostId)).fetch(req2)` 로 넘긴다. `req2` 에는 `x-relay-role: host`, `x-relay-host`, `x-relay-user`, `x-relay-until` 을 싣는다.
+  - 토큰이 없거나 틀리거나 호스트가 해제됐으면 401 이다. **이용권은 보지 않는다**(2차 필수 1 — 이용권 없는 Mac 도 DO 에 붙어 있어야 결제 웹훅의 `/internal/recheck` 가 닿는다). 이용권은 티켓(402)과 DO 의 `{t:'ent'}`·alarm 이 맡는다.
+  - 통과하면 `env.RELAY.get(env.RELAY.idFromName(hostId)).fetch(req2)` 로 넘긴다. `req2` 에는 `x-relay-role: host`, `x-relay-host`, `x-relay-user`, `x-relay-until`(`entitledState(...).untilMs`, 없으면 `0`)을 싣는다.
 - `GET /relay/device?ticket=`
   - `Origin` 머리가 있으면 `RELAY_ORIGIN` 이어야 한다(아니면 403).
   - 티켓은 `UPDATE … SET used_at=? WHERE ticket_hash=? AND used_at IS NULL AND expires_at>?` 의 `changes === 1` 일 때만 받는다.
-  - 받으면 `x-relay-role: device`, `x-relay-device` 를 실어 같은 DO 로 넘긴다. 기기의 `last_seen` 을 갱신한다.
+  - 받으면 클라이언트의 `x-relay-*` 를 지우고 `x-relay-role: device`, `x-relay-device`, `x-relay-host`, `x-relay-user`(티켓 행의 `user_id`), `x-relay-until`(이 시점의 `entitledState(...).untilMs`)을 실어 같은 DO 로 넘긴다(2차 필수 3 — attachment `{role, dev, user, until}` 과 alarm 이 `user`·`until` 을 읽는데 옛 문구는 role·device 만 넘겼다). 기기의 `last_seen` 을 갱신한다.
+  - DO 쪽 업그레이드는 `x-relay-role` 에 맞는 머리가 하나라도 없으면 500 으로 거절하고 로그를 남긴다(`user` 없는 attachment 를 만들지 않는다).
 - `RelayRoom implements DurableObject`:
   - 생성자: `ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'))`.
   - `fetch(req)`
-    - `/internal/revoke {dev}` 이면 그 기기 소켓을 4403 으로 닫고, 호스트 소켓에 `{t:'revoked',dev}` 를 보낸다(필수 5 — Mac 이 로컬 신뢰 목록에서도 지운다). 호스트가 없으면 보내지 않는다(Mac 은 다음 연결 때 `GET /v1/devices` 로 맞춘다, Task 4).
+    - `/internal/revoke {dev}` 이면 그 기기 소켓을 4403 으로 닫고, 호스트 소켓에 `{t:'revoked',dev}` 를 보낸다(필수 5 — Mac 이 로컬 신뢰 목록에서도 지운다). 호스트가 없으면 보내지 않는다(Mac 은 다음 연결 때 `GET /v1/devices` 로 맞춘다, Task 4b).
     - `/internal/unlink` 이면 전부 4401 로 닫는다.
-    - `/internal/recheck` 이면 alarm 을 즉시 건다.
-    - 그 밖에는 업그레이드다. `new WebSocketPair()` → `ctx.acceptWebSocket(server, [role === 'host' ? 'host' : `dev:${id}`])` → `server.serializeAttachment({ role, dev?, user, until })` 순서로 처리한다.
+    - `/internal/recheck` 이면 alarm 을 즉시 건다(`setAlarm(Date.now())`). 호스트가 not_entitled 로 붙어 있어도 이 경로로 닿는다.
+    - 그 밖에는 업그레이드다. `new WebSocketPair()` → `ctx.acceptWebSocket(server, [role === 'host' ? 'host' : `dev:${id}`])` → `server.serializeAttachment({ role, dev?, user, until, lastRecheck: 0 })` 순서로 처리한다.
     - 같은 태그의 옛 소켓은 4409 로 닫는다.
-    - 호스트가 붙으면 모든 기기에 `{t:'host',up:true}` 를 보낸다. 기기가 붙으면 호스트에게 `{t:'peer',dev,up:true}` 를, 그 기기에게 `{t:'host',up:<호스트 있음>}` 을 보낸다.
-    - alarm 을 `min(until)` 로 건다.
+    - 호스트가 붙으면 모든 기기에 `{t:'host',up:true}` 를 보내고, 호스트에게 `{t:'ent', ok: until > now, until}` 를 보낸다. 기기가 붙으면 호스트에게 `{t:'peer',dev,up:true}` 를, 그 기기에게 `{t:'host',up:<호스트 있음>}` 을 보낸다.
+    - alarm 은 `until > now` 인 소켓의 `min(until)` 로 건다. 모두 지난 상태(호스트만 not_entitled 로 붙어 있음)면 alarm 을 걸지 않는다 — 다음 계산은 `/internal/recheck` 나 호스트의 `{"t":"recheck"}` 가 일으킨다.
   - `webSocketMessage(ws, msg)`
-    - 문자열은 무시한다(`ping` 은 auto-response 가 처리).
+    - 문자열은 `ping`(auto-response 가 처리)과 호스트의 `{"t":"recheck"}` 만 뜻이 있다. `recheck` 는 호스트 소켓에서만, attachment 의 `lastRecheck` 가 30초 이전일 때만 `lastRecheck = now` 로 바꾸고 alarm 을 즉시 건다. 그 밖의 문자열은 무시한다.
     - `ArrayBuffer` 가 `MAX_FRAME` 을 넘으면 4413 으로 닫는다.
     - `decodeEnvelope` 가 실패하면 버린다.
     - 호스트가 보낸 것은 `getWebSockets('dev:'+peer)[0]` 에게 `peer='host'` 로 바꿔 보낸다. 대상이 없으면 호스트에게 `{t:'peer',dev:peer,up:false}` 를 보낸다.
     - 기기가 보낸 것은 `peer` 를 첨부의 기기 id 로 덮어써 호스트에게 보낸다. 호스트가 없으면 `{t:'host',up:false}` 를 보낸다.
   - `webSocketClose(ws, code, reason, wasClean)` — 상대에게 알린다(호스트가 닫히면 기기들에 `host up:false`).
   - `alarm()`
-    - 첨부의 `user` 로 D1 의 `entitledState` 를 다시 읽는다.
-    - 지났으면 모두 4402 로 닫는다. 아니면 첨부의 `until` 을 갱신하고 alarm 을 다시 건다.
+    - 첨부의 `user` 로 D1 의 `entitledState` 를 다시 읽는다(호스트·기기 모두 같은 user 다. 호스트가 없고 기기만 있어도 기기 attachment 의 `user` 로 읽는다 — 필수 3).
+    - 모든 소켓의 attachment `until` 을 새 값으로 갱신하고, 호스트에게 `{t:'ent', ok, until}` 를 보낸다.
+    - 지났으면 **기기 소켓만** 4402 로 닫는다. 호스트 소켓은 열어 둔다(2차 필수 1). 아니면 alarm 을 새 `until` 로 다시 건다.
   - 로그는 `console.log(JSON.stringify({ ev, host, dev, bytes, code }))` 형태로만 남기고 payload 는 기록하지 않는다.
 - `webSocketError` 처리기는 쓰지 않는다. 문서에서 확인하지 못했기 때문이다 **(미확인)**. 오류는 close 로 수렴한다고 본다.
 
-- [ ] **Step 1: API 확인** — `wrangler.jsonc` 의 DO 마이그레이션 키(`new_sqlite_classes` / `new_classes`)를 wrangler 설정 스키마(`node_modules/wrangler/config-schema.json`)에서 확인한다. 테스트에서 클라이언트 WS 를 얻는 방법(`res.webSocket` + `accept()`)과 `evictDurableObject` 시그니처를 플러그인 README 에서 확인한다. 확인한 형태를 README "확인한 버전" 에 적는다.
+- [ ] **Step 1: API 확인** — `wrangler.jsonc` 의 DO 마이그레이션 키(`new_sqlite_classes` / `new_classes`)를 wrangler 설정 스키마(`node_modules/wrangler/config-schema.json`)에서 확인한다. 테스트에서 클라이언트 WS 를 얻는 방법(`res.webSocket` + `accept()`)과 `evictDurableObject`·`runInDurableObject` 시그니처를 플러그인 README 에서 확인한다(`runInDurableObject` 가 없으면 attachment 검사는 DO 의 테스트 전용 `/internal/debug-attachments`(`DEV_ROUTES === '1'` 일 때만)로 바꾼다). 확인한 형태를 README "확인한 버전" 에 적는다.
 - [ ] **Step 2: 실패하는 테스트 작성**
 
 ```ts
 // cloud/test/relay.test.ts
 import { env } from 'cloudflare:workers';
-import { runDurableObjectAlarm, evictDurableObject } from 'cloudflare:test';
+import { runDurableObjectAlarm, evictDurableObject, runInDurableObject } from 'cloudflare:test';
 import { EnvKind, decodeEnvelope, encodeEnvelope, CLOSE } from '../../src/shared/cloud/frames';
+
+const stubFor = (hostId: string) => env.RELAY.get(env.RELAY.idFromName(hostId));
 
 async function openWs(path: string, headers: Record<string, string> = {}) {
   const res = await call(path, { headers: { upgrade: 'websocket', ...headers } }, RELAY);
@@ -927,13 +967,43 @@ async function openWs(path: string, headers: Record<string, string> = {}) {
 async function pairedDevice(h: { hostToken: string; hostId: string }): Promise<{ deviceId: string; deviceToken: string }> { /* pair/start → claim → confirm */ }
 async function ticketFor(deviceToken: string) { return (await (await relayPost('/v1/relay/ticket', {}, { authorization: `Bearer ${deviceToken}` })).json() as TicketRes).ticket; }
 
-it('host needs a valid token and an entitlement', async () => {
+it('host needs a valid token but no entitlement; it is told ent:false and tickets are 402', async () => {
   expect((await openWs('/relay/host', { authorization: 'Bearer nope' })).status).toBe(401);
-  const h = await linkHost();
-  expect((await openWs('/relay/host', { authorization: `Bearer ${h.hostToken}` })).status).toBe(101);
+  const h = await linkHost(); const d1 = await pairedDevice(h);
   await env.DB.prepare('UPDATE trials SET ends_at = 0').run();
-  expect((await openWs('/relay/host', { authorization: `Bearer ${h.hostToken}` })).status).toBe(402);
+  const host = await openWs('/relay/host', { authorization: `Bearer ${h.hostToken}` });
+  expect(host.status).toBe(101);                                           // 2차 필수 1: 업그레이드는 받는다
+  await waitFor(() => host.inbox!.some((m) => typeof m === 'string'));
+  expect(JSON.parse(host.inbox!.find((m) => typeof m === 'string') as string)).toMatchObject({ t: 'ent', ok: false });
+  expect((await relayPost('/v1/relay/ticket', {}, { authorization: `Bearer ${d1.deviceToken}` })).status).toBe(402);
 });
+it('not_entitled host stays attached; recheck after payment flips it to ent:true within the same alarm (2차 필수 1)', async () => {
+  const h = await linkHost(); const d1 = await pairedDevice(h);
+  await env.DB.prepare('UPDATE trials SET ends_at = 0').run();
+  const host = await openWs('/relay/host', { authorization: `Bearer ${h.hostToken}` });
+  await env.DB.prepare('UPDATE trials SET ends_at = ?').bind(Date.now() + 86_400_000).run(); // 결제·체험 연장과 같은 효과
+  await stubFor(h.hostId).fetch('https://relay/internal/recheck');
+  await runDurableObjectAlarm(stubFor(h.hostId));
+  await waitFor(() => host.inbox!.some((m) => typeof m === 'string' && JSON.parse(m).t === 'ent' && JSON.parse(m).ok === true));
+  expect(host.closes).toEqual([]);                                         // 끊지 않고 상태만 바뀐다
+  const p1 = await openWs(`/relay/device?ticket=${await ticketFor(d1.deviceToken)}`);
+  expect(p1.status).toBe(101);
+});
+it('host text {"t":"recheck"} triggers a recheck at most once per 30 s', async () => { /* 두 번 연속 → alarm 한 번 */ });
+it('device route forwards user and until: a device-only DO alarm reads the user (2차 필수 3)', async () => {
+  const h = await linkHost(); const d1 = await pairedDevice(h);
+  await env.DB.prepare('UPDATE trials SET ends_at = ?').bind(Date.now() + 50).run();
+  const p1 = await openWs(`/relay/device?ticket=${await ticketFor(d1.deviceToken)}`); // 호스트 없이 기기만
+  await runInDurableObject(stubFor(h.hostId), (_i, state) => {
+    const att = state.getWebSockets(`dev:${d1.deviceId}`)[0].deserializeAttachment();
+    expect(att).toMatchObject({ role: 'device', dev: d1.deviceId, user: expect.any(String) });
+    expect(att.until).toBeGreaterThan(0);
+  });
+  await env.DB.prepare('UPDATE trials SET ends_at = 0').run();
+  await runDurableObjectAlarm(stubFor(h.hostId));
+  await waitFor(() => p1.closes!.includes(CLOSE.notEntitled));
+});
+it('client-sent x-relay-* headers are stripped on both routes', async () => { /* x-relay-user: 다른 사람 → attachment 의 user 는 티켓/토큰의 user */ });
 it('ticket is single use and expires in 60 s', async () => { /* 같은 ticket 두 번째 → 401 */ });
 it('routes host→device and device→host; device cannot spoof its id', async () => {
   const h = await linkHost(); const d1 = await pairedDevice(h); const d2 = await pairedDevice(h);
@@ -971,8 +1041,9 @@ it('ticket before Mac approval is 403 pending_confirm', async () => {
 it('relay routes are 404 on the app origin', async () => {
   expect((await post('/v1/relay/ticket', {})).status).toBe(404);
 });
-it('alarm closes everyone with 4402 once the entitlement is over', async () => {
-  /* trials.ends_at = now+50ms 로 연결 → ends_at 과거로 → runDurableObjectAlarm(stub) → closes 에 4402 */
+it('alarm closes devices with 4402 once the entitlement is over; host stays and gets ent:false', async () => {
+  /* trials.ends_at = now+50ms 로 호스트·기기 연결 → ends_at 과거로 → runDurableObjectAlarm(stub)
+     → 기기 closes 에 4402, 호스트 closes 비어 있음 + {t:'ent',ok:false} */
 });
 it('survives hibernation: attachment keeps routing after eviction', async () => { /* evictDurableObject(stub, { webSockets: true }) 뒤 기기→호스트 전달 */ });
 it('oversized frame closes with 4413', async () => { /* 1 MiB + 1 */ });
@@ -993,15 +1064,16 @@ it('RelayRoom keeps no resident timers', () => {
 
 ---
 
-### Task 4: 로컬 클라우드 클라이언트 — 호스트 연결·RelayClient·RelayBridge
+### Task 4a: 로컬 클라우드 클라이언트 ① — 설정·상태·API·호스트 연결·RelayClient
+
+> 2차 검토 권장에 따라 옛 Task 4(약 200줄)를 둘로 나눴다. 4a 는 "Mac 이 클라우드에 연결되고 바깥 WS 가 붙어 있다" 까지, 4b 는 그 위의 Noise 브리지·정책·`/api/cloud` 다. 4a 만으로도 `RelayClient` 를 `FakeRelay` 로 끝까지 시험할 수 있다.
 
 **Files:**
 - Create:
   - 설정·상태·API: `src/server/cloud/config.ts`, `src/server/cloud/CloudState.ts`, `src/server/cloud/CloudApi.ts`, `src/server/cloud/HostLink.ts`
-  - 릴레이: `src/server/cloud/RelayClient.ts`, `src/server/cloud/RelayBridge.ts`, `src/server/cloud/loopback.ts`, `src/server/cloud/pathPolicy.ts`, `src/server/cloud/wsPolicy.ts`
-  - 조립·도구: `src/server/cloud/CloudService.ts`, `src/server/cloud/testkit.ts`, `src/server/cloud/texts.ts`(또는 i18n 사전)
-- Modify: `src/server/server.ts`, `src/server/http.ts`, `src/shared/protocol.ts`(`FEATURES` 에 `'cloud'`, `RefusalCode` 에 `'mac_confirm_required'`), `docs/protocol.md`(기능 표에 `cloud`, error 코드 표에 `mac_confirm_required`)
-- Test: `src/server/cloud/config.test.ts`, `src/server/cloud/CloudState.test.ts`, `src/server/cloud/HostLink.test.ts`, `src/server/cloud/RelayClient.test.ts`, `src/server/cloud/RelayBridge.test.ts`, `src/server/cloud/pathPolicy.test.ts`, `src/server/cloud/wsPolicy.test.ts`, `src/server/cloud/CloudService.test.ts`, `src/server/http-cloud.test.ts`
+  - 릴레이: `src/server/cloud/RelayClient.ts`
+  - 도구: `src/server/cloud/testkit.ts`(`FakeRelay` — `ws` WebSocketServer 로 Task 3 DO 의 업그레이드 응답·제어 메시지·종료 코드를 흉내 냄)
+- Test: `src/server/cloud/config.test.ts`, `src/server/cloud/CloudState.test.ts`, `src/server/cloud/HostLink.test.ts`, `src/server/cloud/RelayClient.test.ts`
 
 **Interfaces:**
 - `config.ts`: `cloudConfig(env: NodeJS.ProcessEnv): { enabled: boolean; baseUrl: string; relayUrl: string }`.
@@ -1018,13 +1090,72 @@ it('RelayRoom keeps no resident timers', () => {
 - `CloudApi.ts`: `class CloudApi { constructor(o: { baseUrl: string; fetch?: typeof fetch; timeoutMs?: number }); linkStart(…); linkPoll(…); unlink(token); pairStart(token, claimHash); pairStatus(token, id); pairConfirm(token, id); pairReject(token, id); devices(token); revokeDevice(token, id); entitlement(token) }`. 오류는 `CloudError { status: number; code?: string }` 로 던진다. (푸시 대행 메서드는 출시 뒤 Task 6.)
 - `HostLink.ts`: `startLink(o: { api; state; hostName: string; uiVersion: string; now?; sleep? }): { info: LinkStartRes; done: Promise<'linked' | 'expired' | 'cancelled'>; cancel(): void }`. `interval` 초마다 폴링하고(429 `slow_down` 이면 간격 +2초), 연결되면 `state.update({ hostId, hostToken, email })` 한다. `hostPub` 은 `hostKey` 의 X25519 공개키다.
 - `RelayClient.ts`: `class RelayClient extends EventEmitter`
-  - 생성자: `constructor(o: { url: string /* wss://<relay>/relay/host */; token: () => string | null; WebSocketImpl?: typeof WebSocket; backoff?: { minMs: number; maxMs: number }; entitlementBackoff?: { minMs: number; maxMs: number }; now?; random? })`. 기본값 `backoff = { minMs: 1000, maxMs: 60000 }`, `entitlementBackoff = { minMs: 300000, maxMs: 3600000 }`.
-  - 메서드: `start(); stop(); recheck()`(이용권 대기 중이면 즉시 한 번 시도), `send(env: Uint8Array): boolean`
-  - 이벤트: `'envelope'(env)`, `'control'(json)`, `'state'(s: 'connecting' | 'up' | 'down' | 'not_entitled' | 'unlinked' | 'replaced')`
+  - 생성자: `constructor(o: { url: string /* wss://<relay>/relay/host */; token: () => string | null; WebSocketImpl?: typeof WebSocket; backoff?: { minMs: number; maxMs: number }; entitlementBackoff?: { minMs: number; maxMs: number }; now?; random? })`. 기본값 `backoff = { minMs: 1000, maxMs: 60000 }`, `entitlementBackoff = { minMs: 30000, maxMs: 300000 }`(**상한 5분**, 2차 필수 1 — 옛 값은 5분→1시간이었다).
+  - 메서드: `start(); stop(); recheck()`, `send(env: Uint8Array): boolean`, `entitled(): { ok: boolean; until: number } | null`
+  - 이벤트: `'envelope'(env)`, `'control'(json)`, `'entitlement'({ ok, until })`, `'state'(s: 'connecting' | 'up' | 'down' | 'not_entitled' | 'unlinked' | 'replaced')`
   - 연결: `ws` 라이브러리의 `new WebSocket(url, { headers: { authorization: `Bearer ${token}` } })` 로 연다.
   - 핑: 25초마다 텍스트 `ping` 을 보내고, 60초 동안 아무 수신이 없으면 끊고 재연결한다.
-  - 업그레이드 응답 처리: 401 이면 `unlinked` 로 두고 멈춘다. 402 면 `not_entitled` 로 두고 **5분부터 두 배씩, 최대 1시간** 간격으로 다시 시도한다(필수 7). `recheck()`(설정 화면을 열 때·Task 7 의 요금제가 바뀔 때)는 이 대기를 건너뛴다.
-  - 종료 코드 처리: 4401 은 `unlinked`, 4402 는 `not_entitled`(위 백오프), 4409 는 `replaced`(같은 호스트가 다른 곳에서 붙음 — 10분 뒤 재시도)다. 그 밖에는 지수 백오프에 ±20% 흔들림을 더해 재시도한다. 정상 연결이 60초 이어지면 두 백오프를 모두 처음으로 되돌린다.
+  - **이용권 상태는 연결을 끊지 않고 바꾼다(2차 필수 1).** 업그레이드가 되면 `connecting` 에 머물다가 DO 의 첫 `{t:'ent', ok, until}` 을 받으면 `ok` 면 `up`, 아니면 `not_entitled` 로 둔다. 연결된 채로 오는 `{t:'ent'}` 마다 `up` ↔ `not_entitled` 를 바꾸고 `'entitlement'` 를 낸다. `not_entitled` 인 동안에도 소켓은 열어 두므로 결제 웹훅의 `/internal/recheck` 결과가 수 초 안에 `{t:'ent',ok:true}` 로 온다.
+  - `recheck()`(설정 화면을 열 때·Task 7 의 요금제가 바뀔 때): 연결돼 있으면 텍스트 `{"t":"recheck"}` 를 보낸다(DO 가 30초에 한 번까지 받는다). 아래 이용권 백오프로 기다리는 중이면 대기를 건너뛰고 즉시 연결한다.
+  - 업그레이드 응답 처리: 401 이면 `unlinked` 로 두고 멈춘다. 402 는 새 DO 에서는 나오지 않지만(호스트 업그레이드는 이용권을 보지 않는다), 운영 차단이나 옛 배포에 대비해 `not_entitled` 로 두고 `entitlementBackoff`(30초부터 두 배씩, **최대 5분**)로 다시 시도한다.
+  - 종료 코드 처리: 4401 은 `unlinked`, 4402 는 `not_entitled`(이용권 백오프), 4409 는 `replaced`(같은 호스트가 다른 곳에서 붙음 — 10분 뒤 재시도)다. 그 밖에는 지수 백오프에 ±20% 흔들림을 더해 재시도한다. `not_entitled` 상태에서 연결이 끊기면 재연결 간격도 5분을 넘지 않는다. 정상 연결이 60초 이어지면 두 백오프를 모두 처음으로 되돌린다.
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+```ts
+// src/server/cloud/RelayClient.test.ts — FakeRelay(testkit) + 가짜 시계
+it('backs off 1s→2s→4s… capped at 60s with jitter; resets after a good connection', async () => { /* 가짜 시계 */ });
+it('ent control flips up ↔ not_entitled without reconnecting (2차 필수 1)', async () => {
+  const { client, relay } = setupClient();
+  const states: string[] = []; client.on('state', (s) => states.push(s));
+  client.start(); await relay.attempted(1);
+  relay.control({ t: 'ent', ok: false, until: 0 });
+  await waitFor(() => states.at(-1) === 'not_entitled');
+  relay.control({ t: 'ent', ok: true, until: Date.now() + 86_400_000 });  // 웹훅 → recheck 결과
+  await waitFor(() => states.at(-1) === 'up');
+  expect(relay.attempts).toBe(1);                                          // 끊고 다시 붙지 않았다
+});
+it('402 upgrade or 4402 → not_entitled, retries after 30 s, then 60, 120, 240, 300, 300 (cap 5 min)', async () => {
+  const { client, relay, clock } = setupClient({ upgradeStatus: 402 });
+  client.start(); await relay.attempted(1);
+  for (const [n, sec] of [[2, 30], [3, 60], [4, 120], [5, 240], [6, 300], [7, 300]] as const) {
+    clock.advance(sec * 1000 * 0.79); expect(relay.attempts).toBe(n - 1);
+    clock.advance(sec * 1000 * 0.42); await relay.attempted(n);
+  }
+});
+it('recheck(): sends {"t":"recheck"} when attached; skips the entitlement wait when backing off', async () => {
+  /* 붙은 상태 → relay.textsReceived 에 '{"t":"recheck"}' / 402 뒤 recheck → 즉시 시도 */
+});
+it('401 upgrade → unlinked and stops; 4409 → replaced and waits 10 min', async () => { /* FakeRelay 응답 지정 */ });
+it('pings every 25 s and reconnects after 60 s of silence', async () => { /* … */ });
+
+// src/server/cloud/CloudState.test.ts
+it('creates the host key on load, writes 0600 on first update, moves a broken file aside', async () => { /* … */ });
+
+// src/server/cloud/HostLink.test.ts
+it('polls every interval, +2 s on slow_down, stores hostId/hostToken/email when linked', async () => { /* … */ });
+
+// src/server/cloud/config.test.ts
+it('https only; http only for loopback; same origin for app and relay → disabled', () => { /* … */ });
+```
+
+- [ ] **Step 2: 실패 확인** — `npx vitest run src/server/cloud --maxWorkers=2` 가 FAIL 하는지 본다.
+- [ ] **Step 3: 구현** — 위대로 만든다. `FakeRelay` 는 Task 3 DO 의 규칙(업그레이드는 토큰만 확인, 첫 텍스트 `{t:'ent'}`, `{"t":"recheck"}` 수신, 제어 메시지 `peer`·`revoked`·`host`·`ent`, 종료 코드)을 같은 상수(`frames.ts`)로 흉내 낸다.
+- [ ] **Step 4: 통과 확인** — 위 명령과 공통 검증 명령 다섯 개를 돌린다.
+- [ ] **Step 5: 커밋** — `feat(cloud): 로컬 클라우드 클라이언트 ① — 장치 코드 연결·상태 파일·바깥 WS 상주(이용권은 연결 유지한 채 ent 제어로, 끊김 시 최대 5분)`
+
+---
+
+### Task 4b: 로컬 클라우드 클라이언트 ② — RelayBridge·정책·CloudService·`/api/cloud`
+
+**Files:**
+- Create:
+  - 릴레이: `src/server/cloud/RelayBridge.ts`, `src/server/cloud/loopback.ts`, `src/server/cloud/pathPolicy.ts`, `src/server/cloud/wsPolicy.ts`
+  - 조립·문구: `src/server/cloud/CloudService.ts`, `src/server/cloud/texts.ts`(또는 i18n 사전)
+- Modify: `src/server/server.ts`, `src/server/http.ts`, `src/server/cloud/testkit.ts`(루프백 흉내 추가), `src/shared/protocol.ts`(`FEATURES` 에 `'cloud'`, `RefusalCode` 에 `'mac_confirm_required'`), `docs/protocol.md`(기능 표에 `cloud`, error 코드 표에 `mac_confirm_required`)
+- Test: `src/server/cloud/RelayBridge.test.ts`, `src/server/cloud/pathPolicy.test.ts`, `src/server/cloud/wsPolicy.test.ts`, `src/server/cloud/CloudService.test.ts`, `src/server/http-cloud.test.ts`
+
+**Interfaces:**
 - `RelayBridge.ts`: `class RelayBridge`
   - 생성자: `constructor(o: { relay: Pick<RelayClient, 'send' | 'on'>; state: CloudState; loopback: LoopbackTarget; hostVersion: string; fetchImpl?: typeof fetch; WebSocketImpl?: typeof WebSocket; now? })`
   - 기기별 세션 `Map<deviceId, { transport: Transport | null; ready: boolean; streams: Map<number, WebSocket>; http: Map<number, AbortController>; hsTimer }>`
@@ -1038,7 +1169,7 @@ it('RelayRoom keeps no resident timers', () => {
     - `http.req` → `relayPathPolicy` 결과가 `deny` 면 `http.res{st:403, b:{"error":"forbidden"}}`, `mac_confirm_required` 면 `http.res{st:403, b:{"error":"mac_confirm_required","code":"mac_confirm_required"}}` 를 돌려주고 루프백에 닿지 않는다. `allow` 면 `fetch(loopback + p)` 로 보내고, 응답 본문을 32KiB 조각(`TUNNEL_CHUNK`)으로 스트리밍한다. 시간 제한은 60초다.
   - `dropDevice(id: string, reason: 'revoked' | 'decrypt' | 'peer_down' | 'replaced'): void` — Noise 세션을 버리고, 그 기기의 루프백 WS 를 모두 닫고, 진행 중 `http` 를 모두 abort 한다. `revoked` 면 기기에 봉투 `close` 를 보낸다. 동기 함수라 호출 뒤 바로 다음 프레임부터 처리되지 않는다(필수 5).
   - 오류 처리: `DecryptError` 면 `dropDevice(id, 'decrypt')`.
-  - 제어 메시지: `{t:'peer',dev,up:false}` → `dropDevice(dev,'peer_down')`. `{t:'revoked',dev}` → `state.removeDevice(dev)` + `dropDevice(dev,'revoked')`(필수 5).
+  - 제어 메시지: `{t:'peer',dev,up:false}` → `dropDevice(dev,'peer_down')`. `{t:'revoked',dev}` → **`dropDevice(dev,'revoked')` 를 먼저**(동기 — 그 뒤 프레임은 처리되지 않는다), 그다음 `state.removeDevice(dev)`(비동기 파일 쓰기)(필수 5, 2차 권장 — 옛 순서는 파일 쓰기를 기다리는 사이 프레임이 지날 수 있었다). `{t:'ent'}` 는 RelayClient 가 처리한다.
 - `loopback.ts`: `type LoopbackTarget = { port: number; token: () => string }`, `loopbackHeaders(t): Record<string,string>`. 결과는 `{ cookie: `${COOKIE_NAME}=${cookieValueFor(token)}`, origin: `http://127.0.0.1:${port}`, host: `127.0.0.1:${port}` }` 다.
 - `pathPolicy.ts`: `relayPathPolicy(method: string, path: string): 'allow' | 'deny' | 'mac_confirm_required'`.
   - `deny`: `/api/` 로 시작하지 않는 경로, `..`·`%2e%2e`(대소문자 무관)·`//`·`\` 가 들어간 경로, 프로토콜이 있는 절대 주소.
@@ -1055,8 +1186,8 @@ it('RelayRoom keeps no resident timers', () => {
 - `CloudService.ts`: `class CloudService`
   - 생성자: `constructor(o: { cfg: { enabled; baseUrl; relayUrl }; configDir: string; port: number; token: () => string; hostVersion: string; hostName: string; log: (s: string) => void; fetch?; WebSocketImpl? })`
   - 메서드: `start(): void`(대기 없음. 연결된 상태면 RelayClient 를 시작), `stop(): Promise<void>`, `status(): CloudStatus`, `startLink()`, `unlink()`, `revokeDevice(id): Promise<void>`, `onChange(cb)`
-  - `revokeDevice(id)`: ① `state.removeDevice(id)` ② `bridge.dropDevice(id, 'revoked')` ③ `api.revokeDevice` — 실패하면 `pendingRevokes` 에 넣고 다음 `up` 때 다시 보낸다. 로컬 채널은 클라우드 응답을 기다리지 않고 닫힌다(필수 5).
-  - RelayClient 가 `up` 이 될 때마다 `syncDevices()`: `pendingRevokes` 를 보내고, `api.devices(token)` 의 활성 목록에 없는 로컬 신뢰 기기를 `removeDevice` + `dropDevice(…,'revoked')` 한다. 호출이 실패하면 로컬 목록을 그대로 둔다.
+  - `revokeDevice(id)`: ① `bridge.dropDevice(id, 'revoked')` ② `state.removeDevice(id)` ③ `api.revokeDevice` — 실패하면 `pendingRevokes` 에 넣고 다음 `up` 때 다시 보낸다. ①이 동기라 열린 채널은 파일 쓰기·클라우드 응답을 기다리지 않고 바로 닫힌다(필수 5, 2차 권장 — 순서를 dropDevice → removeDevice 로 바꿨다).
+  - RelayClient 가 `up` 이 될 때마다 `syncDevices()`: `pendingRevokes` 를 보내고, `api.devices(token)` 의 활성 목록에 없는 로컬 신뢰 기기를 `dropDevice(…,'revoked')` + `removeDevice` 순서로 지운다. 호출이 실패하면 로컬 목록을 그대로 둔다.
   - 연결하지 않은 상태면 네트워크 호출이 0건이다.
 - `http.ts`: `HttpDeps.cloud?: { service: CloudService }`. 라우트는 다음과 같고, 쿠키·Host·Origin 검사는 기존 `/api/*` 와 같다(`isAllowedHost`·`stateChangingOriginOk` 를 그대로 지난다).
   - `GET /api/cloud/status` → `CloudStatus`
@@ -1153,20 +1284,6 @@ it('cloud revoke notice removes the device locally and closes it', async () => {
 it('revoke works even when the cloud call fails, and is retried on the next connection', async () => { /* api.revokeDevice 500 → pendingRevokes 에 남음 → 재연결 뒤 호출 */ });
 it('on connect, devices no longer active in the cloud are dropped locally', async () => { /* api.devices → [] → 로컬 신뢰 목록 비움 */ });
 
-// src/server/cloud/RelayClient.test.ts
-it('backs off 1s→2s→4s… capped at 60s with jitter; resets after a good connection', async () => { /* 가짜 시계 */ });
-it('402 or 4402 → not_entitled, retries after 5 min, then 10, 20, 40, 60, 60', async () => {
-  const { client, relay, clock } = setupClient({ upgradeStatus: 402 });
-  client.start(); await relay.attempted(1);
-  for (const [n, min] of [[2, 5], [3, 10], [4, 20], [5, 40], [6, 60], [7, 60]] as const) {
-    clock.advance(min * 60_000 * 0.79); expect(relay.attempts).toBe(n - 1);
-    clock.advance(min * 60_000 * 0.42); await relay.attempted(n);
-  }
-});
-it('recheck() skips the entitlement wait', async () => { /* 402 뒤 recheck → 즉시 시도 */ });
-it('401 upgrade → unlinked and stops; 4409 → replaced and waits 10 min', async () => { /* FakeRelay 응답 지정 */ });
-it('pings every 25 s and reconnects after 60 s of silence', async () => { /* … */ });
-
 // src/server/cloud/CloudService.test.ts
 it('not linked: zero requests to the cloud', async () => {
   const calls: string[] = [];
@@ -1176,6 +1293,9 @@ it('not linked: zero requests to the cloud', async () => {
   expect(svc.status()).toMatchObject({ linked: false, relay: 'off' });
 });
 it('cloud unreachable while linked: status down, start() never throws', async () => { /* 닫힌 포트 → relay 'down' */ });
+it('revokeDevice drops the session before the state file write finishes', async () => {
+  /* state.removeDevice 를 붙잡아 두는 가짜 → revokeDevice 호출 직후 bridge 세션 없음, loop.wsClosed === 1 */
+});
 
 // src/server/http-cloud.test.ts
 it('/api/cloud/* needs the cookie and a same-origin Origin', async () => { /* 401 / 403 */ });
@@ -1183,33 +1303,93 @@ it('DECK_CLOUD=off: no routes, no cloud feature', async () => { /* 404, hello.fe
 ```
 
 - [ ] **Step 2: 실패 확인** — `npx vitest run src/server/cloud src/server/http-cloud.test.ts --maxWorkers=2` 가 FAIL 하는지 본다.
-- [ ] **Step 3: 구현** — 위대로 만든다. `FakeRelay` 는 Task 3 DO 의 라우팅 규칙(출처 덮어쓰기·제어 메시지 `peer`·`revoked`·`host`·종료 코드)을 같은 상수(`frames.ts`)로 흉내 낸다. `texts.macConfirmRequired` 는 "Mac 에서 직접 해 주세요 — 보안상 폰에서는 바꿀 수 없는 설정입니다" 다.
+- [ ] **Step 3: 구현** — 위대로 만든다. `texts.macConfirmRequired` 는 "Mac 에서 직접 해 주세요 — 보안상 폰에서는 바꿀 수 없는 설정입니다" 다.
 - [ ] **Step 4: 통과 확인** — 위 명령과 공통 검증 명령 다섯 개를 돌린다.
-- [ ] **Step 5: 커밋** — `feat(cloud): 로컬 클라우드 클라이언트 — 장치 코드 연결·바깥 WS 상주(이용권 5분 백오프)·Noise 브리지(Mac 확인 필요 동작 차단·해제 즉시 종료)·/api/cloud`
+- [ ] **Step 5: 커밋** — `feat(cloud): 로컬 클라우드 클라이언트 ② — Noise 브리지(Mac 확인 필요 동작 차단·해제 즉시 종료, dropDevice 먼저)·/api/cloud`
 
 ---
 
-### Task 5: 페어링 QR과 폰 UI 전송 계층 — 이정표 "폰에서 릴레이 경유 승인 성공"
+### Task 5 앞 실기 확인: iOS 홈 화면 PWA 저장소·카메라·푸시 (5a 착수 전 — 탐침은 실행자, iPhone 확인은 사용자 몫)
+
+> 2차 필수 2. iOS 는 Safari 와 홈 화면 PWA 의 저장소를 따로 둘 수 있다(**추정, 실기 확인 전**). 그러면 Safari 에서 QR 로 페어링한 정보가 PWA 에 없다. 5a·5b 의 페어링 화면 설계가 이 결과에 달려 있으므로 5a 보다 먼저 확인한다(5a 착수 전에 탐침을 만들어 사용자에게 넘기고, 결과가 오기 전까지는 4b 뒤 Task 7·9 를 먼저 해도 된다). 실행자는 탐침 파일만 만들고, iPhone 에서 여는 일은 사용자가 한다.
+
+**Files:**
+- Create: `scripts/probe/ios-pwa/index.html`, `scripts/probe/ios-pwa/probe.js`, `scripts/probe/ios-pwa/manifest.webmanifest`, `scripts/probe/ios-pwa/sw.js`, `scripts/probe/ios-pwa/README.md`
+
+**Interfaces:**
+- `index.html`: 인라인 스크립트 없이 `probe.js` 를 싣고, 버튼 [쓰기]·[읽기]·[카메라]·[푸시 지원] 과 결과 `<pre id="out">` 만 둔다. `<link rel="manifest" href="manifest.webmanifest">`.
+- `manifest.webmanifest`: `{"name":"AI-MSG probe","start_url":"./","display":"standalone","icons":[]}`.
+- `sw.js`: 빈 서비스 워커(`self.addEventListener('fetch', () => {})`) — 설치 조건 충족용.
+- `probe.js`:
+
+```js
+// scripts/probe/ios-pwa/probe.js — 저장소 분리·persist·카메라·BarcodeDetector·푸시 지원을 한 화면에 적는다
+const out = document.getElementById('out');
+const log = (k, v) => { out.textContent += `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}\n`; };
+const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+log('standalone', standalone);
+log('BarcodeDetector', 'BarcodeDetector' in window);
+log('PushManager', 'PushManager' in window);
+navigator.serviceWorker?.register('sw.js').then(() => log('sw', 'ok'), (e) => log('sw', String(e)));
+function idb() {
+  return new Promise((res, rej) => { const r = indexedDB.open('probe', 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+}
+document.getElementById('write').onclick = async () => {
+  const v = `${standalone ? 'pwa' : 'safari'}@${new Date().toISOString()}`;
+  localStorage.setItem('probe', v);
+  const db = await idb(); db.transaction('kv', 'readwrite').objectStore('kv').put(v, 'probe');
+  log('wrote', v);
+  log('persist', navigator.storage?.persist ? await navigator.storage.persist() : 'unsupported');
+};
+document.getElementById('read').onclick = async () => {
+  log('localStorage', localStorage.getItem('probe'));
+  const db = await idb();
+  const r = db.transaction('kv').objectStore('kv').get('probe');
+  r.onsuccess = () => log('indexedDB', r.result ?? null);
+};
+document.getElementById('camera').onclick = async () => {
+  try { const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); log('camera', 'ok'); s.getTracks().forEach((t) => t.stop()); }
+  catch (e) { log('camera', String(e)); }
+};
+document.getElementById('push').onclick = async () => {
+  log('Notification.permission', typeof Notification === 'undefined' ? 'none' : Notification.permission);
+};
+```
+
+- `README.md`: 아래 Step 2 의 순서와 결과 표 양식.
+
+- [ ] **Step 1: 탐침 만들기(실행자)** — 위 파일을 만든다. `src/hygiene.test.ts` 를 통과하는지 본다. 외부 출처·추적 코드를 넣지 않는다.
+- [ ] **Step 2: 실기 확인(사용자 몫)** — 탐침 폴더를 HTTPS 정적 호스팅에 올린다(호스팅 선택은 사용자 몫, 서비스 워커는 HTTPS 에서만 등록된다). iPhone 에서 다음 순서로 보고 `README.md` 결과 표에 적는다.
+  1. Safari 에서 열고 [쓰기].
+  2. 공유 › 홈 화면에 추가 → 홈 화면 앱으로 열고 [읽기]. **Safari 에서 쓴 값이 보이는지**(저장소 공유 여부).
+  3. 홈 화면 앱에서 [쓰기] → Safari 로 돌아가 [읽기].
+  4. 홈 화면 앱에서 [카메라](권한 창이 뜨고 `ok` 인지), `BarcodeDetector` 값, `persist` 값, `PushManager` 값.
+- [ ] **Step 3: 결정 반영(실행자, 결과를 받은 뒤)** — 결과에 따라 5a·5b 를 이렇게 확정하고, 결과 표를 이 문서 "근거·미확인" 절에 옮긴다.
+  - 저장소가 **분리**되면(예상): 5b 의 PWA 안 페어링(코드 붙여 넣기 + 앱 안 스캔)이 주 경로다. Safari 에서 `#pair=` 로 열린 iOS 화면은 "홈 화면 앱으로 쓰려면 먼저 홈 화면에 추가하고, 그 앱에서 [코드 붙여 넣기] 로 연결하세요" 를 먼저 보여 주고 [이 브라우저에서 연결] 을 두 번째 버튼으로 둔다(기기 3대 한도를 Safari·PWA 가 나눠 먹지 않게).
+  - 저장소가 **공유**되면: 같은 화면에서 [이 브라우저에서 연결] 을 첫 버튼으로 둔다. 코드 붙여 넣기·스캔은 그대로 둔다(재페어링 때 쓴다).
+  - 홈 화면 앱에서 카메라가 `ok` 이고 `BarcodeDetector` 가 있으면 [스캔] 을 보인다. 카메라는 되는데 `BarcodeDetector` 가 없으면 [스캔] 을 숨기고 코드 붙여 넣기만 둔다. JS QR 디코더를 들일지는 결정 지점 D20 으로 남긴다(라이브러리 이름은 착수 시 확인, 런타임 의존성 규칙상 사용자 승인 필요).
+  - `PushManager` 가 홈 화면 앱에서 없으면 출시 뒤 Task 6 을 다시 본다.
+
+---
+
+### Task 5a: Mac 쪽 페어링과 시트
 
 **Files:**
 - Create:
   - 서버: `src/server/cloud/Pairing.ts`
-  - 클라우드: `cloud/src/ui.ts`, `cloud/static/boot.js`, `cloud/scripts/publish-ui.sh`
-  - UI 전송·릴레이: `src/ui/transport.ts`, `src/ui/relay/keystore.ts`, `src/ui/relay/pairing.ts`, `src/ui/relay/RelayConnection.ts`, `src/ui/relay/tunnelFetch.ts`, `src/ui/relay/tunnelSocket.ts`, `src/ui/relay/blobUrl.ts`, `src/ui/relay/RelayGate.tsx`
-  - UI 화면·문구: `src/ui/qr.ts`, `src/ui/cloudApi.ts`, `src/ui/components/CloudSection.tsx`, `src/ui/components/PairSheet.tsx`, `src/ui/cloudTexts.ts`(또는 i18n 사전)
-  - 스모크·렌더: `scripts/smoke/relay-e2e.sh`, `scripts/smoke/relay-phone.ts`, `scripts/render/cloud-section.html`, `scripts/render/pair-sheet.html`
+  - UI 화면·문구: `src/ui/qr.ts`, `src/ui/cloudApi.ts`, `src/ui/transport.ts`(이 Task 에서는 `isRelayMode()` 만), `src/ui/components/CloudSection.tsx`, `src/ui/components/PairSheet.tsx`, `src/ui/cloudTexts.ts`(또는 i18n 사전)
+  - 렌더: `scripts/render/cloud-section.html`, `scripts/render/pair-sheet.html`
 - Modify:
   - 서버: `src/server/http.ts`(`/api/cloud/pair/start`, `/api/cloud/pair/:id`, `/api/cloud/pair/:id/approve`, `/api/cloud/pair/:id/deny`, `/api/cloud/devices`), `src/server/cloud/CloudService.ts`
-  - 클라우드: `cloud/src/index.ts`, `cloud/wrangler.jsonc`(R2 `UI`, 정적 자산 `assets: { directory: "./static", binding: "ASSETS", run_worker_first: true }` — 모든 요청이 Worker 의 출처 검사를 먼저 거친다), `cloud/src/env.ts`(`UI: R2Bucket`, `ASSETS: Fetcher`)
-  - UI: `src/ui/ws.ts`, `src/ui/push.ts`, `src/ui/App.tsx`, `src/ui/sessionApi.ts`, `src/ui/components/{SettingsView,Lightbox,FileMenu,ShareMenu}.tsx`, `fetchFn = fetch` 기본값을 가진 파일 전부(`sessionApi.ts`·`pins.ts`·`upload.ts`·`components/{ActivityButton,FolderPicker,ComposerSuggest,MemoryEditor,SessionCwdDialog,Sidebar,ActivitySheet,UsageSheet,Highlights,UsageView}.tsx` 와 가드 테스트가 찾는 나머지)
+  - UI: `src/ui/components/SettingsView.tsx`(계정 묶음에 `CloudSection`), `src/ui/vite-env.d.ts`
   - 빌드·의존성: `vite.config.ts`, `package.json`·`package-lock.json`(devDependency `qrcode-generator`)
-- Test: `src/server/cloud/Pairing.test.ts`, `src/ui/transport.test.ts`, `src/ui/transport.guard.test.ts`, `src/ui/relay/pairing.test.ts`, `src/ui/relay/RelayConnection.test.ts`, `src/ui/relay/tunnelFetch.test.ts`, `src/ui/relay/RelayGate.test.tsx`, `src/ui/components/CloudSection.test.tsx`, `src/ui/components/PairSheet.test.tsx`, `cloud/test/ui.test.ts`
+- Test: `src/server/cloud/Pairing.test.ts`, `src/ui/components/CloudSection.test.tsx`, `src/ui/components/PairSheet.test.tsx`
 
 **Interfaces:**
 - `Pairing.ts`: `startPairing(o: { api; state; hostVersion: string; relayOrigin: string; now?; sleep? }): Promise<PairingRun>`
   - `type PairingView = { state: 'open' } | { state: 'awaiting_approval'; deviceName: string; confirmCode: string } | { state: 'paired'; device: TrustedDevice } | { state: 'rejected' | 'denied' | 'burned' | 'expired' }`
-  - `type PairingRun = { pairingId: string; qrUrl: string; expiresAt: number; view(): PairingView; approve(): Promise<void>; deny(): Promise<void>; done: Promise<PairingView> }`
-  - `claim`·`auth` 를 `randomToken(16)` 으로 만든다. `qrUrl = encodePairUrl({ v: 2, …, relayOrigin })`.
+  - `type PairingRun = { pairingId: string; qrUrl: string; pairCode: string; expiresAt: number; view(): PairingView; approve(): Promise<void>; deny(): Promise<void>; done: Promise<PairingView> }`
+  - `claim`·`auth` 를 `randomToken(16)` 으로 만든다. `qrUrl = encodePairUrl({ v: 2, …, relayOrigin })`. `pairCode` 는 `qrUrl` 의 `#pair=` 뒤 문자열 그대로다(`2.<pairingId>.<claim>.<auth>.<hostPub>`, 2차 필수 2 — PWA 안에서 붙여 넣는다).
   - 2초마다 폴링한다.
     - 클라우드 상태가 `burned` 면 `burned` 로 끝낸다(신뢰 목록에 넣지 않는다).
     - `claimed` 가 되면 `verifyPairingMac` 를 본다. 실패하면 `pairReject` 후 `rejected`.
@@ -1217,49 +1397,12 @@ it('DECK_CLOUD=off: no routes, no cloud feature', async () => { /* 404, hello.fe
   - `approve()` → `pairConfirm` 성공 시에만 `state.devices` 에 추가하고 `paired`. 409 면 그 코드(`burned` 등)로 끝낸다. `deny()` → `pairReject` 후 `denied`.
   - 5분이 지나면 `expired`. `awaiting_approval` 에서 5분이 지나도 `expired` 이고, 클라우드에 `pairReject` 를 보낸다.
 - http 라우트(쿠키·Host·Origin 검사. 터널로 오면 `relayPathPolicy` 가 `mac_confirm_required` 로 막는다 — 폰은 자기 자신을 승인할 수 없다):
-  - `POST /api/cloud/pair/start` → `{pairingId, qrUrl, expiresAt}`
+  - `POST /api/cloud/pair/start` → `{pairingId, qrUrl, pairCode, expiresAt}`
   - `GET /api/cloud/pair/:id` → `PairingView`(`paired` 면 `device` 대신 `deviceName`)
   - `POST /api/cloud/pair/:id/approve` → `{ok}` / 409 `{code}`, `POST /api/cloud/pair/:id/deny` → `{ok}`
-  - `GET /api/cloud/devices` → 로컬 신뢰 목록과 클라우드 목록을 합친다(클라우드 실패 시 로컬만). 해제는 Task 4 의 `POST /api/cloud/devices/:id/revoke`.
-- `cloud/src/ui.ts` — **relay 출처 전용**(D18). R2 바인딩 `UI`(`get(key)` → 본문·`httpMetadata`. R2 Workers API 형태 **(미확인)**, Step 1 에서 확인):
-  - `GET /boot.js` → `env.ASSETS.fetch(new Request(new URL('/boot.js', req.url)))` 응답에 `relayHeaders` 를 덧씌워 준다(`no-cache`). app 출처에서는 404.
-  - `GET /` → 부트스트랩 HTML. 인라인 스크립트 없이 `/boot.js` 를 쓴다. 이 스크립트는 `localStorage['aimsg.hostVersion']` 이 있고 semver 모양이면 `/v/<ver>/` + 기존 search·hash 로 옮기고, 없으면 "Open Settings › Account › Connect phone on your Mac and scan the QR." 를 보여 준다.
-  - `GET /v/<ver>/*` → R2 `v/<ver>/…`(`<ver>` 는 `isSemver`). 없으면 404. 해시가 붙은 자산은 `cache-control: public, max-age=31536000, immutable` 이고, `index.html` 은 `no-store` 다.
-  - `GET /sw.js`·`/manifest.webmanifest`·`/icons/*` → R2 `latest/…` 를 `no-cache` 로 준다.
-  - 머리: `relayHeaders`(Task 2) — `Set-Cookie` 없음, `script-src 'self'`, 제3자 출처 없음. `connect-src 'self' wss://<relay host>`. `style-src` 는 기존 UI 가 HTML `style=""` 속성이나 `<style>` 을 쓰는지 Step 1 에서 확인하고, 쓰면 `'unsafe-inline'` 을 `style-src` 에만 더한다(`script-src` 에는 절대 더하지 않는다).
-- `cloud/scripts/publish-ui.sh <ver>` — `npx vite build --mode relay --base /v/<ver>/ --outDir "$(mktemp -d)"` 결과를 `wrangler r2 object put` 으로 `v/<ver>/…` 에, `sw.js`·`manifest.webmanifest`·`icons/*` 를 `latest/…` 에 올린다. 실제 업로드는 사용자 몫(배포)이고, 이 Task 에서는 `--dry-run` 이 업로드 목록만 출력하는지 본다.
-- `vite.config.ts`: `mode === 'relay'` 면 `define.__AIMSG_RELAY__ = 'true'`, 아니면 `'false'` 다. base 는 CLI `--base` 를 그대로 쓴다. `src/ui/vite-env.d.ts` 에 `declare const __AIMSG_RELAY__: boolean` 을 더한다. relay 빌드는 외부 출처 자산(폰트·CDN)을 하나도 넣지 않는다(Step 5 에서 빌드 결과를 `grep -E 'https?://'` 로 확인, 허용 목록은 relay 출처뿐).
-- `transport.ts`:
-  - `isRelayMode(): boolean`(= `__AIMSG_RELAY__`)
-  - `apiFetch(input: string, init?: RequestInit): Promise<Response>` — 릴레이 모드면 `tunnelFetch`, 아니면 `fetch(input, { credentials: 'same-origin', ...init })`.
-  - `openSocket(): WebSocketLike` — 릴레이 모드면 `connection.openStream()`, 아니면 `new WebSocket(`${proto}://${location.host}/ws`)`.
-  - `setRelayConnection(c: RelayConnection | null): void`
-- `keystore.ts`:
-  - `type RelayIdentity = { deviceId: string; deviceToken: string; hostId: string; hostPub: string; hostVersion: string; key: StaticKey }`
-  - `interface KeyStore { load(): Promise<RelayIdentity | null>; save(i: RelayIdentity): Promise<void>; clear(): Promise<void> }`
-  - 구현은 `indexedDbKeyStore()`(DB `aimsg-relay`, 저장소 `identity`, 추출 불가 `CryptoKey` 를 구조화 복제로 저장)와 `memoryKeyStore()` 둘이다. 저장에 성공하면 `navigator.storage?.persist?.()` 를 한 번 부른다(iOS 저장소 삭제 완화, 권장 7).
-- `relay/pairing.ts`: `handlePairHash(o: { hash: string; store: KeyStore; fetch?: typeof fetch; deviceName: string; hostVersion: string }): Promise<{ state: 'claimed'; confirmCode: string } | { state: 'none' } | { state: 'error'; code: 'pairing_burned' | 'device_limit' | 'expired' | 'network' }>`
-  - `generateStaticKey({ extractable: false })` → `pairingMac` → `POST /v1/pair/claim`(relay 출처, 쿠키 없음). 본문에 `auth` 를 싣지 않는다.
-  - 성공하면 identity 를 저장하고 `confirmCode` 를 돌려준다. `history.replaceState` 로 조각을 지운다(오류여도 지운다).
-  - `deviceName` 은 `navigator.userAgentData?.platform ?? 'Phone'` 에서 만든 짧은 이름이다.
-- `RelayConnection.ts`: `class RelayConnection`
-  - 생성자: `constructor(o: { store: KeyStore; relayOrigin: string; uiVersion: string; WebSocketImpl?; fetch?; navigate?: (url: string) => void })`
-  - 상태: `'pairing_needed' | 'awaiting_mac' | 'connecting' | 'host_offline' | 'up' | 'not_entitled' | 'revoked'`
-  - 메서드: `start(); stop(); onState(cb); http(req): Promise<Response>; openStream(): WebSocketLike`
-  - 흐름: `POST /v1/relay/ticket` → `wss://<relay>/relay/device?ticket=` → `deviceHandshake({ self: identity.key, hostPublic, deviceId, hostId, uiVersion })` → `hs_init` → `hs_ack` → `ready` 보내기 → 호스트 `ready` 받기(5초, 아니면 4408 로 닫고 재시도) 순서다.
-  - 티켓 응답: 403 `pending_confirm` → `awaiting_mac`(3초마다 다시), 401 → `revoked`(identity 삭제), 402 → `not_entitled`(5분마다 다시, 앱이 보이게 되면 즉시).
-  - 버전: **호스트 `ready` 를 연 뒤에만** 본다. `hostVersion !== uiVersion` 이고 `isSemver(hostVersion)` 이면 `localStorage['aimsg.hostVersion'] = hostVersion` 후 `navigate('/v/<hostVersion>/' + location.search)`. semver 가 아니면 이동하지 않고 오류 상태를 보인다(필수 4).
-  - 봉투 `close` 를 받거나 4403 으로 닫히면 `revoked`(identity 삭제).
-  - 재연결: 1→30초 백오프. 앱이 보이게 될 때(`visibilitychange`)는 즉시 시도한다.
-- `tunnelSocket.ts`: `WebSocketLike` 는 `readyState`·`send`·`close`·`onopen`·`onmessage`·`onclose`·`onerror` 만 갖는다. `src/ui/ws.ts` 가 쓰는 것이 이것뿐인지 Step 1 에서 확인하고, 더 있으면 같이 흉내 낸다. 32KiB 를 넘는 `send` 는 `ws.msg{more:true}` 조각으로 나눈다(`chunkString`).
-- `blobUrl.ts`: `useApiUrl(path: string | null): string | null` — 일반 모드는 그대로 돌려준다. 릴레이 모드는 `apiFetch` → `URL.createObjectURL` 하고, 언마운트 때 `revokeObjectURL` 한다. `openApiUrl(path)` 는 릴레이 모드에서 blob 을 새 탭으로 연다(`FileMenu.tsx:246`).
-- `ShareMenu.tsx:13`: 릴레이 모드의 세션 링크는 `${location.origin}/v/<ver>/?session=<id>` 다.
-- `push.ts`(Mac VAPID 직접 푸시, 권장 2): `/api/push/key`·`/api/push/subscribe` 를 `apiFetch` 로 부른다. 릴레이 모드에서도 Mac 의 VAPID 공개키로 relay 출처의 SW(`/sw.js`)에서 구독하고, 구독(endpoint)은 터널로 Mac 에 저장된다. Mac 의 기존 `PushNotifier` 가 푸시 서비스로 직접 보낸다(클라우드 경유 없음, Web Push 암호화로 푸시 서비스도 내용을 못 읽는다). 알림 클릭 주소는 상대 경로라 relay 출처의 `/` → `boot.js` 가 버전 경로로 옮긴다. iOS 는 홈 화면에 추가한 PWA 에서만 웹 푸시가 되므로(Apple 문서 기준, 실기 확인은 사용자 몫) RelayGate 의 알림 켜기 안내에 그 문구를 넣는다.
-- `RelayGate.tsx`: 릴레이 모드에서 `App.tsx` 가 `Login` 대신 그린다. 상태별 화면은 다음과 같고, `up` 이면 앱을 그대로 보여 준다.
-  - `awaiting_mac`: 확인 코드 6자리를 크게, "Mac 화면의 숫자와 같으면 Mac 에서 [허용] 을 누르세요. 다르면 [거부] 하세요."
-  - `pairing_needed`·`revoked`(재페어링 흐름, 권장 7): "이 폰의 연결 정보가 없습니다(브라우저 저장소가 지워졌거나 기기가 해제됨). Mac 에서 설정 › 계정 › 폰 연결 → 새 QR 을 찍으세요. 예전 기기 항목은 Mac 에서 해제해 두세요."
-  - 페어링 오류 `device_limit`: "기기는 3대까지입니다. Mac 설정이나 계정 페이지에서 안 쓰는 기기를 해제하세요." `pairing_burned`: "이 QR 은 두 곳에서 쓰여 폐기됐습니다. 새 QR 을 만드세요."
-  - `host_offline`: Mac 이 꺼져 있거나 잠들었음. `not_entitled`: 구독 필요 → app 출처 계정 페이지를 **새 탭 링크**로.
+  - `GET /api/cloud/devices` → 로컬 신뢰 목록과 클라우드 목록을 합친다(클라우드 실패 시 로컬만). 해제는 Task 4b 의 `POST /api/cloud/devices/:id/revoke`.
+- `vite.config.ts`: `mode === 'relay'` 면 `define.__AIMSG_RELAY__ = 'true'`, 아니면 `'false'` 다. base 는 CLI `--base` 를 그대로 쓴다. `src/ui/vite-env.d.ts` 에 `declare const __AIMSG_RELAY__: boolean` 을 더한다. relay 빌드는 외부 출처 자산(폰트·CDN)을 하나도 넣지 않는다(5b Step 5 에서 빌드 결과를 `grep -E 'https?://'` 로 확인, 허용 목록은 relay 출처뿐).
+- `transport.ts`(이 Task): `isRelayMode(): boolean`(= `__AIMSG_RELAY__`)만 둔다. 나머지는 5b.
 - `CloudSection.tsx`(설정 › 계정)
   - 행 1 "클라우드 연결": 미연결이면 [연결하기] → 코드·주소를 보여 주고 상태를 폴링한다. 연결되면 이메일·[끊기]다.
   - 행 2 "폰 연결": [QR 보기] → `PairSheet` 를 연다.
@@ -1270,32 +1413,105 @@ it('DECK_CLOUD=off: no routes, no cloud feature', async () => { /* 404, hello.fe
   - QR 은 `qrSvgPath` 로 그린 SVG `<path>` 다. 흰 바탕에 4모듈 여백을 둔다(다크 테마에서도 흰 바탕이라 대비가 확보된다).
   - 남은 시간을 보여 주고, 만료되면 [새 QR] 을 띄운다.
   - 상태 문구: "폰 카메라로 찍으세요" → `awaiting_approval` 이면 "<기기 이름> 이 연결하려 합니다. 폰에 보이는 숫자가 **123 456** 과 같나요?" + [허용]·[거부](둘 다 44px, [허용] 에 초기 포커스를 두지 않는다) → "연결됨: <기기>" / "확인 실패 — 다시 시도" / "이 QR 이 두 곳에서 쓰였습니다 — 새 QR 을 만드세요"(`burned`).
-- `transport.guard.test.ts`: `src/ui/**/*.{ts,tsx}` 가운데 테스트가 아니고, `transport.ts`·`relay/` 도 아닌 파일에서 `/\bfetch\(/`·`/=\s*fetch\b/`·`/new WebSocket\(/` 이 나오면 실패한다.
-- `scripts/smoke/relay-e2e.sh`(로컬만, 저장소 `dist/` 무변경)
-  1. 임시 디렉터리 `T` 를 만든다. 테스트용 세션·이메일 해시 비밀을 생성해 `cloud/.dev.vars` 를 쓴다(gitignore, 끝나면 `trap` 으로 지움). `PUBLIC_ORIGIN=http://127.0.0.1:$CP`, `RELAY_ORIGIN=http://localhost:$CP`(호스트 이름이 달라 두 출처가 갈린다), `EMAIL_MODE=log`, `DEV_ROUTES=1`.
-  2. `npx --prefix cloud wrangler dev --local --port $CP --persist-to "$T/wr"` 를 띄운다. `--persist-to` 플래그는 **(미확인)** 이라 Step 1 에서 `wrangler dev --help` 로 확인한다. 폰 UI 는 `publish-ui.sh` 대신 테스트 객체 하나만 로컬 R2 에 넣는다(스모크는 가상 폰이라 UI 자산이 필요 없다).
-  3. 계획 ② 의 `scripts/smoke/fake-claude.mjs` 를 `"$T/bin/claude"` 로 감싸 PATH 앞에 둔다.
-  4. 저장소 서버를 띄운다: `DECK_CONFIG_DIR="$T/conf" HOME="$T/home" DECK_LOOPBACK_ONLY=1 DECK_PORT=$DP DECK_CLOUD_URL=http://127.0.0.1:$CP DECK_RELAY_URL=http://localhost:$CP npx tsx src/server/main.ts`
-  5. `npx tsx scripts/smoke/relay-phone.ts $DP $CP "$T/conf/token" "$T/work"` 를 실행한다.
-- `scripts/smoke/relay-phone.ts`
-  1. 로컬 API 에 로그인한다(`turn.mjs` 와 같은 방식).
-  2. `POST /api/cloud/link/start` 를 보낸다.
-  3. 클라우드 `/v1/auth/magic` 을 보내고 `/dev/outbox` 에서 토큰을 꺼내 `POST /auth/verify` 로 로그인한다.
-  4. `POST /v1/host/link/approve` 를 보내고, `/api/cloud/status` 가 `linked`·`relay:'up'` 이 될 때까지 기다린다.
-  5. `POST /api/cloud/pair/start` → QR 주소를 파싱한다.
-  6. **가상 폰**이 공유 `noise.ts`·`pairing.ts` 로 claim 하고 자기 쪽 `confirmCode` 를 계산한다. 티켓이 403 `pending_confirm` 인지 본다.
-  7. Mac 쪽 `GET /api/cloud/pair/:id` 가 `awaiting_approval` 이고 `confirmCode` 가 폰 것과 같은지 확인한 뒤 `POST /api/cloud/pair/:id/approve` 를 보낸다(사람이 [허용] 누르는 것 대신).
-  8. 티켓 → `ws` → Noise 핸드셰이크 → `ready` 교환 → `ws.open` 순서로 진행한다.
-  9. 터널 WS 로 `send`(프롬프트 "approve") → `permission_request` 를 받는다 → `permission_response{allow}` 를 보낸다 → `turn_result` 를 받는다.
-  10. 터널로 `POST /api/restart` 를 보내 403 `mac_confirm_required` 인지 본다.
-  11. `relay-e2e: 승인 → allow hook=… mcp=…` 를 출력하고 0 으로 끝난다. 60초 안에 끝나지 않으면 마지막 메시지 12개와 함께 1 로 끝난다.
+  - **페어링 코드(2차 필수 2):** QR 아래에 접힌 [코드로 연결] 을 둔다. 펼치면 `pairCode` 를 고정폭 글꼴로 보여 주고 [복사](`navigator.clipboard.writeText`) 버튼을 둔다. 안내: "홈 화면 앱에서 연결할 때: 이 코드를 복사해 폰의 AI-MSG 앱 › [코드 붙여 넣기] 에 넣으세요(같은 Apple 계정이면 Mac 에서 복사한 것을 iPhone 에서 붙여 넣을 수 있습니다)." 코드는 QR 과 같은 비밀이므로 같은 5분 만료·일회용 규칙을 따르고, 화면 녹화·공유 경고 한 줄을 붙인다. 만료되면 코드도 지운다.
 
-- [ ] **Step 1: 확인** — 다음을 확인한다.
-  - R2 바인딩 API(`get`·`put`·`httpMetadata`)를 Workers 타입 정의와 플러그인 README 로 확인한다.
-  - `wrangler dev` 의 `--persist-to` 플래그와 `wrangler r2 object put` 형태를 확인한다.
-  - `src/ui/ws.ts` 가 쓰는 WebSocket 멤버를 확인한다.
-  - `src/ui/` 가 HTML `style=""`·`<style>` 을 쓰는지(`style-src`) 확인한다.
-  - `navigator.storage.persist` 의 iOS Safari 지원 여부를 MDN 호환표로 확인한다(없으면 호출만 건너뛴다).
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+```ts
+// src/server/cloud/Pairing.test.ts
+it('mac ok → awaiting_approval with the confirm code; nothing trusted until approve()', async () => {
+  const run = await startPairing({ api, state, hostVersion: '1.0.0', relayOrigin: 'https://relay.test', sleep: tick });
+  phone.claim(run.qrUrl);
+  await waitFor(() => run.view().state === 'awaiting_approval');
+  expect(state.get().devices).toEqual([]);
+  expect(api.calls).not.toContain('pairConfirm');
+  expect((run.view() as { confirmCode: string }).confirmCode).toBe(await phone.confirmCode());
+  await run.approve();
+  expect(run.view().state).toBe('paired'); expect(state.get().devices).toHaveLength(1);
+});
+it('deny() rejects in the cloud and trusts nothing', async () => { /* … */ });
+it('mac bad → reject, not trusted', async () => { /* fakeCloudFetch 가 devicePub 를 바꿔치기 */ });
+it('burned in the cloud → burned, never trusted, approve() is refused', async () => { /* … */ });
+it('expires after 5 minutes, also while awaiting approval', async () => { /* … */ });
+it('pairCode equals the #pair= payload of qrUrl and parses back', async () => {
+  const run = await startPairing({ api, state, hostVersion: '1.0.0', relayOrigin: 'https://relay.test', sleep: tick });
+  expect('#pair=' + run.pairCode).toBe(new URL(run.qrUrl).hash);
+  expect(parsePairHash('#pair=' + run.pairCode)).not.toBeNull();
+});
+
+// src/ui/components/PairSheet.test.tsx
+it('shows the QR, counts down, offers a new QR when expired; close returns focus', async () => { /* … */ });
+it('awaiting approval: code + 허용/거부; 허용 is not auto-focused', async () => { /* document.activeElement !== 허용 버튼 */ });
+it('touch targets are 44px on phone', () => { /* .sheet-head 버튼·허용·거부 min-height */ });
+it('코드로 연결: shows the pair code with a copy button; cleared on expiry', async () => { /* clipboard.writeText 스파이, 만료 뒤 코드 텍스트 없음 */ });
+
+// src/ui/components/CloudSection.test.tsx
+it('not linked → 연결하기 → code shown → linked (email)', async () => { /* … */ });
+it('relay mode hides link, pair and revoke', () => { /* … */ });
+```
+
+- [ ] **Step 2: 실패 확인** — `npx vitest run src/server/cloud src/ui/components/CloudSection.test.tsx src/ui/components/PairSheet.test.tsx --maxWorkers=2` 가 FAIL 하는지 본다.
+- [ ] **Step 3: 구현** — 위대로 만든다.
+- [ ] **Step 4: 통과 확인** — 위 명령과 공통 검증 명령 다섯 개를 돌린다.
+- [ ] **Step 5: 화면 확인** — `scripts/render/cloud-section.html`·`pair-sheet.html` 픽스처(합성 이메일 `user@example.test`, 기기 이름 `Phone`, 확인 코드 `123 456` 상태, [코드로 연결] 펼친 상태 포함)로 `scripts/render-check.sh` 를 360·412·1440 폭에서 돌린다.
+- [ ] **Step 6: 커밋** — `feat(cloud): Mac 쪽 QR 페어링 — 확인 코드·[허용]/[거부]·페어링 코드 복사·설정 › 계정 클라우드 행`
+
+---
+
+### Task 5b: 폰 UI 전송 계층 — transport·RelayConnection·PWA 안 페어링·가드
+
+**Files:**
+- Create:
+  - UI 전송·릴레이: `src/ui/relay/keystore.ts`, `src/ui/relay/pairing.ts`, `src/ui/relay/RelayConnection.ts`, `src/ui/relay/tunnelFetch.ts`, `src/ui/relay/tunnelSocket.ts`, `src/ui/relay/blobUrl.ts`, `src/ui/relay/RelayGate.tsx`, `src/ui/relay/PairEntry.tsx`, `src/ui/relay/scan.ts`
+- Modify:
+  - UI: `src/ui/transport.ts`(5a 에서 만든 파일에 나머지), `src/ui/ws.ts`, `src/ui/push.ts`, `src/ui/App.tsx`, `src/ui/sessionApi.ts`, `src/ui/components/{Lightbox,FileMenu,ShareMenu}.tsx`, `fetchFn = fetch` 기본값을 가진 파일 전부(`sessionApi.ts`·`pins.ts`·`upload.ts`·`components/{ActivityButton,FolderPicker,ComposerSuggest,MemoryEditor,SessionCwdDialog,Sidebar,ActivitySheet,UsageSheet,Highlights,UsageView}.tsx` 와 가드 테스트가 찾는 나머지)
+- Test: `src/ui/transport.test.ts`, `src/ui/transport.guard.test.ts`, `src/ui/relay/pairing.test.ts`, `src/ui/relay/RelayConnection.test.ts`, `src/ui/relay/tunnelFetch.test.ts`, `src/ui/relay/RelayGate.test.tsx`, `src/ui/relay/PairEntry.test.tsx`
+
+**Interfaces:**
+- `transport.ts`:
+  - `isRelayMode(): boolean`(= `__AIMSG_RELAY__`)
+  - `apiFetch(input: string, init?: RequestInit): Promise<Response>` — 릴레이 모드면 `tunnelFetch`, 아니면 `fetch(input, { credentials: 'same-origin', ...init })`.
+  - `openSocket(): WebSocketLike` — 릴레이 모드면 `connection.openStream()`, 아니면 `new WebSocket(`${proto}://${location.host}/ws`)`.
+  - `setRelayConnection(c: RelayConnection | null): void`
+- `keystore.ts`:
+  - `type RelayIdentity = { deviceId: string; deviceToken: string; hostId: string; hostPub: string; hostVersion: string; key: StaticKey }`
+  - `interface KeyStore { load(): Promise<RelayIdentity | null>; save(i: RelayIdentity): Promise<void>; clear(): Promise<void> }`
+  - 구현은 `indexedDbKeyStore()`(DB `aimsg-relay`, 저장소 `identity`, 추출 불가 `CryptoKey` 를 구조화 복제로 저장)와 `memoryKeyStore()` 둘이다. 저장에 성공하면 `navigator.storage?.persist?.()` 를 한 번 부른다(iOS 저장소 삭제 완화, 권장 7).
+- `relay/pairing.ts`:
+  - `handlePairString(o: { payload: string /* "2.<pairingId>.<claim>.<auth>.<hostPub>" */; store: KeyStore; fetch?: typeof fetch; deviceName: string; hostVersion: string }): Promise<PairResult>` — QR·코드 붙여 넣기·앱 안 스캔이 모두 이 함수를 지난다. 앞뒤 공백·줄바꿈·`#pair=` 접두사·전체 주소(`https://…/#pair=…`)를 받아 `parsePairHash('#pair=' + payload)` 로 정규화한다. 형식이 틀리면 `{ state: 'error', code: 'bad_code' }`.
+  - `handlePairHash(o: { hash: string; … })` 는 `#pair=` 가 있으면 `handlePairString` 을 부르고 `history.replaceState` 로 조각을 지운다(오류여도 지운다). 없으면 `{ state: 'none' }`.
+  - `type PairResult = { state: 'claimed'; confirmCode: string } | { state: 'none' } | { state: 'error'; code: 'pairing_burned' | 'already_paired' | 'device_limit' | 'expired' | 'bad_code' | 'network' }`
+  - `generateStaticKey({ extractable: false })` → `pairingMac` → `POST /v1/pair/claim`(relay 출처, 쿠키 없음). 본문에 `auth` 를 싣지 않는다.
+  - **재전송(2차 권장 — 멱등 claim):** 네트워크 오류·시간 초과면 **같은 키·같은 본문**으로 2초 간격 최대 3번 다시 보낸다(키를 새로 만들지 않는다). 그래서 응답이 사라져도 클라우드가 같은 `devicePub` 으로 보고 같은 `deviceId` 와 새 토큰을 준다.
+  - 성공하면 identity 를 저장하고 `confirmCode` 를 돌려준다.
+  - `deviceName` 은 `navigator.userAgentData?.platform ?? 'Phone'` 에서 만든 짧은 이름이다. 홈 화면 앱(`display-mode: standalone`)이면 뒤에 " (앱)" 을 붙여 Mac 목록에서 Safari 항목과 구별한다.
+- `relay/scan.ts`: `canScan(): Promise<boolean>`(= `'BarcodeDetector' in window` 이고 `BarcodeDetector.getSupportedFormats()` 에 `qr_code` 가 있음), `scanOnce(video: HTMLVideoElement, signal: AbortSignal): Promise<string>`(`getUserMedia({ video: { facingMode: 'environment' } })` → 프레임마다 `detect` → 첫 `rawValue`). 외부 라이브러리 없음. BarcodeDetector 의 iOS 지원 여부는 **착수 시 확인**(Task 5 앞 실기 확인 결과)이고, 없으면 `canScan()` 이 false 라 [스캔] 을 숨긴다.
+- `relay/PairEntry.tsx`(2차 필수 2 — 이미 설치한 PWA 안에서 페어링): `pairing_needed`·`revoked` 화면 안에 둔다.
+  - [코드 붙여 넣기]: 여러 줄 입력칸(`autocapitalize="off"`, `autocorrect="off"`, `spellcheck=false`, `inputmode="text"`) + [연결]. 붙여 넣으면 바로 `handlePairString` 을 부른다.
+  - [스캔]: `canScan()` 이 참일 때만 보인다. 카메라 미리보기 시트를 열고 읽은 값을 `handlePairString` 에 넘긴다. 닫으면 스트림을 멈춘다.
+  - 결과 `claimed` 면 `RelayConnection.start()` 를 다시 불러 `awaiting_mac` 으로 간다. 오류 코드별 문구는 RelayGate 와 같다(`bad_code`: "코드 형식이 맞지 않습니다. Mac 에서 [복사] 한 코드를 그대로 붙여 넣으세요.").
+- `RelayConnection.ts`: `class RelayConnection`
+  - 생성자: `constructor(o: { store: KeyStore; relayOrigin: string; uiVersion: string; WebSocketImpl?; fetch?; navigate?: (url: string) => void })`
+  - 상태: `'pairing_needed' | 'awaiting_mac' | 'connecting' | 'host_offline' | 'up' | 'not_entitled' | 'revoked'`
+  - 메서드: `start(); stop(); onState(cb); http(req): Promise<Response>; openStream(): WebSocketLike`
+  - 흐름: `POST /v1/relay/ticket` → `wss://<relay>/relay/device?ticket=` → `deviceHandshake({ self: identity.key, hostPublic, deviceId, hostId, uiVersion })` → `hs_init` → `hs_ack` → `ready` 보내기 → 호스트 `ready` 받기(5초, 아니면 4408 로 닫고 재시도) 순서다.
+  - 티켓 응답: 403 `pending_confirm` → `awaiting_mac`(3초마다 다시), 401 → `revoked`(identity 삭제), 402 → `not_entitled`. **402 재시도는 5초부터 두 배씩, 최대 5분**이고 앱이 보이게 되면(`visibilitychange`) 즉시 다시 묻는다(2차 필수 1 — 결제 직후 Mac 은 이미 붙어 있으므로 폰이 수 초 안에 티켓을 받는다. 옛 값은 5분 고정이었다).
+  - 버전: **호스트 `ready` 를 연 뒤에만** 본다. `hostVersion !== uiVersion` 이고 `isSemver(hostVersion)` 이면 `localStorage['aimsg.hostVersion'] = hostVersion` 후 `navigate('/v/<hostVersion>/' + location.search)`. semver 가 아니면 이동하지 않고 오류 상태를 보인다(필수 4).
+  - 봉투 `close` 를 받거나 4403 으로 닫히면 `revoked`(identity 삭제).
+  - 재연결: 1→30초 백오프. 앱이 보이게 될 때(`visibilitychange`)는 즉시 시도한다.
+- `tunnelSocket.ts`: `WebSocketLike` 는 `readyState`·`send`·`close`·`onopen`·`onmessage`·`onclose`·`onerror` 만 갖는다. `src/ui/ws.ts` 가 쓰는 것이 이것뿐인지 Step 1 에서 확인하고, 더 있으면 같이 흉내 낸다. 32KiB 를 넘는 `send` 는 `ws.msg{more:true}` 조각으로 나눈다(`chunkString`).
+- `blobUrl.ts`: `useApiUrl(path: string | null): string | null` — 일반 모드는 그대로 돌려준다. 릴레이 모드는 `apiFetch` → `URL.createObjectURL` 하고, 언마운트 때 `revokeObjectURL` 한다. `openApiUrl(path)` 는 릴레이 모드에서 blob 을 새 탭으로 연다(`FileMenu.tsx:246`).
+- `ShareMenu.tsx:13`: 릴레이 모드의 세션 링크는 `${location.origin}/v/<ver>/?session=<id>` 다.
+- `push.ts`(Mac VAPID 직접 푸시, 권장 2): `/api/push/key`·`/api/push/subscribe` 를 `apiFetch` 로 부른다. 릴레이 모드에서도 Mac 의 VAPID 공개키로 relay 출처의 SW(`/sw.js`)에서 구독하고, 구독(endpoint)은 터널로 Mac 에 저장된다. Mac 의 기존 `PushNotifier` 가 푸시 서비스로 직접 보낸다(클라우드 경유 없음, Web Push 암호화로 푸시 서비스도 내용을 못 읽는다). 알림 클릭 주소는 상대 경로라 relay 출처의 `/` → `boot.js` 가 버전 경로로 옮긴다. iOS 는 홈 화면에 추가한 PWA 에서만 웹 푸시가 되므로(Apple 문서 기준, 실기 확인은 사용자 몫) RelayGate 의 알림 켜기 안내에 그 문구를 넣는다.
+- `RelayGate.tsx`: 릴레이 모드에서 `App.tsx` 가 `Login` 대신 그린다. 상태별 화면은 다음과 같고, `up` 이면 앱을 그대로 보여 준다.
+  - `awaiting_mac`: 확인 코드 6자리를 크게, "Mac 화면의 숫자와 같으면 Mac 에서 [허용] 을 누르세요. 다르면 [거부] 하세요."
+  - `pairing_needed`·`revoked`(재페어링 흐름, 권장 7 + 2차 필수 2): "이 폰의 연결 정보가 없습니다(처음이거나, 브라우저 저장소가 지워졌거나, 기기가 해제됨). Mac 에서 설정 › 계정 › 폰 연결 → [QR 보기] 를 여세요." 아래에 `PairEntry`([코드 붙여 넣기]·[스캔]). 홈 화면 앱이면 "카메라 앱으로 QR 을 찍으면 Safari 로 열려 이 앱에는 연결되지 않습니다 — 여기서 붙여 넣거나 스캔하세요" 를 덧붙인다. "예전 기기 항목은 Mac 에서 해제해 두세요."
+  - Safari(홈 화면 앱 아님)에서 `#pair=` 로 열린 iOS: Task 5 앞 실기 확인 Step 3 의 결정대로 [이 브라우저에서 연결]·[홈 화면 앱에서 연결하는 법] 순서를 정한다.
+  - 페어링 오류 `device_limit`: "기기는 3대까지입니다. Mac 설정이나 계정 페이지에서 안 쓰는 기기를 해제하세요." `pairing_burned`: "이 QR 은 두 곳에서 쓰여 폐기됐습니다. 새 QR 을 만드세요." `already_paired`: "이 QR 로는 이미 연결이 끝났습니다. 이 폰에 연결 정보가 없으면 Mac 에서 새 QR 을 만드세요."
+  - `host_offline`: Mac 이 꺼져 있거나 잠들었음. `not_entitled`: 구독 필요 → app 출처 계정 페이지를 **새 탭 링크**로.
+- `transport.guard.test.ts`: `src/ui/**/*.{ts,tsx}` 가운데 테스트가 아니고, `transport.ts`·`relay/` 도 아닌 파일에서 `/\bfetch\(/`·`/=\s*fetch\b/`·`/new WebSocket\(/` 이 나오면 실패한다.
+
+- [ ] **Step 1: 확인** — `src/ui/ws.ts` 가 쓰는 WebSocket 멤버를 확인한다. `navigator.storage.persist` 와 `BarcodeDetector` 의 iOS Safari 지원 여부를 MDN 호환표와 Task 5 앞 실기 확인 결과로 확인한다(없으면 호출·버튼을 건너뛴다).
 - [ ] **Step 2: 실패하는 테스트 작성**
 
 ```ts
@@ -1327,7 +1543,16 @@ it('a forged ready (not decryptable) never moves the page', async () => {
 });
 it('pending_confirm → awaiting_mac and polls every 3 s', async () => { /* 403 두 번 → 200 → connecting */ });
 it('401 on ticket or 4403 → revoked and identity cleared', async () => { /* store.load() === null */ });
-it('402 → not_entitled, retried after 5 min', async () => { /* … */ });
+it('402 → not_entitled, retried after 5 s, 10 s, 20 s … capped at 5 min; visibilitychange retries at once (2차 필수 1)', async () => {
+  const { conn, ticket, clock } = await setupConn({ ticketStatus: 402 });
+  conn.start(); await ticket.called(1);
+  for (const [n, sec] of [[2, 5], [3, 10], [4, 20], [5, 40], [6, 80], [7, 160], [8, 300], [9, 300]] as const) {
+    clock.advance(sec * 1000 - 1); expect(ticket.calls).toBe(n - 1);
+    clock.advance(1); await ticket.called(n);
+  }
+  ticket.respond(200); document.dispatchEvent(new Event('visibilitychange'));
+  await waitFor(() => conn.state === 'connecting' || conn.state === 'up');
+});
 it('streams: ws.open/ws.msg map to a WebSocketLike the app can use; big sends are chunked', async () => { /* 100 KiB send → ws.msg more:true ×3 + 끝 */ });
 
 // src/ui/relay/pairing.test.ts
@@ -1336,36 +1561,92 @@ it('#pair= → claim with mac over devicePub, saves identity, returns the confir
 });
 it('pairing_burned / device_limit come back as error codes and the hash is still cleared', async () => { /* … */ });
 it('the stored device key is non-extractable', async () => { /* (await store.load())!.key.privateKey.extractable === false */ });
+it('pair string: accepts the bare code, #pair=…, or the full URL with whitespace; rejects junk as bad_code', async () => { /* 세 형태 → 같은 claim 본문, 'abc' → bad_code */ });
+it('network error resends the same devicePub (idempotent claim), never a new key', async () => {
+  /* fetch 가 첫 번째는 throw, 두 번째는 200 → 두 본문의 devicePub·mac 이 같다 */
+});
 
 // src/ui/relay/RelayGate.test.tsx
 it('awaiting_mac shows the 6-digit code', () => { /* getByText('123 456') */ });
 it('revoked shows the re-pair steps', () => { /* '새 QR' 안내 */ });
+it('pairing_needed in a home-screen app shows paste and (if supported) scan', () => { /* canScan false → [스캔] 없음, [코드 붙여 넣기] 있음 */ });
 
-// src/server/cloud/Pairing.test.ts
-it('mac ok → awaiting_approval with the confirm code; nothing trusted until approve()', async () => {
-  const run = await startPairing({ api, state, hostVersion: '1.0.0', relayOrigin: 'https://relay.test', sleep: tick });
-  phone.claim(run.qrUrl);
-  await waitFor(() => run.view().state === 'awaiting_approval');
-  expect(state.get().devices).toEqual([]);
-  expect(api.calls).not.toContain('pairConfirm');
-  expect((run.view() as { confirmCode: string }).confirmCode).toBe(await phone.confirmCode());
-  await run.approve();
-  expect(run.view().state).toBe('paired'); expect(state.get().devices).toHaveLength(1);
-});
-it('deny() rejects in the cloud and trusts nothing', async () => { /* … */ });
-it('mac bad → reject, not trusted', async () => { /* fakeCloudFetch 가 devicePub 를 바꿔치기 */ });
-it('burned in the cloud → burned, never trusted, approve() is refused', async () => { /* … */ });
-it('expires after 5 minutes, also while awaiting approval', async () => { /* … */ });
+// src/ui/relay/PairEntry.test.tsx
+it('pasting a code calls handlePairString and moves to awaiting_mac', async () => { /* … */ });
+it('scan button hidden when BarcodeDetector is missing; scan stops the camera on close', async () => { /* getUserMedia 스파이, track.stop 호출 */ });
+```
 
-// src/ui/components/PairSheet.test.tsx
-it('shows the QR, counts down, offers a new QR when expired; close returns focus', async () => { /* … */ });
-it('awaiting approval: code + 허용/거부; 허용 is not auto-focused', async () => { /* document.activeElement !== 허용 버튼 */ });
-it('touch targets are 44px on phone', () => { /* .sheet-head 버튼·허용·거부 min-height */ });
+- [ ] **Step 3: 실패 확인** — `npx vitest run src/ui/relay src/ui/transport.test.ts src/ui/transport.guard.test.ts --maxWorkers=2` 가 FAIL 하는지 본다.
+- [ ] **Step 4: 구현** — 위대로 만든다.
+  - `fetchFn = fetch` 기본값을 모두 `fetchFn = apiFetch` 로 바꾼다. 테스트가 `fetchFn` 을 주입하는 방식은 그대로다.
+  - `Lightbox.tsx` 의 `attachmentUrl` 을 쓰는 곳은 `useApiUrl(attachmentUrl(id))` 로, `sessionApi.ts:143` 의 `rawFileUrl` 을 쓰는 이미지·다운로드는 `useApiUrl`/`openApiUrl` 로 바꾼다.
+  - `App.tsx` 는 `isRelayMode()` 면 `RelayGate` 로 감싸고 `Login` 을 그리지 않는다.
+  - `push.ts` 의 `post` 는 `apiFetch` 를 쓴다.
+- [ ] **Step 5: 통과 확인** — 위 명령과 공통 검증 명령 다섯 개를 돌린다. `npx vite build --mode relay --base /v/0.0.0-test/ --outDir "$O"`(`O=$(mktemp -d)`)도 성공하고, `grep -rEo 'https?://[^"'"'"' )]+' "$O"` 에 외부 출처가 없는지 본다(라이브러리 주석·SVG 네임스페이스 `http://www.w3.org/` 는 허용 목록).
+- [ ] **Step 6: 커밋** — `feat(cloud): 폰 UI 터널 전송 — apiFetch·터널 WS·blob 자산·RelayConnection(402 는 5초부터 최대 5분)·PWA 안 페어링(코드 붙여 넣기·스캔)·Mac 직접 푸시`
 
-// src/ui/components/CloudSection.test.tsx
-it('not linked → 연결하기 → code shown → linked (email)', async () => { /* … */ });
-it('relay mode hides link, pair and revoke', () => { /* … */ });
+---
 
+### Task 5c: 클라우드 UI 배포 — `ui.ts`·boot 폴백·릴리스 스크립트·e2e 이정표 "폰에서 릴레이 경유 승인 성공"
+
+**Files:**
+- Create:
+  - 클라우드: `cloud/src/ui.ts`, `cloud/static/boot.js`, `cloud/scripts/publish-ui.sh`
+  - 릴리스: `scripts/release.sh`
+  - 스모크: `scripts/smoke/relay-e2e.sh`, `scripts/smoke/relay-phone.ts`
+- Modify: `cloud/src/index.ts`, `cloud/wrangler.jsonc`(R2 `UI`, 정적 자산 `assets: { directory: "./static", binding: "ASSETS", run_worker_first: true }` — 모든 요청이 Worker 의 출처 검사를 먼저 거친다), `cloud/src/env.ts`(`UI: R2Bucket`, `ASSETS: Fetcher`)
+- Test: `cloud/test/ui.test.ts`, `cloud/test/boot.test.ts`
+
+**Interfaces:**
+- `cloud/src/ui.ts` — **relay 출처 전용**(D18). R2 바인딩 `UI`(`get(key)` → 본문·`httpMetadata`. R2 Workers API 형태 **(미확인)**, Step 1 에서 확인):
+  - `GET /boot.js` → `env.ASSETS.fetch(new Request(new URL('/boot.js', req.url)))` 응답에 `relayHeaders` 를 덧씌워 준다(`no-cache`). app 출처에서는 404.
+  - `GET /` → 부트스트랩 HTML. 인라인 스크립트 없이 `<script type="module" src="/boot.js">` 를 쓴다.
+  - `GET /version.json` → R2 `latest/version.json`(`{"version":"<semver>"}`)을 `no-cache` 로 준다. 없으면 404.
+  - `GET /v/<ver>/*` → R2 `v/<ver>/…`(`<ver>` 는 `isSemver`). 없으면 404. 해시가 붙은 자산은 `cache-control: public, max-age=31536000, immutable` 이고, `index.html` 은 `no-store` 다.
+  - `GET /sw.js`·`/manifest.webmanifest`·`/icons/*` → R2 `latest/…` 를 `no-cache` 로 준다.
+  - 머리: `relayHeaders`(Task 2) — `Set-Cookie` 없음, `script-src 'self'`, 제3자 출처 없음. `connect-src 'self' wss://<relay host>`. `style-src` 는 기존 UI 가 HTML `style=""` 속성이나 `<style>` 을 쓰는지 Step 1 에서 확인하고, 쓰면 `'unsafe-inline'` 을 `style-src` 에만 더한다(`script-src` 에는 절대 더하지 않는다).
+- `cloud/static/boot.js`(ES 모듈, 2차 권장 — 버전 폴백):
+  - `export async function pickTarget(o: { stored: string | null; exists: (ver: string) => Promise<boolean>; latest: () => Promise<string | null> }): Promise<string | null>`
+    1. `stored`(`localStorage['aimsg.hostVersion']`)가 semver 이고 `exists(stored)`(= `fetch('/v/<ver>/index.html', { method: 'HEAD' })` 가 200)면 `stored`.
+    2. 아니면 `latest()`(= `/version.json` 의 `version`, semver 검사)를 쓴다. Mac 이 아직 올라오지 않은 버전이거나 `publish-ui.sh` 가 빠진 버전이어도 폰은 최신 UI 로 열리고, 핸드셰이크 뒤 `ready` 의 `hostVersion` 이 있으면 RelayConnection 이 그쪽으로 옮긴다(없으면 그대로 머문다 — 이동 전에 `exists` 를 다시 본다).
+    3. 둘 다 없으면 null → "AI-MSG 를 불러오지 못했습니다. 잠시 뒤 다시 여세요." 와 [다시 시도].
+  - 아래쪽 실행부는 `typeof document !== 'undefined'` 일 때만 돈다: `pickTarget` → `location.replace('/v/<ver>/' + location.search + location.hash)`(`#pair=` 조각을 그대로 넘긴다). 저장된 값이 없는 첫 방문·홈 화면 앱도 최신 UI 의 `RelayGate`(페어링 화면, 5b)로 간다.
+  - RelayConnection 의 버전 이동(5b)도 `navigate` 전에 같은 `exists` 를 확인하고, 없으면 지금 버전에 머물며 "Mac 버전 UI 를 아직 받을 수 없어 최신 UI 로 연결했습니다" 한 줄을 띄운다.
+- `cloud/scripts/publish-ui.sh <ver> [--latest] [--dry-run]` — `npx vite build --mode relay --base /v/<ver>/ --outDir "$(mktemp -d)"` 결과를 `wrangler r2 object put` 으로 `v/<ver>/…` 에 올린다. `--latest` 면 빌드·`v/<ver>/` 업로드를 하지 않고, 이미 올라간 `v/<ver>/index.html` 이 있는지 확인한 뒤 `sw.js`·`manifest.webmanifest`·`icons/*` 와 `version.json`(`{"version":"<ver>"}`)만 `latest/…` 에 올린다(없으면 멈춘다). `--dry-run` 은 올릴 키 목록만 출력한다.
+- `scripts/release.sh <ver> [--dry-run]`(2차 권장 — npm 릴리스와 UI 게시를 한 번에, 빠뜨리지 않게). 기존 릴리스 절차(`package.json` scripts·`docs/` 의 배포 문서)가 있는지 **착수 시 확인**하고, 있으면 그 절차를 이 스크립트가 부르게 한다. 순서:
+  1. `node -p "require('./package.json').version"` 이 `<ver>` 와 같고 `git status --short` 가 비었는지 본다. 아니면 멈춘다.
+  2. `cloud/scripts/publish-ui.sh <ver>` — 새 버전 UI 를 먼저 올린다(`latest` 는 아직 안 바꿈). 새 Mac 이 나와도 폰이 `/v/<ver>/` 를 찾을 수 있게 하려는 순서다.
+  3. `npm publish`(기존 절차가 있으면 그것).
+  4. `cloud/scripts/publish-ui.sh <ver> --latest` — `latest/version.json` 을 새 버전으로.
+  5. 2 가 실패하면 3·4 를 하지 않는다. 3 이 실패하면 4 를 하지 않는다(새 UI 는 올라가 있지만 `latest` 는 그대로라 해가 없다).
+  - `--dry-run` 은 각 단계의 명령을 출력만 하고(`publish-ui.sh --dry-run`, `npm publish --dry-run`) 아무것도 올리지 않는다. 실제 실행은 사용자 몫(배포)이다.
+- `scripts/smoke/relay-e2e.sh`(로컬만, 저장소 `dist/` 무변경)
+  1. 임시 디렉터리 `T` 를 만든다. 테스트용 세션·이메일 해시 비밀을 생성해 `cloud/.dev.vars` 를 쓴다(gitignore, 끝나면 `trap` 으로 지움). `PUBLIC_ORIGIN=http://127.0.0.1:$CP`, `RELAY_ORIGIN=http://localhost:$CP`(호스트 이름이 달라 두 출처가 갈린다), `EMAIL_MODE=log`, `DEV_ROUTES=1`.
+  2. `npx --prefix cloud wrangler dev --local --port $CP --persist-to "$T/wr"` 를 띄운다. `--persist-to` 플래그는 **(미확인)** 이라 Step 1 에서 `wrangler dev --help` 로 확인한다. 폰 UI 는 `publish-ui.sh` 대신 테스트 객체 하나만 로컬 R2 에 넣는다(스모크는 가상 폰이라 UI 자산이 필요 없다).
+  3. 계획 ② 의 `scripts/smoke/fake-claude.mjs` 를 `"$T/bin/claude"` 로 감싸 PATH 앞에 둔다.
+  4. 저장소 서버를 띄운다: `DECK_CONFIG_DIR="$T/conf" HOME="$T/home" DECK_LOOPBACK_ONLY=1 DECK_PORT=$DP DECK_CLOUD_URL=http://127.0.0.1:$CP DECK_RELAY_URL=http://localhost:$CP npx tsx src/server/main.ts`
+  5. `npx tsx scripts/smoke/relay-phone.ts $DP $CP "$T/conf/token" "$T/work"` 를 실행한다.
+- `scripts/smoke/relay-phone.ts`
+  1. 로컬 API 에 로그인한다(`turn.mjs` 와 같은 방식).
+  2. `POST /api/cloud/link/start` 를 보낸다.
+  3. 클라우드 `/v1/auth/magic` 을 보내고 `/dev/outbox` 에서 토큰을 꺼내 `POST /auth/verify` 로 로그인한다.
+  4. `POST /v1/host/link/approve` 를 보내고, `/api/cloud/status` 가 `linked`·`relay:'up'` 이 될 때까지 기다린다(DO 의 첫 `{t:'ent',ok:true}` 를 받은 뒤라야 `up`).
+  5. `POST /api/cloud/pair/start` → QR 주소를 파싱한다.
+  6. **가상 폰**이 공유 `noise.ts`·`pairing.ts` 로 claim 하고 자기 쪽 `confirmCode` 를 계산한다. 티켓이 403 `pending_confirm` 인지 본다.
+  7. Mac 쪽 `GET /api/cloud/pair/:id` 가 `awaiting_approval` 이고 `confirmCode` 가 폰 것과 같은지 확인한 뒤 `POST /api/cloud/pair/:id/approve` 를 보낸다(사람이 [허용] 누르는 것 대신).
+  8. 티켓 → `ws` → Noise 핸드셰이크 → `ready` 교환 → `ws.open` 순서로 진행한다.
+  9. 터널 WS 로 `send`(프롬프트 "approve") → `permission_request` 를 받는다 → `permission_response{allow}` 를 보낸다 → `turn_result` 를 받는다.
+  10. 터널로 `POST /api/restart` 를 보내 403 `mac_confirm_required` 인지 본다.
+  11. `relay-e2e: 승인 → allow hook=… mcp=…` 를 출력하고 0 으로 끝난다. 60초 안에 끝나지 않으면 마지막 메시지 12개와 함께 1 로 끝난다.
+
+- [ ] **Step 1: 확인** — 다음을 확인한다.
+  - R2 바인딩 API(`get`·`put`·`httpMetadata`)를 Workers 타입 정의와 플러그인 README 로 확인한다.
+  - `wrangler dev` 의 `--persist-to` 플래그와 `wrangler r2 object put` 형태를 확인한다.
+  - `src/ui/` 가 HTML `style=""`·`<style>` 을 쓰는지(`style-src`) 확인한다.
+  - 저장소에 기존 릴리스 스크립트·문서가 있는지 확인한다(`release.sh` 가 감쌀 대상).
+- [ ] **Step 2: 실패하는 테스트 작성**
+
+```ts
 // cloud/test/ui.test.ts — R2 에 테스트 객체를 put 한 뒤
 it('/v/<ver>/ serves the versioned build on the relay origin, / boots, /sw.js from latest', async () => { /* … */ });
 it('UI routes are 404 on the app origin', async () => { expect((await call('/v/1.0.0/index.html')).status).toBe(404); });
@@ -1377,18 +1658,28 @@ it('no cookie, strict CSP with no third-party origin', async () => {
   expect(csp.match(/https?:\/\/[^\s;']+/g) ?? []).toEqual([]);
 });
 it('non-semver version path is 404', async () => { expect((await call('/v/..%2f/index.html', {}, RELAY)).status).toBe(404); });
+it('/version.json comes from R2 latest/ with no-cache; 404 when missing', async () => { /* … */ });
+
+// cloud/test/boot.test.ts — boot.js 의 순수 함수만
+import { pickTarget } from '../static/boot.js';
+it('stored version that exists wins', async () => {
+  expect(await pickTarget({ stored: '1.2.3', exists: async () => true, latest: async () => '1.3.0' })).toBe('1.2.3');
+});
+it('stored version missing on R2 falls back to latest (2차 권장)', async () => {
+  expect(await pickTarget({ stored: '1.2.3', exists: async () => false, latest: async () => '1.3.0' })).toBe('1.3.0');
+});
+it('no stored version (first visit / home-screen app) goes to latest; junk is ignored', async () => {
+  expect(await pickTarget({ stored: null, exists: async () => true, latest: async () => '1.3.0' })).toBe('1.3.0');
+  expect(await pickTarget({ stored: '../x', exists: async () => true, latest: async () => '1.3.0' })).toBe('1.3.0');
+  expect(await pickTarget({ stored: null, exists: async () => true, latest: async () => 'nope' })).toBeNull();
+});
 ```
 
-- [ ] **Step 3: 실패 확인** — `npx vitest run src/server/cloud src/ui/relay src/ui/transport.test.ts src/ui/transport.guard.test.ts src/ui/components/CloudSection.test.tsx src/ui/components/PairSheet.test.tsx --maxWorkers=2` 와 `npm --prefix cloud test` 가 FAIL 하는지 본다.
+- [ ] **Step 3: 실패 확인** — `npm --prefix cloud test` 가 FAIL 하는지 본다.
 - [ ] **Step 4: 구현** — 위대로 만든다.
-  - `fetchFn = fetch` 기본값을 모두 `fetchFn = apiFetch` 로 바꾼다. 테스트가 `fetchFn` 을 주입하는 방식은 그대로다.
-  - `Lightbox.tsx` 의 `attachmentUrl` 을 쓰는 곳은 `useApiUrl(attachmentUrl(id))` 로, `sessionApi.ts:143` 의 `rawFileUrl` 을 쓰는 이미지·다운로드는 `useApiUrl`/`openApiUrl` 로 바꾼다.
-  - `App.tsx` 는 `isRelayMode()` 면 `RelayGate` 로 감싸고 `Login` 을 그리지 않는다.
-  - `push.ts` 의 `post` 는 `apiFetch` 를 쓴다.
-- [ ] **Step 5: 통과 확인** — 위 명령, cloud 검증 세 개, 공통 검증 명령 다섯 개를 돌린다. `npx vite build --mode relay --base /v/0.0.0-test/ --outDir "$O"`(`O=$(mktemp -d)`)도 성공하고, `grep -rEo 'https?://[^"'"'"' )]+' "$O"` 에 외부 출처가 없는지 본다(라이브러리 주석·SVG 네임스페이스 `http://www.w3.org/` 는 허용 목록).
+- [ ] **Step 5: 통과 확인** — cloud 검증 세 개와 공통 검증 명령 다섯 개를 돌린다. `bash scripts/release.sh "$(node -p "require('./package.json').version")" --dry-run` 이 ① UI 게시 ② npm publish ③ latest 갱신 순서의 명령만 출력하고 0 으로 끝나는지 본다(작업 트리가 깨끗할 때).
 - [ ] **Step 6: 이정표 확인** — `bash scripts/smoke/relay-e2e.sh` 가 `relay-e2e: 승인 → allow …` 를 출력하고 0 으로 끝나는지 본다. 실행 중인 9320 서버에는 아무것도 보내지 않는다.
-- [ ] **Step 7: 화면 확인** — `scripts/render/cloud-section.html`·`pair-sheet.html` 픽스처(합성 이메일 `user@example.test`, 기기 이름 `Phone`, 확인 코드 `123 456` 상태 포함)로 `scripts/render-check.sh` 를 360·412·1440 폭에서 돌린다.
-- [ ] **Step 8: 커밋** — `feat(cloud): QR 페어링(확인 코드·Mac 허용)·폰 UI 터널 전송(apiFetch·터널 WS·blob 자산)·relay 출처의 버전별 UI·Mac 직접 푸시 — 폰에서 릴레이 경유 승인 e2e`
+- [ ] **Step 7: 커밋** — `feat(cloud): relay 출처의 버전별 UI(boot 최신 폴백)·릴리스 스크립트(UI 먼저 → npm → latest)·폰에서 릴레이 경유 승인 e2e`
 
 ---
 
@@ -1405,15 +1696,15 @@ it('non-semver version path is 404', async () => { expect((await call('/v/..%2f/
 - `[app] GET /v1/entitlement`(host Bearer) → `EntitlementRes = { plan: 'pro' | 'trial' | 'comp' | 'none'; st: 'active' | 'trialing' | 'past_due' | 'canceled' | 'none'; untilMs: number; checkedAt: number }`.
   - `entitledState(db, userId, now)` 를 그대로 옮기고 `checkedAt = now` 를 붙인다. `cache-control: no-store`.
   - 해제된 호스트·틀린 토큰은 401 `{code:'revoked'}`. 호스트당 분당 6회(넘으면 429).
-- `CloudApi.entitlement(token): Promise<EntitlementRes>` — 401 이면 `CloudAuthError`(Task 4 의 기존 처리로 `unlinked`).
+- `CloudApi.entitlement(token): Promise<EntitlementRes>` — 401 이면 `CloudAuthError`(Task 4a 의 기존 처리로 `unlinked`).
 - `PlanView.ts`: `class PlanView`
   - 생성자: `constructor(o: { api: CloudApi; state: CloudState; relay: { recheck(): void }; now?: () => number; setTimer?: typeof setTimeout })`
   - 메서드: `start()`(연결돼 있으면 즉시 한 번, 그 뒤 6시간 ±30분마다), `refresh(): Promise<EntitlementRes | null>`, `get(): EntitlementRes | null`, `stop()`
   - 새 값을 `state.plan` 에 저장한다. 네트워크·5xx 실패면 저장된 값을 그대로 둔다(표시는 `checkedAt` 으로 "마지막 확인 <시각>").
-  - `plan`·`st`·`untilMs` 중 하나라도 바뀌고 새 `untilMs > now` 면 `relay.recheck()` 를 부른다(Task 4 — 결제 직후 5분 대기 없이 릴레이가 붙는다).
+  - `plan`·`st`·`untilMs` 중 하나라도 바뀌고 새 `untilMs > now` 면 `relay.recheck()` 를 부른다(Task 4a — 붙어 있으면 `{"t":"recheck"}` 를 보내고, 끊겨 대기 중이면 즉시 다시 붙는다). 반대로 RelayClient 의 `'entitlement'` 이벤트(DO 의 `{t:'ent'}`)가 오면 `PlanView` 를 곧바로 다시 가져온다(2차 필수 1 — 웹훅 → recheck → 설정 화면까지 수 초).
   - 이 값으로 아무것도 막지 않는다. 테스트로 고정한다(아래 "표시만" 테스트).
 - `POST /api/cloud/plan/refresh`(쿠키·Origin) → `EntitlementRes | null`. 설정 › 계정을 열 때 UI 가 한 번 부른다. 터널로 오면 `relayPathPolicy` 가 막는다(`/api/cloud/*` 규칙 그대로).
-- `CloudStatus.plan`(Task 4 타입)은 `PlanView.get()` 이다.
+- `CloudStatus.plan`(Task 4b 타입)은 `PlanView.get()` 이다.
 - `CloudSection.tsx` 요금제 행 문구:
   - `none`: "Community — 폰 릴레이는 Pro 에서" (+ Task 10 의 [Pro 구독])
   - `trial`: "체험 중 · N일 남음"(N = `ceil((untilMs - now) / 1일)`)
@@ -1522,14 +1813,16 @@ VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CASE WHEN ?4 = 'past_due' THEN ?8 END, ?9, ?
 ON CONFLICT(id) DO UPDATE SET
   user_id = COALESCE(excluded.user_id, subscriptions.user_id),
   customer_id = excluded.customer_id, status = excluded.status, price_id = excluded.price_id,
-  period_end = excluded.period_end, canceled_at = excluded.canceled_at,
+  period_end = COALESCE(excluded.period_end, subscriptions.period_end), canceled_at = excluded.canceled_at,
   past_due_since = CASE WHEN excluded.status = 'past_due' THEN COALESCE(subscriptions.past_due_since, excluded.last_event_at) END,
-  scheduled_cancel = excluded.scheduled_cancel, last_event_at = excluded.last_event_at, updated_at = excluded.updated_at
+  scheduled_cancel = CASE WHEN excluded.status = 'canceled' THEN MAX(subscriptions.scheduled_cancel, excluded.scheduled_cancel) ELSE excluded.scheduled_cancel END,
+  last_event_at = excluded.last_event_at, updated_at = excluded.updated_at
 WHERE excluded.last_event_at >= subscriptions.last_event_at
 ```
 
     - `?8` 은 이벤트의 `occurred_at`(ms)이다. 저장된 `last_event_at` 이 더 크면 `outcome:'stale'`(SELECT 로 미리 판단, 문장은 그대로 넣어도 WHERE 가 막는다).
     - `past_due_since` 는 `past_due` 로 **처음 바뀐 이벤트의 `occurred_at`** 이고, past_due 가 이어지는 동안 바뀌지 않는다(권장 5).
+    - 기간 끝 해지가 실제로 일어난 `canceled` 이벤트는 `current_billing_period` 가 비어 올 수 있어 `period_end` 는 기존 값을 지키고(`COALESCE`), `scheduled_cancel = 1` 도 지킨다(`MAX`). 그래야 예약 해지 유예(`period_end + 48시간`, 계약 절)를 계산할 수 있다.
     - 같은 user 에 `status IN ('active','trialing','past_due')` 인 **다른** 구독이 이미 있는데 이 이벤트도 활성이면 그대로 반영하고 `outcome:'second_subscription'` + 알림(권장 6 — 사람이 환불한다).
     - 활성 이벤트가 오면 `DELETE FROM checkout_intents WHERE user_id = ?` 를 같은 batch 에 넣는다(Task 10 잠금 해제).
   - `transaction.completed` → user 를 찾았고 `data.customer_id` 가 있으면:
@@ -1541,7 +1834,7 @@ WHERE excluded.last_event_at >= subscriptions.last_event_at
   - 그 밖의 이벤트는 `ignored` 로 이벤트 행만 남긴다.
   - 상태가 바뀐 user 의 호스트(`hosts.user_id`, `revoked_at IS NULL`)마다 effect `recheck(hostId)`.
 - **Paddle 엔터티 필드 이름은 (미확인)** 이다: `data.status`, `data.customer_id`, `data.custom_data`, `data.current_billing_period.ends_at`, `data.scheduled_change.action`, `data.canceled_at`, `data.items[0].price.id`, adjustment 의 `action`(refund·chargeback 값)·`type`(full/partial)·`status`·`subscription_id`·`transaction_id`. Step 1 에서 문서 예시 페이로드와 맞추고, 픽스처를 그 모양 그대로 만든다. 확인한 것은 웹훅 머리·서명 방식·이벤트 이름·`custom_data` 전달·`event_id`·`occurred_at`(근거 절)이다.
-- `entitled.ts` 추가(계약 절 "이용권 계산"): `subscriptions` 를 후보에 넣는다. `active`·`trialing`(해지 예약 포함) → `period_end + 48시간`(필수 7), `past_due` → `past_due_since + 7일`, `canceled`·`paused` → `canceled_at ?? last_event_at`. `plan: 'pro'`. 여러 출처 가운데 `until` 이 가장 큰 것을 쓰고, 같으면 표시 우선순위 pro > comp > trial.
+- `entitled.ts` 추가(계약 절 "이용권 계산"): `subscriptions` 를 후보에 넣는다. `active`·`trialing`(해지 예약 포함) → `period_end + 48시간`(필수 7), `past_due` → `past_due_since + 7일`, `canceled`·`paused` → `canceled_at ?? last_event_at`. 단 `canceled` 이고 `scheduled_cancel = 1` 이며 그 구독에 `refunds.full = 1` 행이 없으면 `max(canceled_at, period_end + 48시간)`(예약 해지 유예, 2차 권장). `plan: 'pro'`. 여러 출처 가운데 `until` 이 가장 큰 것을 쓰고, 같으면 표시 우선순위 pro > comp > trial.
 
 - [ ] **Step 1: Paddle 페이로드·API 확인** — Paddle 개발자 문서에서 다음을 확인하고 `cloud/README.md` 에 적는다. 다른 경로가 나오면 `apply.ts`·`api.ts` 와 이 문서의 Interfaces 를 고친다.
   - `subscription.created`·`updated`·`past_due`·`canceled`·`transaction.completed`·`adjustment.created` 예시 페이로드의 필드 경로(위 목록). 픽스처의 이메일·이름은 합성값으로 바꾼다.
@@ -1612,7 +1905,31 @@ it('signed but unparseable body → 200 bad_payload + alert; missing data.status
 it('D1 failure during apply → 500 and no paddle_events row', async () => {
   /* deps.db 를 batch 가 던지는 래퍼로 바꿔 deliver → 500, 원래 DB 에 이벤트 행 없음 */
 });
-it('canceled closes relay at recheck', async () => { /* 호스트 WS 연결 → canceled → runDurableObjectAlarm → 4402 */ });
+it('scheduled cancel keeps entitlement until period_end + 48 h, even after the canceled webhook', async () => {
+  /* updated(active, scheduled_change.action='cancel', period_end P) → canceled(occurred P, current_billing_period 없음)
+     → entitledState.untilMs === P + 48h. 같은 흐름에 full refund 행이 있으면 untilMs === canceled_at */
+});
+it('canceled closes device sockets at recheck, host stays attached and gets ent:false', async () => {
+  /* 호스트 WS + 기기 WS 연결 → canceled(즉시) → runDurableObjectAlarm → 기기 4402, 호스트 열림 + {t:'ent',ok:false} */
+});
+it('Mac attached while not_entitled → webhook → recheck → ticket within seconds (2차 필수 1)', async () => {
+  // relay.test.ts 의 openWs·pairedDevice·waitFor 를 helpers.ts 로 옮겨 같이 쓴다
+  const h = await linkHost(); const d1 = await pairedDevice(h);
+  await env.DB.prepare('UPDATE trials SET ends_at = 0').run();
+  const host = await openWs('/relay/host', { authorization: `Bearer ${h.hostToken}` });
+  expect(host.status).toBe(101);                                           // 이용권 없어도 붙는다
+  const ents = () => host.inbox!.filter((m) => typeof m === 'string').map((m) => JSON.parse(m as string)).filter((m) => m.t === 'ent');
+  await waitFor(() => ents().length === 1); expect(ents()[0].ok).toBe(false);
+  expect((await relayPost('/v1/relay/ticket', {}, { authorization: `Bearer ${d1.deviceToken}` })).status).toBe(402);
+  const t0 = Date.now();
+  // 폰에서 결제 → 웹훅 → effects(/internal/recheck)
+  expect((await deliver(fx('subscription.activated', { ref: await refFor(h.userId) }))).status).toBe(200);
+  await runDurableObjectAlarm(env.RELAY.get(env.RELAY.idFromName(h.hostId)));
+  await waitFor(() => ents().some((m) => m.ok === true));
+  expect(host.closes).toEqual([]);
+  expect((await relayPost('/v1/relay/ticket', {}, { authorization: `Bearer ${d1.deviceToken}` })).status).toBe(200);
+  expect(Date.now() - t0).toBeLessThan(5000);                               // 백오프 대기 없음
+});
 it('bad signature → 401, nothing stored; IP check on: non-Paddle IP → 403', async () => { /* … */ });
 ```
 
@@ -1633,7 +1950,7 @@ Paddle.js 는 **app 출처에만** 싣는다. relay 출처(폰 UI·기기 키)�
 - Test: `cloud/test/billing.test.ts`, `src/ui/components/CloudSection.test.tsx`(추가)
 
 **Interfaces:**
-- 정적 파일: `[app] GET /static/{account.js,checkout.js,pages.css}` → `env.ASSETS.fetch(new Request(new URL('/' + 파일이름, req.url)))`(Task 5 가 더한 `assets` 바인딩은 `./static` 을 루트에 올리므로 `/static/` 접두사를 떼어 넘긴다. `run_worker_first` 라 출처 검사를 먼저 거친다). 파일 이름은 이 세 개만 허용하고, `boot.js` 는 app 출처에서 404. relay 출처에서는 셋 다 404.
+- 정적 파일: `[app] GET /static/{account.js,checkout.js,pages.css}` → `env.ASSETS.fetch(new Request(new URL('/' + 파일이름, req.url)))`(Task 5c 가 더한 `assets` 바인딩은 `./static` 을 루트에 올리므로 `/static/` 접두사를 떼어 넘긴다. `run_worker_first` 라 출처 검사를 먼저 거친다). 파일 이름은 이 세 개만 허용하고, `boot.js` 는 app 출처에서 404. relay 출처에서는 셋 다 404.
 - `[app] GET /account`(웹 세션 필요, 없으면 `/login?next=/account`)
   - 보여 주는 것: 이메일, 요금제(체험 N일 남음 / Pro 월·연 · 다음 결제일 / 결제 확인 필요 / 해지됨 · 날짜까지 / 만료), 연결된 Mac 목록(이름·연결일·[Unlink]), 기기 목록(이름·추가일·[Revoke]).
   - 버튼: [Subscribe monthly]·[Subscribe yearly](구독이 없을 때) 또는 [Manage billing], [Sign out]. 맨 아래 "Delete account" 묶음은 Task 12 가 더한다.
@@ -1728,14 +2045,14 @@ it('after trial: Pro 구독 opens checkout; coming back refreshes the plan', asy
 - `pages/legal.ts` — `[app] GET /legal/{terms,privacy,refund,notice}`(영어), `[app] GET /legal/ko/{terms,privacy,refund,notice}`(한국어).
   - `layout.ts` 로 감싼다. CSP `default-src 'self'; script-src 'none'; style-src 'self'; frame-ancestors 'none'`. `cache-control: public, max-age=3600`.
   - `LEGAL_DRAFT` 면 맨 위에 "Draft — not yet in force" 띠를 보인다(로컬·테스트에서만 가능, 배포는 strict 라 막힌다).
-  - relay 출처에서는 404. relay 출처의 부트스트랩 화면(Task 5)은 app 출처 법적 페이지로 가는 일반 링크만 둔다.
+  - relay 출처에서는 404. relay 출처의 부트스트랩 화면(Task 5c)은 app 출처 법적 페이지로 가는 일반 링크만 둔다.
 - `layout.ts` 바닥글(모든 app 페이지): "Terms · Privacy · Refunds · Notice" 링크 + 고지 첫 문장. 결제 페이지(`/checkout`)에도 붙는다(출시 점검 L10 의 "결제 페이지에 고지").
 - `account.ts` — `[app] POST /v1/account/delete {confirm: 'DELETE'}`(웹 세션 + `Origin === PUBLIC_ORIGIN`, 사용자당 시간당 5회)
   - `confirm` 이 정확히 `DELETE` 가 아니면 400 `{code:'confirm_required'}`.
   - `subscriptions` 에 이 user 의 `status IN ('active','trialing','past_due') AND scheduled_cancel = 0` 이 있으면 409 `{code:'active_subscription'}`(계정 페이지는 [Manage billing] 에서 먼저 해지하라고 안내).
   - 아니면 한 batch 로 지운다(자식부터): `relay_tickets`(user) → `devices`(user) → `pairings`(그 user 의 호스트) → `hosts`(user) → `host_links`(user_id) → `web_sessions` → `magic_links`(email) → `outbox`(to_addr) → `trials` → `grants` → `checkout_intents` → `users`.
   - **남기는 것:** `trial_claims` 행은 남기고 `user_id` 만 NULL(정규화 이메일 키 해시라 원래 주소를 되돌릴 수 없다 — 같은 이메일로 다시 가입해도 체험은 `already_used`). `subscriptions` 는 `user_id` 만 NULL(결제 기록은 Paddle 이 판매자로서 보관). `ops_alerts.ref` 가 그 user id 면 NULL.
-  - 커밋 뒤 `ctx.waitUntil` 로 그 user 의 호스트 DO 마다 `/internal/unlink`(Task 3, 4401 로 모두 닫음). Mac 은 다음 호출에서 401 → `unlinked`(Task 4).
+  - 커밋 뒤 `ctx.waitUntil` 로 그 user 의 호스트 DO 마다 `/internal/unlink`(Task 3, 4401 로 모두 닫음). Mac 은 다음 호출에서 401 → `unlinked`(Task 4a).
   - 응답 200 `{ok:true}` + 쿠키 지우기(`__Host-aimsg_web=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Lax`). `account.js` 가 `/account/deleted`(로그인 없이 보이는 안내 페이지)로 옮긴다.
 - 계정 페이지(Task 10)의 "Delete account" 묶음: 지우는 것·남는 것을 위 목록대로 한 줄씩, 입력칸("type DELETE") + [Delete my account]. 활성 구독이면 버튼 대신 해지 안내.
 - `0004_account.sql` — 정리 쿼리용 색인:
@@ -1844,7 +2161,7 @@ it('logs counts only', async () => { /* console.log 스파이 — 이메일·id 
 
 ### Task 11: 보안·장애 테스트와 문서
 
-출시 1차 범위만 담는다. 부하 스크립트는 출시 뒤 Task 14, 출시 스위치는 출시 뒤 Task 13 이다. `publish-ui.sh` 는 Task 5 에서 만든다.
+출시 1차 범위만 담는다. 부하 스크립트는 출시 뒤 Task 14, 출시 스위치는 출시 뒤 Task 13 이다. `publish-ui.sh`·`scripts/release.sh` 는 Task 5c 에서 만든다.
 
 **Files:**
 - Create: `docs/security-model.md`, `docs/privacy-data-inventory.md`, `src/server/cloud/faults.test.ts`, `src/server/cloud/localGuards.test.ts`, `cloud/test/security.test.ts`, `cloud/README.md`(완성)
@@ -1920,7 +2237,7 @@ it('relay origin never sets a cookie and allows no third-party origin', async ()
 
 ### Task 6: 클라우드 경유 웹 푸시 (출시 뒤)
 
-> **출시 뒤.** 출시 1차의 폰 알림은 Task 5 대로 Mac 이 자기 VAPID 키로 직접 보낸다(권장 2). 이 Task 는 iOS 실기에서 릴레이 출처 PWA 가 Mac VAPID 키로 구독·수신하지 못할 때만 꺼낸다. 꺼낼 때 마이그레이션 이름은 `0005_push.sql` 이다(0003·0004 는 Task 9·12 가 쓴다). 체험·Pro 확인은 Task 2·7 의 `entitledState` 를 그대로 쓴다.
+> **출시 뒤.** 출시 1차의 폰 알림은 Task 5b 대로 Mac 이 자기 VAPID 키로 직접 보낸다(권장 2). 이 Task 는 iOS 실기에서 릴레이 출처 PWA 가 Mac VAPID 키로 구독·수신하지 못할 때만 꺼낸다. 꺼낼 때 마이그레이션 이름은 `0005_push.sql` 이다(0003·0004 는 Task 9·12 가 쓴다). 체험·Pro 확인은 Task 2·7 의 `entitledState` 를 그대로 쓴다.
 
 **Files:**
 - Create: `cloud/src/push/vapid.ts`, `cloud/src/push/send.ts`, `cloud/migrations/0005_push.sql`, `cloud/scripts/gen-vapid.mjs`, `src/server/cloud/pushRelay.ts`
@@ -2119,7 +2436,7 @@ it('hello carries pro; a gate change rides on the settings broadcast', async () 
 **Interfaces:**
 - `load-relay.mjs --hosts 50 --devices 2 --rate 5 --seconds 60 --url http://127.0.0.1:<port>` — `wrangler dev --local` 대상이다. 가짜 호스트·기기는 공유 `noise.ts` 로 실제 핸드셰이크를 한다. 지연 p50/p95, 끊김 수, DO 별 메시지 수를 출력한다. `--url` 이 `127.0.0.1`·`localhost` 가 아니면 거부한다(배포본 부하는 사용자가 따로 판단).
 
-- [ ] **Step 1: 작성** — 위대로 만든다. `DEV_ROUTES=1` 로컬 클라우드에서 계정·호스트·페어링을 자동으로 만든다(Task 5 스모크의 helper 재사용).
+- [ ] **Step 1: 작성** — 위대로 만든다. `DEV_ROUTES=1` 로컬 클라우드에서 계정·호스트·페어링을 자동으로 만든다(Task 5c 스모크의 helper 재사용).
 - [ ] **Step 2: 로컬 실행** — `--hosts 50 --devices 2 --seconds 60` 을 돌리고 결과 한 줄을 커밋 메시지 본문에 적는다.
 - [ ] **Step 3: 커밋** — `chore(cloud): 로컬 릴레이 부하 스크립트`
 
@@ -2148,10 +2465,12 @@ it('hello carries pro; a gate change rides on the settings broadcast', async () 
 | D17 | 사용자당 Mac 수 | **3대(`MAX_HOSTS`)**, 기기 3대(스펙)와 별도 | 무제한 / 1대 | 개인 개발자 기준으로 집·회사·서버 정도면 충분하다. 계정 공유 남용을 막는다. 변수라서 바꾸기 쉽다 |
 | D18 | 출처를 나누나 | **둘로 나눈다 — app(로그인·계정·결제·법적 페이지, 쿠키·Paddle.js)과 relay(폰 UI·폰 API·릴레이 WS, 쿠키 없음·제3자 스크립트 없음).** Worker 하나가 `Host` 로 나누고 반대쪽 출처 요청은 404 | 한 출처(옛 구조) / Worker 두 개 | 같은 출처면 Paddle.js 같은 제3자 스크립트나 계정 페이지 XSS 가 폰 UI 의 IndexedDB 기기 키에 닿는다(검토 필수 2). Worker 하나면 D1·DO 바인딩과 배포가 하나로 유지된다 |
 | D19 | 폰에서 Mac 확인이 필요한 동작(재시작·설정 마법사·로그인·클라우드 연결 해제·권한 모드 상향) | **출시 1차는 폰에서 거절(`mac_confirm_required`)하고 Mac 앞에서 하게 한다** | "폰 요청 → Mac 에 [허용] 대화상자"(출시 뒤) | 악성 UI(D1 한계)나 훔친 폰이 Mac 을 원격으로 재설정·권한 상향하는 길을 막는다(검토 필수 1). 대화상자는 Mac 앞에 사람이 있어야 의미가 있어 원격 사용 이점이 작고, 만들면 UI·프로토콜 일이 커진다 |
+| D20 | 홈 화면 PWA 안 [스캔] 에 JS QR 디코더를 들이나 | **들이지 않는다.** `BarcodeDetector` 가 있을 때만 [스캔] 을 보이고, 없으면 페어링 코드 붙여 넣기만 둔다 | JS QR 디코더(이름·라이선스는 착수 시 확인)를 relay UI 번들에 넣기 | Mac 에서 [복사] 한 코드를 iPhone 에 붙여 넣는 경로(같은 Apple 계정의 공유 클립보드)로 같은 일을 할 수 있고, 번들·의존성·검토 범위가 늘지 않는다. Task 5 앞 실기 확인에서 붙여 넣기가 불편하다고 나오면 의존성 승인과 함께 다시 정한다 |
 
 ## 사용자 몫 (이 계획의 작업이 아님)
 
-- **결정:** D3 루트 런타임 의존성 추가 승인(Noise 구현 또는 `@noble/curves` 중 Task 1 Step 1 이 고른 것 하나), D19 확인.
+- **결정:** D3 루트 런타임 의존성 추가 승인(Noise 구현 또는 `@noble/curves` 중 Task 1 Step 1 이 고른 것 하나), D19 확인, D20(실기 확인 결과에 따라).
+- **5a 착수 전 iOS 실기 확인(2차 필수 2):** "Task 5 앞 실기 확인" 의 탐침을 HTTPS 정적 호스팅에 올리고 iPhone 에서 Safari ↔ 홈 화면 앱 저장소 공유 여부, `persist()`, 카메라, `BarcodeDetector`, `PushManager` 를 확인해 결과 표를 넘긴다.
 - **Paddle**
   - 판매자 가입·KYC(한국 개인/개인사업자), USD 수취 계좌·정산 비용 확인(스펙 §5.4).
   - 상품 "AI msg Pro" 와 가격 둘(월 $15, 연 $150), 창립 고객 할인 코드(연 $120 상당).
@@ -2162,7 +2481,7 @@ it('hello carries pro; a gate change rides on the settings broadcast', async () 
   - 계정과 플랜(DO 사용 가능 여부는 플랜별로 확인), 도메인 `aimsg.app`(후보) 확보, `app.`·`relay.` 두 호스트 이름을 같은 Worker 의 `routes` 로 연결.
   - `wrangler d1 create ai-msg` → `database_id` 기입, `wrangler d1 migrations apply`(0001–0004), R2 버킷 `ai-msg-ui` 생성.
   - 비밀 넣기: `SESSION_SECRET`, `EMAIL_HASH_SECRET`, `CHECKOUT_SECRET`, `RESEND_API_KEY`, `PADDLE_WEBHOOK_SECRET`, `PADDLE_API_KEY`. (`ENTITLEMENT_SIGNING_JWK`·`VAPID_PRIVATE_JWK` 는 출시 1차에 없다 — Task 13·6 을 꺼낼 때만.)
-  - `npm --prefix cloud run deploy`(predeploy 가 법적 페이지를 strict 로 빌드하므로 초안 표시나 `{{…}}` 가 남아 있으면 배포가 멈춘다), `cloud/scripts/publish-ui.sh <버전>`.
+  - `npm --prefix cloud run deploy`(predeploy 가 법적 페이지를 strict 로 빌드하므로 초안 표시나 `{{…}}` 가 남아 있으면 배포가 멈춘다). 이후 릴리스마다 `scripts/release.sh <버전>`(UI 게시 → npm publish → `latest` 갱신, Task 5c).
 - **메일:** Resend 가입, 발신 도메인 SPF/DKIM 인증.
 - **법적 문서**
   - `docs/legal/{terms,privacy,refund}{,.ko}.md` 의 `{{…}}` 자리(사업자 정보·연락처·관할 등)를 채우고 초안 표시를 지운 뒤 변호사 1회 검토. 특히 `terms.md` §1 의 "추가 기능과 선택형 클라우드 서비스" 문구를 "릴레이·폰 알림" 으로 좁힐지 정한다(출시 점검 "Pro 문구는 릴레이·푸시만").
@@ -2170,7 +2489,7 @@ it('hello carries pro; a gate change rides on the settings broadcast', async () 
 - **서면 확인:** Anthropic·OpenAI·xAI 에 구독 로그인한 공식 CLI 를 서브프로세스로 띄우는 것과 원격 승인이 허용되는지 확인한다(스펙 §3 규칙 7, §11).
 - **랜딩 문구:** 계획 ③ 의 `relayCiphertext` 등 Pro 문구를 D1 의 정직한 문구("클라우드는 대화를 저장·열람하지 않는다, 폰 UI 는 우리 서버가 내보낸다")와 "릴레이·폰 알림" 범위로 바꾼다.
 - **이 Mac 소유자 계정 comp 부여**(`cloud/README.md` 의 SQL). 출시 1차에는 로컬 게이트가 없으므로 릴레이를 쓸 때만 필요하다.
-- **실기 확인:** iOS Safari(홈 화면 PWA, Mac VAPID 직접 푸시 — 안 되면 Task 6 을 꺼낸다, 저장소 삭제 뒤 재페어링)·Android Chrome 에서 QR 페어링(확인 코드 대조·Mac [허용]) → 승인 → 푸시. 실제 결제 1건(샌드박스 → 라이브), 전액 환불 1건(자동 해지 확인).
+- **실기 확인(출시 전):** iOS Safari(홈 화면 PWA 안에서 코드 붙여 넣기·스캔 페어링, Mac VAPID 직접 푸시 — 안 되면 Task 6 을 꺼낸다, 저장소 삭제 뒤 재페어링)·Android Chrome 에서 QR 페어링(확인 코드 대조·Mac [허용]) → 승인 → 푸시. 실제 결제 1건(샌드박스 → 라이브), 전액 환불 1건(자동 해지 확인).
 - **운영:** `ops_alerts` 를 보는 방법(주기적 D1 조회 또는 알림 연결)을 정하고, 배포본 DO 비용 실측(스펙 §11)과 외부 1인 보안 리뷰(스펙 §7, Task 1 의 Noise 구현 우선).
 
 ## 범위 밖
@@ -2223,10 +2542,12 @@ it('hello carries pro; a gate change rides on the settings broadcast', async () 
 | 테스트 안 클라이언트 WS 획득 형태(`res.webSocket`+`accept()`) | Task 3 |
 | `readD1Migrations` 시그니처, `miniflare.bindings` 형태, 플러그인의 vitest 5 지원 여부 | Task 2 — cloud 는 자기 vitest 를 고정 |
 | Resend `POST /emails` 형태 | Task 2 |
-| R2 바인딩 API 세부(`get` 반환·`httpMetadata`), `env.ASSETS.fetch` 경로 규칙 | Task 5 |
-| 기존 UI 의 인라인 `style` 사용 여부(`style-src` 결정) | Task 5 |
-| `navigator.storage.persist()` 의 iOS Safari 홈 화면 PWA 동작, 저장소 삭제 조건 | Task 5(재페어링 흐름), 사용자 몫 실기 확인 |
-| `wrangler dev --persist-to`·`--var`, `wrangler r2 object put` 형태 | Task 5·11 |
+| R2 바인딩 API 세부(`get` 반환·`httpMetadata`), `env.ASSETS.fetch` 경로 규칙 | Task 5c |
+| 기존 UI 의 인라인 `style` 사용 여부(`style-src` 결정) | Task 5c |
+| `navigator.storage.persist()` 의 iOS Safari 홈 화면 PWA 동작, 저장소 삭제 조건 | Task 5b(재페어링 흐름), Task 5 앞 실기 확인 |
+| iOS 에서 Safari 와 홈 화면 PWA 의 저장소 공유 여부, 홈 화면 PWA 안의 카메라(`getUserMedia`)·`BarcodeDetector` 지원 — 착수 시 확인 | Task 5 앞 실기 확인 → 5a·5b 페어링 화면, D20 |
+| 저장소의 기존 릴리스 절차(`package.json` scripts·배포 문서) — 착수 시 확인 | Task 5c `scripts/release.sh` |
+| `wrangler dev --persist-to`·`--var`, `wrangler r2 object put` 형태 | Task 5c·11 |
 | Paddle 엔터티 필드 경로(`current_billing_period.ends_at`, `scheduled_change.action`, `canceled_at`, `items[].price.id`, `customer_id`) | Task 9 |
 | Paddle 조정(adjustment) 의 전액/부분·차지백 구분 필드, 구독 즉시 해지 API(경로·`effective_from`·필요 권한) | Task 9 Step 1, D15 |
 | Paddle.js 스크립트 주소·`Initialize`·`Environment.set`·`Checkout.open` 의 `items`/`customer`/`customData`, 결제 완료 이벤트 이름, CSP 출처 | Task 10 |
@@ -2242,22 +2563,36 @@ it('hello carries pro; a gate change rides on the settings broadcast', async () 
 
 | 검토 항목 | 반영 | 위치 |
 |---|---|---|
-| 필수 1 — 폰 UI JS 를 클라우드가 서빙(운영자 신뢰), Mac 확인 동작 | 반영 | "보안 모델과 한계" 절(위협 표·정직한 문구), D1·D4·D19, Task 4 `relayPathPolicy`·`relayWsPolicy`(`mac_confirm_required`)와 `pathPolicy.test.ts`, Review Focus 7, 사용자 몫 "랜딩 문구" |
-| 필수 2 — 같은 출처 공유 | 반영 | D18, 프로토콜 계약 "두 출처", Task 2 `origins.ts`·`origins.test.ts`, Task 5 `ui.ts`(relay 전용·쿠키 없음·제3자 없음), Task 10(Paddle.js 는 app 출처만), Task 11 `security.test.ts` 출처 행렬 |
-| 필수 3 — QR 엿보기 즉시 페어링 | 반영 | 프로토콜 계약 "페어링", Task 1 `confirmCode`, Task 2 두 번째 claim → `burned`·`pending_confirm` 403, Task 5 `PairingView.awaiting_approval` + Mac [허용]/[거절], D5 |
-| 필수 4 — 핸드셰이크 전사 미바인딩, 버전 다운그레이드, D3 근거 | 반영 | Task 1 Noise KK(prologue·공식 벡터 합격 조건, 라이브러리 착수 시 확인), 프로토콜 계약 `ready`, Task 5 `RelayConnection`(ready 검증 뒤에만 버전 이동, semver 만), D3 근거 정정 |
-| 필수 5 — 로컬 해제가 열린 채널을 안 끊음 | 반영 | Task 4 `CloudService.revokeDevice` → `RelayBridge.dropDevice(id,'revoked')`(Noise 세션·루프백 스트림 즉시 종료)와 클라우드 `revoked` 통지 → 로컬 신뢰 목록 삭제, Task 3 해제 통지, Review Focus 8 |
+| 필수 1 — 폰 UI JS 를 클라우드가 서빙(운영자 신뢰), Mac 확인 동작 | 반영 | "보안 모델과 한계" 절(위협 표·정직한 문구), D1·D4·D19, Task 4b `relayPathPolicy`·`relayWsPolicy`(`mac_confirm_required`)와 `pathPolicy.test.ts`, Review Focus 7, 사용자 몫 "랜딩 문구" |
+| 필수 2 — 같은 출처 공유 | 반영 | D18, 프로토콜 계약 "두 출처", Task 2 `origins.ts`·`origins.test.ts`, Task 5c `ui.ts`(relay 전용·쿠키 없음·제3자 없음), Task 10(Paddle.js 는 app 출처만), Task 11 `security.test.ts` 출처 행렬 |
+| 필수 3 — QR 엿보기 즉시 페어링 | 반영 | 프로토콜 계약 "페어링", Task 1 `confirmCode`, Task 2 두 번째 claim → `burned`·`pending_confirm` 403, Task 5a `PairingView.awaiting_approval` + Mac [허용]/[거부], D5 |
+| 필수 4 — 핸드셰이크 전사 미바인딩, 버전 다운그레이드, D3 근거 | 반영 | Task 1 Noise KK(prologue·공식 벡터 합격 조건, 라이브러리 착수 시 확인), 프로토콜 계약 `ready`, Task 5b `RelayConnection`(ready 검증 뒤에만 버전 이동, semver 만), D3 근거 정정 |
+| 필수 5 — 로컬 해제가 열린 채널을 안 끊음 | 반영 | Task 4b `CloudService.revokeDevice` → `RelayBridge.dropDevice(id,'revoked')`(Noise 세션·루프백 스트림 즉시 종료)와 클라우드 `revoked` 통지 → 로컬 신뢰 목록 삭제, Task 3 해제 통지, Review Focus 8 |
 | 필수 6 — Task 8 범위 어긋남(accounts·routeFull) | 반영 | 출시 범위 표, Task 8 을 "출시 뒤" 로 옮기고 `accounts`·`routeFull` 행·테스트 삭제, D7·D13 철회 |
-| 필수 7 — 갱신 때 릴레이 끊김 | 반영 | 프로토콜 계약 이용권 규칙(active = `period_end` + 48시간), Task 2 `entitledState`, Task 3 alarm, Task 4 RelayClient 402/4402 5분 → 1시간 백오프·`recheck()`, Task 7 |
+| 필수 7 — 갱신 때 릴레이 끊김 | 반영 | 프로토콜 계약 이용권 규칙(active = `period_end` + 48시간), Task 2 `entitledState`, Task 3 alarm, Task 4a RelayClient(2차에서 `ent` 제어·최대 5분으로 바뀜)·`recheck()`, Task 7 |
 | 필수 8 — 웹훅 멱등·실패·user_id 신뢰 | 반영 | Task 9 전체(`planEvent`, 전부 upsert, 200 + `outcome` + `ops_alerts`, D1 장애만 500, `userRef` 서명), D14 |
 | 필수 9 — 법적 페이지·계정 삭제·정리 cron | 반영 | 새 Task 12(`docs/legal/*.md` 빌드·게시, strict 배포 검사, `/v1/account/delete`, `email_key` 보존, `runCleanup` + Cron), D8 |
 | 필수 10 — 클라우드 공개 여부 | 반영 | D11 → 비공개, Architecture·Global Constraints(공개본 export 에서 `cloud/` 제외) |
 | 권장 1 — 위협 정리, `/api/cloud/*` 회귀 테스트 | 반영 | "보안 모델과 한계" 위협 표, Task 11 `localGuards.test.ts`(Host 421·Origin 403·쿠키 401·SameSite) |
-| 권장 2 — Mac VAPID 직접 푸시, Task 6 제외 | 반영 | Task 5 `push.ts`, D12, Task 6 은 "출시 뒤"(iOS 실기 실패 때만) |
+| 권장 2 — Mac VAPID 직접 푸시, Task 6 제외 | 반영 | Task 5b `push.ts`, D12, Task 6 은 "출시 뒤"(iOS 실기 실패 때만) |
 | 권장 3 — 이메일 정규화·IP 체험 제한 | 반영 | Task 2 `normalizeEmail`·`email_key`·IP 당 체험 생성 제한, D8 |
 | 권장 4 — 전액 환불·차지백 → API 해지 | 반영 | Task 9 `cancel` effect·실패 알림, Task 12 cron 재시도, D15 |
 | 권장 5 — past_due 는 `occurred_at` + 7일 | 반영 | Task 9 `past_due_since`, Task 2 `entitledState`, D15 |
 | 권장 6 — `/checkout` 이중 구독 | 반영 | Task 10 `checkout_intents`(완료 intent 잠금·active 면 `/account`), Task 9 `second_subscription` 알림 |
-| 권장 7 — WebAuthn 앱 잠금, iOS 저장소 삭제 뒤 재페어링 | 일부 반영 | 재페어링 흐름·`navigator.storage.persist`는 Task 5. **WebAuthn 은 보류** — iOS PWA 실기 확인이 필요하고 악성 운영자 JS 는 잠금 뒤에서도 키를 쓸 수 있어 효과가 좁다(범위 밖 절) |
-| 권장 8 — `EMAIL_MODE: log` 기동 거부, link/start·approve 속도 제한, `os.hostname` 데이터 목록 | 반영 | Task 2 `checkConfig`(공개 출처에서 `log` 면 거부, 기본 `resend`)·속도 제한 표, Task 4 호스트 이름 전송 범위, Task 11 `privacy-data-inventory.md` |
-| 최소 판매 범위 | 반영 | 맨 위 "출시 범위" 표(1차 10개 Task / 출시 뒤 6·8·13·14), "출시 뒤" 절 |
+| 권장 7 — WebAuthn 앱 잠금, iOS 저장소 삭제 뒤 재페어링 | 일부 반영 | 재페어링 흐름·`navigator.storage.persist`는 Task 5b. **WebAuthn 은 보류** — iOS PWA 실기 확인이 필요하고 악성 운영자 JS 는 잠금 뒤에서도 키를 쓸 수 있어 효과가 좁다(범위 밖 절) |
+| 권장 8 — `EMAIL_MODE: log` 기동 거부, link/start·approve 속도 제한, `os.hostname` 데이터 목록 | 반영 | Task 2 `checkConfig`(공개 출처에서 `log` 면 거부, 기본 `resend`)·속도 제한 표, Task 4b 호스트 이름 전송 범위, Task 11 `privacy-data-inventory.md` |
+| 최소 판매 범위 | 반영 | 맨 위 "출시 범위" 표(1차 14개 단계 — Task 4·5 를 4a·4b·실기 확인·5a·5b·5c 로 나눔 / 출시 뒤 6·8·13·14), "출시 뒤" 절 |
+
+**2차 검토(2026-10-25, 판정 "고친 뒤 착수")**
+
+| 검토 항목 | 반영 | 위치 |
+|---|---|---|
+| 2차 필수 1 — 이용권 없는 Mac 이 릴레이에 붙지 못해 결제 뒤 recheck 가 닿지 않음 | 반영 | 프로토콜 계약 제어 메시지(`{t:'ent'}`·호스트 `{"t":"recheck"}`), Global Constraints, Task 3 `/relay/host`(이용권 확인 안 함)·alarm(기기만 4402, 호스트는 `ent:false`)·테스트 3개, Task 4a RelayClient(`ent` 로 연결 유지, 끊김 백오프 30초→최대 5분), Task 5b 티켓 402 재시도 5초→최대 5분, Task 7 `'entitlement'` 즉시 갱신, Task 9 "not_entitled 로 붙은 Mac → 웹훅 → recheck → 5초 안에 티켓" 테스트, Review Focus 5 |
+| 2차 필수 2 — iOS 홈 화면 PWA 안에서 페어링할 길이 없음 | 반영 | 프로토콜 계약 페어링(페어링 코드), Task 5a `pairCode`·PairSheet [코드로 연결]/[복사], Task 5b `handlePairString`·`PairEntry`(붙여 넣기·`BarcodeDetector` 스캔)·RelayGate 문구, 새 "Task 5 앞 실기 확인"(탐침 4종, 5a 전), 출시 범위 표, 사용자 몫, 근거·미확인, D20 |
+| 2차 필수 3 — 기기 라우트가 user·until 을 DO 에 안 넘김 | 반영 | Task 3 `/relay/device`(`x-relay-user`·`x-relay-until`·`x-relay-host`, 클라이언트 `x-relay-*` 제거, 빠지면 500), 테스트 "device-only DO alarm reads the user"·"x-relay-* stripped" |
+| 2차 권장 — 쿠키 라우트 목록·Origin CSRF | 반영 | Task 2 라우트 절(쿠키 라우트 목록, `Origin === PUBLIC_ORIGIN`·JSON 만, `cookieRoute`), `pairing.test.ts` CSRF 테스트 |
+| 2차 권장 — 같은 devicePub claim 멱등 | 반영 | 프로토콜 계약 4단계 예외, Task 2 claim 분기(`claimed` 면 새 토큰·같은 `deviceId`, `confirmed` 면 409 `already_paired`), 테스트, Task 5b 같은 키로 재전송 |
+| 2차 권장 — 릴리스 통합·boot 폴백 | 반영 | Task 5c `scripts/release.sh`(UI 게시 → npm publish → `latest`, dry-run), `publish-ui.sh --latest`, `/version.json`, `boot.js` `pickTarget`(없는 버전이면 최신)·`boot.test.ts`, 사용자 몫 배포 줄 |
+| 2차 권장 — revoke 순서 | 반영 | Task 4b `revokeDevice`·제어 `revoked`·`syncDevices` 모두 `dropDevice` → `removeDevice`, CloudService 테스트 |
+| 2차 권장 — 예약 해지 period_end+48h, 환불 문서 | 반영 | 프로토콜 계약 이용권 계산, Task 9 upsert(`COALESCE`·`MAX`)·`entitled.ts`·테스트, `docs/legal/refund.md`·`refund.ko.md` 3절 |
+| 2차 권장 — Task 4·5 분할 | 반영 | Task 4a·4b, Task 5a·5b·5c(각자 Files·Interfaces·Steps·커밋), 출시 범위 표 14단계, Review Focus·결합 지점·이후 Task 참조 갱신 |

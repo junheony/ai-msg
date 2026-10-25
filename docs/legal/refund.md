@@ -24,6 +24,7 @@ You can ask for a refund within **14 days of your first payment** for a Pro subs
 
 - Your plan renews automatically until you cancel. Cancel in the customer portal linked from your account before the renewal date to avoid the next charge.
 - Cancelling stops future charges. You keep Pro until the end of the paid period.
+- If you schedule a cancellation for the end of the period, Pro (including the relay) keeps working until **48 hours after the paid period ends**. This grace period covers late renewal notices from Paddle. It is not a paid period, so nothing extra is charged or refunded for it. `{{확인 필요: 유예 48시간을 약관·환불 정책에 적을지 — 변호사 확인}}`
 - `{{확인 필요: 갱신 직후 취소한 경우의 환불 처리}}`
 
 ## 4. How refunds work
