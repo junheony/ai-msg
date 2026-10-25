@@ -17,7 +17,7 @@ import { ClaudeProcess, exitFailureText } from './claudeCli/process';
 import { toUserMessage, type ReadFile } from './claudeCli/prompt';
 import type { ClaudeSpawnFn } from './claudeCli/spawnTypes';
 import { childScript } from './claudeCli/childScripts';
-import { BackgroundTracker, ProgressMeter, ToolTracker, deniedCalls, isActivity, isInjectedNoopResult, isNotificationResult, mapCliMessage, noteCommands, toolAudit, type CommandsListener } from './claudeCli/stream';
+import { BackgroundTracker, ProgressMeter, ToolTracker, deniedCalls, foldedNotificationIds, isActivity, isInjectedNoopResult, isNotificationResult, mapCliMessage, noteCommands, toolAudit, type CommandsListener } from './claudeCli/stream';
 import { ABORTED_TEXT, CLAUDE_MISSING_TEXT, claudeTooOldText, fastFailureKind, fastModeText, invalidResumeText } from './claudeCli/texts';
 import type { ClaudeBin } from './claudeCli/version';
 
@@ -187,13 +187,27 @@ export class ClaudeEngine implements Engine {
        * Background tasks that ended while a turn was streaming: the CLI queues their notification and runs it as a turn of
        * its own right after that turn's result. Until that turn begins they are still shown as background work, so the
        * result does not let the process go — here, nor ws endHeld while a restart drains (2026-10-25: the notification
-       * turn was cut at once, its answer never came). Settled when the process, idle after a result, shows main-thread
-       * activity again, or by the notification turn's own result (origin task-notification). Bounded: an idle process with no live task is still let go after bgGraceMs (armGrace counts live tasks only).
+       * turn was cut at once, its answer never came). Each entry keeps the turn it ended in and is settled on its own:
+       *  - by the next turn the CLI starts (the process idle after a result shows main-thread activity again), or by a
+       *    notification turn's own result (origin task-notification): only entries from before that turn — the CLI drains
+       *    every queued notification into one turn (dequeueAllMatching, same mode), so one ending during it (B while A's
+       *    notification turn runs) is still owed its own turn;
+       *  - by its id, when the CLI folds its notification into a running turn instead (foldedNotificationIds) — a user turn
+       *    included.
+       * Not by the SDK `task_notification` frame: the CLI writes it when the task ends (its task-registry update, before
+       * the notification is even queued), not when the notification is taken in — mid-turn it means nothing was told yet.
+       * Bounded: an idle process with no live task is still let go after bgGraceMs (armGrace counts live tasks only).
        */
-      const owed = new Map<string, BgTask>();
+      const owed = new Map<string, { task: BgTask; turn: number }>();
       /** A turn is streaming: main-thread activity since the last result (the first turn streams from the start). */
       let streaming = true;
-      const shown = (): BgTask[] => { const live = bg.detail(); const ids = new Set(live.map((t) => t.id)); return [...live, ...[...owed.values()].filter((t) => !ids.has(t.id))]; };
+      /** This process's turns so far: a turn begins with the first main-thread activity after a result. */
+      let turnNo = 1;
+      /** Settles what ended before turn `n`; true when something was. */
+      /** Live tasks whose notification was already folded into a turn: leaving the live set later owes nothing. */
+      const toldEarly = new Set<string>();
+      const settleBefore = (n: number): boolean => { let any = false; for (const [id, o] of owed) if (o.turn < n) { owed.delete(id); any = true; } return any; };
+      const shown = (): BgTask[] => { const live = bg.detail(); const ids = new Set(live.map((t) => t.id)); return [...live, ...[...owed.values()].map((o) => o.task).filter((t) => !ids.has(t.id))]; };
       /** The shown set as a `background` event when it changed since last told, else null. */
       const bgChange = (): EngineEvent | null => {
         const detail = shown();
@@ -296,11 +310,17 @@ export class ClaudeEngine implements Engine {
         if (m.type === 'result') toolInputs.clear();
         const before = m.type === 'system' ? bg.detail() : [];
         const taskMsg = bg.apply(m);
-        if (taskMsg && streaming) { const now = new Set(bg.detail().map((t) => t.id)); for (const t of before) if (!now.has(t.id)) owed.set(t.id, t); }
-        // The process gets going after a result (the queued notification turn begins), or that turn's own result: what it
-        // owed is being told now. Shown after the turn opened (`continue` below), so it never looks idle in between.
-        const settled = owed.size > 0 && ((idle && isActivity(m)) || (m.type === 'result' && isNotificationResult(m)));
-        if (settled) owed.clear();
+        if (taskMsg && streaming) { const now = new Set(bg.detail().map((t) => t.id)); for (const t of before) if (!now.has(t.id) && !toldEarly.delete(t.id)) owed.set(t.id, { task: t, turn: turnNo }); }
+        // What owed is being told now (see owed). Shown after the turn opened (`continue` below), so it never looks idle in
+        // between. A no-op result (shouldQuery:false) is no turn: the CLI never batches a queried notification into it.
+        let settled = false;
+        const noop = isInjectedNoopResult(m);
+        if (isActivity(m) && !streaming && !noop) { turnNo++; if (idle) settled = settleBefore(turnNo); }
+        if (m.type === 'result' && isNotificationResult(m) && !noop) settled = settleBefore(turnNo) || settled;
+        for (const id of foldedNotificationIds(m)) {
+          if (owed.delete(id)) settled = true;
+          else if (bg.detail().some((t) => t.id === id)) toldEarly.add(id); // told before its level frame let it go
+        }
         if (m.type === 'result') streaming = false;
         else if (isActivity(m)) streaming = true;
         if (taskMsg) {

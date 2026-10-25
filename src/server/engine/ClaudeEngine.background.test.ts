@@ -201,6 +201,64 @@ describe('ClaudeEngine: a task that ends while a turn streams', () => {
     expect(f.state.inputClosed).toBe(true);
   });
 
+  it('back-to-back: B ends while A\'s notification turn streams — A\'s result settles A only, B still gets its own turn', async () => {
+    const f = fakeClaudeCli();
+    const r = reader((await engine(f, { bgGraceMs: 60_000 })).runTurn(req()));
+    const tasksSeen = () => r.seen.filter((e) => e.kind === 'background').map((e) => (e as Extract<EngineEvent, { kind: 'background' }>).tasks);
+    f.push(cli.init(), cli.bgLevel([{ id: 'a', desc: 'A' }, { id: 'b', desc: 'B' }]), cli.delta('waiting'));
+    await r.until('delta');
+    // A ends mid-turn (frame at completion, CLI order), then the turn ends.
+    f.push(cli.bgLevel([{ id: 'b', desc: 'B' }]), cli.taskDone('a'), cli.result('first'));
+    await r.until('result');
+    // A's notification turn; B ends while it streams.
+    f.push(cli.init(), cli.delta('A is in'));
+    await r.until('continue');
+    await r.until('delta');
+    f.push(cli.bgLevel([]), cli.taskDone('b'), cli.delta(' — wrapping up'), cli.notifyResult('A is in'));
+    expect(await r.until('result')).toMatchObject({ text: 'A is in' });
+    await new Promise((res) => setTimeout(res, 10));
+    expect(f.state.inputClosed).toBe(false);
+    expect(tasksSeen().at(-1)).toEqual(['B']);
+    // B's own notification turn, then the process goes.
+    f.push(cli.init(), cli.delta('B is in'), cli.notifyResult('B is in'));
+    const kinds: string[] = [];
+    for (let e = await r.next(); e && e.kind !== 'result'; e = await r.next()) kinds.push(e.kind === 'background' ? `background:${e.tasks.length}` : e.kind);
+    expect(kinds.indexOf('continue')).toBeLessThan(kinds.indexOf('background:0'));
+    expect(r.seen.at(-1)).toMatchObject({ kind: 'result', text: 'B is in' });
+    await r.rest();
+    await new Promise((res) => setTimeout(res, 0));
+    expect(f.state.inputClosed).toBe(true);
+  });
+
+  it('a notification the CLI folds into the running turn (replayed) is told: no owed turn, the process goes after the result', async () => {
+    const f = fakeClaudeCli();
+    const r = reader((await engine(f, { bgGraceMs: 60_000 })).runTurn(req()));
+    f.push(cli.init(), cli.bgLevel([{ id: 'rv', desc: 'review' }]), cli.delta('waiting'));
+    await r.until('delta');
+    f.push(cli.bgLevel([]), cli.taskDone('rv'), cli.delta(' tool runs'), cli.notifyReplay('rv'), cli.delta(' review is in'), cli.result('review is in'));
+    expect(await r.until('result')).toMatchObject({ text: 'review is in' });
+    expect(r.seen.filter((e) => e.kind === 'background').map((e) => (e as Extract<EngineEvent, { kind: 'background' }>).tasks)).toEqual([['review'], []]);
+    await r.rest();
+    await new Promise((res) => setTimeout(res, 0));
+    expect(f.state.inputClosed).toBe(true);
+  });
+
+  it('a user turn that takes the owed notification in (replayed) settles it: the process goes after that result, not after the grace', async () => {
+    const f = fakeClaudeCli();
+    let live: LiveInput | null = null;
+    const r = reader((await engine(f, { bgGraceMs: 60_000 })).runTurn(req({ onLive: (l) => { live = l; } })));
+    f.push(cli.init(), cli.bgLevel([{ id: 'rv', desc: 'review' }]), cli.delta('waiting'));
+    await r.until('delta');
+    f.push(cli.bgLevel([]), cli.taskDone('rv'), cli.result('first'));
+    await r.until('result');
+    expect(await live!.send({ text: 'and this', attachments: [] })).toBe(true);
+    f.push(cli.notifyReplay('rv'), cli.delta('both'), cli.result('both'));
+    expect(await r.until('result')).toMatchObject({ text: 'both' });
+    await r.rest();
+    await new Promise((res) => setTimeout(res, 0));
+    expect(f.state.inputClosed).toBe(true);
+  });
+
   it('a task that ends while the process waits idle is no owed turn: nothing changes there', async () => {
     const f = fakeClaudeCli();
     const r = reader((await engine(f)).runTurn(req()));

@@ -716,4 +716,73 @@ describe('ws: drain and held processes', () => {
     a.close();
     s.close();
   });
+
+  it('restart drain, back-to-back: B ends while A\'s notification turn streams — the drain waits for B\'s notification turn too', async () => {
+    const s = await ownServer();
+    const a = await s.client();
+    await a.next('hello');
+    const S = '64646464-6464-4464-8464-646464646464';
+    const cwd = await seed(S, 'dr4');
+    const f = (fake = fakeClaudeCli());
+    a.send({ type: 'send', sessionId: S, cwd, text: 'go', clientRef: 'dr4-go' });
+    const t = await a.next('turn_started', (m) => m.clientRef === 'dr4-go');
+    f.push(cli.init(S), cli.bgLevel([{ id: 'a', desc: 'A' }, { id: 'b', desc: 'B' }]), cli.delta('working'));
+    await a.next('turn_background', (m) => m.tasks.length === 2);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    let done: string | null = null;
+    const drained = drain(s.api, { maxMs: Infinity, pollMs: 5 }).then((r) => { done = r; return r; });
+    await a.next('error', (m) => m.message === DRAINING_MESSAGE);
+    f.push(cli.bgLevel([{ id: 'b', desc: 'B' }]), cli.taskDone('a'), cli.result('first', S));
+    await a.next('turn_result', (m) => m.turnId === t.turnId);
+    // A's notification turn; B ends while it streams.
+    f.push(cli.init(S), cli.delta('A is in'));
+    const bgA = await a.next('turn_started', (m) => m.reason === '백그라운드 계속');
+    await a.next('delta', (m) => m.turnId === bgA.turnId);
+    f.push(cli.bgLevel([]), cli.taskDone('b'), cli.notifyResult('A is in', S));
+    expect(await a.next('turn_result', (m) => m.turnId === bgA.turnId)).toMatchObject({ ok: true });
+    await new Promise((r) => setTimeout(r, 40));
+    expect(s.api.activeTurns()).toBe(1);
+    expect(done).toBeNull();
+    expect(f.state.inputClosed).toBe(false);
+    expect(s.api.cutSessions()).toEqual([{ sessionId: S, tasks: ['B'] }]);
+    // B's own notification turn; then the drain ends.
+    f.push(cli.init(S), cli.delta('B is in'), cli.notifyResult('B is in', S));
+    const bgB = await a.next('turn_started', (m) => m.reason === '백그라운드 계속' && m.turnId !== bgA.turnId);
+    expect(await a.next('turn_result', (m) => m.turnId === bgB.turnId)).toMatchObject({ ok: true, text: 'B is in' });
+    expect(await drained).toBe('drained');
+    expect(s.api.activeTurns()).toBe(0);
+    log.mockRestore();
+    a.close();
+    s.close();
+  });
+
+  it('a notification the CLI folds into the running turn leaves nothing behind: no cut session, no background in activity.json, the drain ends with that turn', async () => {
+    const s = await ownServer();
+    const a = await s.client();
+    await a.next('hello');
+    const S = '65656565-6565-4565-8565-656565656565';
+    const cwd = await seed(S, 'dr5');
+    const f = (fake = fakeClaudeCli());
+    a.send({ type: 'send', sessionId: S, cwd, text: 'go', clientRef: 'dr5-go' });
+    const t = await a.next('turn_started', (m) => m.clientRef === 'dr5-go');
+    f.push(cli.init(S), cli.bgLevel([{ id: 'rv', desc: 'review' }]), cli.delta('working'));
+    await a.next('turn_background', (m) => m.tasks.length === 1);
+    const activity = async () => JSON.parse(await fs.readFile(s.activityFile, 'utf8')) as { sessions: { sessionId: string; bg: number }[] };
+    // The review ends mid-turn and the CLI takes its notification in at the next tool boundary (replayed).
+    f.push(cli.bgLevel([]), cli.taskDone('rv'), cli.notifyReplay('rv'), cli.delta(' review is in'));
+    await a.next('turn_background', (m) => m.tasks.length === 0);
+    expect(s.api.cutSessions()).toEqual([{ sessionId: S, tasks: [] }]);
+    await vi.waitFor(async () => expect((await activity()).sessions.filter((x) => x.sessionId === S)).toEqual([expect.objectContaining({ running: true, bg: 0 })]), { timeout: 1000, interval: 10 });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const drained = drain(s.api, { maxMs: Infinity, pollMs: 5 });
+    await a.next('error', (m) => m.message === DRAINING_MESSAGE);
+    f.push(cli.result('review is in', S));
+    expect(await a.next('turn_result', (m) => m.turnId === t.turnId)).toMatchObject({ ok: true });
+    expect(await drained).toBe('drained');
+    expect(s.api.cutSessions()).toEqual([]);
+    expect(f.state.inputClosed).toBe(true);
+    log.mockRestore();
+    a.close();
+    s.close();
+  });
 });

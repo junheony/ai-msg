@@ -227,6 +227,24 @@ export function isNotificationResult(m: CliMessage): boolean {
   return !!o && typeof o === 'object' && (o as Rec).kind === 'task-notification';
 }
 
+/**
+ * Task ids whose notification the CLI folded into the running turn (a queued `priority: 'next'` notification is taken in
+ * at a tool boundary, or at a turn's start). With --replay-user-messages the CLI echoes such a queued_command attachment
+ * as a replayed main-thread user message, origin task-notification, its text the notification itself
+ * (`<task-notification> <task-id>ID</task-id> …`; CLI 2.1.283 bundle: `if(replayUserMessages&&attachment.type===
+ * "queued_command") yield Bdr(…)`, text built by `li({taskId,…})`). [] for anything else.
+ */
+export function foldedNotificationIds(m: CliMessage): string[] {
+  if (m.type !== 'user') return [];
+  const r = m as unknown as Rec;
+  if (r.isReplay !== true || r.parent_tool_use_id !== null) return [];
+  const text = textOfContent((m.message as unknown as Rec | undefined)?.content);
+  const o = r.origin;
+  const fromCli = o && typeof o === 'object' ? (o as Rec).kind === 'task-notification' : text.trimStart().startsWith('<task-notification>');
+  if (!fromCli) return [];
+  return [...text.matchAll(/<task-id>\s*([^<\s]+)\s*<\/task-id>/g)].map((x) => x[1]!);
+}
+
 /** Where an audited call was decided without deck being asked: 'cli' = the CLI ran or refused it on its own (an allow rule, the mode, or a tool that needs no permission — the SDK does not say which), 'rule' = a deny rule (the SDK says so), 'deck' = deck's own hook. */
 export type AuditSource = 'cli' | 'rule' | 'deck';
 export type ToolAudit = { handled: Set<string>; report: (e: { tool_name: string; tool_input: unknown; tool_use_id: string }, decision: 'allow' | 'deny', source: AuditSource) => Promise<void> };
