@@ -1,7 +1,7 @@
 import { cookieRoute, endSession } from '../auth/session';
 import { type Entitled, entitledState } from '../entitled';
 import type { Env } from '../env';
-import { NO_CUSTOMER_MESSAGE, liveSubscription } from '../billing';
+import { NO_CUSTOMER_MESSAGE, deleteBlock, liveSubscription } from '../billing';
 import { redirect } from '../http';
 import { PRO_LINE, day, esc, page } from './layout';
 
@@ -61,11 +61,13 @@ export const accountGet = cookieRoute({ session: 'page' }, async (c) => {
   ].join('');
   // A subscription with no linked customer (paid under someone else's Paddle customer): say so instead of a dead button.
   const unlinked = !u?.paddle_customer_id && live ? `<p class="muted" id="billing-unavailable">${esc(NO_CUSTOMER_MESSAGE)}</p>` : '';
-  // Same rule as POST /v1/account/delete: a running subscription set to renew blocks deletion.
-  const renewing = live && (await liveSubscription(db, c.userId, c.nowMs, { renewing: true }));
-  const deletion = renewing
+  // Same rule as POST /v1/account/delete (deleteBlock).
+  const block = await deleteBlock(db, c.userId, c.nowMs);
+  const deletion = block === 'active_subscription'
     ? '<p id="delete-blocked">You have a subscription that renews. Cancel it under Manage billing first, then delete your account.</p>'
-    : `<div id="delete-account"><label for="delete-confirm">To confirm, type DELETE</label>
+    : block === 'payment_pending'
+      ? '<p id="delete-blocked">A payment is still being processed. Try again in a few minutes.</p>'
+      : `<div id="delete-account"><label for="delete-confirm">To confirm, type DELETE</label>
 <input id="delete-confirm" autocomplete="off" spellcheck="false">
 <button type="button" id="delete-button">Delete my account</button></div>`;
 
@@ -133,7 +135,7 @@ export const ACCOUNT_JS = `(() => {
       const r = await post('/v1/account/delete', { confirm: confirmBox.value });
       if (r.ok) { location.href = '/account/deleted'; return; }
       const body = await r.json().catch(() => ({}));
-      say(body.code === 'active_subscription' ? 'Cancel your subscription under Manage billing first.' : 'That did not work (' + (body.code || r.status) + ').');
+      say(body.code === 'active_subscription' ? 'Cancel your subscription under Manage billing first.' : body.code === 'payment_pending' ? 'A payment is still being processed. Try again in a few minutes.' : 'That did not work (' + (body.code || r.status) + ').');
     } catch { say('Network error — try again.'); }
     del.disabled = false;
   });

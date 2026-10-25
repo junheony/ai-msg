@@ -53,6 +53,17 @@ describe('renderLegal', () => {
     expect(() => renderLegal('> **DRAFT. Not legal advice.**', { strict: true, links })).toThrow();
     expect(() => renderLegal('> In force.', { strict: true, links })).not.toThrow();
   });
+
+  it('strict also refuses unpaired or line-split braces and a draft banner in any case', () => {
+    for (const md of ['Date {{EFFECTIVE_DATE', 'Date EFFECTIVE_DATE}}', 'Date {{EFFECTIVE\nDATE}}', 'ok {{a}} then {{b']) {
+      expect(() => renderLegal(md, { strict: true, links }), md).toThrow(LegalSyntaxError);
+      expect(renderLegal(md, { strict: false, links }).marks.some((m) => m.text.startsWith('unpaired')), md).toBe(true);
+    }
+    const split = renderLegal('a {{x\ny}} b', { strict: false, links });
+    expect(split.marks).toEqual([{ line: 1, text: 'unpaired {{' }, { line: 2, text: 'unpaired }}' }]);
+    for (const md of ['> Draft — not final', '> draft', '> **dRaFt**']) expect(() => renderLegal(md, { strict: true, links }), md).toThrow(LegalSyntaxError);
+    expect(() => renderLegal('Plain {braces} are fine.', { strict: true, links })).not.toThrow();
+  });
 });
 
 describe('generated pages', () => {

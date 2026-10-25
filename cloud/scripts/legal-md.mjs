@@ -20,7 +20,7 @@ const PLACEHOLDER = /\{\{[^{}]*\}\}/g;
 const LINK = /\[([^\]]+)\]\(([^()\s]+)\)/g;
 /** An underscore at a word edge starts or ends `_emphasis_` (`snake_case` inside a word is plain text). */
 const UNDERSCORE_EM = /(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])/u;
-const DRAFT = /DRAFT|초안/;
+const DRAFT = /draft|초안/i;
 
 /** Placeholders (`{{…}}`) in already-escaped text become a visible mark. */
 const markTodo = (html) => html.replace(PLACEHOLDER, (m) => `<mark class="todo">${m}</mark>`);
@@ -91,6 +91,9 @@ export function renderLegal(md, o) {
     const raw = lines[i];
     const n = i + 1;
     for (const m of raw.matchAll(PLACEHOLDER)) marks.push({ line: n, text: m[0] });
+    // A `{{` or `}}` left once the pairs are out (unpaired, or split across lines) is a draft mark too.
+    const rest = raw.replace(PLACEHOLDER, '');
+    for (const brace of ['{{', '}}']) if (rest.includes(brace)) marks.push({ line: n, text: `unpaired ${brace}` });
     if (raw.trim() === '') { flush(); continue; }
     if (/^\s/.test(raw)) throw new LegalSyntaxError(n, 'indented lines (nested lists, indented code) are not supported');
     if (raw.startsWith('```') || raw.startsWith('~~~')) throw new LegalSyntaxError(n, 'code fences are not supported');
@@ -141,5 +144,5 @@ export function renderLegal(md, o) {
 
   const draft = marks.some((m) => m.text === 'DRAFT');
   if (o.strict && marks.length) throw new LegalSyntaxError(marks[0].line, `draft mark left: ${marks[0].text}`);
-  return { title, html: html.join('\n'), placeholders: marks.filter((m) => m.text !== 'DRAFT').map((m) => m.text), marks, draft };
+  return { title, html: html.join('\n'), placeholders: marks.filter((m) => m.text.startsWith('{{')).map((m) => m.text), marks, draft };
 }

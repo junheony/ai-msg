@@ -1,5 +1,5 @@
 import { cookieRoute, endSession } from './auth/session';
-import { liveSubscription } from './billing';
+import { deleteBlock } from './billing';
 import { json, problem, readBody } from './http';
 import { page } from './pages/layout';
 import { HOUR, hit } from './rate';
@@ -7,7 +7,8 @@ import { notifyRelay } from './relay/routes';
 
 /**
  * `POST /v1/account/delete {confirm: 'DELETE'}` (web session + Origin, 5 an hour per user). 409 `active_subscription`
- * while a subscription is running and set to renew (cancel it under Manage billing first). Otherwise one batch,
+ * while a subscription is set to renew (cancel it under Manage billing first) or `payment_pending` while a finished
+ * checkout waits for its webhook (`deleteBlock`). Otherwise one batch,
  * children first; kept: the `trial_claims` row (an irreversible email-key hash, so the trial stays used) and the
  * `subscriptions` rows (Paddle keeps the payment record as seller) — both with `user_id` NULL. Then every host's
  * relay room closes (4401) and the cookie is cleared.
@@ -18,7 +19,8 @@ export const accountDelete = cookieRoute({ session: 'required' }, async (c) => {
   if (!(await hit(db, `account:delete:user:${uid}`, 5, HOUR, c.nowMs))) return problem(429, 'rate_limited');
   const body = await readBody(c.req);
   if (body.confirm !== 'DELETE') return problem(400, 'confirm_required');
-  if (await liveSubscription(db, uid, c.nowMs, { renewing: true })) return problem(409, 'active_subscription');
+  const block = await deleteBlock(db, uid, c.nowMs);
+  if (block) return problem(409, block);
 
   const email = (await db.prepare('SELECT email FROM users WHERE id = ?').bind(uid).first<string>('email')) ?? '';
   const hosts = (await db.prepare('SELECT id FROM hosts WHERE user_id = ?').bind(uid).all<{ id: string }>()).results.map((h) => h.id);

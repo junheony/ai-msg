@@ -66,8 +66,40 @@ describe('POST /v1/account/delete', () => {
     }
   });
 
-  it('a subscription set to cancel, or one stale past its period, does not block deletion', async () => {
-    for (const o of [{ scheduledCancel: 1 }, { periodEnd: Date.now() - 4 * DAY }, { status: 'past_due', pastDueSince: Date.now() - 8 * DAY }, { status: 'canceled' }]) {
+  it('a renewing subscription blocks deletion even when it looks stale (no time window)', async () => {
+    for (const o of [{ periodEnd: Date.now() - 4 * DAY }, { status: 'past_due', pastDueSince: Date.now() - 8 * DAY }, { status: 'trialing', periodEnd: Date.now() - 30 * DAY }]) {
+      const addr = email();
+      const cookie = await loginAs(addr);
+      const uid = await userId(addr);
+      await subscribe(uid, o);
+      const r = await del(cookie);
+      expect(r.status, JSON.stringify(o)).toBe(409);
+      expect(await r.json()).toMatchObject({ code: 'active_subscription' });
+      expect(await n('SELECT count(*) AS n FROM users WHERE id = ?', uid)).toBe(1);
+      expect(await (await call('/account', { headers: { cookie } })).text()).toContain('id="delete-blocked"');
+    }
+  });
+
+  it('a finished checkout still waiting for its webhook blocks deletion (409 payment_pending)', async () => {
+    const addr = email();
+    const cookie = await loginAs(addr);
+    const uid = await userId(addr);
+    await env.DB.prepare("INSERT INTO checkout_intents (user_id, plan, completed_at, expires_at) VALUES (?, 'pro-monthly', ?, ?)").bind(uid, Date.now(), Date.now() + 15 * 60_000).run();
+    const r = await del(cookie);
+    expect(r.status).toBe(409);
+    expect(await r.json()).toMatchObject({ code: 'payment_pending' });
+    expect(await n('SELECT count(*) AS n FROM users WHERE id = ?', uid)).toBe(1);
+    const page = await (await call('/account', { headers: { cookie } })).text();
+    expect(page).toContain('id="delete-blocked"');
+    expect(page).toMatch(/payment is still being processed/i);
+    expect(page).not.toContain('id="delete-account"');
+    // An open (not finished) intent or an expired lock does not block.
+    await env.DB.prepare('UPDATE checkout_intents SET completed_at = NULL, expires_at = ? WHERE user_id = ?').bind(Date.now() + 60 * 60_000, uid).run();
+    expect((await del(cookie)).status).toBe(200);
+  });
+
+  it('a subscription set to cancel, or a canceled one, does not block deletion', async () => {
+    for (const o of [{ scheduledCancel: 1 }, { status: 'past_due', scheduledCancel: 1 }, { status: 'canceled' }]) {
       const addr = email();
       const cookie = await loginAs(addr);
       const uid = await userId(addr);

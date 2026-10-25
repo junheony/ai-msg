@@ -18,14 +18,14 @@ const NOW = Date.UTC(2001, 0, 1);
 
 class FakePaddle implements PaddleApi {
   calls: string[] = [];
-  constructor(private readonly fail = false) {}
+  constructor(private readonly fail = false, private readonly status = 500) {}
   async cancelSubscription(id: string): Promise<void> {
     this.calls.push(id);
-    if (this.fail) throw new Error('paddle cancel 500');
+    if (this.fail) throw Object.assign(new Error(`paddle cancel ${this.status}`), { status: this.status });
   }
   async portalSession(): Promise<{ url: string }> { throw new Error('unused'); }
 }
-const fakePaddle = (fail = false) => new FakePaddle(fail);
+const fakePaddle = (fail = false, status = 500) => new FakePaddle(fail, status);
 
 const run = (sql: string, ...args: unknown[]) => env.DB.prepare(sql).bind(...args).run();
 const n = async (sql: string, ...args: unknown[]) => (await env.DB.prepare(sql).bind(...args).first<number>('n'))!;
@@ -113,6 +113,58 @@ describe('runCleanup', () => {
     expect(await alerts()).toBe(2);
   });
 
+  it('a refund cancel is done when the subscription is already canceled locally or unknown to Paddle (404)', async () => {
+    const s = seq++;
+    await run("INSERT INTO subscriptions (id, status, last_event_at, updated_at) VALUES (?, 'canceled', ?, ?)", `sub_gone${s}`, NOW - DAY, NOW - DAY);
+    await run("INSERT INTO refunds (adjustment_id, subscription_id, action, status, full, cancel_done_at, last_event_at) VALUES (?, ?, 'refund', 'approved', 1, ?, ?)", `adj_g${s}`, `sub_gone${s}`, -(NOW - HOUR), NOW - HOUR);
+    const p1 = fakePaddle(true);
+    expect(await runCleanup(env, NOW, { paddle: p1 })).toMatchObject({ refund_cancel_done: 1, refund_cancel_failed: 0 });
+    expect(p1.calls).toEqual([]); // no call needed
+    expect(await env.DB.prepare('SELECT cancel_done_at FROM refunds WHERE adjustment_id = ?').bind(`adj_g${s}`).first('cancel_done_at')).toBe(NOW);
+
+    await run("INSERT INTO refunds (adjustment_id, subscription_id, action, status, full, cancel_done_at, last_event_at) VALUES (?, ?, 'refund', 'approved', 1, NULL, ?)", `adj_404${s}`, `sub_404${s}`, NOW - HOUR);
+    const p2 = fakePaddle(true, 404);
+    expect(await runCleanup(env, NOW, { paddle: p2 })).toMatchObject({ refund_cancel_done: 1, refund_cancel_failed: 0 });
+    expect(p2.calls).toEqual([`sub_404${s}`]);
+    expect(await env.DB.prepare('SELECT cancel_done_at FROM refunds WHERE adjustment_id = ?').bind(`adj_404${s}`).first('cancel_done_at')).toBe(NOW);
+    expect(await n("SELECT count(*) AS n FROM ops_alerts WHERE kind = 'refund_cancel_failed' AND ref IN (?, ?)", `sub_gone${s}`, `sub_404${s}`)).toBe(0);
+  });
+
+  it('a refund cancel still failing 30 days after its event is given up with one last alert', async () => {
+    const s = seq++;
+    const sub = `sub_old${s}`;
+    await run("INSERT INTO refunds (adjustment_id, subscription_id, action, status, full, cancel_done_at, last_event_at) VALUES (?, ?, 'refund', 'approved', 1, ?, ?)", `adj_old${s}`, sub, -(NOW - DAY), NOW - 31 * DAY);
+    const p = fakePaddle(true);
+    expect(await runCleanup(env, NOW, { paddle: p })).toMatchObject({ refund_cancel_gave_up: 1, refund_cancel_failed: 0 });
+    expect(p.calls).toEqual([]);
+    expect(await env.DB.prepare('SELECT cancel_done_at FROM refunds WHERE adjustment_id = ?').bind(`adj_old${s}`).first('cancel_done_at')).toBe(0);
+    const alerts = await env.DB.prepare("SELECT detail FROM ops_alerts WHERE kind = 'refund_cancel_failed' AND ref = ?").bind(sub).all<{ detail: string }>();
+    expect(alerts.results).toHaveLength(1);
+    expect(alerts.results[0]!.detail).toMatch(/gave up/);
+    const later = fakePaddle(true);
+    expect(await runCleanup(env, NOW + 2 * DAY, { paddle: later })).toMatchObject({ refund_cancel_gave_up: 0 });
+    expect(later.calls).not.toContain(sub); // (an earlier test's failing row may still be retried)
+  });
+
+  it('a failing step is counted as -1 in errors; the other steps still run', async () => {
+    const s = seq++;
+    await run('INSERT INTO magic_links (token_hash, email, expires_at) VALUES (?, ?, ?)', `ml_err${s}`, 'x@example.test', NOW - 2 * DAY);
+    await run('INSERT INTO outbox (to_addr, subject, body, created_at) VALUES (?, ?, ?, ?)', 'x@example.test', 's', 'b', NOW - 2 * DAY);
+    const db = new Proxy(env.DB, {
+      get(target, prop) {
+        if (prop === 'prepare') return (sql: string) => { if (sql.includes('FROM magic_links')) throw new Error('D1_ERROR boom'); return target.prepare(sql); };
+        const v = Reflect.get(target, prop);
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    });
+    const errs = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const counts = await runCleanup({ ...env, DB: db }, NOW, { paddle: fakePaddle() });
+    expect(counts).toMatchObject({ magic_links: -1, errors: 1, outbox: 1 });
+    expect(await n('SELECT count(*) AS n FROM magic_links WHERE token_hash = ?', `ml_err${s}`)).toBe(1);
+    expect(errs.mock.calls.map((c) => String(c[0])).join('\n')).not.toMatch(/ml_err|@/);
+  });
+
   it('stale customer links: alert after 24 h once a day, delete after 30 days', async () => {
     const s = seq++;
     await run('INSERT INTO paddle_link_pending (customer_id, user_id, created_at) VALUES (?, ?, ?), (?, ?, ?), (?, ?, ?)',
@@ -133,12 +185,12 @@ describe('runCleanup', () => {
     await ins(`sub_s_active${s}`, 'active', NOW - 4 * DAY, null, u);
     await ins(`sub_s_trial${s}`, 'trialing', NOW - 4 * DAY, null);
     await ins(`sub_s_due${s}`, 'past_due', NOW - 10 * DAY, NOW - 8 * DAY);
-    await ins(`sub_ok_active${s}`, 'active', NOW - 2 * DAY, null);
+    await ins(`sub_ok_active${s}`, 'active', NOW - DAY, null); // inside the 48 h renewal grace
     await ins(`sub_ok_due${s}`, 'past_due', NOW - 3 * DAY, NOW - 6 * DAY);
     await ins(`sub_ok_canceled${s}`, 'canceled', NOW - 40 * DAY, null);
 
     expect(await liveSubscription(env.DB, u, NOW)).toBe(false);
-    expect(await liveSubscription(env.DB, u, NOW - 2 * DAY)).toBe(true); // 2 days past period_end: still live
+    expect(await liveSubscription(env.DB, u, NOW - 3 * DAY)).toBe(true); // 1 day past period_end: still in the grace
 
     const counts = await runCleanup(env, NOW, { paddle: fakePaddle() });
     expect(counts).toMatchObject({ subscription_stale: 3 });

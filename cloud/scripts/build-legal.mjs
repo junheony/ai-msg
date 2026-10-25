@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Builds cloud/src/legal/pages.gen.ts from the six docs/legal/{terms,privacy,refund}{,.ko}.md files (the only source;
-// the generated file is not committed). `--strict` (predeploy) refuses any draft mark left — every `{{…}}` and the
-// DRAFT banner — and lists each with its file and line, so drafts can never be deployed.
+// the generated file is not committed). `--strict` (predeploy) refuses any draft mark left — every `{{…}}`, any
+// unpaired `{{`/`}}` and the DRAFT banner — and lists each with its file and line, so drafts can never be deployed.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,7 +48,8 @@ for (const doc of DOCS) {
 
 if (strict && left.length) {
   const banners = left.filter((l) => l.endsWith(': DRAFT')).length;
-  fail([`build-legal --strict: ${left.length} draft marks left (${left.length - banners} {{…}} placeholders, ${banners} DRAFT banners) — fill them in docs/legal/ before deploying:`, ...left]);
+  const stray = left.filter((l) => /: unpaired (\{\{|\}\})$/.test(l)).length;
+  fail([`build-legal --strict: ${left.length} draft marks left (${left.length - banners - stray} {{…}} placeholders, ${stray} unpaired braces, ${banners} DRAFT banners) — fill them in docs/legal/ before deploying:`, ...left]);
 }
 
 mkdirSync(dirname(outFile), { recursive: true });

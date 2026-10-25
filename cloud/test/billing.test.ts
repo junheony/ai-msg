@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { PAST_DUE_GRACE_MS, RENEWAL_GRACE_MS } from '../src/entitled';
 import { checkConfig, deps } from '../src/index';
 import type { Env } from '../src/env';
 import { type PaddleApi, paddleApi } from '../src/paddle/api';
@@ -134,21 +135,21 @@ describe('/checkout (app origin)', () => {
     expect((await post('/v1/billing/intent', { plan: 'pro-monthly' }, { cookie: u.cookie })).status).toBe(200);
   });
 
-  it('an active subscription 3+ days past period_end (missed cancel webhook) or a past_due one past its 7 days does not block checkout', async () => {
+  it('an active subscription past period_end + the entitlement renewal grace (missed cancel webhook) or a past_due one past its 7 days does not block checkout', async () => {
     const u = await user();
     const sub = await subscribe(u.id);
-    await env.DB.prepare('UPDATE subscriptions SET period_end = ? WHERE id = ?').bind(Date.now() - 3 * DAY - 60_000, sub).run();
+    await env.DB.prepare('UPDATE subscriptions SET period_end = ? WHERE id = ?').bind(Date.now() - RENEWAL_GRACE_MS - 60_000, sub).run();
     expect((await post('/v1/billing/intent', { plan: 'pro-monthly' }, { cookie: u.cookie })).status).toBe(200);
     expect(await (await call('/account', web(u))).text()).toContain('href="/checkout?plan=pro-monthly"');
 
     const d = await user();
     const due = await subscribe(d.id, { status: 'past_due' });
-    await env.DB.prepare('UPDATE subscriptions SET past_due_since = ? WHERE id = ?').bind(Date.now() - 7 * DAY - 60_000, due).run();
+    await env.DB.prepare('UPDATE subscriptions SET past_due_since = ? WHERE id = ?').bind(Date.now() - PAST_DUE_GRACE_MS - 60_000, due).run();
     expect((await post('/v1/billing/intent', { plan: 'pro-monthly' }, { cookie: d.cookie })).status).toBe(200);
 
     const recent = await user();
     const r = await subscribe(recent.id);
-    await env.DB.prepare('UPDATE subscriptions SET period_end = ? WHERE id = ?').bind(Date.now() - 2 * DAY, r).run();
+    await env.DB.prepare('UPDATE subscriptions SET period_end = ? WHERE id = ?').bind(Date.now() - RENEWAL_GRACE_MS + 60 * 60_000, r).run(); // still inside the grace: Pro holds, so checkout stays blocked
     expect((await post('/v1/billing/intent', { plan: 'pro-monthly' }, { cookie: recent.cookie })).status).toBe(409);
   });
 

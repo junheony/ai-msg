@@ -1,5 +1,5 @@
 import { cookieRoute } from './auth/session';
-import { PAST_DUE_GRACE_MS } from './entitled';
+import { PAST_DUE_GRACE_MS, RENEWAL_GRACE_MS } from './entitled';
 import type { Env } from './env';
 import { HttpError, json, problem, readBody } from './http';
 import type { PaddleApi } from './paddle/api';
@@ -19,25 +19,22 @@ export const INTENT_TTL_MS = 60 * 60_000;
 export const PENDING_TTL_MS = 15 * 60_000;
 
 /**
- * An `active`·`trialing` row whose `period_end` is this far behind is not running any more — its cancel webhook was
- * missed (Paddle renews at `period_end`, and the renewal webhook lags hours, not days). The Task 12 cron alerts on it.
+ * SQL condition: the subscription is running at `?<n>` (ms) — the same grace windows as entitled.ts, so a user is never
+ * both without Pro and blocked from paying. `active`·`trialing` until `RENEWAL_GRACE_MS` past `period_end` (no
+ * `period_end` → running); `past_due` within `PAST_DUE_GRACE_MS` of `past_due_since` (NULL → not running, as there).
+ * A row still in a live status past these is a missed webhook: the Task 12 cron alerts `subscription_stale`.
  */
-export const STALE_PERIOD_MS = 3 * 24 * 3_600_000;
-
-/**
- * SQL condition: the subscription is running at `?<n>` (ms). `active`·`trialing` until 3 days past `period_end` (no
- * `period_end` → running); `past_due` within its 7-day dunning grace, the same rule as entitled.ts.
- */
-export const liveSql = (now: string) => `((status IN ('active', 'trialing') AND (period_end IS NULL OR period_end > ${now} - ${STALE_PERIOD_MS}))
+export const liveSql = (now: string) => `((status IN ('active', 'trialing') AND (period_end IS NULL OR period_end + ${RENEWAL_GRACE_MS} > ${now}))
   OR (status = 'past_due' AND past_due_since + ${PAST_DUE_GRACE_MS} > ${now}))`;
 
-/**
- * Whether the user has a running subscription (`liveSql`), whatever plan wins the display. `renewing` keeps only those
- * not set to cancel (`scheduled_cancel = 0`) — what blocks account deletion.
- */
-export async function liveSubscription(db: D1Database, userId: string, nowMs: number, opts: { renewing?: boolean } = {}): Promise<boolean> {
-  const renewing = opts.renewing ? ' AND scheduled_cancel = 0' : '';
-  return Boolean(await db.prepare(`SELECT 1 AS x FROM subscriptions WHERE user_id = ?1 AND ${liveSql('?2')}${renewing} LIMIT 1`).bind(userId, nowMs).first<number>('x'));
+/** Whether the user has a running subscription (`liveSql`), whatever plan wins the display. Blocks a new checkout. */
+export async function liveSubscription(db: D1Database, userId: string, nowMs: number): Promise<boolean> {
+  return Boolean(await db.prepare(`SELECT 1 AS x FROM subscriptions WHERE user_id = ?1 AND ${liveSql('?2')} LIMIT 1`).bind(userId, nowMs).first<number>('x'));
+}
+
+/** A checkout the user finished whose webhook has not come yet (`checkout.completed` lock, 15 min). */
+async function paymentPending(db: D1Database, userId: string, nowMs: number): Promise<boolean> {
+  return Boolean(await db.prepare('SELECT 1 AS x FROM checkout_intents WHERE user_id = ? AND completed_at IS NOT NULL AND expires_at > ?').bind(userId, nowMs).first<number>('x'));
 }
 
 /**
@@ -46,8 +43,18 @@ export async function liveSubscription(db: D1Database, userId: string, nowMs: nu
  */
 export async function checkoutBlock(db: D1Database, userId: string, nowMs: number): Promise<'already_subscribed' | 'payment_pending' | null> {
   if (await liveSubscription(db, userId, nowMs)) return 'already_subscribed';
-  const done = await db.prepare('SELECT 1 AS x FROM checkout_intents WHERE user_id = ? AND completed_at IS NOT NULL AND expires_at > ?').bind(userId, nowMs).first<number>('x');
-  return done ? 'payment_pending' : null;
+  return (await paymentPending(db, userId, nowMs)) ? 'payment_pending' : null;
+}
+
+/**
+ * Why this account may not be deleted. `active_subscription`: any row in a live status set to renew — no time window
+ * (unlike `liveSql`), since even a stale-looking row may still bill at Paddle; cancel it under Manage billing first.
+ * `payment_pending`: a finished checkout whose subscription has not arrived — it would land with no owner and bill.
+ */
+export async function deleteBlock(db: D1Database, userId: string, nowMs: number): Promise<'active_subscription' | 'payment_pending' | null> {
+  const sub = await db.prepare("SELECT 1 AS x FROM subscriptions WHERE user_id = ? AND status IN ('active', 'trialing', 'past_due') AND scheduled_cancel = 0 LIMIT 1").bind(userId).first<number>('x');
+  if (sub) return 'active_subscription';
+  return (await paymentPending(db, userId, nowMs)) ? 'payment_pending' : null;
 }
 
 /**

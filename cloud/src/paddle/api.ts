@@ -2,7 +2,7 @@ import type { Env } from '../env';
 
 /** The Paddle Billing API calls the Worker makes. Tests inject a fake (`deps.paddle` in index.ts). */
 export interface PaddleApi {
-  /** Cancels at once (full refund or chargeback, D15). Throws on a non-2xx answer. */
+  /** Cancels at once (full refund or chargeback, D15). Throws on a non-2xx answer (the error carries `status`). */
   cancelSubscription(id: string): Promise<void>;
   /** A fresh customer portal link (`urls.general.overview`). Throws on a non-2xx answer or a missing / non-https link. */
   portalSession(customerId: string, subscriptionIds: string[]): Promise<{ url: string }>;
@@ -28,7 +28,7 @@ export const paddleApi = (env: Pick<Env, 'PADDLE_ENV' | 'PADDLE_API_KEY'>, fetch
     async cancelSubscription(id) {
       const r = await postJson(`/subscriptions/${encodeURIComponent(id)}/cancel`, { effective_from: 'immediately' });
       await r.body?.cancel();
-      if (!r.ok) throw new Error(`paddle cancel ${r.status}`);
+      if (!r.ok) throw Object.assign(new Error(`paddle cancel ${r.status}`), { status: r.status });
     },
     async portalSession(customerId, subscriptionIds) {
       const ids = subscriptionIds.slice(0, 25);
