@@ -12,7 +12,7 @@ These terms are an agreement between you and `{{OPERATOR_NAME}}` ("we", "us"), o
 AI-MSG is software that runs on your own computer. It gives you one web and mobile screen for the AI coding command-line tools that you installed and signed in to yourself (the "Vendor Tools"). AI-MSG has two parts.
 
 - **Core.** Free, open-source software under the Apache License 2.0. The license file in the package governs your use of the Core. These terms do not reduce your rights under that license.
-- **Pro.** A paid subscription. It adds extra features and an optional cloud service for relay, push notifications and device pairing ("Pro Cloud").
+- **Pro.** A paid subscription. It adds a hosted cloud service that connects your own devices to your own computer: an end-to-end encrypted relay, push notifications and device pairing ("Pro Cloud"). Pro does not sell, resell or include any AI usage.
 
 ## 2. Vendor tools and vendor terms
 
