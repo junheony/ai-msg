@@ -24,6 +24,7 @@ afterEach(() => { vi.restoreAllMocks(); });
 describe('origin separation (D18)', () => {
   it('every route is 404 on the other origin and on an unknown host name', async () => {
     expect(ROUTES.length).toBeGreaterThan(30);
+    const ROUTER_404 = await (await call('/no-such-route-anywhere')).text();
     for (const [side, method, pattern] of ROUTES) {
       const path = concrete(pattern);
       const init = method === 'GET' ? {} : { method, headers: { 'content-type': 'application/json', origin: OTHER[side] }, body: '{}' };
@@ -31,6 +32,10 @@ describe('origin separation (D18)', () => {
       const h = method === 'GET' ? {} : { method, headers: { 'content-type': 'application/json', origin: 'https://evil.test' }, body: '{}' };
       expect((await call(path, h, 'https://evil.test')).status, `${method} ${path} on an unknown host`).toBe(404);
       expect((await call(path, h, 'https://app.test.evil.test')).status, `${method} ${path} on a look-alike host`).toBe(404);
+      // Control: on its own origin the route exists — whatever it answers, it is not the router's 404.
+      const own = side === 'app' ? APP : RELAY;
+      const mine = await call(path, method === 'GET' ? {} : { method, headers: { 'content-type': 'application/json', origin: own }, body: '{}' }, own);
+      expect(mine.status === 404 ? await mine.text() : '', `${method} ${path} on its own origin`).not.toBe(ROUTER_404);
     }
   });
 });
@@ -153,7 +158,9 @@ describe('secrets stay out of logs and D1', () => {
     expect([host.status, phone.status]).toEqual([101, 101]);
     phone.ws!.close(1000);
     host.ws!.close(1000);
-    await waitFor(() => logged.some((l) => l.includes('"bytes"')), 3000).catch(() => undefined);
+    // Both sockets' open and close lines are in before anything is checked (a missing line fails here, not silently).
+    await waitFor(() => logged.filter((l) => l.includes('"ev":"close"')).length >= 2, 3000);
+    expect(logged.filter((l) => l.includes('"ev":"open"')).length).toBeGreaterThanOrEqual(2);
     // Wrong tokens are not echoed either.
     const wrong = `wrong-${'z'.repeat(40)}`;
     secrets.push(wrong);

@@ -251,11 +251,11 @@ Do not expose the port to the public internet. There is no multi-user support an
 
 ## Pro cloud (optional)
 
-Pro is a paid relay: it connects your Mac to a phone you paired, away from your tailnet. Everything above works without it, and keeps working when the cloud is down or unreachable. There is no local feature lock.
+Pro is a paid relay between your Mac and your phone, away from your tailnet. **This release has the Mac side only:** linking the Mac to a cloud account, the plan shown in Settings, and the Mac's relay connection. The phone app and the pairing screen are not in this release; they come in the next release. Everything above works without Pro, and keeps working when the cloud is down or unreachable. There is no local feature lock.
 
 - **Nothing is sent until you link.** An install that has never been linked to a cloud account makes no cloud request. Linking happens in Settings > Cloud, where you sign in by email link and approve the Mac in the browser. `DECK_CLOUD=off` removes the feature entirely.
-- **What the relay can read.** The relay is end-to-end encrypted: our servers pass along encrypted bytes between your Mac and the phone you paired, and cannot read your sessions. The phone app itself is delivered from our servers, so you are trusting us to serve the published app code. Sensitive actions — restarting the server, changing setup, raising permission modes, and pairing a new phone — need you at your Mac.
-- **Where keys live.** The Mac's cloud state, including its key, its token and the paired phones' public keys, is in `<config dir>/cloud/state.json` (`0600`). The cloud keeps public keys and token hashes only.
+- **What the relay will be able to read (next release, with the phone app).** The relay is end-to-end encrypted: our servers pass along encrypted bytes between your Mac and the phone you paired, and cannot read your sessions. The phone app itself is delivered from our servers, so you are trusting us to serve the published app code. Sensitive actions — restarting the server, changing setup, raising permission modes, and pairing a new phone — need you at your Mac. The Mac already refuses these when they arrive through the relay.
+- **Where keys live.** The Mac's cloud state, including its key, its token and (once pairing ships) the paired phones' public keys, is in `<config dir>/cloud/state.json` (`0600`). The cloud keeps public keys and token hashes only.
 - **Payments.** Paddle is the merchant of record; AI-MSG never receives card details.
 
 Details: [docs/security-model.md](docs/security-model.md) (threats, what is and is not protected) and [docs/privacy-data-inventory.md](docs/privacy-data-inventory.md) (what the cloud keeps, and for how long). Both are in Korean.
@@ -294,7 +294,7 @@ Under `~/.config/deck` (or `DECK_CONFIG_DIR`):
 | `events.jsonl` | 하이라이트: finished/failed turns, permission and question cards, background tasks, restart cuts and server start/drain, one JSON line each. Kept 7 days (older lines are dropped at start). |
 | `attachments/` | Uploaded files (`0700`; 10 MiB each, deleted after 7 days). |
 | `vapid.json`, `push-subscriptions.json` | Web Push keys and subscriptions (`0600`). |
-| `cloud/state.json` | Pro cloud link: host key and token, paired phones' public keys, last plan (`0600`, folder `0700`). Only after linking. |
+| `cloud/state.json` | Pro cloud link: host key and token, last plan, and (from the next release) paired phones' public keys (`0600`, folder `0700`). Only after linking. |
 | `usage-index-v2.json`, `usage-index-v2.json.seen` | Token-usage aggregates and their dedupe log. An older `usage-index.json` is read once for conversion and left in place. |
 | `usage-source.json` | Written once, the first time a usage dashboard answers (`{"deckSeenAt": ...}`). |
 | `gemini/<id>/` | Gemini CLI home per Gemini account (follows `DECK_CONFIG_DIR`). |

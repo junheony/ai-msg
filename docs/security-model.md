@@ -38,7 +38,7 @@
 ## 키 저장 위치
 
 - **Mac:** 호스트 키·호스트 토큰·신뢰한 기기 공개키는 `<설정 폴더>/cloud/state.json` 에 있다. 폴더는 `0700`, 파일은 `0600` 이고 임시 파일에 쓴 뒤 바꿔 끼운다. 클라우드에 연결한 적 없는 설치는 클라우드에 아무 요청도 보내지 않는다(`src/server/cloud/faults.test.ts`).
-- **폰:** 기기 키는 IndexedDB 의 추출 불가 `CryptoKey` 다(DH 는 `deriveBits` 로만). 그 런타임이 WebCrypto X25519 를 지원하지 않아 `@noble/curves` 로 대체하면 그 폰에서만 키가 IndexedDB 에 원시 바이트로 남는다.
+- **폰(5a 계약, 구현 전):** 기기 키는 IndexedDB 의 추출 불가 `CryptoKey` 다(DH 는 `deriveBits` 로만). 그 런타임이 WebCrypto X25519 를 지원하지 않아 `@noble/curves` 로 대체하면 그 폰에서만 키가 IndexedDB 에 원시 바이트로 남는다.
 - **클라우드:** 호스트·기기의 공개키와 토큰 해시만 있다. 비밀키는 없다.
 - 저장소에 들어가는 파일에 비밀키 모양(PEM 머리, `d` 가 있는 OKP·EC JWK)이 있으면 위생 검사(`src/hygiene.ts`)가 실패한다.
 

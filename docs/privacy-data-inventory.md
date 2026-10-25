@@ -52,4 +52,4 @@
 
 ## 계정 삭제
 
-`POST /v1/account/delete` 가 한 batch 로 지운다: 사용자, 그 사용자의 호스트·기기·페어링·Mac 연결 요청·웹 세션·매직링크·로그 메일·체험·comp·결제 의도·보류 연결·릴레이 티켓·사용자 id 속도 키. 남는 것은 `trial_claims`(이메일 키)·`subscriptions`·`paddle_customers`·`refunds`·`paddle_events`(90일)·`ops_alerts`(참조 NULL, 90일)·IP·이메일 키 속도 카운터(2일)다.
+`POST /v1/account/delete` 가 한 batch 로 지운다: 사용자, 그 사용자의 호스트·기기·페어링·Mac 연결 요청·웹 세션·매직링크·로그 메일·체험·comp·결제 의도·보류 연결·릴레이 티켓·사용자 id 속도 키. 남는 것은 `trial_claims`(이메일 키)·`subscriptions`·`paddle_customers`·`refunds`·`paddle_events`(90일)·`ops_alerts`(참조 NULL, 90일)·IP·이메일 키 속도 카운터와 호스트·기기 id 로 묶인 속도 키 `ent:host:<호스트 id>`·`relay:ticket:dev:<기기 id>`(모두 2일 뒤 정리)다.

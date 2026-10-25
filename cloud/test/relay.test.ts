@@ -335,16 +335,25 @@ describe('relay routing', () => {
     try {
       const h = await linkHost(email());
       const d1 = await pairedDevice(h);
+      // The DO runs in this isolate, so a frozen Date freezes its token bucket too: no refill, the limit is exact
+      // however slowly the room drains. (Waits below count turns, not Date.)
+      vi.useFakeTimers({ toFake: ['Date'] });
       const p1 = await openDevice(d1.deviceToken);
-      await waitFor(() => texts(p1).length > 0);
-      // Well past burst + refill even when other test files load the shared workerd and the room drains slowly.
-      for (let i = 0; i < 5000 && p1.closes.length === 0; i++) {
-        try { p1.ws!.send(new Uint8Array([200, 1, 2, 3])); } catch { break; }
-      }
-      await waitFor(() => p1.closes.length > 0);
+      const until = async (cond: () => boolean) => { for (let i = 0; i < 1000 && !cond(); i++) await sleep(10); expect(cond()).toBe(true); };
+      await until(() => texts(p1).length > 0);
+      const hostDown = () => texts(p1).filter((m) => m.t === 'host' && m.up === false).length;
+      const before = hostDown();
+      for (let i = 0; i < 399; i++) p1.ws!.send(new Uint8Array([200, 1, 2, 3]));
+      // Frame 400, a real one: no host is connected, so the room answers `host up:false` — every frame so far was handled.
+      p1.ws!.send(encodeEnvelope({ kind: EnvKind.Data, peer: 'host', payload: new Uint8Array([0]) }));
+      await until(() => hostDown() > before);
+      expect(p1.closes).toEqual([]);
+      p1.ws!.send(new Uint8Array([200, 1, 2, 3])); // frame 401
+      await until(() => p1.closes.length > 0);
       expect(p1.closes).toEqual([CLOSE.rateLimited]);
       expect(lines.filter((l) => l.includes('"ev":"bad_frame"'))).toHaveLength(1);
     } finally {
+      vi.useRealTimers();
       spy.mockRestore();
     }
   });

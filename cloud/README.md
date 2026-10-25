@@ -89,7 +89,8 @@ npm --prefix cloud test        # miniflare 안의 workerd, 네트워크 없음
 5. **배포:** `npm --prefix cloud run deploy`. `predeploy` 가 `node scripts/build-legal.mjs --strict` 를 먼저 돌려, 법적 문서에 `{{…}}` 나 DRAFT 띠가 하나라도 남아 있으면 남은 개수와 `파일:줄` 목록을 찍고 배포를 멈춘다. cron(`17 3 * * *`, UTC)은 `wrangler.jsonc` 의 `triggers` 로 같이 올라간다.
 6. **이 Mac 소유자 계정 comp 부여**(아래 SQL). 출시 1차에는 로컬 게이트가 없으므로 릴레이를 쓸 때만 필요하다.
 7. **실기 확인:** 실제 결제 1건(샌드박스 → 라이브), 전액 환불 1건(자동 해지 확인), 폰 페어링 → 승인.
-8. **운영:** `ops_alerts` 를 볼 방법을 정한다(아래 쿼리).
+8. **라이브 전환:** 샌드박스 확인이 끝나면 `vars` 의 `PADDLE_ENV` 를 `production` 으로 바꾸고, 비밀 `PADDLE_API_KEY`(라이브 키)·`PADDLE_WEBHOOK_SECRET`(라이브 알림 대상의 비밀)을 다시 넣는다. `vars` 의 `PADDLE_CLIENT_TOKEN`(라이브 `live_`)·`PADDLE_PRICE_MONTHLY`·`PADDLE_PRICE_YEARLY`·`PADDLE_DISCOUNT_FOUNDING` 도 라이브 값으로 바꾼 뒤 다시 배포한다. 하나라도 샌드박스 값이 남으면 checkConfig 가 503 으로 막거나 결제가 실패한다.
+9. **운영:** `ops_alerts` 를 볼 방법을 정한다(아래 쿼리).
 
 ### comp 부여
 

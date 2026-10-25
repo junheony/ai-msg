@@ -11,6 +11,7 @@ import type { CloudStatus, EntitlementRes } from '../../shared/cloud/api-types';
 import type { ServerMessage } from '../../shared/protocol';
 import { loadConfig } from '../config';
 import { startServer } from '../server';
+import { CLOSE } from '../../shared/cloud/envelope';
 import { CloudState } from './CloudState';
 import { RelayClient, type RelayState } from './RelayClient';
 import { FakeRelay, waitFor } from './testkit';
@@ -173,6 +174,69 @@ describe('sleep and wake', () => {
       await relay.attempted(2);
       await waitFor(() => states.at(-1) === 'up');
       expect(states.slice(-2)).toEqual(['connecting', 'up']);
+      // Once: the next ticks (awake, no jump) redo nothing.
+      vi.advanceTimersByTime(15_000);
+      await realPause();
+      expect(relay.attempts).toBe(2);
+    } finally {
+      client.stop();
+      vi.useRealTimers();
+      await relay.close();
+    }
+  });
+
+  /** Real time passing (performance is not faked) so a reconnect that would happen has had its chance. */
+  const realPause = async (ms = 300) => { for (const end = performance.now() + ms; performance.now() < end;) await new Promise((r) => setImmediate(r)); };
+  const sleepFor2h = () => { vi.setSystemTime(Date.now() + 2 * 3_600_000); vi.advanceTimersByTime(5_000); };
+
+  it('waking during an ordinary backoff wait ends the wait at once (and only once)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    const relay = await FakeRelay.start({ upgradeStatus: 503 });
+    const client = new RelayClient({ url: relay.url, token: () => relay.token, backoff: { minMs: 60_000, maxMs: 60_000 }, random: () => 0.5 });
+    try {
+      const states: RelayState[] = [];
+      client.on('state', (s: RelayState) => states.push(s));
+      client.start();
+      await relay.attempted(1);
+      await waitFor(() => states.at(-1) === 'down');
+      sleepFor2h(); // only 5 s of the 60 s wait have run
+      await relay.attempted(2);
+      await waitFor(() => states.at(-1) === 'down');
+      vi.advanceTimersByTime(15_000); // awake ticks, still far inside the new 60 s wait
+      await realPause();
+      expect(relay.attempts).toBe(2);
+    } finally {
+      client.stop();
+      vi.useRealTimers();
+      await relay.close();
+    }
+  });
+
+  it('waking does not cut the entitlement wait nor the replaced wait', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    const relay = await FakeRelay.start({ upgradeStatus: 402 });
+    const client = new RelayClient({ url: relay.url, token: () => relay.token, random: () => 0.5 });
+    try {
+      const states: RelayState[] = [];
+      client.on('state', (s: RelayState) => states.push(s));
+      client.start();
+      await relay.attempted(1);
+      await waitFor(() => states.at(-1) === 'not_entitled');
+      sleepFor2h();
+      await realPause();
+      expect(relay.attempts).toBe(1);
+
+      // Then up, and pushed out by another Mac (4409): the 10-minute wait stays too.
+      relay.upgradeStatus = null;
+      vi.advanceTimersByTime(300_000); // the entitlement wait's longest
+      await relay.attempted(2);
+      await waitFor(() => states.at(-1) === 'up');
+      relay.closeHost(CLOSE.replaced, 'replaced');
+      await waitFor(() => states.at(-1) === 'replaced');
+      sleepFor2h();
+      await realPause();
+      expect(relay.attempts).toBe(2);
+      expect(states.at(-1)).toBe('replaced');
     } finally {
       client.stop();
       vi.useRealTimers();
