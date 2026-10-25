@@ -1568,6 +1568,7 @@ it('pair string: accepts the bare code, #pair=…, or the full URL with whitespa
 it('network error resends the same devicePub (idempotent claim), never a new key', async () => {
   /* fetch 가 첫 번째는 throw, 두 번째는 200 → 두 본문의 devicePub·mac 이 같다 */
 });
+it('409 retry waits at least 10 s before resending the same claim', async () => { /* 가짜 타이머: 409 {code:'retry'} → 9.9초엔 두 번째 fetch 없음, 10초 뒤 같은 본문으로 재전송 */ });
 
 // src/ui/relay/RelayGate.test.tsx
 it('awaiting_mac shows the 6-digit code', () => { /* getByText('123 456') */ });

@@ -133,6 +133,27 @@ describe('host link (device code)', () => {
     expect((await linkHost('v65@example.test', '2001:db8:9:a::1')).trial).toBe('granted');
   });
 
+  it('a trial write failing for a non-UNIQUE reason still answers the committed approval (trial unavailable, metadata-only log)', async () => {
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => { logs.push(a.map(String).join(' ')); });
+    await env.DB.prepare('ALTER TABLE trials RENAME TO trials_away').run(); // any non-UNIQUE failure inside the trial batch
+    let h: Awaited<ReturnType<typeof linkHost>>;
+    try {
+      h = await linkHost('trialfail@example.test');
+    } finally {
+      await env.DB.prepare('ALTER TABLE trials_away RENAME TO trials').run();
+      spy.mockRestore();
+    }
+    expect(h.trial).toBe('unavailable');
+    expect(h.hostToken).toBeTruthy(); // the approval went through and the Mac got its token
+    const claims = await env.DB.prepare('SELECT count(*) AS n FROM trial_claims tc JOIN users u ON u.id = tc.user_id WHERE u.email = ?').bind('trialfail@example.test').first('n');
+    expect(claims).toBe(0); // the batch rolled back as one
+    const line = logs.find((l) => l.includes('trial_grant_failed'));
+    expect(line).toBeDefined();
+    expect(Object.keys(JSON.parse(line!) as object).sort()).toEqual(['err', 'ev', 'user']);
+    expect(line).not.toContain('trialfail@');
+  });
+
   it('MAX_HOSTS', async () => {
     for (let i = 0; i < 3; i++) await linkHost('many@example.test');
     const s = await start();

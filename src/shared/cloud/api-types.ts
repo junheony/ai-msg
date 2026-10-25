@@ -24,7 +24,9 @@ export type PairClaimRes = { deviceId: string; deviceToken: string; hostId: stri
 export type TicketRes = { ticket: string; hostId: string; expiresIn: number };
 
 // app: GET /v1/devices — the host's active (confirmed, not revoked) devices. `pub` is the X25519 key (base64url),
-// `addedAt` the claim time, `lastSeen` the last ticket (null until the first one). Times are ms.
+// `addedAt` when the device's current token was issued (the claim, or the last accepted resend of the same claim
+// within its ≤5-min window — so practically the claim time), `lastSeen` the last relay connection (null until the
+// first one). Times are ms.
 export type DeviceInfo = { id: string; name: string; pub: string; addedAt: number; lastSeen: number | null };
 
 // app: GET /v1/entitlement (display only, unsigned)

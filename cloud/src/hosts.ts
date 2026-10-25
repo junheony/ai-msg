@@ -105,8 +105,11 @@ export const linkApprove = cookieRoute({ session: 'required' }, async (c) => {
     ]);
     return json(200, { trial: claim!.meta.changes === 1 ? 'granted' : 'unavailable' } satisfies LinkApproveRes);
   } catch (e) {
-    if (!/UNIQUE/i.test(String(e))) throw e;
-    return json(200, { trial: 'already_used' } satisfies LinkApproveRes); // lost a race with another approval for the same person
+    if (/UNIQUE/i.test(String(e))) return json(200, { trial: 'already_used' } satisfies LinkApproveRes); // lost a race with another approval for the same person
+    // The approval above is already committed: answer it as a success without a trial rather than a 500 that makes
+    // the user retry an approval that went through. Metadata only in the log — no email, no SQL text.
+    console.error(JSON.stringify({ ev: 'trial_grant_failed', user: c.userId, err: e instanceof Error ? e.name : 'error' }));
+    return json(200, { trial: 'unavailable' } satisfies LinkApproveRes);
   }
 });
 

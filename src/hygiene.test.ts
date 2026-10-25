@@ -30,20 +30,36 @@ describe('repository hygiene', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('the shared files cloud/ compiles in import only each other by relative path (no zod or other packages in the Worker)', () => {
+  it('the Worker (cloud/src and the shared files it compiles in) imports only itself, those shared files and cloudflare:* (no zod, frames or other packages)', () => {
+    const cloud = path.join(ROOT, 'cloud');
+    if (!fs.existsSync(cloud)) return; // public export: no cloud/
+    const raw = fs.readFileSync(path.join(cloud, 'tsconfig.json'), 'utf8');
     let tsconfig: { include?: string[] };
-    try { tsconfig = JSON.parse(fs.readFileSync(path.join(ROOT, 'cloud', 'tsconfig.json'), 'utf8')) as { include?: string[] }; } catch { return; } // public export: no cloud/
-    const shared = (tsconfig.include ?? []).filter((p) => p.startsWith('../')).map((p) => path.resolve(ROOT, 'cloud', p));
+    try { tsconfig = JSON.parse(raw) as { include?: string[] }; } catch {
+      // tsconfig may carry comments / trailing commas; strip them (outside strings) and parse again — or fail.
+      const stripped = raw.replace(/("(?:[^"\\]|\\.)*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (_m, s: string | undefined) => s ?? '').replace(/,(\s*[}\]])/g, '$1');
+      tsconfig = JSON.parse(stripped) as { include?: string[] };
+    }
+    const shared = (tsconfig.include ?? []).filter((p) => p.startsWith('../')).map((p) => path.resolve(cloud, p));
     expect(shared.length).toBeGreaterThan(0);
     const allowed = new Set(shared);
+    const cloudSrc = path.join(cloud, 'src');
+    const walk = (d: string): string[] => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(path.join(d, e.name)) : /\.ts$/.test(e.name) ? [path.join(d, e.name)] : []);
+    const worker = walk(cloudSrc);
+    expect(worker.length).toBeGreaterThan(0);
     const bad: string[] = [];
-    for (const file of shared) {
-      const src = fs.readFileSync(file, 'utf8');
-      for (const m of src.matchAll(/\b(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g)) {
+    // The shared files import only each other; the Worker's own code also imports itself and `cloudflare:*`.
+    for (const file of [...shared, ...worker]) {
+      const rel = path.relative(ROOT, file);
+      const own = !shared.includes(file);
+      for (const m of fs.readFileSync(file, 'utf8').matchAll(/\b(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g)) {
         const spec = m[1]!;
-        const rel = path.relative(ROOT, file);
-        if (!spec.startsWith('./') && !spec.startsWith('../')) bad.push(`${rel}: ${spec}`);
-        else if (!allowed.has(path.resolve(path.dirname(file), spec.endsWith('.ts') ? spec : `${spec}.ts`))) bad.push(`${rel}: ${spec} (not in cloud/tsconfig.json include)`);
+        if (own && spec.startsWith('cloudflare:')) continue;
+        if (!spec.startsWith('./') && !spec.startsWith('../')) { bad.push(`${rel}: ${spec}`); continue; }
+        const target = path.resolve(path.dirname(file), spec.endsWith('.ts') ? spec : `${spec}.ts`);
+        if (allowed.has(target)) continue;
+        if (own && target.startsWith(cloudSrc + path.sep)) continue;
+        bad.push(`${rel}: ${spec} (not cloud/src nor in cloud/tsconfig.json include)`);
       }
     }
     expect(bad).toEqual([]);
