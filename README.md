@@ -209,6 +209,8 @@ All settings are environment variables. None is required.
 | `DECK_UI_DIR` | `dist/ui` | Built UI directory. |
 | `DECK_EXTRA_CWD_ROOTS` | empty | Comma-separated absolute paths where new sessions may start in addition to the home directory. Honoured only with `DECK_LOOPBACK_ONLY=1`; `/` is never accepted. Meant for test harnesses. |
 | `DECK_DEV_ORIGIN` | empty | Comma-separated extra origins allowed during development (the Vite dev server). |
+| `DECK_CLOUD` | on | `off` = no Pro cloud at all: nothing is ever sent to it. See [Pro cloud](#pro-cloud-optional). |
+| `DECK_CLOUD_URL` / `DECK_RELAY_URL` | the official app / relay origins | Cloud addresses. Must be https (http only for localhost) and two different origins, or the cloud turns off with one log line. |
 
 Server-wide settings changed in the UI (default permission mode, routing policy) are stored in `settings.json` in the config directory. *Same-vendor account rotation* (moving a session between your Claude accounts on limits, the Fable cap or a cold cache) is off by default — sessions stay on the home account or the account you pin — and turns on only after you confirm the accounts are your own paid accounts; handing off to another vendor (Codex, Gemini) is not affected. Pinned project folders can be listed in `projects.json` as `[{"cwd": "/Users/alice/code/acme-app", "name": "acme-app"}]`.
 
@@ -247,6 +249,17 @@ An address is treated as Tailscale when it is an IPv4 address in `100.64.0.0/10`
 
 Do not expose the port to the public internet. There is no multi-user support and no rate limiting on login.
 
+## Pro cloud (optional)
+
+Pro is a paid relay: it connects your Mac to a phone you paired, away from your tailnet. Everything above works without it, and keeps working when the cloud is down or unreachable. There is no local feature lock.
+
+- **Nothing is sent until you link.** An install that has never been linked to a cloud account makes no cloud request. Linking happens in Settings > Cloud, where you sign in by email link and approve the Mac in the browser. `DECK_CLOUD=off` removes the feature entirely.
+- **What the relay can read.** The relay is end-to-end encrypted: our servers pass along encrypted bytes between your Mac and the phone you paired, and cannot read your sessions. The phone app itself is delivered from our servers, so you are trusting us to serve the published app code. Sensitive actions — restarting the server, changing setup, raising permission modes, and pairing a new phone — need you at your Mac.
+- **Where keys live.** The Mac's cloud state, including its key, its token and the paired phones' public keys, is in `<config dir>/cloud/state.json` (`0600`). The cloud keeps public keys and token hashes only.
+- **Payments.** Paddle is the merchant of record; AI-MSG never receives card details.
+
+Details: [docs/security-model.md](docs/security-model.md) (threats, what is and is not protected) and [docs/privacy-data-inventory.md](docs/privacy-data-inventory.md) (what the cloud keeps, and for how long). Both are in Korean.
+
 ## Security model
 
 AI-MSG can run commands on your machine. Treat access to it like shell access.
@@ -281,6 +294,7 @@ Under `~/.config/deck` (or `DECK_CONFIG_DIR`):
 | `events.jsonl` | 하이라이트: finished/failed turns, permission and question cards, background tasks, restart cuts and server start/drain, one JSON line each. Kept 7 days (older lines are dropped at start). |
 | `attachments/` | Uploaded files (`0700`; 10 MiB each, deleted after 7 days). |
 | `vapid.json`, `push-subscriptions.json` | Web Push keys and subscriptions (`0600`). |
+| `cloud/state.json` | Pro cloud link: host key and token, paired phones' public keys, last plan (`0600`, folder `0700`). Only after linking. |
 | `usage-index-v2.json`, `usage-index-v2.json.seen` | Token-usage aggregates and their dedupe log. An older `usage-index.json` is read once for conversion and left in place. |
 | `usage-source.json` | Written once, the first time a usage dashboard answers (`{"deckSeenAt": ...}`). |
 | `gemini/<id>/` | Gemini CLI home per Gemini account (follows `DECK_CONFIG_DIR`). |

@@ -12,6 +12,9 @@ const REPLACED_WAIT_MS = 600_000;
 const REPLACED_MAX = 3;
 const HANDSHAKE_TIMEOUT_MS = 15_000;
 const JITTER = 0.2;
+/** Wall-clock check while running: a gap well past the tick means the Mac slept (its timers may not count the sleep). */
+const WAKE_CHECK_MS = 5_000;
+const WAKE_GAP_MS = 30_000;
 
 /**
  * The Mac's one WebSocket to the relay (`wss://<relay>/relay/host`, host Bearer token).
@@ -26,6 +29,9 @@ const JITTER = 0.2;
  *   `start()`). Anything else → exponential backoff ±20 %; a drop while not entitled uses the entitlement backoff, so
  *   it also stays within 5 min. 60 s attached resets both backoffs and the 4409 count.
  * - Handshake timeout 15 s, frames over `MAX_FRAME` close the socket (1009), no permessage-deflate.
+ * - Sleep/wake: the wall clock is read every 5 s; a jump of more than 30 s past that means the Mac slept, so the
+ *   socket (most likely dead) is dropped and redone at once, and an ordinary backoff wait is cut short — no waiting
+ *   for the 60 s silence watchdog or the rest of a backoff.
  */
 export class RelayClient extends EventEmitter {
   private readonly o: { url: string; token: () => string | null; WebSocketImpl: typeof WebSocket; backoff: Backoff; entitlementBackoff: Backoff; random: () => number; handshakeTimeoutMs: number };
@@ -42,6 +48,7 @@ export class RelayClient extends EventEmitter {
   private timers: ReturnType<typeof setTimeout>[] = [];
   private pinger: ReturnType<typeof setInterval> | null = null;
   private silence: ReturnType<typeof setTimeout> | null = null;
+  private wakeCheck: ReturnType<typeof setInterval> | null = null;
 
   constructor(o: { url: string; token: () => string | null; WebSocketImpl?: typeof WebSocket; backoff?: Backoff; entitlementBackoff?: Backoff; random?: () => number; handshakeTimeoutMs?: number }) {
     super();
@@ -60,12 +67,15 @@ export class RelayClient extends EventEmitter {
     if (this.running) return;
     this.running = true;
     this.replacedInRow = 0;
+    this.watchWake();
     this.connect();
   }
 
   stop(): void {
     this.running = false;
     this.clearRetry();
+    if (this.wakeCheck) clearInterval(this.wakeCheck);
+    this.wakeCheck = null;
     const ws = this.ws;
     this.detach();
     if (ws) try { ws.terminate(); } catch { /* already closed */ }
@@ -186,6 +196,41 @@ export class RelayClient extends EventEmitter {
       this.setState('down');
       this.schedule('normal', this.delay(this.o.backoff, this.attempt++));
     });
+  }
+
+  private watchWake(): void {
+    if (this.wakeCheck) clearInterval(this.wakeCheck);
+    let last = Date.now();
+    const timer = setInterval(() => {
+      const now = Date.now();
+      const slept = now - last > WAKE_CHECK_MS + WAKE_GAP_MS;
+      last = now;
+      if (!this.running) {
+        clearInterval(timer);
+        if (this.wakeCheck === timer) this.wakeCheck = null;
+        return;
+      }
+      if (slept) this.woke();
+    }, WAKE_CHECK_MS);
+    timer.unref?.();
+    this.wakeCheck = timer;
+  }
+
+  /** The Mac slept: an open socket is dropped and redone now; an ordinary backoff wait ends now. Other waits stay. */
+  private woke(): void {
+    if (this.retry) {
+      if (this.retry.kind !== 'normal') return;
+      this.attempt = 0;
+      this.clearRetry();
+      this.connect();
+      return;
+    }
+    const ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return; // still connecting: its own timeout decides
+    this.attempt = 0;
+    this.detach();
+    try { ws.terminate(); } catch { /* already closed */ }
+    this.connect();
   }
 
   /** Something arrived: restart the silence watchdog. */

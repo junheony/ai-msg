@@ -99,6 +99,11 @@ describe('repository hygiene', () => {
       'AI' + 'za' + run(11) + 'ab',
       '-----BEGIN ' + 'OPENSSH PRIVATE KEY-----',
       '/private/var/folders/' + 'wd/' + 'abcd1234ef_gh5678/T/x',
+      // Cloud key material: a PEM header with its dashes stripped, and a private JWK (X25519/P-256 `d`) on one line.
+      'BEGIN ' + 'PRIVATE KEY',
+      'BEGIN EC ' + 'PRIVATE KEY',
+      '{"kty":"' + 'OKP","crv":"X25519","x":"' + run(15) + '","d":"' + run(15) + '"}',
+      '{"d":"' + run(15) + '","kty":"' + 'EC","crv":"P-256"}',
     ]) expect(hit(s), `${s.slice(0, 6)}…`).toBe(true);
     for (const s of [
       'sk-' + 'ant-api03-' + run(8),
@@ -107,6 +112,10 @@ describe('repository hygiene', () => {
       'gh' + 'p_short',
       '-----BEGIN PUBLIC KEY-----',
       '/private/var/folders/wd/x/T/',
+      'BEGIN PUBLIC KEY',
+      '{"kty":"' + 'OKP","crv":"X25519","x":"' + run(15) + '"}', // public JWK: no d
+      '{"kty":"' + 'OKP","d":"short"}',
+      '{"kty":"' + 'OKP","d":"EXAMPLE' + run(15) + '"}',
     ]) expect(hit(s), s.slice(0, 12)).toBe(false);
   });
 });

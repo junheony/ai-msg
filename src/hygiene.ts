@@ -28,6 +28,9 @@ export const GENERIC_RULES: Rule[] = [
   { name: 'google api key', pattern: /AIza[0-9A-Za-z_-]{35}/g, allow: EXAMPLE },
   { name: 'macOS temp dir hash', pattern: /\/var\/folders\/[a-z0-9_]{2}\/[a-z0-9_]{10,}\//gi },
   { name: 'private key', pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g },
+  { name: 'private key (pem header without dashes)', pattern: /BEGIN (?:EC |RSA )?PRIVATE KEY/g },
+  // A private JWK (cloud host/device keys are X25519 or P-256): an object on one line with kty OKP/EC and a long `d`.
+  { name: 'private jwk', pattern: /\{(?=[^{}]*"kty"\s*:\s*"(?:OKP|EC)")(?=[^{}]*"d"\s*:\s*"[A-Za-z0-9_-]{40,}")[^{}]*/g, allow: EXAMPLE },
 ];
 
 /** Rules from a rules file; a missing file is no rules, a malformed one throws (a broken check must not pass). */

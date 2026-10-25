@@ -337,7 +337,8 @@ describe('relay routing', () => {
       const d1 = await pairedDevice(h);
       const p1 = await openDevice(d1.deviceToken);
       await waitFor(() => texts(p1).length > 0);
-      for (let i = 0; i < 1200 && p1.closes.length === 0; i++) {
+      // Well past burst + refill even when other test files load the shared workerd and the room drains slowly.
+      for (let i = 0; i < 5000 && p1.closes.length === 0; i++) {
         try { p1.ws!.send(new Uint8Array([200, 1, 2, 3])); } catch { break; }
       }
       await waitFor(() => p1.closes.length > 0);

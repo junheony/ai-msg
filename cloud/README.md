@@ -1,7 +1,7 @@
 # AI msg cloud (Cloudflare Worker)
 
 AI msg Pro 클라우드 Worker 다. 공개본에는 들어가지 않는다(`.gitattributes` 의 `cloud/** export-ignore`).
-이 문서는 Task 12 에서 완성한다. 지금은 Task 2~3·9 범위(두 출처·로그인·호스트 연결·QR 페어링·기기 API·릴레이·Paddle 웹훅)만 적는다.
+보안 모델은 `docs/security-model.md`, 클라우드가 두는 데이터와 보관 기간은 `docs/privacy-data-inventory.md` 에 있다.
 
 ## 구조
 
@@ -16,14 +16,14 @@ AI msg Pro 클라우드 Worker 다. 공개본에는 들어가지 않는다(`.git
   - 해제가 티켓 소비와 DO 수락 사이에 끼어도 남지 않도록, DO 는 수락 직후 D1 에서 기기(`state`)·호스트(`revoked_at`)를 다시 읽고 아니면 4403·4401 로 닫는다.
   - 종료 코드: 4401 인증 실패·호스트 해제, 4402 이용권 없음, 4403 기기 해제, 4408 핸드셰이크 시간 초과, 4409 새 연결로 대체, 4413 프레임 1MiB 초과, 4429 기기 소켓의 프레임 폭주(초당 200·버스트 400, 첨부의 토큰 버킷 — 호스트 소켓은 모든 기기의 응답이 지나가므로 제한 없음, 1MiB 상한만).
   - 깨진 프레임 로그(`bad_frame`)는 소켓당 한 번만 남긴다. 티켓 발급은 기기당 분당 10회(넘으면 429).
-  - 다 쓴 `relay_tickets` 행 정리는 Task 12 의 cron 몫이다.
+  - 다 쓴 `relay_tickets` 행은 정리 cron 이 지운다.
   - 반대편 경로는 404 다. relay 응답에서는 `Set-Cookie` 를 지우고, 엄격한 CSP 를 붙인다.
 - Paddle 웹훅 `POST /v1/paddle/webhook`(app 출처, `src/paddle/`):
   - 순서: 본문 64KB 상한(`content-length` 와 실제로 읽은 바이트 둘 다, 넘으면 413·저장 없음) → 원문 바이트 HMAC(`Paddle-Signature`, 5초) → 401, `PADDLE_IP_CHECK=1` 이면 환경별 Paddle IP 목록 → 403, `event_id` 선조회(중복이면 200 `duplicate`), 변경·알림·이벤트 행을 한 batch 로 쓴다.
   - 모든 쓰기는 `occurred_at` 으로 막는 upsert 다. 늦게 온 옛 이벤트는 `stale` 로 기록만 한다.
   - 구독의 사용자는 기존 행의 주인 → 서명된 `custom_data.ref`(`signUserRef(CHECKOUT_SECRET, userId)`) → 이미 연결된 `paddle_customer_id` 순서로 정한다. 서명 없는 `user_id` 는 읽지 않는다. 주인이 정해진 구독은 주인이 바뀌지 않는다(다른 사용자의 ref 가 오면 `customer_conflict` 알림만).
   - user↔customer 연결은 서명된 ref, 그 사용자의 `checkout_intents` 가 이벤트 `occurred_at` 에 열려 있음, 다른 사용자가 그 customer 를 쓰지 않음, **Paddle customer 이메일 = 계정 이메일**(`emailKey` 비교)일 때만 새로 만든다(Paddle 은 같은 이메일이면 기존 고객을 재사용한다). 어긋나면 `customer_unlinked` 알림.
-  - customer 이메일은 `customer.created`/`customer.updated` 로 `paddle_customers(id, email_key)` 에 둔다(원문 없음, `EMAIL_HASH_SECRET` HMAC). 그 이벤트가 아직 없으면 연결은 `paddle_link_pending` 에 보류되고(`customer_pending`), customer 이벤트가 오면 그때 맞춰 연결하거나 알린다. 오래 남은 보류 행 정리와 계정 삭제 때 지우기는 Task 12 몫.
+  - customer 이메일은 `customer.created`/`customer.updated` 로 `paddle_customers(id, email_key)` 에 둔다(원문 없음, `EMAIL_HASH_SECRET` HMAC). 그 이벤트가 아직 없으면 연결은 `paddle_link_pending` 에 보류되고(`customer_pending`), customer 이벤트가 오면 그때 맞춰 연결하거나 알린다. 오래 남은 보류 행은 정리 cron 이 30일 뒤 지우고, 계정 삭제 때도 지운다.
   - 업무 충돌(사용자 못 찾음·두 번째 구독·고객 id 충돌·깨진 페이로드)은 200 + `ops_alerts` 행 + `console.error` 한 줄이다. D1 오류만 500(Paddle 이 다시 보낸다).
   - 전액 환불·차지백(거절·취소된 차지백과 차지백 되돌림은 제외)이면 커밋 뒤 `ctx.waitUntil` 로 Paddle 즉시 해지 API 를 부른다. 먼저 `cancel_done_at` 을 NULL → `-now` 로 조건부 선점해 한 번만 부르고, 성공하면 `+now` 다. 실패하면 음수가 남고 `refund_cancel_failed` 알림, Task 12 cron 이 `full = 1 AND (cancel_done_at IS NULL OR cancel_done_at < 0)` 을 다시 시도한다.
   - 구독이 바뀌면 그 사용자의 호스트 방에 recheck 를 보내 기기 소켓의 `until` 을 새로 읽게 한다.
@@ -51,16 +51,56 @@ npm --prefix cloud run typecheck
 npm --prefix cloud test        # miniflare 안의 workerd, 네트워크 없음
 ```
 
-## 배포(사용자 몫, 요약)
+## 배포(사용자 몫)
 
-1. `wrangler d1 create ai-msg` 를 실행하고, 나온 `database_id` 를 `wrangler.jsonc` 에 넣는다.
-2. `wrangler d1 migrations apply ai-msg --remote` 로 마이그레이션을 적용한다.
-3. 비밀은 `wrangler secret put` 으로 넣는다: `SESSION_SECRET`, `EMAIL_HASH_SECRET`, `CHECKOUT_SECRET`(각각 32자 이상의 임의 값), `RESEND_API_KEY`, `PADDLE_WEBHOOK_SECRET`(Paddle 알림 대상의 비밀), `PADDLE_API_KEY`(권한 `subscription.write`, Task 10 부터 `customer_portal_session.write` 도). `PADDLE_WEBHOOK_SECRET` 이 비었거나 32자 미만이면 웹훅 경로만 503 이고(나머지는 정상), `pdl_ntfset_` 로 시작하지 않으면 경고 로그만 남긴다. Paddle 알림 대상은 `subscription.*`·`transaction.completed`·`adjustment.*` 와 함께 **`customer.created`·`customer.updated`** 도 구독해야 한다(빠지면 customer 연결이 보류에서 멈춘다).
-   - `vars` 의 `PADDLE_ENV`(`sandbox`/`production`)와 키 환경을 맞춘다. 샌드박스 키는 샌드박스 주소에서만 통한다.
-4. `wrangler.jsonc` 의 `vars` 를 채운다: `EMAIL_FROM`(Resend 에서 검증한 발신 주소), 두 출처. `routes` 에는 두 호스트 이름을 커스텀 도메인으로 적는다.
-   - 결제(Task 10): `PADDLE_CLIENT_TOKEN`(클라이언트 토큰, 샌드박스는 `test_`·실서비스는 `live_` — `PADDLE_ENV` 와 안 맞으면 checkConfig 가 막는다), `PADDLE_PRICE_MONTHLY`·`PADDLE_PRICE_YEARLY`(가격 id), 선택 `PADDLE_DISCOUNT_FOUNDING`. 비어 있으면 `/checkout` 은 503 이다.
-   - Paddle 대시보드에서 app 출처 도메인(예: `app.aimsg.app`)의 결제 승인(checkout domain approval)은 사용자가 한다.
-5. `npm --prefix cloud run deploy` 로 배포한다. `predeploy` 가 `node scripts/build-legal.mjs --strict` 를 먼저 돌려, `docs/legal/*.md` 에 `{{…}}` 나 DRAFT 띠가 하나라도 남아 있으면 남은 개수와 `파일:줄` 목록을 찍고 배포를 멈춘다. 마이그레이션 `0004_account.sql`(정리용 색인)도 함께 적용한다. cron(`17 3 * * *`, UTC)은 `wrangler.jsonc` 의 `triggers` 로 같이 올라간다.
+계획의 "사용자 몫" 순서다. 실제 배포·비밀 넣기·원격 D1 은 운영자가 직접 한다(이 저장소의 작업·테스트는 하지 않는다).
+
+### 비밀 목록
+
+`wrangler secret put <이름>` 으로 넣는다. 저장소·`wrangler.jsonc` 에는 절대 적지 않는다.
+
+| 이름 | 값 | 없거나 틀리면 |
+|---|---|---|
+| `SESSION_SECRET` | 32자 이상 임의 값 | 모든 요청 503 `misconfigured` |
+| `EMAIL_HASH_SECRET` | 32자 이상 임의 값(이메일 키 HMAC — 바꾸면 체험 1회 기록·고객 이메일 대조가 모두 어긋난다) | 모든 요청 503 |
+| `CHECKOUT_SECRET` | 32자 이상 임의 값(결제 ref 서명) | 모든 요청 503 |
+| `RESEND_API_KEY` | Resend API 키 | `EMAIL_MODE=resend` 이면 모든 요청 503 |
+| `PADDLE_WEBHOOK_SECRET` | Paddle 알림 대상의 비밀(`pdl_ntfset_…`) | 웹훅 경로만 503(32자 미만 포함), 접두사가 다르면 경고 로그만 |
+| `PADDLE_API_KEY` | Paddle API 키, 권한 `subscription.write`(환불·차지백 자동 해지)·`customer_portal_session.write`(결제 포털) | 포털 502, 자동 해지 실패 → `refund_cancel_failed` 알림 |
+
+`ENTITLEMENT_SIGNING_JWK`·`VAPID_PRIVATE_JWK` 는 출시 1차에 없다.
+
+### 순서
+
+1. **Paddle**
+   - 판매자 가입·KYC, 상품 "AI msg Pro" 와 가격 둘(월·연), 창립 고객 할인 코드.
+   - 샌드박스·라이브 각각 알림 대상을 만든다. 주소는 `https://<app 출처>/v1/paddle/webhook`, 이벤트는 `subscription.*`·`transaction.completed`·`adjustment.*` 와 **`customer.created`·`customer.updated`**(빠지면 customer 연결이 보류에서 멈춘다). 그 비밀을 `PADDLE_WEBHOOK_SECRET` 으로 넣는다.
+   - API 키를 위 권한으로 만들어 `PADDLE_API_KEY` 로 넣는다. `vars` 의 `PADDLE_ENV`(`sandbox`/`production`)와 키 환경을 맞춘다. 샌드박스 키는 샌드박스 주소에서만 통한다.
+   - 결제 승인 도메인에는 **app 출처만** 넣는다(relay 출처는 넣지 않는다).
+2. **Cloudflare**
+   - 계정·플랜(Durable Object 를 쓸 수 있는지 확인), 도메인, `app.`·`relay.` 두 호스트 이름.
+   - `wrangler d1 create ai-msg` → 나온 `database_id` 를 `wrangler.jsonc` 에 넣는다.
+   - `wrangler d1 migrations apply ai-msg --remote` 로 `0001`–`0004` 를 적용한다.
+   - R2 버킷 `ai-msg-ui` 를 만든다(바인딩 `UI`, 폰 UI 를 올릴 곳).
+   - 위 비밀 여섯 개를 넣는다.
+   - `wrangler.jsonc` 의 `vars` 를 채운다: 두 출처(`PUBLIC_ORIGIN`·`RELAY_ORIGIN`, https, 서로 달라야 한다), `EMAIL_FROM`(Resend 에서 검증한 주소), `PADDLE_CLIENT_TOKEN`(샌드박스 `test_`·라이브 `live_` — `PADDLE_ENV` 와 안 맞으면 checkConfig 가 막는다), `PADDLE_PRICE_MONTHLY`·`PADDLE_PRICE_YEARLY`, 선택 `PADDLE_DISCOUNT_FOUNDING`(가격이 비면 `/checkout` 은 503). `routes` 에 두 호스트 이름을 커스텀 도메인으로 적는다.
+3. **메일:** Resend 가입, 발신 도메인 SPF/DKIM 인증.
+4. **법적 문서:** `docs/legal/{terms,privacy,refund}{,.ko}.md` 의 `{{…}}` 를 채우고 초안 표시를 지운 뒤 변호사 검토. `docs/privacy-data-inventory.md` 와 어긋나는 곳을 바로잡는다.
+5. **배포:** `npm --prefix cloud run deploy`. `predeploy` 가 `node scripts/build-legal.mjs --strict` 를 먼저 돌려, 법적 문서에 `{{…}}` 나 DRAFT 띠가 하나라도 남아 있으면 남은 개수와 `파일:줄` 목록을 찍고 배포를 멈춘다. cron(`17 3 * * *`, UTC)은 `wrangler.jsonc` 의 `triggers` 로 같이 올라간다.
+6. **이 Mac 소유자 계정 comp 부여**(아래 SQL). 출시 1차에는 로컬 게이트가 없으므로 릴레이를 쓸 때만 필요하다.
+7. **실기 확인:** 실제 결제 1건(샌드박스 → 라이브), 전액 환불 1건(자동 해지 확인), 폰 페어링 → 승인.
+8. **운영:** `ops_alerts` 를 볼 방법을 정한다(아래 쿼리).
+
+### comp 부여
+
+먼저 그 이메일로 한 번 로그인해 계정을 만든다. `until` 은 ms 정수다.
+
+```sh
+npx --prefix cloud wrangler d1 execute ai-msg --remote --command "SELECT id FROM users WHERE email = 'owner@example.com'"
+npx --prefix cloud wrangler d1 execute ai-msg --remote --command "INSERT INTO grants (user_id, plan, until, note) VALUES ('<user id>', 'comp', 4102444800000, 'owner')"
+```
+
+계획의 원형은 `INSERT INTO grants (user_id, plan, until, note) VALUES (?, 'comp', ?, 'owner')` 다. 사용자당 한 행이라(`user_id` 가 기본 키) 바꿀 때는 `UPDATE grants SET until = ? WHERE user_id = ?` 다. 연결된 Mac 은 다음 요금제 확인 때 반영한다.
 
 ## 계정·결제 페이지 (Task 10, app 출처에서만)
 

@@ -86,7 +86,8 @@ export const deps: WebhookDeps = { paddle: (env) => paddleApi(env), db: (env) =>
 const asset = (body: string, type: string) => async () => new Response(body, { headers: { 'content-type': `${type}; charset=utf-8` } });
 const JS = 'text/javascript';
 
-const ROUTES: readonly Route[] = [
+/** Exported for the origin-separation matrix (test/security.test.ts). */
+export const ROUTES: readonly Route[] = [
   // app origin — pages
   ['app', 'GET', '/login', loginGet],
   ['app', 'POST', '/login', loginPost],

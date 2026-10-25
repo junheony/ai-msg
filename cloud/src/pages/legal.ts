@@ -5,7 +5,7 @@ import type { Ctx } from '../router';
 import { esc, page } from './layout';
 
 /** No script at all on the legal pages; they change only with a deploy, so an hour of caching is fine. */
-export const LEGAL_CSP = "default-src 'self'; script-src 'none'; style-src 'self'; frame-ancestors 'none'";
+export const LEGAL_CSP = "default-src 'self'; script-src 'none'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 const LEGAL_HEADERS = { 'cache-control': 'public, max-age=3600' };
 
 const NOTICE_TITLE = { en: 'Notice', ko: '고지' } as const;
