@@ -102,45 +102,74 @@ async function hkdf2(ck: Uint8Array, ikm: Uint8Array): Promise<[Uint8Array, Uint
   return [out1, out2];
 }
 
-/** §5.1. A failed decrypt leaves `n` unchanged. */
-export class CipherState {
-  /** Nonce counter. Public so tests can push it to the rekey limit. */
-  n = 0n;
-  private k: CryptoKey | null = null;
+let setNonce: (cs: CipherState, n: bigint) => void;
 
-  async initializeKey(key: Uint8Array | null): Promise<void> {
-    this.k = key ? await subtle().importKey('raw', buf(key), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']) : null;
-    this.n = 0n;
+/**
+ * §5.1. A failed decrypt leaves `n` unchanged. Operations on one CipherState run one at a time, so
+ * concurrent `encrypt` calls can never read the same `n` (nonce reuse).
+ */
+export class CipherState {
+  #n = 0n;
+  #k: CryptoKey | null = null;
+  #queue: Promise<unknown> = Promise.resolve();
+
+  static {
+    setNonce = (cs, n) => { cs.#n = n; };
   }
 
-  hasKey(): boolean { return this.k !== null; }
+  /** Nonce counter (read-only; tests use `testOnlySetNonce`). */
+  get n(): bigint { return this.#n; }
+
+  async initializeKey(key: Uint8Array | null): Promise<void> {
+    this.#k = key ? await subtle().importKey('raw', buf(key), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']) : null;
+    this.#n = 0n;
+  }
+
+  hasKey(): boolean { return this.#k !== null; }
 
   private nonce(): Uint8Array {
     const iv = new Uint8Array(12);
-    new DataView(iv.buffer).setBigUint64(4, this.n, false);
+    new DataView(iv.buffer).setBigUint64(4, this.#n, false);
     return iv;
   }
 
-  async encrypt(ad: Uint8Array, plain: Uint8Array): Promise<Uint8Array> {
-    if (!this.k) return plain;
-    if (this.n >= NONCE_MAX) throw new RekeyNeeded('nonce exhausted');
-    const ct = new Uint8Array(await subtle().encrypt({ name: 'AES-GCM', iv: buf(this.nonce()), additionalData: buf(ad), tagLength: 128 }, this.k, buf(plain)));
-    this.n += 1n;
-    return ct;
+  private serial<T>(op: () => Promise<T>): Promise<T> {
+    const run = this.#queue.then(op, op);
+    this.#queue = run.catch(() => undefined);
+    return run;
   }
 
-  async decrypt(ad: Uint8Array, ct: Uint8Array): Promise<Uint8Array> {
-    if (!this.k) return ct;
-    if (this.n >= NONCE_MAX) throw new RekeyNeeded('nonce exhausted');
-    let pt: Uint8Array;
-    try {
-      pt = new Uint8Array(await subtle().decrypt({ name: 'AES-GCM', iv: buf(this.nonce()), additionalData: buf(ad), tagLength: 128 }, this.k, buf(ct)));
-    } catch {
-      throw new DecryptError('decrypt failed');
-    }
-    this.n += 1n;
-    return pt;
+  encrypt(ad: Uint8Array, plain: Uint8Array): Promise<Uint8Array> {
+    return this.serial(async () => {
+      const k = this.#k;
+      if (!k) return plain;
+      if (this.#n >= NONCE_MAX) throw new RekeyNeeded('nonce exhausted');
+      const iv = this.nonce();
+      this.#n += 1n; // a nonce is spent even if encryption fails
+      return new Uint8Array(await subtle().encrypt({ name: 'AES-GCM', iv: buf(iv), additionalData: buf(ad), tagLength: 128 }, k, buf(plain)));
+    });
   }
+
+  decrypt(ad: Uint8Array, ct: Uint8Array): Promise<Uint8Array> {
+    return this.serial(async () => {
+      const k = this.#k;
+      if (!k) return ct;
+      if (this.#n >= NONCE_MAX) throw new RekeyNeeded('nonce exhausted');
+      let pt: Uint8Array;
+      try {
+        pt = new Uint8Array(await subtle().decrypt({ name: 'AES-GCM', iv: buf(this.nonce()), additionalData: buf(ad), tagLength: 128 }, k, buf(ct)));
+      } catch {
+        throw new DecryptError('decrypt failed');
+      }
+      this.#n += 1n;
+      return pt;
+    });
+  }
+}
+
+/** Test-only: move a CipherState's counter (rekey and nonce-exhaustion tests). Runtime code must not call this. */
+export function testOnlySetNonce(cs: CipherState, n: bigint): void {
+  setNonce(cs, n);
 }
 
 /** §5.2 */
@@ -203,7 +232,8 @@ export class HandshakeState {
   private re: Uint8Array | undefined;
   private readonly ss = new SymmetricState();
   private readonly ready: Promise<void>;
-  private step = 0; // 0: message 1 (-> e, es, ss), 1: message 2 (<- e, ee, se), 2: done
+  private step = 0; // 0: message 1 (-> e, es, ss), 1: message 2 (<- e, ee, se), 2: ready to split, 3: split done
+  private failed = false;
   private hash: Uint8Array | undefined;
 
   constructor(o: { initiator: boolean; prologue: Uint8Array; s: X25519Key; rs: Uint8Array; e?: X25519Key /* test vectors only */ }) {
@@ -241,6 +271,7 @@ export class HandshakeState {
 
   async writeMessage(payload: Uint8Array): Promise<Uint8Array> {
     try {
+      this.usable();
       await this.ready;
       if (!this.writesNext()) throw new HandshakeError('not our turn to write');
       if (payload.length > NOISE_MAX_MSG - DHLEN - TAGLEN) throw new HandshakeError('payload too large');
@@ -258,12 +289,13 @@ export class HandshakeState {
       this.step++;
       return concat(this.e.publicRaw, ct);
     } catch (err) {
-      throw asHandshakeError(err);
+      throw this.fail(err);
     }
   }
 
   async readMessage(msg: Uint8Array): Promise<Uint8Array> {
     try {
+      this.usable();
       await this.ready;
       if (this.writesNext() || this.step > 1) throw new HandshakeError('not our turn to read');
       if (msg.length < DHLEN + TAGLEN || msg.length > NOISE_MAX_MSG) throw new HandshakeError('bad handshake message length');
@@ -279,15 +311,34 @@ export class HandshakeState {
       this.step++;
       return pt;
     } catch (err) {
-      throw asHandshakeError(err);
+      throw this.fail(err);
     }
   }
 
+  /** Callable once: a second call throws so the same keys (and nonces) can never back two channels. */
   async split(): Promise<{ send: CipherState; recv: CipherState }> {
-    if (this.step !== 2) throw new HandshakeError('handshake not finished');
-    const [c1, c2] = await this.ss.split();
-    this.hash = this.ss.h.slice();
-    return this.initiator ? { send: c1, recv: c2 } : { send: c2, recv: c1 };
+    try {
+      this.usable();
+      if (this.step !== 2) throw new HandshakeError('handshake not finished');
+      this.step = 3;
+      const [c1, c2] = await this.ss.split();
+      this.hash = this.ss.h.slice();
+      await this.ss.cs.initializeKey(null);
+      this.ss.ck = new Uint8Array(HASHLEN);
+      return this.initiator ? { send: c1, recv: c2 } : { send: c2, recv: c1 };
+    } catch (err) {
+      throw this.fail(err);
+    }
+  }
+
+  /** Any failure locks the handshake; every later call throws. */
+  private usable(): void {
+    if (this.failed) throw new HandshakeError('handshake already failed');
+  }
+
+  private fail(err: unknown): HandshakeError {
+    this.failed = true;
+    return asHandshakeError(err);
   }
 }
 
@@ -300,7 +351,18 @@ function asHandshakeError(err: unknown): HandshakeError {
 
 /** Post-handshake channel. Associated data is empty; replay, reordering and tampering all fail as `DecryptError`. */
 export class Transport {
-  constructor(readonly send: CipherState, readonly recv: CipherState) {}
+  constructor(readonly send: CipherState, readonly recv: CipherState) {
+    if (!send.hasKey() || !recv.hasKey()) throw new TypeError('Transport needs keyed CipherStates (from split())');
+  }
+
+  /**
+   * True once at least one message from the peer has decrypted on this channel. For the Mac (responder)
+   * this is the only proof the initiator is live: a replayed msg1 still yields a Transport, but the
+   * replayer cannot produce the initiator's first transport message (`ready`).
+   */
+  get peerAuthenticated(): boolean {
+    return this.recv.n > 0n;
+  }
 
   async encrypt(plain: Uint8Array): Promise<Uint8Array> {
     if (plain.length > NOISE_MAX_PLAINTEXT) throw new RangeError(`plaintext over ${NOISE_MAX_PLAINTEXT} bytes`);
@@ -356,7 +418,15 @@ export async function deviceHandshake(o: { self: X25519Key; hostPublic: Uint8Arr
   };
 }
 
-/** Mac side (responder). `devicePublic` must come from the local trust list. */
+/**
+ * Mac side (responder). `devicePublic` must come from the local trust list.
+ *
+ * The returned `transport` is NOT yet an authenticated connection. Noise KK message 1 can be replayed
+ * by anyone who saw it (the relay), and this function will happily answer it. Treat the device as
+ * connected only after `transport.decrypt` has opened the device's first transport message (`ready`),
+ * i.e. `transport.peerAuthenticated === true`. Until then do not replace an existing session for the
+ * same device (no 4409, no `dropDevice`) and do not act on anything else.
+ */
 export async function hostHandshake(o: { self: X25519Key; devicePublic: Uint8Array; deviceId: string; hostId: string; msg1: Uint8Array; hostVersion: string }): Promise<{ msg2: Uint8Array; transport: Transport; uiVersion: string }> {
   const hs = new HandshakeState({ initiator: false, prologue: relayPrologue(o.deviceId, o.hostId), s: o.self, rs: o.devicePublic });
   const uiVersion = readVersion('uiVersion', await hs.readMessage(o.msg1));

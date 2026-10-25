@@ -4,15 +4,19 @@ import { claimHash, confirmCode, encodePairUrl, pairingMac, parsePairHash, verif
 
 it('QR url round trip on the relay origin, hash only, v2', () => {
   const hostPub = toB64u(new Uint8Array(32).fill(7));
-  const url = encodePairUrl({ v: 2, pairingId: 'p1', claim: 'c', auth: 'a', hostPub, hostVersion: '1.2.3', relayOrigin: 'https://relay.example' });
-  expect(url).toBe(`https://relay.example/v/1.2.3/#pair=2.p1.c.a.${hostPub}`);
-  expect(parsePairHash(new URL(url).hash)).toEqual({ v: 2, pairingId: 'p1', claim: 'c', auth: 'a', hostPub });
-  expect(parsePairHash(`2.p1.c.a.${hostPub}`)).toEqual({ v: 2, pairingId: 'p1', claim: 'c', auth: 'a', hostPub });
-  expect(parsePairHash('#pair=1.p1.c.a.h')).toBeNull();
-  expect(parsePairHash('#pair=2.p1.c.a.short')).toBeNull();
-  expect(parsePairHash(`#pair=2.p1..a.${hostPub}`)).toBeNull();
-  expect(parsePairHash(`#pair=2.p1.c.a.${hostPub}.x`)).toBeNull();
-  expect(() => encodePairUrl({ v: 2, pairingId: 'p1', claim: 'c', auth: 'a', hostPub, hostVersion: '../x', relayOrigin: 'https://relay.example' })).toThrow();
+  const c = toB64u(new Uint8Array(32).fill(1)); const a = toB64u(new Uint8Array(32).fill(2));
+  const url = encodePairUrl({ v: 2, pairingId: 'p1', claim: c, auth: a, hostPub, hostVersion: '1.2.3', relayOrigin: 'https://relay.example' });
+  expect(url).toBe(`https://relay.example/v/1.2.3/#pair=2.p1.${c}.${a}.${hostPub}`);
+  expect(parsePairHash(new URL(url).hash)).toEqual({ v: 2, pairingId: 'p1', claim: c, auth: a, hostPub });
+  expect(parsePairHash(`2.p1.${c}.${a}.${hostPub}`)).toEqual({ v: 2, pairingId: 'p1', claim: c, auth: a, hostPub });
+  expect(parsePairHash(`#pair=1.p1.${c}.${a}.${hostPub}`)).toBeNull();
+  expect(parsePairHash(`#pair=2.p1.${c}.${a}.short`)).toBeNull();
+  expect(parsePairHash(`#pair=2.p1..${a}.${hostPub}`)).toBeNull();
+  expect(parsePairHash(`#pair=2.p1.${c}.${a}.${hostPub}.x`)).toBeNull();
+  expect(parsePairHash(`#pair=2.p1.c.${a}.${hostPub}`)).toBeNull();               // claim under 256 bits
+  expect(parsePairHash(`#pair=2.p1.${c}.${a.slice(0, 42)}.${hostPub}`)).toBeNull(); // auth under 256 bits
+  expect(() => encodePairUrl({ v: 2, pairingId: 'p1', claim: c, auth: a, hostPub, hostVersion: '../x', relayOrigin: 'https://relay.example' })).toThrow();
+  expect(() => encodePairUrl({ v: 2, pairingId: 'p1', claim: 'c', auth: a, hostPub, hostVersion: '1.2.3', relayOrigin: 'https://relay.example' })).toThrow();
 });
 it('mac fails when the cloud swaps the device key, and lp removes boundary ambiguity', async () => {
   const mac = await pairingMac('auth', { pairingId: 'p1', devicePub: 'real', hostPub: 'h' });

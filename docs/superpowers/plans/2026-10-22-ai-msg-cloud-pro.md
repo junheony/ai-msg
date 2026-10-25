@@ -245,6 +245,7 @@ relay 출처는 쿠키를 읽지도 심지도 않는다. 폰 UI 가 app 출처�
 - 메시지 2(Mac → 폰, 봉투 종류 `hs_ack`): Noise `<- e, ee, se` + 페이로드 `{"v":2,"hostVersion":"<semver>"}`(암호화·인증됨).
 - Split 뒤 폰은 `c1` 로 보내고 `c2` 로 받으며, Mac 은 반대다.
 - 양쪽은 첫 전송 메시지로 `{t:'ready'}` 를 보낸다. 5초 안에 상대 `ready` 가 오지 않거나 열리지 않으면 세션을 버린다(폰은 4408 로 닫는다).
+- **msg1 재전송 방어 — `ready` 복호화 전에는 기존 세션 교체(4409·`dropDevice`) 금지.** 릴레이는 옛 `hs_init` 을 다시 보낼 수 있고 Mac 의 `hostHandshake` 는 거기에도 `Transport` 를 돌려준다. Mac 은 기기의 `ready` 를 그 Transport 로 복호화한 뒤에만(`transport.peerAuthenticated`) 새 세션을 인증된 것으로 보고, 그때 같은 기기의 옛 세션을 버린다. 새 핸드셰이크가 5초 안에 `ready` 를 열지 못하면 새 쪽만 버리고 옛 세션은 그대로 둔다(Task 4b). DO 의 4409 는 티켓으로 인증된 소켓 교체이고 Noise 세션 교체와는 별개다(Task 3).
 - **버전 이동은 `ready` 검증 뒤에만** 한다. `hostVersion` 은 `/^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/` 에 맞아야 하고, 아니면 이동하지 않고 오류 화면을 보인다.
 
 **전송 메시지**
@@ -272,7 +273,8 @@ relay 출처는 쿠키를 읽지도 심지도 않는다. 폰 UI 가 app 출처�
 - `ws.open{s}` · `ws.msg{s,d}` · `ws.close{s,code?}`
 - `http.req{id,m,p,h,b?,more}` · `http.res{id,st,h,b?,more}` · `http.chunk{id,b,more}` · `http.abort{id}`
 
-본문 `b` 는 base64 이고 조각마다 원본 32KiB 이하다(`TUNNEL_CHUNK = 32768` — base64·JSON 을 더해도 `NOISE_MAX_PLAINTEXT` 안). `ws.msg` 의 `d` 가 한도를 넘으면 `ws.msg{s,d,more:true}` 조각으로 나눈다. 기기당 동시 `ws` 스트림은 8개, 진행 중 `http` 는 32개까지다.
+본문 `b` 는 base64 이고 조각마다 원본 32KiB 이하다(`TUNNEL_CHUNK = 32768` — base64·JSON 을 더해도 `NOISE_MAX_PLAINTEXT` 안). `ws.msg` 의 `d` 가 한도를 넘으면 `ws.msg{s,d,more:true}` 조각으로 나눈다(`chunkString` 은 JSON 이스케이프 뒤 UTF-8 바이트로 잰다). 기기당 동시 `ws` 스트림은 8개, 진행 중 `http` 는 32개까지다. `frames.ts` 는 봉투 크기(`MAX_FRAME`)만 막는다 — `more` 조각 재조립 상한(1MiB)과 동시 스트림 수 상한은 받는 쪽인 DO(Task 3, 프레임 크기)·`RelayBridge`(Task 4b)·`RelayConnection`(Task 5b)이 지킨다.
+- `http.req` 의 `p` 는 `/` 하나로 시작하는 출처 상대 경로(`//host`·역슬래시·공백·제어 문자·`.`/`..` 구간과 그 퍼센트 인코딩 금지, 2048자 이하)만 프레임 검증을 통과한다. 그래도 `relayPathPolicy` 는 퍼센트 디코딩·정규화한 경로로 검사한다(Task 4b).
 
 **종료 코드**
 
@@ -927,7 +929,7 @@ it('trial and comp: larger until wins; expired → none', async () => { /* … *
     - `/internal/unlink` 이면 전부 4401 로 닫는다.
     - `/internal/recheck` 이면 alarm 을 즉시 건다(`setAlarm(Date.now())`). 호스트가 not_entitled 로 붙어 있어도 이 경로로 닿는다.
     - 그 밖에는 업그레이드다. `new WebSocketPair()` → `ctx.acceptWebSocket(server, [role === 'host' ? 'host' : `dev:${id}`])` → `server.serializeAttachment({ role, dev?, user, until, lastRecheck: 0 })` 순서로 처리한다.
-    - 같은 태그의 옛 소켓은 4409 로 닫는다.
+    - 같은 태그의 옛 소켓은 4409 로 닫는다. 이것은 티켓으로 인증된 소켓 사이의 교체다. DO 는 Noise 를 풀 수 없으므로 소켓 안의 핸드셰이크가 진짜인지 모른다 — Mac 쪽 Noise 세션 교체는 계약 절의 "`ready` 복호화 전에는 교체 금지" 규칙을 Task 4b 가 따로 지킨다.
     - 호스트가 붙으면 모든 기기에 `{t:'host',up:true}` 를 보내고, 호스트에게 `{t:'ent', ok: until > now, until}` 를 보낸다. 기기가 붙으면 호스트에게 `{t:'peer',dev,up:true}` 를, 그 기기에게 `{t:'host',up:<호스트 있음>}` 을 보낸다.
     - alarm 은 `until > now` 인 소켓의 `min(until)` 로 건다. 모두 지난 상태(호스트만 not_entitled 로 붙어 있음)면 alarm 을 걸지 않는다 — 다음 계산은 `/internal/recheck` 나 호스트의 `{"t":"recheck"}` 가 일으킨다.
   - `webSocketMessage(ws, msg)`
@@ -1162,7 +1164,7 @@ it('https only; http only for loopback; same origin for app and relay → disabl
   - 핸드셰이크
     - `hs_init` 를 받으면 봉투 `peer`(DO 가 덮어쓴 기기 id)로 `state.devices` 에서 공개키를 찾는다. 없으면 무시하고 로그 한 줄을 남긴다.
     - 찾으면 `hostHandshake({ self, devicePublic, deviceId, hostId, msg1, hostVersion })` 를 하고 `hs_ack`(msg2)와 `ready` 를 보낸 뒤 5초 안에 기기의 `ready` 를 기다린다. `HandshakeError` 면 세션을 만들지 않는다.
-    - 같은 기기의 새 `hs_init` 는 옛 세션을 `dropDevice` 한 뒤 처리한다.
+    - 같은 기기의 새 `hs_init` 는 옛 세션을 **건드리지 않고** 대기 세션으로 처리한다. 대기 세션의 Transport 가 기기의 `ready` 를 복호화하면(`transport.peerAuthenticated`) 그때 옛 세션을 `dropDevice(id, 'replaced')` 하고 대기 세션을 올린다. 5초 안에 `ready` 가 열리지 않거나 `DecryptError` 면 대기 세션만 버린다(옛 msg1 재전송으로 정상 세션을 밀어내는 공격 방어). 테스트: 같은 msg1 을 두 번 보내도 기존 세션이 살아 있다.
   - 프레임 처리(기기의 `ready` 전에는 `ready` 외 전부 버린다)
     - `ws.open` → 루프백 WS 를 연다. 상한 8개다.
     - `ws.msg` → `relayWsPolicy` 가 `mac_confirm_required` 면 루프백에 보내지 않고, 그 스트림에 `{"type":"error","turnId":null,"message":<texts.macConfirmRequired>,"code":"mac_confirm_required"}` 을 `ws.msg` 로 돌려준다(`clientRef`·`sessionId` 가 있으면 그대로 싣는다). 조각(`more:true`)은 모아서 검사한 뒤 보낸다(모은 크기 상한 1MiB).
@@ -1171,7 +1173,7 @@ it('https only; http only for loopback; same origin for app and relay → disabl
   - 오류 처리: `DecryptError` 면 `dropDevice(id, 'decrypt')`.
   - 제어 메시지: `{t:'peer',dev,up:false}` → `dropDevice(dev,'peer_down')`. `{t:'revoked',dev}` → **`dropDevice(dev,'revoked')` 를 먼저**(동기 — 그 뒤 프레임은 처리되지 않는다), 그다음 `state.removeDevice(dev)`(비동기 파일 쓰기)(필수 5, 2차 권장 — 옛 순서는 파일 쓰기를 기다리는 사이 프레임이 지날 수 있었다). `{t:'ent'}` 는 RelayClient 가 처리한다.
 - `loopback.ts`: `type LoopbackTarget = { port: number; token: () => string }`, `loopbackHeaders(t): Record<string,string>`. 결과는 `{ cookie: `${COOKIE_NAME}=${cookieValueFor(token)}`, origin: `http://127.0.0.1:${port}`, host: `127.0.0.1:${port}` }` 다.
-- `pathPolicy.ts`: `relayPathPolicy(method: string, path: string): 'allow' | 'deny' | 'mac_confirm_required'`.
+- `pathPolicy.ts`: `relayPathPolicy(method: string, path: string): 'allow' | 'deny' | 'mac_confirm_required'`. 규칙은 쿼리를 뗀 경로를 퍼센트 디코딩하고 `.`/`..`·중복 `/` 를 정규화한 **뒤에** 맞춘다. 디코딩이 실패하거나 정규화 결과가 원문 경로와 다르면 `deny` 다(프레임 검증의 `p` 제한은 1차 방어일 뿐이다).
   - `deny`: `/api/` 로 시작하지 않는 경로, `..`·`%2e%2e`(대소문자 무관)·`//`·`\` 가 들어간 경로, 프로토콜이 있는 절대 주소.
   - `mac_confirm_required`(보안 모델 절 목록): `/api/restart`, `GET` 이 아닌 `/api/server-update*`, `/api/setup` 과 그 아래 전부, `/api/login`, `/api/logout`, `/api/cloud/` 아래 전부(단 `GET /api/cloud/status` 는 `allow`).
   - 그 밖의 `/api/*` 는 `allow`.
