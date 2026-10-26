@@ -8,7 +8,7 @@ const https = (v: string | undefined): string | null => {
   try { return new URL(v).protocol === 'https:' ? v : null; } catch { return null; }
 };
 
-/** Checkout links from the build environment (plan ④ fills them); anything but an https URL is no link. */
+/** Checkout links from the build environment (set when Pro goes on sale); anything but an https URL is no link. */
 export function checkoutUrls(env: Record<string, string | undefined>): Checkout {
   return { proMonthly: https(env.AIMSG_CHECKOUT_PRO_MONTHLY), proYearly: https(env.AIMSG_CHECKOUT_PRO_YEARLY) };
 }

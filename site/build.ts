@@ -1,8 +1,8 @@
 /**
- * Landing-page build (i18n plan ③ Task 7): site/content → static HTML, no framework.
+ * Landing-page build: site/content → static HTML, no framework.
  *   npx tsx site/build.ts [--release] [--out <dir>]          (default out: site/dist)
  * Env: SITE_ORIGIN (https, required with --release), AIMSG_INSTALL_READY=1 (required with --release: you checked that
- * the install line really works — npm name and publish, plan ③ D13), AIMSG_CHECKOUT_PRO_MONTHLY / _YEARLY (optional,
+ * the install line really works — npm name and publish), AIMSG_CHECKOUT_PRO_MONTHLY / _YEARLY (optional,
  * both or neither: without them the Pro buttons are marked unavailable — Community launches first; with them every
  * plan4 claim must be checked and moved to shipped first), CF_ANALYTICS_TOKEN (optional).
  */

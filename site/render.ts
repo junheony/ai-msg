@@ -21,7 +21,7 @@ export function escapeHtml(s: string): string {
 }
 const e = escapeHtml;
 
-/** Path of a locale's page under the site root: `/` for English, `/ko/` for Korean (plan ③ D8). */
+/** Path of a locale's page under the site root: `/` for English, `/ko/` for Korean. */
 export const pagePath = (l: Locale) => (l === 'en' ? '/' : `/${l}/`);
 
 export function renderPage(c: SiteContent, ctx: RenderContext): string {

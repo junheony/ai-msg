@@ -115,7 +115,7 @@ describe('landing site build', () => {
   it('--release needs SITE_ORIGIN (https) and AIMSG_INSTALL_READY=1, but not checkout URLs (free launch first)', async () => {
     await expect(build({ AIMSG_INSTALL_READY: '1' }, true)).rejects.toThrow(/SITE_ORIGIN/);
     await expect(build({ SITE_ORIGIN: 'http://example.com', AIMSG_INSTALL_READY: '1' }, true)).rejects.toThrow(/SITE_ORIGIN/);
-    // The install line has to work before the page goes out (npm name and publish, plan ③ D13).
+    // The install line has to work before the page goes out (npm name and publish).
     await expect(build({ SITE_ORIGIN: 'https://example.com' }, true)).rejects.toThrow(/AIMSG_INSTALL_READY/);
     await expect(build({ SITE_ORIGIN: 'https://example.com', AIMSG_INSTALL_READY: 'yes' }, true)).rejects.toThrow(/AIMSG_INSTALL_READY/);
     await expect(build({}, false)).resolves.toBeTruthy(); // previews do not need it
@@ -247,6 +247,26 @@ describe('landing site build', () => {
     expect(CLAIMS.reminders.evidence).toContain('src/server/push/BottleneckWatch.ts');
   });
 
+  it('push and reminder copy matches the code (cumulative nudge gaps; only turns that need you)', () => {
+    const body = (c: typeof enContent, id: string) => c.features.items.find((f) => f.claim === id)!.body;
+    // TURN_NUDGE_GAPS_MS are gaps added up: 10, 10+30, 10+30+60 minutes after the failure.
+    expect(body(enContent, 'reminders')).toMatch(/10, 40 and 100 minutes/);
+    expect(body(koContent, 'reminders')).toMatch(/10분·40분·100분/);
+    expect(CLAIMS.reminders.text).toMatch(/10, 40 and 100 minutes/);
+    // turnNeedsAttention: a quiet success is not pushed.
+    expect(JSON.stringify([enContent, koContent, CLAIMS.pushNotifications])).not.toMatch(/turn finishes|턴이 끝나/);
+    expect(body(enContent, 'pushNotifications')).toMatch(/fails, runs long or ends with a question/);
+    expect(body(koContent, 'pushNotifications')).toMatch(/실패했거나 오래 걸렸거나 질문으로 끝/);
+  });
+
+  it('claims and site sources carry no internal plan labels; en Pro items are future tense', () => {
+    for (const [id, c] of Object.entries(CLAIMS)) expect(`${c.text} ${c.evidence}`, id).not.toMatch(/plan ?[①-⑨0-9]|\bD\d+\b|\bTask\b|Review Focus/);
+    for (const f of ['build.ts', 'render.ts', 'content/claims.ts', 'content/install.ts', 'content/pricing.ts', 'content/en.ts', 'content/ko.ts', 'demo/shotlist.md']) {
+      expect(fs.readFileSync(path.join(ROOT, 'site', f), 'utf8'), f).not.toMatch(/plan ?[①-⑨]|\bD\d{1,2}\b|\bTask \d|Review Focus/);
+    }
+    for (const f of enContent.features.items.filter((i) => i.pro)) expect(f.body, f.title).toMatch(/\bwill\b/);
+  });
+
   it('unreleased (plan4) items carry a coming-soon mark on the page; ko says them in the future tense', async () => {
     const out = await build();
     for (const [p, c] of [['index.html', enContent], ['ko/index.html', koContent]] as const) {
@@ -280,6 +300,11 @@ describe('landing site build', () => {
     for (const id of ['approvals', 'engineApprovals'] as const) {
       expect(CLAIMS[id].evidence).toContain('src/server/engine/CodexEngine.ts');
       expect(CLAIMS[id].evidence).toContain('src/server/engine/GrokEngine.ts');
+      // Gemini read-only comes from headless denial (--mode plan has no effect), as measured.
+      expect(CLAIMS[id].evidence).toContain('docs/gemini-spike.md');
+      expect(CLAIMS[id].evidence).toContain('src/server/engine/fixtures/agy-1.4.2/04-plan-write-denied.jsonl');
+      expect(CLAIMS[id].evidence).toContain('src/server/engine/fixtures/agy-1.4.2/06-resume-shell-denied.jsonl');
+      expect(CLAIMS[id].evidence).not.toMatch(/plan = read-only/);
     }
   });
 
@@ -316,7 +341,7 @@ describe('landing site build', () => {
   it('shipped claims cite files that exist', () => {
     for (const [id, c] of Object.entries(CLAIMS)) {
       if (c.owner !== 'shipped') continue;
-      const paths = c.evidence.split(/[;,]\s*/).map((s) => s.trim().split(/\s|#/)[0]!).filter((s) => /^(src|scripts|README)/.test(s));
+      const paths = c.evidence.split(/[;,]\s*/).map((s) => s.trim().split(/\s|#/)[0]!).filter((s) => /^(src|scripts|docs|README)/.test(s));
       expect(paths.length, id).toBeGreaterThan(0);
       for (const p of paths) expect(fs.existsSync(path.join(ROOT, p)), `${id}: ${p}`).toBe(true);
     }
