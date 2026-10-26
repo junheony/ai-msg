@@ -19,7 +19,9 @@
   - **iPhone 탐침 → 5a·5b·5c:** 탐침 서버가 시간 제한으로 꺼졌어요. 사용자가 준비되면 `scripts/probe/ios-pwa` 를 127.0.0.1:3200 으로 다시 띄워요(tailscale serve :3400 그대로). 결과는 계획의 "근거·미확인"에 표로 넣어요.
   - **사용자 몫:** Paddle 가입·KYC(최우선), Cloudflare·도메인 aimsg.app, Resend, `docs/legal/` 빈칸 126개, 개인정보 문서를 `docs/privacy-data-inventory.md` 에 맞추기(푸시 데이터 없음·보관 기간·삭제 뒤 남는 것·처리자·Cloudflare IP 로그·Mac 이름·속도 제한 키·누락 항목), 벤더 서면 확인.
   - **LOW:** Task 9 신원 대조를 emailKey 대신 원형 이메일로 / Task 7 공유 확인이 토큰을 구분하지 않음 / 상단 배치 drawer 첫 로드 포커스·toggleFocus 테스트 / relay 한도 테스트가 DO 시계 고정을 직접 단언하지 않음 / 두 탭 동시 결제(마지막 그물은 second_subscription 알림) / Paddle 오버레이 CSP·allowLogout 은 샌드박스에서 확인.
-  - **출시 방향 결정 대기:** 경쟁(Claude Remote Control·ChatGPT Codex 원격·Happy 가 폰 원격을 무료로 제공) 때문에 Pro 를 "여러 벤더 한 화면·한 알림함·자동 이어가기를 폰까지"로 팔자고 제안. 방향(에이전트 메신저 추천)·출시 순서(무료 공개 먼저 추천)·가격($10 추천) 답 대기.
+  - **출시 방향 결정 (10-27, "일단 해봐"):** 에이전트 메신저 포지셔닝 · 무료 공개 먼저 · Pro $10/월·$100/연(창립 $80). 무료 단계엔 로컬 기능 잠금 없음, Pro 는 릴레이 묶음만(스펙 §0·§4 메모).
+  - **랜딩 사이트 (`site/`):** en·ko 정적 빌드(`npx tsx site/build.ts`), 합성 스크린샷 3장, 가격 카드(Pro "출시 예정"), 엔진별 승인 문구, 주장표(`site/content/claims.ts`)를 테스트로 고정. `--release` 는 `SITE_ORIGIN` + `AIMSG_INSTALL_READY=1`(npm 이름 확보 뒤) 필요, 결제 링크는 월·연 둘 다 있을 때만 판매. 리뷰 3회.
+  - **공개본 export 수리:** `.gitattributes` 가 빈 `cloud/`·`docs/superpowers/` 폴더를 남겨 위생 검사가 실패하던 것을 고침 — 이제 `scripts/export-public.sh` 통과.
   - **기타:** 공개본 export, 유료 스펙·패키징 계획 동기화, 오래된 `/private/tmp/deck-*` 정리.
 
 ## 이전 상태 (2026-10-25 저녁)
