@@ -895,6 +895,13 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .markdown code { font-family: var(--mono); font-size: var(--fs-mono); padding: 2px 6px; border-radius: var(--r-xs); background: var(--inline-code-bg); color: var(--code-fg); box-shadow: inset 0 0 0 1px var(--line); word-break: keep-all; overflow-wrap: anywhere; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .markdown blockquote { margin: 10px 0 14px; padding: 8px 16px; border-left: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 0 10px 10px 0; background: var(--pill-bg); color: color-mix(in srgb, var(--fg) 78%, var(--muted)); }
 .markdown blockquote > :last-child { margin-bottom: 0; }
+/* The outermost quote of a reply carries a copy button at its top right: shown on hover / focus (desktop), always on touch. */
+.markdown blockquote.md-quote { position: relative; padding-right: calc(var(--icon-btn) + var(--s2)); }
+.md-quote-copy { position: absolute; top: var(--s1); right: var(--s1); min-width: 28px; height: 28px; opacity: 0; transition: opacity var(--t-fast) ease; }
+.md-quote:hover > .md-quote-copy, .md-quote-copy:focus-visible, .md-quote:focus-within > .md-quote-copy { opacity: 1; }
+.md-quote-copy .msg-act-said { display: none; }
+@media (hover: none) { .md-quote-copy { opacity: 1; } }
+:where(:root[data-phone]) { .md-quote-copy { opacity: 1; min-width: var(--phone-tap); height: var(--phone-tap); top: 0; right: 0; } .markdown blockquote.md-quote { padding-right: var(--phone-tap); } }
 .markdown del { color: var(--muted); }
 /* Task list: GFM's checkboxes are disabled (read-only), which the browser greys out whatever accent-color says, so they
    are drawn here — a brand-colour box with a tick when done, an outlined one when not. */

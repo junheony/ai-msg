@@ -61,6 +61,8 @@ export const chat: Widen<typeof en> = {
   placeholder: '메시지 보내기',
   /** A long fenced code block shows its first lines; the toggle under it. */
   code: { more: (n: number) => `${n}줄 더 보기`, less: '접기' },
+  /** A reply's blockquote: its copy button (label, touch toast). */
+  quote: { copy: '인용문 복사', copied: '복사했어요', failed: '복사하지 못했어요' },
   taskMenu: '따로 작업으로 돌리기',
   selectText: { title: '텍스트 선택', copyAll: '전체 복사', copied: '복사했어요' },
   newChat: {

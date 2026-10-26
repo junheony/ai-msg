@@ -367,6 +367,42 @@ describe('MessageView code blocks and turn footer', () => {
   });
 });
 
+describe('MessageView · 인용문 복사', () => {
+  afterEach(cleanup);
+  const reply = (text: string) => ({ kind: 'assistant' as const, turnId: 't', text, toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [] });
+  const writeText = vi.fn(() => Promise.resolve());
+  beforeEach(() => {
+    writeText.mockClear();
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true });
+  });
+
+  it('a quote gets one copy button that copies its paragraphs (inline code included); code blocks keep theirs', async () => {
+    const text = '아래를 붙여 넣으세요.\n\n> 안녕하세요, `deck` 입니다.\n>\n> 두 번째 문단\n> 같은 문단 줄\n\n```\nx\n```';
+    const { container } = render(<MessageView item={reply(text)} />);
+    const btn = container.querySelectorAll('blockquote .md-quote-copy');
+    expect(btn).toHaveLength(1);
+    expect(container.querySelectorAll('.code-block .code-copy')).toHaveLength(1);
+    fireEvent.click(btn[0]!);
+    await Promise.resolve();
+    expect(writeText).toHaveBeenCalledWith('안녕하세요, deck 입니다.\n\n두 번째 문단\n같은 문단 줄');
+  });
+
+  it('a nested quote has no button of its own; the outer copy includes it', async () => {
+    const { container } = render(<MessageView item={reply('> 바깥\n>\n> > 안쪽')} />);
+    expect(container.querySelectorAll('.md-quote-copy')).toHaveLength(1);
+    expect(container.querySelectorAll('blockquote')).toHaveLength(2);
+    fireEvent.click(container.querySelector('.md-quote-copy')!);
+    await Promise.resolve();
+    expect(writeText).toHaveBeenCalledWith('바깥\n\n안쪽');
+  });
+
+  it('a streaming, half-written quote renders with its button', () => {
+    const { container } = render(<MessageView item={{ ...reply('> 쓰는 중'), streaming: true }} />);
+    expect(container.querySelectorAll('.md-quote-copy')).toHaveLength(1);
+  });
+});
+
 describe('code block 저장 · 줄바꿈', () => {
   afterEach(() => { cleanup(); localStorage.removeItem('deck.codeWrap'); vi.restoreAllMocks(); });
   const reply = (text: string) => ({ kind: 'assistant' as const, turnId: 't', text, toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [] });

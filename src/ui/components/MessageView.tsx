@@ -200,7 +200,64 @@ function MdTable({ children }: { children?: ReactNode }) {
   return <div className="md-table-frame"><div ref={ref} className="md-table"><table>{children}</table></div></div>;
 }
 
+const BLOCK_TAGS = new Set(['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'PRE', 'BLOCKQUOTE', 'UL', 'OL', 'LI', 'TABLE', 'HR', 'DIV']);
+const isBlock = (n: Node): n is Element => n.nodeType === 1 && BLOCK_TAGS.has((n as Element).tagName);
+
+/** Text inside a block: line breaks (<br>) kept; the copy button itself skipped. */
+function inlineText(n: Node): string {
+  if (n.nodeType === 3) return n.textContent ?? '';
+  if (n.nodeType !== 1) return '';
+  const el = n as Element;
+  if (el.tagName === 'BR') return '\n';
+  if (el.tagName === 'BUTTON') return '';
+  return Array.from(el.childNodes).map(inlineText).join('');
+}
+
+/** An element's on-screen text: paragraphs apart by a blank line, list items by a line (with their marker). jsdom has no innerText. */
+function blockText(el: Element): string {
+  const kids = Array.from(el.childNodes);
+  if (!kids.some(isBlock)) return inlineText(el).trim();
+  const parts: string[] = [];
+  let run = '';
+  const flush = () => { const t = run.trim(); if (t) parts.push(t); run = ''; };
+  let item = 0;
+  for (const kid of kids) {
+    if (!isBlock(kid)) { run += inlineText(kid); continue; }
+    flush();
+    if (kid.tagName === 'LI') {
+      const marker = el.tagName === 'OL' ? `${++item}. ` : '- ';
+      parts.push(marker + blockText(kid).replace(/\n/g, '\n  '));
+    } else {
+      const t = blockText(kid);
+      if (t) parts.push(t);
+    }
+  }
+  flush();
+  return parts.join(el.tagName === 'UL' || el.tagName === 'OL' ? '\n' : '\n\n');
+}
+
+/** A blockquote inside another one: the outer one carries the only copy button. */
+const InQuoteContext = createContext(false);
+
+/** An assistant reply's quote (often a draft to paste elsewhere): a copy button at its top right, only on the outermost. */
+function MdQuote({ children }: { children?: ReactNode }) {
+  const nested = useContext(InQuoteContext);
+  const ref = useRef<HTMLQuoteElement>(null);
+  const feedback = useFileActions();
+  if (nested) return <blockquote>{children}</blockquote>;
+  const touch = typeof window !== 'undefined' && window.matchMedia?.('(hover: none)').matches === true;
+  const done = touch ? (ok: boolean) => feedback.toast(ok ? ui().chat.quote.copied : ui().chat.quote.failed, ok ? 'info' : 'error') : undefined;
+  return (
+    <blockquote ref={ref} className="md-quote">
+      <CopyButton icon className="md-quote-copy" label={ui().chat.quote.copy} text={() => (ref.current ? blockText(ref.current) : '')} {...(done ? { onDone: done } : {})} />
+      <InQuoteContext.Provider value>{children}</InQuoteContext.Provider>
+      {feedback.node}
+    </blockquote>
+  );
+}
+
 const MD_COMPONENTS: Components = {
+  blockquote: ({ children }) => <MdQuote>{children}</MdQuote>,
   img: ({ src, alt }) => <MdImage src={src} alt={alt} />,
   a: ({ href, children }) => <MdLink href={href}>{children}</MdLink>,
   // Inline code naming a file opens it in the pane's side panel (fenced code ends with a newline, so it never matches).
