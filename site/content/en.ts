@@ -1,0 +1,126 @@
+import { INSTALL_COMMAND, GLOBAL_INSTALL_COMMAND } from './install';
+import { PRICING } from './pricing';
+import type { SiteContent } from './types';
+
+const P = PRICING.pro;
+
+export const en: SiteContent = {
+  meta: {
+    title: 'AI-MSG — one inbox for all your coding agents',
+    description: 'Claude Code, Codex, Gemini and Grok side by side in one inbox. When one hits its limit, the work carries on — from your desk or your phone. Free and open source.',
+    ogAlt: 'The AI-MSG home screen: sessions from four coding agents, what needs you, and usage left on every account',
+  },
+  nav: { features: 'Features', pricing: 'Pricing', faq: 'FAQ', security: 'Security', install: 'Install', github: 'GitHub', skip: 'Skip to content' },
+  hero: {
+    eyebrow: 'The messenger for coding agents',
+    headline: 'AI-MSG — one inbox for all your coding agents.',
+    sub: 'Claude Code, Codex, Gemini and Grok side by side; when one hits its limit, the work carries on — from your desk or your phone.',
+    installLabel: 'Copy the install command',
+    copy: 'Copy',
+    copied: 'Copied',
+    secondaryCta: 'View on GitHub',
+    shotAlt: 'The AI-MSG home: two items need you, three sessions running across Claude, Codex and Gemini, and usage left for every account',
+    note: 'Free and open source. Runs on your Mac with the CLIs you already use.',
+  },
+  demo: {
+    heading: 'See it work',
+    caption: 'Screens rendered from the real app with sample data.',
+    videoLabel: 'AI-MSG demo video',
+    stills: [
+      { file: 'phone.png', alt: 'AI-MSG on a phone: what needs you and what is running', caption: 'The same inbox on your phone' },
+      { file: 'light.png', alt: 'AI-MSG in the light theme with nothing waiting and recent sessions grouped by project', caption: 'Recent sessions by project, light or dark' },
+    ],
+  },
+  features: {
+    heading: 'Everything in one inbox — free today',
+    sub: 'What ships in the free Community edition.',
+    proHeading: 'Coming with Pro',
+    proBadge: 'Pro · coming soon',
+    items: [
+      { title: 'One inbox, four vendors', body: 'Claude Code, Codex, Gemini and Grok sessions in one list, grouped by project — including conversations you started in those CLIs.', claim: 'oneInbox' },
+      { title: 'Work carries on at the limit', body: 'When an agent runs out, the turn continues on another AI you use, and picks up again when the limit resets. Both are settings you control.', claim: 'carriesOn' },
+      { title: 'Auto routing', body: 'Auto picks the engine and model from your first message and the limits you have left, and shows why on the turn.', claim: 'autoRouting' },
+      { title: 'Usage left, every account', body: 'A usage bar shows what is left and when it resets for each account and vendor, so you know where the next turn goes.', claim: 'usageBars' },
+      { title: 'Split view', body: 'Two to four sessions side by side, each its own conversation, with saved layouts.', claim: 'splitView' },
+      { title: 'Approvals you can trust', body: 'New sessions ask before tool calls. Approve once or for the session, answer questions, and switch permission modes per session.', claim: 'approvals' },
+      { title: 'On your phone, too', body: 'The same UI works on a phone or tablet over your own network or Tailscale, so you can pick up a running session from the couch.', claim: 'phoneWeb' },
+      { title: 'Handoff to a new session', body: 'When a conversation gets long, continue in a new session with a handoff note written from the old one.', claim: 'handoffNote' },
+      { title: 'Commander', body: 'Optional: give a session a goal and a done condition, and it keeps going turn by turn — stopping for you on approvals and at a turn cap.', claim: 'commander' },
+      { title: 'As many accounts as you own', body: 'Use as many accounts per vendor as you own, with combined usage across all of them.', claim: 'proAccounts', pro: true },
+      { title: 'Phone relay, no setup', body: 'Reach your Mac from your phone anywhere through an end-to-end encrypted relay — no tailnet needed.', claim: 'proRelay', pro: true },
+      { title: 'Push to your devices', body: 'Web Push on up to three devices when a turn finishes or needs you.', claim: 'proPush', pro: true },
+      { title: 'Never miss a waiting agent', body: 'Reminders for unanswered approvals and failed turns, sent to your phone.', claim: 'proReminders', pro: true },
+      { title: 'One-tap vendor handoff', body: 'Move a session to another vendor in one tap, with a summary and the git state carried over.', claim: 'proOneTapHandoff', pro: true },
+    ],
+  },
+  pricing: {
+    heading: 'Pricing',
+    sub: 'Community is free now. Pro arrives with the phone app.',
+    free: {
+      name: 'Community',
+      tagline: 'Free and open source (Apache-2.0)',
+      price: '$0',
+      period: 'forever',
+      features: ['All four vendors in one inbox', 'Carry-on at the limit and auto routing', 'Usage bars, split view, approvals', 'Your phone over your own network or Tailscale'],
+    },
+    pro: {
+      name: 'Pro',
+      tagline: 'For when you step away from your desk',
+      price: `$${P.monthlyUsd}`,
+      period: 'per month',
+      features: ['Everything in Community', 'As many accounts per vendor as you own', 'Encrypted phone relay and push on 3 devices', 'Reminders and one-tap vendor handoff'],
+    },
+    freeCta: 'Install free',
+    comingSoon: 'Coming soon',
+    monthly: `$${P.monthlyUsd} / month`,
+    yearly: `or $${P.yearlyUsd} / year`,
+    founding: `Founding customers: $${P.foundingYearlyUsd} / year`,
+    trial: `${P.trialDays}-day free trial${P.cardRequiredForTrial ? '' : ', no card required'}`,
+    buyMonthly: 'Monthly',
+    buyYearly: 'Yearly',
+    unavailable: 'Not on sale yet — Pro opens with the phone app.',
+  },
+  faq: {
+    heading: 'Questions',
+    items: [
+      { q: 'Is this allowed by the vendors’ terms?', a: 'AI-MSG runs the official, unmodified CLIs with your own logins, the way you would in a terminal. It never touches their tokens. Moving a session between accounts of the same vendor is off by default, and turning it on asks you to confirm the accounts are your own.' },
+      { q: 'Does my code or login leave my machine?', a: 'No. The server runs on your computer and listens only on 127.0.0.1 and your Tailscale address. Your code goes only where your CLIs already send it. The Pro relay, when it ships, carries only encrypted bytes.' },
+      { q: 'Do I need API keys?', a: 'No. AI-MSG reuses the subscriptions you already pay for, through the CLIs you are logged in to.' },
+      { q: 'What happens when I hit a limit?', a: 'The usage bar shows it coming. When an agent runs out, the turn can continue on another AI you use, and pick up again when the limit resets. You choose which engines Auto may use.' },
+      { q: 'Which platforms?', a: 'macOS is the supported platform. Linux runs the server and the Claude and Codex engines but is less tested. Windows is not supported yet. You need Node.js 24 or newer.' },
+      { q: 'What does Pro add?', a: 'Pro is for working away from your desk: an encrypted relay to your phone, push on up to three devices, reminders for waiting agents, one-tap handoff between vendors, and as many accounts per vendor as you own. It is coming soon; Community stays free.' },
+      { q: 'How do the trial and refunds work?', a: `Pro will start with a ${P.trialDays}-day free trial${P.cardRequiredForTrial ? '' : ' without a card'}. Payments and refunds are handled by our merchant of record.` },
+      { q: 'Is it open source?', a: 'Yes. Community is open source under the Apache-2.0 license.' },
+    ],
+  },
+  security: {
+    heading: 'Security model',
+    sub: 'AI-MSG can run commands on your machine. It is built to be treated like shell access.',
+    points: [
+      { title: 'Local first', body: 'The server runs on your computer and binds to 127.0.0.1 and your Tailscale address — never 0.0.0.0. Credentials stay on your machine, and AI-MSG puts no server of its own between you and your agents.', claim: 'localFirst' },
+      { title: 'Official logins only', body: 'Each CLI logs in its own way. AI-MSG never reads, stores or forwards their tokens or keychain entries.', claim: 'noCredentialReads' },
+      { title: 'You approve tool calls', body: 'New sessions ask before each tool call that needs a decision. Every decision is written to an audit log.', claim: 'auditLog' },
+      { title: 'Rotation off by default', body: 'Moving between accounts of the same vendor is off until you turn it on and confirm the accounts are yours.', claim: 'rotationOffByDefault' },
+      { title: 'Clean public repository', body: 'Tests check the published source for keys and personal paths.', claim: 'publicHygiene' },
+      { title: 'Relay sees ciphertext only (Pro, coming soon)', body: 'The relay will pass encrypted bytes between your Mac and the phone you paired; it cannot read your sessions.', claim: 'relayCiphertext' },
+      { title: 'The Mac keeps the keys (Pro, coming soon)', body: 'Over the relay, new sessions use your Mac’s defaults. Raising a session’s permissions, settings that widen permissions, safety switches, consent to send code to another vendor and global instructions stay on the Mac.', claim: 'relayMacOnly' },
+    ],
+    more: 'Read SECURITY.md',
+  },
+  install: {
+    heading: 'Install',
+    steps: [
+      { title: 'Run it', body: 'You need Node.js 24 or newer and at least one of the Claude Code, Codex, Gemini or Grok CLIs.', command: INSTALL_COMMAND },
+      { title: 'Open the address it prints', body: 'The terminal shows a login address. The first-run setup checks which CLIs are installed and logged in.' },
+      { title: 'Keep it running', body: 'Install it globally to run it as a service.', command: GLOBAL_INSTALL_COMMAND },
+    ],
+    docsLink: 'Full install guide',
+  },
+  footer: {
+    disclaimer: 'AI-MSG is an independent project, not affiliated with or endorsed by Anthropic, OpenAI, Google or xAI. Product names are trademarks of their owners.',
+    license: 'Apache-2.0',
+    security: 'Security',
+    source: 'Source',
+  },
+  langSwitch: '한국어',
+};

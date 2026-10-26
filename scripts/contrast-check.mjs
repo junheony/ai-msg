@@ -127,6 +127,50 @@ function check(name, t) {
   return bad;
 }
 
-const bad = check("dark", dark) + check("light", light);
+// Landing page (site/styles.css): its own :root (dark) and a prefers-color-scheme: light :root, same text floors.
+const siteCss = readFileSync(new URL("../site/styles.css", import.meta.url), "utf8");
+const siteBlock = (re) => {
+  const m = siteCss.match(re);
+  if (!m) throw new Error(`site block not found: ${re}`);
+  return m[1];
+};
+const siteDark = vars(siteBlock(/^:root \{([\s\S]*?)^\}/m));
+const siteLight = { ...siteDark, ...vars(siteBlock(/@media \(prefers-color-scheme: light\) \{\s*:root \{([\s\S]*?)^ {2}\}/m)) };
+function checkSite(name, t) {
+  const c = (k) => {
+    const v = t[k];
+    if (!/^#[0-9a-f]{6}$/i.test(v)) throw new Error(`${name} --${k} is not a hex color: ${v}`);
+    return hex(v);
+  };
+  const rows = [
+    ["fg / bg", c("fg"), c("bg"), 7],
+    ["fg-strong / panel", c("fg-strong"), c("panel"), 7],
+    ["muted / bg", c("muted"), c("bg"), 4.5],
+    ["muted / panel", c("muted"), c("panel"), 4.5],
+    ["muted / bg-raised", c("muted"), c("bg-raised"), 4.5],
+    ["faint / bg", c("faint"), c("bg"), 4.5],
+    ["link / bg", c("link"), c("bg"), 4.5],
+    ["link / panel", c("link"), c("panel"), 4.5],
+    ["accent / bg (eyebrow)", c("accent"), c("bg"), 4.5],
+    ["on-accent / accent (step)", c("on-accent"), c("accent"), 4.5],
+    ["btn-primary", c("btn-primary-fg"), c("btn-primary-bg"), 4.5],
+    ["code-fg / code-bg", c("code-fg"), c("code-bg"), 4.5],
+    ["faint / code-bg", c("faint"), c("code-bg"), 4.5],
+    ["warn / panel (badge)", c("warn"), c("panel"), 4.5],
+    ["warn / bg (badge)", c("warn"), c("bg"), 4.5],
+    ["ok / panel (check)", c("ok"), c("panel"), 3],
+  ];
+  console.log(`\n${name}`);
+  let bad = 0;
+  for (const [label, f, b, floor] of rows) {
+    const r = ratio(f, b);
+    const ok = r >= floor;
+    if (!ok) bad++;
+    console.log(`  ${ok ? "ok  " : "FAIL"} ${label.padEnd(22)} ${r.toFixed(2)}:1  (>= ${floor})`);
+  }
+  return bad;
+}
+
+const bad = check("dark", dark) + check("light", light) + checkSite("site dark", siteDark) + checkSite("site light", siteLight);
 console.log(bad ? `\n${bad} pair(s) below floor` : "\nall pairs pass");
 process.exit(bad ? 1 : 0);
