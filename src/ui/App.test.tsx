@@ -883,25 +883,26 @@ describe('App phone layout (D10)', () => {
     expect(labels()).toEqual(['1 · two', '2 · 새 세션', '3 · one']);
   });
 
-  it('usage strip: in the top bar on a desktop, a line of its own under the top bar on a phone', async () => {
+  it('usage strip: a collapsed pill in the top bar on a desktop and on a phone', async () => {
     const numbered = { ...usage, accounts: { ...usage.accounts, a: { ...usage.accounts.a, fiveHour: { usedPct: 42, resetsAt: null } } } };
     mockMatchMedia(false);
     await boot();
     server({ type: 'usage', usage: numbered } as unknown as ServerMessage);
-    expect(screen.getByTestId('usage-strip').closest('.topbar')).not.toBeNull();
+    const desk = screen.getByTestId('usage-strip');
+    expect(desk.closest('.topbar')).not.toBeNull();
+    expect(desk.querySelector('.usage-seg')).toBeNull();
+    expect(document.querySelector('.usage-strip-row')).toBeNull();
     cleanup();
     mockMatchMedia(true);
     await boot();
     server({ type: 'usage', usage: numbered } as unknown as ServerMessage);
     const strip = screen.getByTestId('usage-strip');
-    expect(strip.closest('.topbar')).toBeNull();
-    const row = strip.closest('.usage-strip-row')!;
-    // Portalled into the slot right after the top bar; the bar keeps no usage element of its own.
-    expect(row.parentElement?.classList.contains('usage-strip-slot')).toBe(true);
-    expect(row.parentElement?.previousElementSibling?.classList.contains('topbar')).toBe(true);
-    expect(document.querySelector('.topbar [data-testid="usage-strip"], .topbar [data-testid="usage-chip"]')).toBeNull();
-    // Phone: the mid stage (no bars).
-    expect(strip.querySelector('.usage-seg-bar')).toBeNull();
+    expect(strip.closest('.topbar')).not.toBeNull();
+    expect(strip.querySelector('.usage-seg')).toBeNull();
+    expect(document.querySelector('.usage-strip-row')).toBeNull();
+    expect(document.querySelector('.topbar [data-testid="usage-chip"]')).toBeNull();
+    fireEvent.click(strip);
+    expect(screen.getByTestId('usage-strip-pop').querySelector('.usage-seg-bar')).not.toBeNull();
   });
 
   it('Escape closes the open phone drawer', async () => {
@@ -1103,7 +1104,7 @@ describe('App new build without a server restart', () => {
     expect(labels[2]).toMatch(/^테마: /);
     expect(labels[3]).toMatch(/^단축키/);
     expect(labels[4]).toBe('새로고침');
-    expect(labels[5]).toMatch(/^deck /);
+    expect(labels[5]).toMatch(/^Crew /);
     expect(screen.getByTestId('foot-menu-version').getAttribute('aria-disabled')).toBe('true');
   });
 });
@@ -1245,21 +1246,22 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
 
   const numbered = { ...usage, accounts: { ...usage.accounts, a: { ...usage.accounts.a, fiveHour: { usedPct: 42, resetsAt: null } } } };
 
-  it('the usage strip toggles the usage sheet; ✕ hands focus back to the strip', async () => {
+  it('the usage strip opens the seat list; 자세히 opens the sheet; ✕ hands focus back to the strip', async () => {
     await boot();
     server({ type: 'usage', usage: numbered } as unknown as ServerMessage);
     const btn = screen.getByTestId('usage-strip');
     expect(btn.getAttribute('aria-expanded')).toBe('false');
+    expect(btn.querySelector('.usage-seg')).toBeNull();
     btn.focus();
     fireEvent.click(btn);
-    expect(screen.getByRole('dialog', { name: '사용량' })).toBeTruthy();
-    expect(btn.getAttribute('aria-expanded')).toBe('true');
-    expect(btn.getAttribute('aria-haspopup')).toBe('dialog');
-    expect(document.activeElement?.getAttribute('aria-label')).toBe('닫기');
-    fireEvent.click(btn);
+    expect(screen.getByTestId('usage-strip-pop')).toBeTruthy();
     expect(screen.queryByRole('dialog', { name: '사용량' })).toBeNull();
-    expect(btn.getAttribute('aria-expanded')).toBe('false');
-    fireEvent.click(btn);
+    expect(btn.getAttribute('aria-expanded')).toBe('true');
+    expect(btn.getAttribute('aria-haspopup')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: '자세히' }));
+    expect(screen.getByRole('dialog', { name: '사용량' })).toBeTruthy();
+    expect(screen.queryByTestId('usage-strip-pop')).toBeNull();
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('닫기');
     fireEvent.click(within(screen.getByRole('dialog', { name: '사용량' })).getByRole('button', { name: '닫기' }));
     expect(screen.queryByRole('dialog', { name: '사용량' })).toBeNull();
     expect(document.activeElement).toBe(btn);
@@ -1595,13 +1597,15 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     openSession('one');
     expect(frames()).toContainEqual({ type: 'route_preview', sessionId: 's1', cwd: '/w' });
     server({ type: 'route_preview', sessionId: 's1', account: 'c', reason: '5h 여유', asOpus: true } as ServerMessage);
-    // The usage strip marks where the next turn goes (→ before C until the session's own account is known); the
-    // reason is in its title.
+    // The collapsed pill keeps the next turn in its label and title. The → sits on C once the seat list is open.
+    const strip = screen.getByTestId('usage-strip');
+    expect(strip.title).toContain('5h 여유');
+    expect(strip.getAttribute('aria-label')).toContain('다음 턴 C(Opus)');
+    expect(screen.queryByTestId('next-c')).toBeNull();
+    fireEvent.click(strip);
     const tag = screen.getByTestId('next-c');
     expect(tag.textContent).toBe('→');
     expect(screen.getByTestId('seg-c').contains(tag)).toBe(true);
-    expect(screen.getByTestId('usage-strip').title).toContain('5h 여유');
-    expect(screen.getByTestId('usage-strip').getAttribute('aria-label')).toContain('다음 턴 C(Opus)');
     server({ type: 'route_preview', sessionId: 'other', account: 'a', reason: 'x' } as ServerMessage);
     expect(screen.queryByTestId(/^next-/)).toBeNull(); // an answer for another session is not shown
   });

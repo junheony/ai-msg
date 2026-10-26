@@ -1300,8 +1300,7 @@ export function App() {
         {!phone && <button type="button" className="icon-btn sidebar-toggle" aria-label={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} title={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} aria-pressed={!sidebarHidden} onClick={toggleSidebar} onMouseEnter={peekable && !peek ? armPeek : undefined} onMouseLeave={peekable ? () => { unlatchPeek(); leavePeek(); } : undefined}>☰</button>}
         {/* The session chip of the one pane (desktop) / the shown pane (phone) renders here (Pane → Chat, a portal). */}
         <div className="topbar-head" ref={setHeadSlot} />
-        {/* Every seat's usage: in the bar, shrinking in steps; when even its narrowest does not fit (and always on a phone)
-            a line of its own under the bar (the slot below, a portal). */}
+        {/* Every seat's usage, collapsed to the tightest remaining amount. The list of seats opens under the pill. */}
         <UsageStrip usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} phone={phone} rowSlot={stripRow} open={usageOpen !== null} onToggle={() => setUsageOpen((v) => (v ? null : 'limits'))} />
         <div className="topbar-end">
           {!phone && <button type="button" className="icon-btn split" onClick={addPane} aria-label="새 분할" title={`새 분할 (${mod}⇧O) — 세션 칩을 끌어 순서를 바꾸거나 카드로 떼어낼 수 있어요`}><SplitIcon /></button>}
