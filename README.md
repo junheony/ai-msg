@@ -5,97 +5,59 @@
 
 English | [한국어](README.ko.md)
 
-AI-MSG — run Claude Code, Codex, Gemini and Grok from your phone. It keeps going while you're away.
+**AI-MSG — one inbox for all your coding agents.** Claude Code, Codex, Gemini and Grok side by side; when one hits its limit, the work carries on — from your desk or your phone.
 
-A self-hosted web/mobile shell for your coding agents — the CLIs you are already logged in to.
+It is self-hosted: AI-MSG runs on your own computer and drives the official CLIs you have already installed and logged in to, as they are. Free and open source under Apache-2.0.
+
+![The AI-MSG home: what needs you, the sessions running across Claude Code, Codex and Gemini, and usage left](site/assets/shots/en/inbox.png)
 
 AI-MSG is an independent project, not affiliated with or endorsed by Anthropic, OpenAI, Google or xAI. Product names are trademarks of their owners.
 
-AI-MSG runs on your own computer. It drives the official Claude Code CLI (headless), the Codex CLI and the Gemini CLI **with your own logins, as they are**. If you have more than one Claude account ("seat"), it shows the usage of each and assigns every turn to a suitable one automatically. The same UI works from a phone or tablet, so you can pick up a running session from another device.
-
-The name: "AI-MSG" plays on the Korean word "머시기" ("whatsit") and on message / MSG. Internal identifiers keep the short name `deck` (`DECK_*` environment variables, `~/.config/deck`).
-
-<!-- Screenshot placeholder: add docs/screenshot.png (desktop, split view) and reference it here. -->
-
-> **UI language:** the interface is currently Korean only. Internationalization is on the roadmap.
-
 ## Features
 
-- **Chat shell** — streaming markdown, collapsible tool calls, diff view, thinking blocks, todo panel, image and file attachments, slash-command and file-path completion.
-- **Concise mode (간결 모드)** — on by default (Settings → 일반). Instant short ack naming the chosen engine/model, results-first pane (thinking/tool bodies collapsed; mid-turn chatter tucked away), milestone-style progress on long turns, and Web Push when a long turn finishes (unfocused tab). Toggle off for the full Claude Code–style stream. Explain/chat turns prefer fast models (Sonnet / Gemini Flash / GPT Sol); hard/build work still uses Fable / Opus / Astra.
-- **Split view** — 2 to 4 panes, each an independent session. On narrow screens: one pane and a drawer sidebar. On desktop `⌘\` hides the sidebar; resting the pointer on the window's left edge then slides it out over the panes until the pointer leaves.
-- **Session list** — reads the Claude Code transcripts already on disk, grouped by project folder. Pin, rename, archive, search, fork, delete (with undo), export to Markdown. Transcripts written only by scripted `claude -p` runs (a batch job's one-shots) stay out of the list unless deck runs or renames them; search still finds them.
-- **Desktop session mirroring (experimental)** — a session that ran on another account's profile is copied back to the home profile, so Claude Desktop and `claude --resume` see the same conversation. Sessions currently held open by another `claude` process are marked.
-- **Account routing** — every Claude turn gets an account based on usage, cache warmth and cooldowns. A session can be pinned to one account. One account can be marked *protected* (ranked like the others; last only on a tie).
-- **Usage panel** — remaining 5-hour / weekly / Fable windows per account (with a short countdown to the fullest window's reset, and a *다음* tag on the account the open session's next turn would use), plus a token-usage history view built from local transcripts. On desktop the top bar also shows running / background / waiting-for-approval work and the server's restart state.
-- **Permissions** — approval cards (once / this session / deny), per-session permission modes, `AskUserQuestion` cards, and an audit log of every decision.
-- **Commander (총사령탑)** — optional, off by default (Settings toggle). Arm a goal and a done condition on a Claude session from the pane's ⋯ menu; each time the session goes idle a judge decides the next instruction, stops for a person (approval cards, hard-to-undo steps), or ends at a turn cap. A header chip shows progress and the last verdict, with one-tap stop.
-- **Steer and queue** — a message sent while a turn runs is injected at the next tool boundary, or queued for after the turn.
-- **Reconnect catch-up** — turns keep running on the server when a browser disconnects; a reconnecting device receives only the events it missed.
-- **Push notifications** — Web Push from the installed PWA (needs HTTPS, see [Remote access](#remote-access)).
-- **Codex, Gemini and Grok engines** — optional; a session is bound to one engine when it is created.
+- **One inbox, four vendors** — Claude Code, Codex, Gemini and Grok sessions in one list, grouped by project, including conversations you started in those CLIs. Pin, rename, archive, search, fork, delete (with undo), export to Markdown.
+- **Work carries on at the limit** — when an agent runs out, the turn continues on another AI you use, and is sent again when the limit resets. Both are settings you control; Gemini and Grok are used only after you agree to sending to them.
+- **Auto routing** — Auto picks the engine and model from your first message and the limits you have left, and shows why on the turn.
+- **Usage left, every account** — what is left and when it resets, per account and vendor, plus a token-usage history built from local transcripts.
+- **Split view** — two to four sessions side by side, each its own conversation, with saved layouts. On a narrow screen: one pane and a drawer sidebar.
+- **Approvals, engine by engine** — Claude Code and Grok ask before tool calls that need permission: approve once or for the session, deny, or answer their questions. Codex runs with no approval cards, inside its sandbox (the project folder with network access, or read-only). Gemini is read-only, or edits files in the project folder with shell commands refused. Every answered card goes to an audit log.
+- **On your phone, too** — the same UI on a phone or tablet over Tailscale. Turns keep running on the server when a browser disconnects; a device that reconnects gets only what it missed.
+- **Push notifications and reminders** — Web Push to up to 20 browsers and phones when something needs you: an approval or question waiting, or a turn that fails, runs long or ends with a question. An unanswered approval is pushed again after 10 minutes; a failed turn up to three more times, 10, 40 and 100 minutes after it failed. Needs HTTPS (see [Remote access](#remote-access)).
+- **Handoff** — continue a long conversation in a new session with a handoff note written from the old one.
+- **Commander** — optional, off by default: give a session a goal and a done condition, and it keeps going turn by turn, stopping for you on approvals, hard-to-undo steps and at a turn cap.
+- **Steer and queue** — a message sent while a turn runs is added at the next tool boundary, or queued for after the turn.
+- **Concise mode** — on by default: a short note naming the engine and model, results first, thinking and tool output folded away. Turn it off for the full stream.
+- **Chat shell** — streaming Markdown, collapsible tool calls, diff view, todo panel, image and file attachments, slash-command and file-path completion.
+- **Multiple Claude accounts** — if you have more than one Claude account, each one's usage is shown, sessions can be pinned to one, and moving between them on a limit is an opt-in setting. See [Multiple Claude accounts](#multiple-claude-accounts).
 
-## Requirements
+## Install
 
-| | |
-|---|---|
-| Node.js | 24 or newer (`engines` in `package.json`) |
-| Claude Code | Logged in with `claude` on this machine. One account is enough. |
-| OS | macOS is the development and supported platform. |
-| Optional | Codex CLI 0.159 or newer (`codex login`), Gemini CLI, Grok CLI (`grok login`), Tailscale |
-
-**Linux:** the server, the Claude and Codex engines and Tailscale binding are not macOS-specific, and the unit tests run on Linux in CI as an informational job. Not available on Linux: the launchd service scripts (`scripts/install-launchd.sh`), Claude Desktop session records (the default path is macOS's `~/Library/Application Support/Claude`), and the Gemini write sandbox (macOS seatbelt). Linux is not regularly used by the author.
-
-## Quick start
+You need Node.js 24 or newer, macOS or Linux, and at least one of the Claude Code, Codex, Gemini (Antigravity) or Grok CLIs, logged in.
 
 ```bash
-git clone https://github.com/junheony/ai-msg.git
-cd ai-msg
-npm install        # uses the claude, codex, gemini, grok CLIs you already installed
-npm run build      # UI -> dist/ui
-npm start          # http://127.0.0.1:9320
+npx ai-msg
 ```
 
-On start the server prints the addresses it listens on and where the login token is:
+> **Not on npm yet:** the package is not published, so the line above does not work today — run AI-MSG from the repository instead, as described in [CONTRIBUTING.md](CONTRIBUTING.md#run-from-the-repository). <!-- npm-pending -->
 
-```
-deck: http://127.0.0.1:9320
-deck: 로그인 토큰은 /Users/alice/.config/deck/token 에 있습니다 (내용은 출력하지 않음)
-```
+The terminal prints a login address; open it, and the first-run setup shows which CLIs are installed and logged in. To keep it running: `npm i -g ai-msg`, then `ai-msg service install` (launchd on macOS, a systemd user service on Linux).
 
-Open `http://127.0.0.1:9320` and paste the contents of the token file into the login form:
+The full guide — logging in to each CLI, language, phone access, the service, upgrades, uninstalling and troubleshooting — is [docs/install.md](docs/install.md).
 
-```bash
-cat ~/.config/deck/token
-# 5f2c…(64 hex characters)…9e1a
-```
+## Pro (coming soon)
 
-The token is generated on first start (file mode `0600`) and never printed. The browser keeps a derived session cookie for 30 days. To invalidate every session, delete the token file and restart.
+Community — everything on this page — is free and open source, with no feature lock. Pro is coming soon: it is for working away from your desk and is not on sale yet. It will add an end-to-end encrypted relay, so your phone can follow sessions and approve from anywhere without setting up Tailscale or HTTPS, with push and reminders delivered through it. It will cost $10 a month or $100 a year.
 
-New Claude sessions ask before each tool call that needs a decision. Auto-approval is opt-in; read [Security model](#security-model) before turning it on.
-
-### Run as a service (macOS)
-
-```bash
-scripts/install-launchd.sh              # install a user LaunchAgent (com.deck.server) and start it
-scripts/install-launchd.sh --uninstall
-npm run restart                         # graceful restart: refused while turns or background work run, or when already draining (--force)
-```
-
-The service reads environment variables from `~/.config/deck/env` (`KEY=value` lines). The file is read as a shell script (`scripts/launchd/run.sh` sources it), so keep it writable by you only (`chmod 600`).
-
-When server code (`src/server`, `src/shared`) changed since the server started, the top bar shows *서버 업데이트 대기 · 파일 N개*; *지금 재시작* runs the same graceful drain as `npm run restart`. It is offered only when the relaunch loop or the LaunchAgent will start the server again (`DECK_SUPERVISED=1`, set by `scripts/relaunch.sh`, and the loop still running as the server's parent — checked on every request); a server started by hand, or one left running after `relaunch.sh stop`, refuses it. Detection compares file modification times, so a file whose timestamp changed without a content change (e.g. after `git checkout` or `git stash`) counts too.
-
-If the repo lives under `~/Documents` (or Desktop/Downloads), give **Full Disk Access** to the node binary the installer prints (System Settings → Privacy & Security). The LaunchAgent starts that node (`scripts/launchd/boot.mjs`), and macOS checks folder access against the job's own program — so node's grant covers the shell scripts and the server it starts.
+Nothing is sent to the cloud unless you link this computer to a cloud account. `DECK_CLOUD=off` turns the cloud feature off entirely. Details: [docs/security-model.md](docs/security-model.md) and [docs/privacy-data-inventory.md](docs/privacy-data-inventory.md) (both in Korean).
 
 ## Multiple Claude accounts
 
 Each account is a Claude Code **profile directory**. Log in once per profile:
 
 ```bash
-claude                                   # first account  -> ~/.claude
-CLAUDE_CONFIG_DIR=~/.claude-b claude     # second account -> ~/.claude-b
-CLAUDE_CONFIG_DIR=~/.claude-c claude     # third account  -> ~/.claude-c  (any number of accounts works)
+claude auth login                                   # first account  -> ~/.claude
+CLAUDE_CONFIG_DIR=~/.claude-b claude auth login     # second account -> ~/.claude-b
+CLAUDE_CONFIG_DIR=~/.claude-c claude auth login     # third account  -> ~/.claude-c  (any number works)
 ```
 
 With no `accounts.json`, AI-MSG discovers accounts at start: `~/.claude` becomes account `a`, and `~/.claude-<letter>` (one lower-case ASCII letter) becomes the account with that letter. A `.claude-<x>` directory counts only if it contains a `projects` directory or a `.claude.json`. Any other `~/.claude-*` name (`.claude-backup`, `.claude-2`) is ignored, and the start log prints the `accounts.json` entry that would add it. One account is enough; with nothing found, the account is `a`.
@@ -125,61 +87,70 @@ To use other ids or directories, name accounts, set the home account or retire o
 | `retired` | `false` | Read-only: sessions and usage stay visible, but the account is left out of routing, the account picker and pinning. Continuing one of its sessions is refused with a message. |
 | `home` (top level) | `a` if it is active, else the first active account | The one profile Claude Desktop reads and writes. Sessions run on other accounts are mirrored back to it. Must be an active account. |
 
-At least one account must be active. Unknown fields are ignored.
-
-**Upgrading:** `x1`, `x2` and `grok` are now reserved for Grok. If your `accounts.json` uses one of these ids, the server refuses to start — rename that account to another id.
+At least one account must be active. Unknown fields are ignored. Ids `x1`, `x2` and `grok` are reserved for Grok; an `accounts.json` that uses one of them stops the server from starting.
 
 **If the file is there but wrong** (unreadable, not JSON, wrong shape, duplicate id, directory or card, unknown `home`, relative `configDir`), the server does not start. It prints the file path and the reason. It does not fall back to discovery, because that would silently run with a different set of accounts than the file says. Only a missing file means discovery.
 
-### Add an account
+**Add an account:** log in to a new profile directory yourself (`CLAUDE_CONFIG_DIR=~/.claude-work claude auth login`), add an entry to `accounts.json` (a one-letter suffix such as `~/.claude-d` needs none), restart the server.
 
-1. Log in to a new profile directory with the Claude Code CLI yourself, for example `CLAUDE_CONFIG_DIR=~/.claude-work claude`.
-2. Add an entry to `accounts.json`. Without the file, a one-letter suffix such as `~/.claude-d` needs no entry.
-3. Restart the server.
+**Remove an account:** `"retired": true` keeps its sessions and usage visible, read-only. Deleting the entry removes its sessions from the list (files on disk are not touched). Changing an `id`, or swapping the `configDir` of two accounts, makes usage counts overlap — treat ids as permanent. The token-usage index has room for 23 Claude accounts over its lifetime.
 
-### Remove an account
+**Same-vendor rotation is off by default.** Sessions stay on the home account or the account you pin. Turning rotation on (Settings) asks you to confirm the accounts are your own paid accounts; only then does a session move to another of your Claude accounts on a limit, the Fable cap or a cold cache. Carrying on to another vendor is a separate setting.
 
-- **`"retired": true`** keeps its sessions and usage visible, read-only. Use this to keep history.
-- **Deleting the entry** removes the account's sessions from the list, because its `projects` directory is no longer scanned. Files on disk are not touched. To keep seeing them, use `retired`.
+**Protected account.** If you also use one account interactively (for example in Claude Desktop), mark it protected: routing still ranks it by usage, but when candidates are otherwise equal it is used last. Set `CLAUDE_PROTECT=<id>`, or put the id on the first non-comment line of `~/.config/offload/protect` (optional). Pinning a session to it still works.
 
-Cautions:
+### How a turn gets an account (with rotation on)
 
-- Changing an `id`, or swapping the `configDir` of two accounts, makes usage counts overlap and read too high. Treat ids as permanent.
-- The token-usage index has room for 23 Claude accounts over its lifetime, retired and removed ones included. Further accounts are logged once and not counted.
-
-**Claude Desktop** mirroring targets the single top-level `home` account.
-
-**Protected account.** If you also use one account interactively (for example in Claude Desktop), mark it protected: automatic routing still ranks it by usage like any other account, but when candidates are otherwise equal it is used last. This is not part of `accounts.json`. Set `CLAUDE_PROTECT=<id>`, or put the id on the first non-comment line of `~/.config/offload/protect` (an optional path shared with the author's other tools; it does not need to exist). An id that is not a configured account is ignored with a start-log warning. Pinning a session to the protected account still works; a pin is an explicit choice.
-
-### How a turn gets an account
-
-1. A pinned session uses its pinned account unless that account is at its limit or cooling down — or, for a Fable turn, at the Fable cap (80%) while another account has Fable room; that turn runs there, the pin stays, and a notice says so. At the cap with no such account the pin holds (the model then follows the account's own Fable value, i.e. Opus) and a notice says that too.
+1. A pinned session uses its pinned account unless that account is at its limit or cooling down — or, for a Fable turn, at the Fable cap (80%) while another account has Fable room; that turn runs there, the pin stays, and a notice says so.
 2. Otherwise the session stays on its current account while the prompt cache is warm (last turn less than 55 minutes ago).
 3. It switches when the current account passes 80% of the 5-hour window or 85% of the weekly window, or is cooling down. Accounts at 95% or more are excluded.
-4. New sessions and cold sessions go to the best candidate. The policy is a setting: *balance* (default; lowest 5-hour usage first) or *drain* (the account whose weekly window resets soonest first).
+4. New and cold sessions go to the best candidate: *balance* (default; lowest 5-hour usage first) or *drain* (the account whose weekly window resets soonest first).
 5. If a turn fails with a rate-limit or authentication error, the account is put on cooldown (1 hour / 6 hours), the session transcript is copied to the next account's profile, and the turn is retried there (up to 2 retries).
 
-Each turn's badge shows the account, the model and the reason for the choice.
+Each turn's badge shows the account, the model and the reason for the choice. **Desktop session mirroring (experimental):** a session that ran on another account's profile is copied back to the home profile, so Claude Desktop and `claude --resume` see the same conversation.
 
-## Codex, Gemini and Grok (optional)
+## Engines
 
-| Engine | How it runs | Notes |
+| Engine | How it runs | Approvals and notes |
 |---|---|---|
-| Codex | `codex exec --json` as a child process | Needs codex-cli 0.159 or newer. No approval cards: turns run with `approval_policy=never` inside a sandbox. The sandbox is workspace-write with network access on by default (whatever the Claude permission default), or read-only if you pick it. You can change it on an existing session from its sandbox chip; it applies from the next turn. `danger-full-access` is never used. If the ChatGPT desktop app has the same thread open, the turn fails ("already has an active writer"); **deck 에서 새 GPT 세션으로 이어가기** under the error opens a new GPT session in the same folder with an excerpt of the conversation and the failed request in the composer. |
-| Gemini | `gemini -o stream-json` as a child process | Picked by 자동 only after you consent in Settings (자동 분배). Up to two accounts (`g1`, `g2`), each with its own `GEMINI_CLI_HOME` at `<configDir>/gemini/<id>`. Reopened sessions do not show earlier messages. |
-| Grok | `grok agent` (Grok Build CLI) over ACP, one process group per turn | Picked by 자동 only after you consent in Settings (자동 분배). One seat (`x1`) using `~/.grok`. Models Grok 4.7 (default), Grok 4.7 Fast, Grok 4.6 and Grok 4.5. Approval cards, 모두 자동 승인, 편집 자동 승인, messages sent mid-turn and the audit log work as in Claude sessions; a mode change applies at once. Plan mode is not offered. No usage card (Grok's quota is not readable). Image attachments are refused. Reopened sessions do not show earlier messages. |
+| Claude Code | The official `claude` CLI, headless, one process per turn, with the selected profile | Approval and question cards; per-session modes (ask every time, auto-accept edits, plan, auto-approve everything). Your Claude Code settings, allow and deny rules and hooks apply as in the CLI. |
+| Codex | `codex exec --json` (codex-cli 0.159 or newer) | No approval cards: turns run with `approval_policy=never` inside a sandbox — workspace-write with network access by default, or read-only. Change it from the session's sandbox chip; it applies from the next turn. `danger-full-access` is never used. |
+| Gemini | The Antigravity CLI `agy`, headless | Read-only, or edits in the project folder with shell commands refused. Used by Auto only after you consent. Reopened sessions do not show earlier messages. Login steps and limits: [docs/gemini-spike.md](docs/gemini-spike.md) (Korean). |
+| Grok | `grok agent` (Grok Build CLI) over ACP, one process group per turn | Approval cards, auto-approve and auto-accept-edits modes, messages sent mid-turn, audit log. Used by Auto only after you consent. A usage card shows the subscription's usage as the CLI reports it. Image attachments are refused. |
 
-**자동 (auto engine).** New sessions start on the 자동 engine; with the model also on 자동, AI-MSG picks the engine and model from the first message and the remaining limits (Claude, GPT, and Gemini / Grok once consented) and shows why on the turn badge. Settings → 자동 분배 chooses which engines it may use; if the chosen engine cannot do the task (shell for Gemini, images for Grok), it asks before sending.
+A session is bound to one engine when it is created. Without a CLI's binary its engine is hidden (Grok is shown dimmed). If the engine Auto chose cannot do the task (shell for Gemini, images for Grok), it asks before sending.
 
-Without the binary, the engine is hidden in the UI (Grok is shown dimmed). AI-MSG never logs in for you: use `codex login`, and see [docs/gemini-spike.md](docs/gemini-spike.md) (Korean) for the Gemini login steps and limits. Grok: install with `curl -fsSL https://x.ai/cli/install.sh | bash`, then run `grok login` once in a terminal, then restart AI-MSG.
+**Grok specifics.** The Grok CLI reads a project's own `.grok/` settings, which can change its permissions or run commands; do not start Grok sessions in folders with a `.grok/` you did not create (AI-MSG refuses such folders where it can detect them). AI-MSG answers every Grok approval request itself according to the session's mode, and before each turn runs `grok inspect --json` and refuses the turn if permission rules, a default mode other than `default` or auto mode show up. Even in `default` mode the Grok CLI runs read tools, read-only shell commands, `mkdir` and `touch` without asking. If a tool that should have asked runs without a request, AI-MSG stops the turn and locks the Grok engine until you unlock it in Settings. This is a best-effort check on what Grok reports, not a sandbox. Each Grok turn runs with `HOME` set to a fresh empty folder (only `.gitconfig`, `.config/git` and `.ssh` linked in). Do not open the same Grok session in a terminal at the same time.
 
-**Grok and project `.grok/` folders.** The Grok CLI reads a project's own `.grok/` settings, which can change its permissions or run commands. Do not start Grok sessions in folders that contain a `.grok/` directory you did not create; AI-MSG refuses such folders where it can detect them.
+## Remote access
 
-**What Grok approvals guarantee.** Grok always runs in its own `default` mode; AI-MSG answers every approval request itself according to the session's mode (never "always allow"). Before each turn it runs `grok inspect --json` with the same environment and refuses the turn if any permission-rule source, a default mode other than `default`, or auto mode shows up. Even in `default` mode the Grok CLI runs read tools, read-only shell commands, `mkdir` and `touch` without asking. If a tool that should have asked runs without a request, or the session mode leaves `default`, AI-MSG stops the turn and locks the Grok engine until you unlock it in Settings (권한). This is a best-effort check on what Grok reports, not a sandbox.
+By default the server listens on `127.0.0.1`, plus what it takes to be this machine's **Tailscale** IPv4 address. It never binds to `0.0.0.0`.
 
-**Shadow HOME.** Each Grok turn runs with `HOME` set to a fresh empty folder under `<configDir>/homes/grok` (deleted after the turn; leftovers are removed at server start), so Grok cannot pick up Claude settings or other tools' files from your real home. Only `.gitconfig`, `.config/git` and `.ssh` are linked in, when they exist, and `SSH_AUTH_SOCK` is passed through. The cost: anything else Grok's shell commands expect in your home (other dotfiles, language toolchains configured there) is not visible to them. `GROK_HOME` still points at the real `~/.grok`.
+An address is treated as Tailscale when it is an IPv4 address in `100.64.0.0/10` on an interface named `utunN` (macOS) or `tailscaleN` (Linux). If the `tailscale` CLI is installed and answers, the address must also appear in `tailscale ip -4`. If the CLI is missing or fails, the interface and range alone decide.
 
-**Do not open the same Grok session in a terminal at the same time.** AI-MSG serializes its own turns per session, but cannot see a `grok` you run yourself. Loading the same session from both can mix their histories; when AI-MSG notices the session's files changed since its last turn, it shows a notice.
+> Other VPNs also use `utunN` interfaces, and some use the `100.64.0.0/10` range. If you run such a VPN, especially without the `tailscale` CLI installed, set `DECK_LOOPBACK_ONLY=1`.
+
+- From another device on your tailnet: `http://<tailscale-ip>:9320`.
+- Requests are accepted only when the `Host` header is loopback, a bound address, this node's MagicDNS name, or listed in `DECK_EXTRA_HOSTS`.
+- Web Push and installing the app on a home screen need HTTPS. Put the server behind `tailscale serve`, for example `tailscale serve --bg --https=443 http://127.0.0.1:9320`, then open `https://deck-host.example.ts.net/`.
+
+Do not expose the port to the public internet. There is no multi-user support and no rate limiting on login.
+
+## Security model
+
+AI-MSG can run commands on your machine. Treat access to it like shell access.
+
+- **Where your code goes.** To the vendor of the CLI you are using, the same as in a terminal — never to us. If carry-on at the limit is on, a turn that carries on goes to the other vendor's CLI too.
+- **Who can connect.** Processes on the machine and devices on your tailnet. Every `/api` request except login, and the WebSocket, requires the session cookie.
+- **Token.** 64 hex characters in `~/.config/deck/token` (`0600`). The browser holds only a SHA-256-derived cookie (`HttpOnly`, `SameSite=Strict`, `Secure` over HTTPS), kept for 30 days.
+- **Cross-site requests.** State-changing requests and the WebSocket upgrade must carry the server's own `Origin`. The `Host` allowlist guards against DNS rebinding. Responses carry a restrictive Content-Security-Policy; images in model output are rendered as links, not loaded.
+- **Approvals per engine.** Claude Code and Grok ask before each tool call that needs permission; new Claude sessions start in *ask every time*. Codex has no approval cards and runs in its sandbox. Gemini is read-only or edits-only. A turn that carries on to another engine never gets more than the session allowed. Unanswered requests are denied after 30 minutes or when the turn ends.
+- **Auto-approve everything is opt-in.** With it on, every tool call, including shell commands, file edits and network access, runs without a card, on any device and while nobody is watching. Each call is still written to the audit log, and deny rules and hooks still apply.
+- **Audit log.** Every permission decision is appended to `~/.config/deck/audit.log` as JSON lines: time, session, tool name, decision, who decided, and a SHA-256 of the tool input (not the input itself). It rotates at 5 MiB.
+- **Credentials.** AI-MSG does not read, store or forward CLI credentials. It starts the official CLIs with a profile directory selected. Before a Claude turn it removes `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_AUTH_TOKEN` and base-URL variables from the child environment, so a turn cannot silently bill a different account.
+- **File access.** New sessions must start inside your home directory. The file preview API refuses the config directory, dot-directories directly under home, and common secret files (`.env`, private keys, credential files).
+
+Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
 ## Configuration
 
@@ -187,41 +158,32 @@ All settings are environment variables. None is required.
 
 | Variable | Default | Description |
 |---|---|---|
-| `DECK_PORT` | `9320` | Listen port. |
-| `DECK_CONFIG_DIR` | `~/.config/deck` | Token, `accounts.json`, settings, session state, audit log, attachments, usage files, Gemini homes. |
+| `DECK_PORT` | `9320` | Listen port (`ai-msg --port N` sets it too). |
+| `DECK_CONFIG_DIR` | `~/.config/deck` | Token, `accounts.json`, settings, session state, audit log, attachments, usage files. One server per folder. |
+| `DECK_LANG` | from `LC_ALL` / `LC_MESSAGES` / `LANG`, else `en` | `en` or `ko` for server messages until a language is picked in Settings. |
 | `DECK_LOOPBACK_ONLY` | unset | `1` = listen on `127.0.0.1` only, even when Tailscale is up. |
 | `DECK_EXTRA_HOSTS` | empty | Comma-separated extra names accepted in the `Host` header. |
-| `DECK_STEER` | on | `0` = messages sent during a turn are queued for after it instead of injected. |
-| `DECK_DRAIN_MAX_MIN` | `15` | On graceful restart, minutes to wait for running turns and live background work (subagents, Monitor); work still running then is cut, announced in its session, and told to the model on the next turn (a note added to its first prompt by a hook). |
-| `DECK_BG_MAX_MIN` | `360` | Minutes a CLI process may stay open for background tasks after its turn. When the limit cuts work, deck records it and sends the session on by itself (at most twice in a row). |
+| `DECK_STEER` | on | `0` = messages sent during a turn are queued for after it instead of added. |
+| `DECK_DRAIN_MAX_MIN` | unset: wait until running work ends; the service sets 25 | On stop or restart, minutes to wait for running turns and background work; work still running then is cut and announced in its session. |
+| `DECK_BG_MAX_MIN` | `360` | Minutes a CLI process may stay open for background tasks after its turn. |
 | `DECK_BACKUP_RETENTION_DAYS` | `30` | Age at which fork backups and trashed sessions are deleted. |
-| `DECK_USAGE_SOURCE` | `cli` | Where Claude usage comes from: `cli` (the official CLI's own per-turn output) or `usage-deck` (an external dashboard at `DECK_URL`). Unset: `usage-deck` only when the dashboard address is set (`DECK_URL` or the `deck_url` file), otherwise `cli`. See [Usage data](#usage-data). |
-| `DECK_USAGE_STRICT` | unset | `1` = unknown quota means Opus / engine switch, `0` = never. Unset: decided by `usage-source.json`. |
-| `DECK_URL` | `http://127.0.0.1:9310` | Base URL of the optional usage dashboard. When unset, the first line of `~/.config/claude-pick/deck_url` is used if that file exists (an optional path shared with the author's other tools). |
-| `CLAUDE_PROTECT` | unset | Protected account id. Falls back to `~/.config/offload/protect` (optional, shared with the author's other tools). |
-| `CLAUDE_PICK_COOLDOWN_DIR` | `$XDG_CACHE_HOME/offload/cooldown` (`~/.cache/...`) | Directory of per-account cooldown files. |
-| `DECK_CODEX_BIN` | search `PATH`, `~/.local/bin`, `~/.nvm` | Path to `codex`. An explicit path skips the version check. |
+| `DECK_USAGE_SOURCE` | `cli` | Where Claude usage comes from: `cli` (the CLI's own per-turn output) or `usage-deck` (an external dashboard at `DECK_URL`). See [Usage data](#usage-data). |
+| `DECK_USAGE_STRICT` | unset | `1` = unknown quota means Opus / engine switch, `0` = never. |
+| `DECK_URL` | `http://127.0.0.1:9310` | Base URL of the optional usage dashboard. |
+| `CLAUDE_PROTECT` | unset | Protected account id. |
+| `DECK_CLAUDE_BIN`, `DECK_CODEX_BIN`, `DECK_GEMINI_BIN`, `DECK_GROK_BIN` | search `PATH` | Paths to the CLIs. |
 | `CODEX_HOME` | `~/.codex` | Where Codex session rollouts are read from. |
-| `DECK_GEMINI_BIN` | search `PATH`, `~/.local/bin` | Path to `gemini`. |
-| `DECK_GROK_BIN` | search `PATH`, `~/.grok/bin` | Path to `grok`. Grok always uses `~/.grok` as its home (a `GROK_HOME` in the shell is ignored). |
 | `DECK_DESKTOP_SESSIONS_DIR` | `~/Library/Application Support/Claude/claude-code-sessions` | Claude Desktop session records (read-only). |
 | `DECK_VAPID_SUBJECT` | derived | `https:` or `mailto:` subject for Web Push. |
-| `DECK_UI_DIR` | `dist/ui` | Built UI directory. |
-| `DECK_EXTRA_CWD_ROOTS` | empty | Comma-separated absolute paths where new sessions may start in addition to the home directory. Honoured only with `DECK_LOOPBACK_ONLY=1`; `/` is never accepted. Meant for test harnesses. |
-| `DECK_DEV_ORIGIN` | empty | Comma-separated extra origins allowed during development (the Vite dev server). |
-| `DECK_CLOUD` | on | `off` = no Pro cloud at all: nothing is ever sent to it. See [Pro cloud](#pro-cloud-optional). |
-| `DECK_CLOUD_URL` / `DECK_RELAY_URL` | the official app / relay origins | Cloud addresses. Must be https (http only for localhost) and two different origins, or the cloud turns off with one log line. |
+| `DECK_UI_DIR` | the built UI | Built UI directory. |
+| `DECK_CLOUD` | on | `off` = no cloud at all: nothing is ever sent to it. |
 
-Server-wide settings changed in the UI (default permission mode, routing policy) are stored in `settings.json` in the config directory. *Same-vendor account rotation* (moving a session between your Claude accounts on limits, the Fable cap or a cold cache) is off by default — sessions stay on the home account or the account you pin — and turns on only after you confirm the accounts are your own paid accounts; handing off to another vendor (Codex, Gemini) is not affected. Pinned project folders can be listed in `projects.json` as `[{"cwd": "/Users/alice/code/acme-app", "name": "acme-app"}]`.
+Server-wide settings changed in the UI (default permission mode, routing policy, same-vendor rotation, language) are stored in `settings.json` in the config directory.
 
 ### Usage data
 
-There are two sources for the Claude usage cards, chosen with `DECK_USAGE_SOURCE`:
-
-- **`cli` (default).** AI-MSG never calls a usage endpoint. Each Claude account's 5-hour and weekly numbers come only from the `rate_limit_event` that the official `claude` CLI prints during a turn AI-MSG runs on that account. The last reading and when it was taken are kept per account in `<config dir>/claude-usage-observed.json` (mode 0600), so they survive a restart. A card shows when its numbers were observed ("마지막 턴 기준 · 12분 전" — as of the last turn, 12 minutes ago), or that the account has not been observed yet. A window whose reset time has passed is shown as 0 % and marked as an estimate. Usage within a window never goes down, so after 10 minutes a reading still counts for routing as a lower bound until the earliest reset time of its windows (at most 24 hours after it was taken; a window with no reset time: 10 minutes). The card then says "추정 · 마지막 턴 12분 전" (estimate, last turn 12 minutes ago), and a fresher account wins over it. Past that point the card is dimmed and routing treats the account as unknown. The CLI reports no Fable window, so the Fable limit stays unknown (the Fable row says "CLI 미제공", not provided by the CLI); as in any install without a dashboard, that alone does not turn a Fable request into Opus (set `DECK_USAGE_STRICT=1` if you want it to). When the CLI says the account is on overage, or that the Opus-family limit refused a request, Fable counts as spent until that limit resets, and Fable requests go to Opus.
-- **`usage-deck`.** Chosen automatically when you set the dashboard address (`DECK_URL`, or the `deck_url` file) or when a dashboard at the default address has answered this install before (recorded in `<config dir>/usage-source.json`), or with `DECK_USAGE_SOURCE=usage-deck`. Described below.
-
-In `usage-deck` mode, AI-MSG polls an external usage dashboard at `DECK_URL` (`GET /api/state`, every 60 seconds) for per-account usage windows. The dashboard is a separate program and not part of this repository; the expected response is:
+- **`cli` (default).** AI-MSG never calls a usage endpoint. Each Claude account's 5-hour and weekly numbers come only from the `rate_limit_event` the official `claude` CLI prints during a turn AI-MSG runs on that account, kept per account in `<config dir>/claude-usage-observed.json`. A card shows when its numbers were observed; past the reset time a window shows 0 % as an estimate. The CLI reports no Fable window, so the Fable limit stays unknown, and that alone does not turn a Fable request into Opus (set `DECK_USAGE_STRICT=1` if you want it to).
+- **`usage-deck`.** AI-MSG polls an external dashboard at `DECK_URL` (`GET /api/state`, every 60 seconds). The dashboard is a separate program, not part of this repository. Chosen when you set `DECK_URL`, or when a dashboard at the default address has answered this install before. Expected response:
 
 ```json
 { "cards": [ { "id": "claude:main", "status": "ok", "fetchedAt": "2026-01-01T00:00:00Z",
@@ -229,52 +191,7 @@ In `usage-deck` mode, AI-MSG polls an external usage dashboard at `DECK_URL` (`G
             { "label": "Weekly (7d)", "used": 40, "resetsAt": "2026-01-05T00:00:00Z" } ] } ] }
 ```
 
-Account `a`, `b` and `c` map to the card ids `claude:main`, `claude:second` and `claude:third`; every other account maps to `claude:<id>`. Set `card` in `accounts.json` to change it.
-
-When no dashboard answers, everything still works. Usage windows then come from what the CLIs report during each turn, so an account shows numbers only after it has run a turn, and accounts with unknown usage are tried after accounts with known usage and before accounts known to be at their limit. The token-usage history view reads local transcripts and does not depend on the dashboard.
-
-**Without a usage dashboard, remaining quota is unknown, and AI-MSG does not change your request because of that.** An unknown value alone does not switch the model or the engine: a Fable turn runs on Fable as requested. Managing Fable usage beyond your plan's limit (extra billing) is up to you. An install that has seen a dashboard answer even once is recorded as strict in `<config dir>/usage-source.json`, and one where the dashboard address is set explicitly (`DECK_URL`, or the `deck_url` file) is strict from the start; there, unknown quota means Opus instead of Fable and a switch of engine. Set `DECK_USAGE_STRICT=1` to force strict mode or `DECK_USAGE_STRICT=0` to force the lenient one. Until the first dashboard request has finished, the strict side applies.
-
-## Remote access
-
-By default the server listens on `127.0.0.1`, plus what it takes to be this machine's **Tailscale** IPv4 address. It never binds to `0.0.0.0`.
-
-An address is treated as Tailscale when it is an IPv4 address in `100.64.0.0/10` on an interface named `utunN` (macOS) or `tailscaleN` (Linux). If the `tailscale` CLI is installed and answers, the address must also appear in `tailscale ip -4`. If the CLI is missing or fails, that cross-check is skipped and the interface and range alone decide.
-
-> Other VPNs also use `utunN` interfaces, and some use the `100.64.0.0/10` range. If you run such a VPN, especially without the `tailscale` CLI installed, set `DECK_LOOPBACK_ONLY=1` so the server does not listen on that network.
-
-- From another device on your tailnet: `http://<tailscale-ip>:9320`.
-- Requests are accepted only when the `Host` header is loopback, a bound address, this node's MagicDNS name, or listed in `DECK_EXTRA_HOSTS`.
-- Web Push and PWA installation need HTTPS. Put the server behind `tailscale serve`, for example `tailscale serve --bg --https=443 http://127.0.0.1:9320`, then open `https://deck-host.example.ts.net/`. (This command comes from the author's setup; it is not exercised by the test suite.)
-
-Do not expose the port to the public internet. There is no multi-user support and no rate limiting on login.
-
-## Pro cloud (optional)
-
-Pro is a paid relay between your Mac and your phone, away from your tailnet. **This release has the Mac side only:** linking the Mac to a cloud account, the plan shown in Settings, and the Mac's relay connection. The phone app and the pairing screen are not in this release; they come in the next release. Everything above works without Pro, and keeps working when the cloud is down or unreachable. There is no local feature lock.
-
-- **Nothing is sent until you link.** An install that has never been linked to a cloud account makes no cloud request. Linking happens in Settings > Cloud, where you sign in by email link and approve the Mac in the browser. `DECK_CLOUD=off` removes the feature entirely.
-- **What the relay will be able to read (next release, with the phone app).** The relay is end-to-end encrypted: our servers pass along encrypted bytes between your Mac and the phone you paired, and cannot read your sessions. The phone app itself is delivered from our servers, so you are trusting us to serve the published app code. Sensitive actions — restarting the server, changing setup, raising permission modes, and pairing a new phone — need you at your Mac. The Mac already refuses these when they arrive through the relay.
-- **Where keys live.** The Mac's cloud state, including its key, its token and (once pairing ships) the paired phones' public keys, is in `<config dir>/cloud/state.json` (`0600`). The cloud keeps public keys and token hashes only.
-- **Payments.** Paddle is the merchant of record; AI-MSG never receives card details.
-
-Details: [docs/security-model.md](docs/security-model.md) (threats, what is and is not protected) and [docs/privacy-data-inventory.md](docs/privacy-data-inventory.md) (what the cloud keeps, and for how long). Both are in Korean.
-
-## Security model
-
-AI-MSG can run commands on your machine. Treat access to it like shell access.
-
-- **Who can connect.** Processes on the machine and devices on your tailnet. Every `/api` request except login, and the WebSocket, requires the session cookie.
-- **Token.** 64 hex characters in `~/.config/deck/token` (`0600`). The browser holds only a SHA-256-derived cookie (`HttpOnly`, `SameSite=Strict`, `Secure` over HTTPS).
-- **Cross-site requests.** State-changing HTTP requests and the WebSocket upgrade must carry an `Origin` equal to the server's own origin. The `Host` allowlist guards against DNS rebinding. Responses carry a restrictive Content-Security-Policy; images in model output are rendered as links, not loaded.
-- **Permission modes.** Per Claude session: ask every time, auto-accept edits, plan, or auto-approve everything. New sessions default to **ask every time**: each tool call that needs a decision shows an approval card. Deny rules in your Claude settings apply in every mode.
-- **Auto-approve everything is opt-in.** You can turn it on for one session or make it the default in Settings. With it on, every tool call the model makes, including shell commands, file edits and network access, runs without a card, on any device and while nobody is watching. Each call is still written to the audit log, and deny rules and hooks still apply. (Codex sessions are not affected: they always default to the workspace-write sandbox.) Unanswered requests are denied after 30 minutes or when the turn ends.
-- **Claude settings apply.** Turns load your user, project and local Claude Code settings, including allow rules and hooks, exactly as the CLI would.
-- **Audit log.** Every permission decision is appended to `~/.config/deck/audit.log` as JSON lines: time, session, tool name, decision, who decided, and a SHA-256 of the tool input (not the input itself). The file rotates to `audit.log.1` at 5 MiB.
-- **Credentials.** AI-MSG does not read, store or forward CLI credentials. It starts the official CLIs with a profile directory selected; for Gemini it checks only whether the credential file exists. Before a Claude turn it removes `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_AUTH_TOKEN` and base-URL variables from the child environment, so a turn cannot silently bill a different account.
-- **File access.** New sessions must start inside your home directory (or a `DECK_EXTRA_CWD_ROOTS` path on a loopback-only server). The file preview API refuses the config directory, dot-directories directly under home, and common secret files (`.env`, private keys, credential files).
-
-Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
+Without a dashboard, remaining quota is unknown until an account has run a turn, and AI-MSG does not change your request because of that: a Fable turn runs on Fable as requested. Managing usage beyond your plan's limit is up to you.
 
 ## Files
 
@@ -283,67 +200,29 @@ Under `~/.config/deck` (or `DECK_CONFIG_DIR`):
 | File | Content |
 |---|---|
 | `token` | Login token (`0600`). |
-| `accounts.json` | Optional account list ([Multiple Claude accounts](#multiple-claude-accounts)). |
-| `settings.json` | Default permission mode (default: ask every time), routing policy, same-vendor account rotation (default: off). |
-| `projects.json` | Optional pinned project folders. |
-| `session-state.json` | Per-session account, model and last turn. |
-| `session-meta.json`, `pins.json` | Renamed titles, archive flags, pinned sessions. |
-| `recent-folders.json` | Folders recently opened for new sessions. |
-| `accepted-refs.json` | References of accepted sends, so a re-sent message runs once. |
+| `accounts.json` | Optional account list. |
+| `settings.json` | Server-wide settings. |
+| `projects.json` | Optional pinned project folders, e.g. `[{"cwd": "/Users/alice/projects/acme-web", "name": "acme-web"}]`. |
+| `session-state.json`, `session-meta.json`, `pins.json`, `recent-folders.json` | Per-session account, model, titles, archive flags, pins, recent folders. |
 | `audit.log` | Permission decisions. |
-| `events.jsonl` | 하이라이트: finished/failed turns, permission and question cards, background tasks, restart cuts and server start/drain, one JSON line each. Kept 7 days (older lines are dropped at start). |
+| `events.jsonl` | Finished and failed turns, cards, background tasks, restarts; kept 7 days. |
 | `attachments/` | Uploaded files (`0700`; 10 MiB each, deleted after 7 days). |
 | `vapid.json`, `push-subscriptions.json` | Web Push keys and subscriptions (`0600`). |
-| `cloud/state.json` | Pro cloud link: host key and token, last plan, and (from the next release) paired phones' public keys (`0600`, folder `0700`). Only after linking. |
-| `usage-index-v2.json`, `usage-index-v2.json.seen` | Token-usage aggregates and their dedupe log. An older `usage-index.json` is read once for conversion and left in place. |
-| `usage-source.json` | Written once, the first time a usage dashboard answers (`{"deckSeenAt": ...}`). |
-| `gemini/<id>/` | Gemini CLI home per Gemini account (follows `DECK_CONFIG_DIR`). |
-
-The launchd service additionally uses `~/.config/deck/env` (environment for the service) and writes its output to `~/.config/deck/deck.log`.
+| `cloud/state.json` | Only after linking to a cloud account (`0600`). |
+| `ai-msg.log` | Service log on macOS. |
 
 Conversation transcripts stay where the CLIs keep them (`<profile>/projects/` for Claude, `$CODEX_HOME/sessions` for Codex).
 
 ## Development
 
-```bash
-DECK_DEV_ORIGIN=http://localhost:5173 npm run dev:server   # server with reload
-npm run dev:ui                                             # Vite on :5173, proxies /api and /ws to :9320
-npm run typecheck
-npm test                                                   # unit tests (no network, no accounts)
-npm run build
-```
-
-> **`npm run test:e2e` uses your real accounts.** It starts a real server and runs short turns against the logged-in Claude profiles (and Codex if installed). It consumes tokens from your subscription. It is never run in CI.
-
-### Layout
-
-```
-src/server/          HTTP + WebSocket server (Node, TypeScript)
-  engine/            ClaudeEngine (claude CLI), CodexEngine, GeminiEngine, GrokEngine
-  routing/           account, engine and model selection; cooldowns
-  turn/              TurnRunner: one turn from routing to result, retries
-  sessions/          session index, cross-profile moves, forks, trash, search
-  usage/             usage polling and token-usage index
-  push/              Web Push
-src/shared/          types and the WebSocket protocol shared by server and UI
-src/ui/              React UI (Vite)
-scripts/             launchd service and restart helpers
-tests/e2e/           end-to-end tests against real accounts
-docs/                architecture and protocol notes
-```
-
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how the pieces fit together.
-- [docs/protocol.md](docs/protocol.md) (Korean) — rules for changing the WebSocket protocol. The UI and the server are deployed separately, so every change must stay compatible in both directions.
-- [CONTRIBUTING.md](CONTRIBUTING.md)
+Running from the repository, the development service, tests and the code layout are in [CONTRIBUTING.md](CONTRIBUTING.md). Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Disclaimer
 
-AI-MSG is an unofficial personal project. It is not affiliated with, endorsed by or supported by Anthropic, OpenAI, Google or xAI. "Claude", "Codex", "Gemini" and "Grok" are trademarks of their respective owners.
+AI-MSG is an unofficial project. It is not affiliated with, endorsed by or supported by Anthropic, OpenAI, Google or xAI. "Claude", "Codex", "Gemini" and "Grok" are trademarks of their respective owners.
 
-It is a local front end for CLIs that you have installed and logged in to yourself, on your own device. It does not use API keys and does not share accounts between people. Whether your use, including the use of more than one account, complies with each service's terms is your responsibility.
+It is a local front end for CLIs that you have installed and logged in to yourself, on your own device. It does not use API keys and does not share accounts between people. Whether your use, including the use of more than one account, complies with each service’s terms is your responsibility.
 
 ## License
 
-[Apache License 2.0](LICENSE). See [NOTICE](NOTICE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution and the licenses of bundled dependencies.
-
-AI-MSG is an independent project, not affiliated with or endorsed by Anthropic, OpenAI, Google or xAI. Product names are trademarks of their owners.
+[Apache License 2.0](LICENSE). See [NOTICE](NOTICE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

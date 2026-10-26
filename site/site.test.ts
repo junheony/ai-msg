@@ -360,3 +360,112 @@ describe('landing site build', () => {
 
   it('escapeHtml', () => expect(escapeHtml(`<a href="x">&'`)).toBe('&lt;a href=&quot;x&quot;&gt;&amp;&#39;'));
 });
+
+describe('README and install guide', () => {
+  const doc = (f: string) => fs.readFileSync(path.join(ROOT, f), 'utf8');
+  const EN = ['README.md', 'docs/install.md'] as const;
+  const KO = ['README.ko.md', 'docs/install.ko.md'] as const;
+  const ALL = [...EN, ...KO];
+  /** The one line to delete once the package is on npm (same marker in every doc). */
+  const NOT_ON_NPM = /^.*<!-- npm-pending -->.*$/gm;
+
+  it('every doc gives INSTALL_COMMAND as the install line, with the one-line not-on-npm-yet note linking CONTRIBUTING', () => {
+    for (const f of ALL) {
+      const s = doc(f);
+      expect(s, f).toMatch(new RegExp(`^${INSTALL_COMMAND.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
+      const notes = s.match(NOT_ON_NPM) ?? [];
+      expect(notes, f).toHaveLength(1);
+      expect(notes[0], f).toMatch(/CONTRIBUTING\.md#/);
+    }
+    // Deleting that line leaves a working guide: no other text depends on it.
+    for (const f of ALL) expect(doc(f).replace(NOT_ON_NPM, ''), f).not.toMatch(/npm-pending|not on npm|npm 에 아직/i);
+  });
+
+  it('English docs have no Hangul except the language link', () => {
+    for (const f of EN) expect(doc(f).replace(/\[한국어\]\([^)]+\)/g, ''), f).not.toMatch(HANGUL);
+  });
+
+  it('no banned words, old names, SDK wording, repo-only service script, internal plan labels or personal paths', () => {
+    for (const f of ALL) {
+      const s = doc(f);
+      expect(s, f).not.toMatch(BANNED);
+      expect(s, f).not.toMatch(/quarterdeck|Agent SDK|install-launchd\.sh/i);
+      expect(s, f).not.toMatch(/plan ?[①-⑨]|\bD\d{1,2}\b|\bTask \d|Review Focus/);
+      expect(s, f).not.toMatch(/\/Users\/(?!alice\b)|Documents\/개발/);
+    }
+  });
+
+  it('README opens as the agent messenger, not an account rotator; multiple accounts is one feature', () => {
+    for (const f of ['README.md', 'README.ko.md']) {
+      const s = doc(f);
+      const head = s.slice(0, s.indexOf('\n## '));
+      expect(head, f).toMatch(/Claude Code/);
+      for (const v of ['Codex', 'Gemini', 'Grok']) expect(head, f).toContain(v);
+      expect(head, f).not.toMatch(/account|seat|계정|좌석/i);
+    }
+    expect(doc('README.md').slice(0, doc('README.md').indexOf('\n## '))).toMatch(/one inbox/i);
+    expect(doc('README.ko.md').slice(0, doc('README.ko.md').indexOf('\n## '))).toMatch(/받은편지함/);
+  });
+
+  it('package.json description says the same thing', () => {
+    const pkg = JSON.parse(doc('package.json')) as { description: string; private?: boolean };
+    expect(pkg.description).toMatch(/one inbox/i);
+    for (const v of ['Claude Code', 'Codex', 'Gemini', 'Grok', 'phone']) expect(pkg.description).toContain(v);
+    expect(pkg.description).not.toMatch(/routes? turns|accounts/i);
+    expect(pkg.private).toBe(true); // stays until the npm name is secured
+  });
+
+  it('Community is free under Apache-2.0; Pro is coming soon, the relay only, at PRICING', () => {
+    const { monthlyUsd, yearlyUsd } = PRICING.pro;
+    for (const f of ['README.md', 'README.ko.md']) {
+      const s = doc(f);
+      expect(s, f).toContain('Apache-2.0');
+      expect(s, f).not.toMatch(/\bMIT\b/);
+      expect(s, f).toContain(`$${monthlyUsd}`);
+      expect(s, f).toContain(`$${yearlyUsd}`);
+    }
+    const pro = /\n## Pro[^\n]*\n([\s\S]*?)\n## /.exec(doc('README.md'))?.[1] ?? '';
+    expect(pro).toMatch(/coming soon/i);
+    expect(pro).toMatch(/relay/);
+    expect(pro).not.toMatch(/This release has/);
+    expect(/\n## Pro[^\n]*\n([\s\S]*?)\n## /.exec(doc('README.ko.md'))?.[1] ?? '').toMatch(/출시 예정/);
+  });
+
+  it('approvals engine by engine, phone over Tailscale, code goes to the vendor, terms are the user’s', () => {
+    const en = doc('README.md');
+    expect(en).toMatch(/Claude Code and Grok ask/);
+    expect(en).toMatch(/Codex[^.]*no approval cards/);
+    expect(en).toMatch(/Gemini[^.]*read-only/);
+    expect(en).toMatch(/over Tailscale/);
+    expect(en).toMatch(/vendor of the CLI/);
+    expect(en).toContain('complies with each service’s terms is your responsibility');
+    expect(en).toContain('## Remote access'); // CLAIMS cite README.md#remote-access
+    const ko = doc('README.ko.md');
+    expect(ko).toMatch(/Codex[^.]*승인 카드 없이/);
+    expect(ko).toContain('각 서비스의 약관에 맞는지는 사용자 책임');
+  });
+
+  it('every ai-msg command in the docs parses (src/server/cli/args.ts)', async () => {
+    const { parseCli } = await import('../src/server/cli/args');
+    const seen: string[] = [];
+    for (const f of ALL) {
+      const s = doc(f);
+      const lines = [
+        ...[...s.matchAll(/```(?:bash|sh)?\n([\s\S]*?)```/g)].flatMap((m) => m[1]!.split('\n')),
+        ...[...s.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]!),
+      ];
+      for (const raw of lines) {
+        // `npx ai-msg` / `npm i -g ai-msg@latest` name the package, not a command.
+        const line = raw.replace(/\s+#.*$/, '').replace(/\b(?:npx|npm i(?:nstall)? -g)\s+ai-msg(?:@\S+)?/g, '').trim();
+        const m = /(?:^|\s)ai-msg((?:\s+[^\s;&|]+)*)/.exec(line);
+        if (!m) continue;
+        const argv = m[1]!.trim().split(/\s+/).filter(Boolean)
+          .map((a) => a.replace(/^\[|\]$/g, '').replace(/^<[^>]+>$/, '/x').replace(/^N$/, '5'));
+        const cmd = parseCli(argv);
+        expect(cmd.kind, `${f}: ${line}`).not.toBe('error');
+        seen.push(argv[0] ?? 'start');
+      }
+    }
+    for (const c of ['doctor', 'login-url', 'service']) expect(seen).toContain(c);
+  });
+});
