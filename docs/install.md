@@ -46,7 +46,7 @@ A second Claude account is a second Claude Code profile folder, for example `CLA
 
 ## Language
 
-Pick English or Korean in Settings › Screen › Language (the first group in Settings). The pick applies to that device; notifications and server messages use the language last picked on any device. Until a language has been picked, the server follows `DECK_LANG` (`en` or `ko`), then `LC_ALL`, `LC_MESSAGES` and `LANG`, then English. `ai-msg --help`, `ai-msg doctor` and `ai-msg service install` follow the terminal's environment.
+Pick English or Korean in Settings › Language (in the first group of Settings). The pick applies to that device; notifications and server messages use the language last picked on any device. Until a language has been picked, the server follows `DECK_LANG` (`en` or `ko`), then `LC_ALL`, `LC_MESSAGES` and `LANG`, then English. `ai-msg --help`, `ai-msg doctor` and `ai-msg service install` follow the terminal's environment.
 
 The interface is being translated; some screens are still in Korean.
 
@@ -96,7 +96,7 @@ Options of `service install`:
 Things the installer checks:
 
 - **No version-manager node.** A node from nvm, fnm, volta, asdf, mise or n breaks the service when you switch versions, so it is refused. Pass a stable one, for example `ai-msg service install --node /opt/homebrew/bin/node`.
-- **macOS:** run it from a logged-in desktop session, not over SSH (a LaunchAgent cannot be loaded there). If your projects are under `~/Documents`, Desktop or Downloads, add the node path the installer prints under System Settings › Privacy & Security › Full Disk Access. After upgrading node, run `ai-msg doctor` to check that the grant still holds. The service log is `~/.config/deck/ai-msg.log`.
+- **macOS:** run it from a logged-in desktop session, not over SSH (a LaunchAgent cannot be loaded there). If your projects are under `~/Documents`, Desktop or Downloads, add the node path the installer prints under System Settings › Privacy & Security › Full Disk Access. After upgrading node, add the new node path to Full Disk Access again. The service log is `~/.config/deck/ai-msg.log`.
 - **Linux:** run it from a login session (it needs `systemctl --user`). To keep the service running after you log out, run `loginctl enable-linger`. Logs: `journalctl --user -u ai-msg`.
 - The settings the service needs (paths of the CLIs, allowed `DECK_*` variables, port, drain limit) are recorded at install time. After changing them, run `ai-msg service install` again.
 

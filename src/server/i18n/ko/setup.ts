@@ -61,7 +61,7 @@ export const setup: Widen<typeof en> = {
     nodeCellarNoLink: (p: string) => `Homebrew node(${p})의 안정 경로(opt/…/bin/node, bin/node)를 찾지 못했습니다 — --node <경로>로 지정하세요`,
     nodeMissing: (p: string) => `--node ${p} 를 실행할 수 없습니다`,
     nodeOld: (p: string, v: string) => `--node ${p} 는 ${v} 입니다 — Node 24 이상이 필요합니다`,
-    nodeTcc: 'macOS 권한(전체 디스크 접근)은 이 node 경로에 줍니다 — node 를 업그레이드한 뒤 권한이 유지되는지 ai-msg doctor 로 확인하세요',
+    nodeTcc: 'macOS 권한(전체 디스크 접근)은 이 node 경로에 줍니다 — node 를 업그레이드하면 새 node 경로를 다시 추가하세요',
     notOurs: (file: string) => `남이 만든 파일이라 건드리지 않습니다: ${file}`,
     lockHeld: (pid: number, port: number) => `이 설정 폴더를 쓰는 서버(pid ${pid}, 포트 ${port})가 이미 있습니다 — 먼저 끄세요`,
     portBusy: (port: number) => `포트 ${port} 에 이미 서버가 있습니다 — 그 서버를 끄거나 --port 로 다른 포트를 지정하세요`,

@@ -9,7 +9,7 @@ AI-MSG is not on npm yet, so this is how to run it today.
 ```bash
 git clone https://github.com/junheony/ai-msg.git
 cd ai-msg
-npm install        # uses the claude, codex, gemini, grok CLIs you already installed
+npm install        # installs the dependencies; the agent CLIs (claude, codex, agy, grok) are only needed to run turns
 npm run build      # UI -> dist/ui
 npm start          # http://127.0.0.1:9320
 ```
@@ -29,7 +29,7 @@ npm run build
 - Do not run `npm run test:e2e` unless you mean to: it runs real turns on your logged-in accounts.
 - Any change to `src/shared/protocol.ts` must follow [docs/protocol.md](docs/protocol.md): new fields are optional, nothing is removed or narrowed, and new server behavior gets a feature name.
 - Keep fixtures free of personal data. Use `/Users/alice`, `deck-host.example.ts.net` and `acme-app`.
-- UI strings are Korean for now; keep new strings consistent with the existing ones.
+- UI and server strings live in typed `en` and `ko` dictionaries (`src/ui/i18n`, `src/server/i18n`); add every new string to both, English first. Some screens are not translated yet, so check before assuming a string has a key.
 - Add or update tests next to the code you change (`*.test.ts`).
 
 ## Development service on a Mac (repository checkout)

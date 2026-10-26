@@ -97,7 +97,7 @@ At least one account must be active. Unknown fields are ignored. Ids `x1`, `x2` 
 
 **Same-vendor rotation is off by default.** Sessions stay on the home account or the account you pin. Turning rotation on (Settings) asks you to confirm the accounts are your own paid accounts; only then does a session move to another of your Claude accounts on a limit, the Fable cap or a cold cache. Carrying on to another vendor is a separate setting.
 
-**Protected account.** If you also use one account interactively (for example in Claude Desktop), mark it protected: routing still ranks it by usage, but when candidates are otherwise equal it is used last. Set `CLAUDE_PROTECT=<id>`, or put the id on the first non-comment line of `~/.config/offload/protect` (optional). Pinning a session to it still works.
+**Protected account.** If you also use one account interactively (for example in Claude Desktop), mark it protected: routing still ranks it by usage, but when candidates are otherwise equal it is used last. Set `CLAUDE_PROTECT=<id>`, or put the id on the first non-comment line of `protect` in the config folder (optional). Pinning a session to it still works.
 
 ### How a turn gets an account (with rotation on)
 

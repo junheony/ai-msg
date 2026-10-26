@@ -96,7 +96,7 @@ macOS 에서는 LaunchAgent(`local.ai-msg.server`), Linux 에서는 systemd 사�
 설치기가 확인하는 것:
 
 - **버전 관리자의 node 는 안 됩니다.** nvm, fnm, volta, asdf, mise, n 의 node 는 버전을 바꾸면 서비스가 깨지므로 거부합니다. 안정적인 것을 직접 주세요. 예: `ai-msg service install --node /opt/homebrew/bin/node`.
-- **macOS:** SSH 가 아니라 로그인된 데스크톱 세션에서 실행하세요(LaunchAgent 를 거기서는 올릴 수 없습니다). 프로젝트가 `~/Documents`, 데스크탑, 다운로드 아래에 있으면 설치기가 알려 주는 node 경로를 시스템 설정 › 개인정보 보호 및 보안 › 전체 디스크 접근 권한에 추가하세요. node 를 업그레이드한 뒤에는 `ai-msg doctor` 로 권한이 유지되는지 확인하세요. 서비스 로그는 `~/.config/deck/ai-msg.log` 입니다.
+- **macOS:** SSH 가 아니라 로그인된 데스크톱 세션에서 실행하세요(LaunchAgent 를 거기서는 올릴 수 없습니다). 프로젝트가 `~/Documents`, 데스크탑, 다운로드 아래에 있으면 설치기가 알려 주는 node 경로를 시스템 설정 › 개인정보 보호 및 보안 › 전체 디스크 접근 권한에 추가하세요. node 를 업그레이드하면 새 node 경로를 전체 디스크 접근에 다시 추가하세요. 서비스 로그는 `~/.config/deck/ai-msg.log` 입니다.
 - **Linux:** 로그인 세션에서 실행하세요(`systemctl --user` 가 필요). 로그아웃한 뒤에도 서비스를 돌리려면 `loginctl enable-linger` 를 실행하세요. 로그: `journalctl --user -u ai-msg`.
 - 서비스에 필요한 설정(CLI 경로, 허용된 `DECK_*` 변수, 포트, 정지 대기 상한)은 설치할 때 기록됩니다. 바꾼 뒤에는 `ai-msg service install` 을 다시 실행하세요.
 

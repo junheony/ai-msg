@@ -64,7 +64,7 @@ const service = {
   nodeCellarNoLink: (p: string) => `Couldn't find a stable path (opt/…/bin/node, bin/node) for the Homebrew node (${p}) — pass --node <path>`,
   nodeMissing: (p: string) => `Can't run --node ${p}`,
   nodeOld: (p: string, v: string) => `--node ${p} is ${v} — Node 24 or later is required`,
-  nodeTcc: 'macOS permissions (Full Disk Access) are granted to this node path — after upgrading node, check with ai-msg doctor that they still hold',
+  nodeTcc: 'macOS permissions (Full Disk Access) are granted to this node path — after upgrading node, add the new node path again',
   notOurs: (file: string) => `Not our file, so it is left alone: ${file}`,
   lockHeld: (pid: number, port: number) => `A server using this config folder (pid ${pid}, port ${port}) is already running — stop it first`,
   portBusy: (port: number) => `A server is already on port ${port} — stop it or pick another port with --port`,
