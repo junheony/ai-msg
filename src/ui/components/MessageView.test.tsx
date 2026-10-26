@@ -488,12 +488,12 @@ describe('MessageView · 간결 모드 live text', () => {
     expect(queryByTestId('concise-progress')).toBeNull();
   });
 
-  it('a tool call folds the text before it into a gray lead line; the next stretch streams; tool output and thinking stay hidden', () => {
+  it('the text before a tool call stays readable mid-turn (nothing folds); tool output and thinking stay hidden', () => {
     const before = '먼저 테스트부터 볼게요.';
-    const { container, getByTestId, rerender } = render(<MessageView item={turn(before, [call('1', before.length)], true, { thinking: { text: 'SECRET-THOUGHT', redacted: false, startedAt: 0, ms: 1000 } })} />);
-    expect(getByTestId('concise-lead').textContent).toBe(before);
+    const { container, getByTestId, queryByTestId, rerender } = render(<MessageView item={turn(before, [call('1', before.length)], true, { thinking: { text: 'SECRET-THOUGHT', redacted: false, startedAt: 0, ms: 1000 } })} />);
+    expect(queryByTestId('concise-lead')).toBeNull();
     expect(getByTestId('work-log').textContent).toContain('계속 작업 중 · 단계 1');
-    expect(container.querySelector('.markdown:not(.thinking-body)')).toBeNull();
+    expect(container.querySelector('.markdown:not(.thinking-body)')?.textContent).toBe(before);
     // Tool bodies stay folded inside the collapsed 작업 기록 line (as before).
     expect(getByTestId('work-log').getAttribute('aria-expanded')).toBe('false');
     expect(panelOf(getByTestId('work-log')).hidden).toBe(true);
@@ -503,10 +503,10 @@ describe('MessageView · 간결 모드 live text', () => {
     expect(outside.textContent).not.toContain('SECRET-OUTPUT');
     expect(container.textContent).not.toContain('SECRET-THOUGHT');
     rerender(<MessageView item={turn(`${before}\n\n원인은 오타였어요`, [call('1', before.length)])} />);
-    expect(getByTestId('concise-lead').textContent).toBe(before);
     const md = container.querySelectorAll('.markdown');
     expect(md).toHaveLength(1);
-    expect(md[0]!.textContent).toBe('원인은 오타였어요');
+    expect(md[0]!.textContent).toContain(before);
+    expect(md[0]!.textContent).toContain('원인은 오타였어요');
     expect(container.querySelector('.cursor')).not.toBeNull();
   });
 
@@ -561,18 +561,18 @@ describe('MessageView · 간결 모드 live text', () => {
     expect(container.querySelector('.cursor')).not.toBeNull();
   });
 
-  it('deck-choices in the live stretch do not shift the fold point (textAt counts the raw text)', () => {
+  it('deck-choices mid-turn: the text around them shows, the block itself does not', () => {
     const before = '먼저 찾아볼게요.';
     const text = `${before}\n\n어느 쪽으로 할까요?\n\n\`\`\`deck-choices\n? 고르기\n- 가\n- 나\n\`\`\``;
-    const { container, getByTestId } = render(<MessageView item={turn(text, [call('1', before.length)])} />);
-    expect(getByTestId('concise-lead').textContent).toBe(before);
+    const { container } = render(<MessageView item={turn(text, [call('1', before.length)])} />);
     const md = container.querySelectorAll('.markdown');
     expect(md).toHaveLength(1);
-    expect(md[0]!.textContent).toBe('어느 쪽으로 할까요?');
+    expect(md[0]!.textContent).toContain(before);
+    expect(md[0]!.textContent).toContain('어느 쪽으로 할까요?');
     expect(container.textContent).not.toContain('deck-choices');
   });
 
-  it('reducer to screen: delta → tool_call → delta shows the first stretch as the lead and streams the second', () => {
+  it('reducer to screen: delta → tool_call → delta shows both stretches while the turn streams', () => {
     const scope = { turnId: 't1', sessionId: null, cwd: '/w' };
     const msgs: ServerMessage[] = [
       { type: 'turn_started', ...scope, account: 'a', model: 'opus', reason: 'r', attempt: 0 },
@@ -589,11 +589,11 @@ describe('MessageView · 간결 모드 live text', () => {
     const item = s.panes[0]!.items.findLast((it): it is Extract<ChatItem, { kind: 'assistant' }> => it.kind === 'assistant')!;
     expect(item.streaming).toBe(true);
     const { container, getByTestId } = render(<MessageView item={item} />);
-    expect(getByTestId('concise-lead').textContent).toBe('먼저 테스트부터 볼게요.');
     expect(getByTestId('work-log').textContent).toContain('단계 1');
     const md = container.querySelectorAll('.markdown');
     expect(md).toHaveLength(1);
-    expect(md[0]!.textContent).toBe('원인은 오타였어요');
+    expect(md[0]!.textContent).toContain('먼저 테스트부터 볼게요.');
+    expect(md[0]!.textContent).toContain('원인은 오타였어요');
   });
 });
 

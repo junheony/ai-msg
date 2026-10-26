@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CONCISE_STYLE_PROMPT, conciseAck, conciseEventRole, conciseFirstStep, conciseForwardsEvent, conciseLeadLine, conciseLiveSplit, conciseMilestone, shouldEmitMilestone, withConcise, CONCISE_MILESTONE_MS } from './concise';
+import { CONCISE_STYLE_PROMPT, conciseAck, conciseEventRole, conciseFirstStep, conciseForwardsEvent, conciseMilestone, shouldEmitMilestone, withConcise, CONCISE_MILESTONE_MS } from './concise';
 
 describe('conciseAck', () => {
   it('names the model', () => {
@@ -69,39 +69,6 @@ describe('instant ack with a first step', () => {
   });
 });
 
-describe('conciseLeadLine', () => {
-  it('shows the first finished sentence of the streaming text', () => {
-    expect(conciseLeadLine('먼저 실패하는 테스트부터 볼게요. 그다음')).toBe('먼저 실패하는 테스트부터 볼게요.');
-    expect(conciseLeadLine('먼저 실패하는 테스트부터')).toBeNull();
-    expect(conciseLeadLine('')).toBeNull();
-    expect(conciseLeadLine('# 제목.\n\n본문')).toBeNull();
-    expect(conciseLeadLine(`${'가'.repeat(200)}.`, 20)).toHaveLength(20);
-  });
-});
-
-describe('conciseLiveSplit', () => {
-  it('streams the whole text before any tool call', () => {
-    expect(conciseLiveSplit('바로 답할게요', [])).toEqual({ lead: null, live: '바로 답할게요' });
-    expect(conciseLiveSplit('답', [undefined, 0])).toEqual({ lead: null, live: '답' });
-  });
-  it('folds the text before the last tool call into a lead line and streams the rest', () => {
-    const t = '먼저 테스트부터 볼게요. 그다음 고칠게요.\n\n원인은 X예요';
-    const cut = t.indexOf('\n\n');
-    expect(conciseLiveSplit(t, [cut])).toEqual({ lead: '먼저 테스트부터 볼게요.', live: '\n\n원인은 X예요' });
-    // Right after the call: nothing live yet, the lead stays.
-    expect(conciseLiveSplit(t.slice(0, cut), [cut])).toEqual({ lead: '먼저 테스트부터 볼게요.', live: '' });
-  });
-  it('leads with the latest non-empty stretch; an unfinished one shows its first line', () => {
-    const t = '먼저 볼게요.이제 고쳐 볼게요끝';
-    const a = '먼저 볼게요.'.length;
-    const b = t.length - 1;
-    expect(conciseLiveSplit(t, [a, b])).toEqual({ lead: '이제 고쳐 볼게요', live: '끝' });
-    // Back-to-back calls (empty stretch between): the earlier stretch leads.
-    expect(conciseLiveSplit('먼저 볼게요.', [a, a, a])).toEqual({ lead: '먼저 볼게요.', live: '' });
-    expect(conciseLiveSplit('```\ncode\n```', [14])).toEqual({ lead: null, live: '' });
-  });
-});
-
 describe('withConcise', () => {
   it('tags sends only while the pref is on, never a handoff note turn', () => {
     const send = { type: 'send', sessionId: null, cwd: '/w', text: 'x' } as const;
@@ -116,5 +83,8 @@ describe('withConcise', () => {
     expect(CONCISE_STYLE_PROMPT).toContain('AskUserQuestion');
     expect(CONCISE_STYLE_PROMPT).toContain('결과');
     expect(CONCISE_STYLE_PROMPT).toContain('초안');
+    // Nothing asked is skipped, and nothing claims the text between tool calls is hidden (it streams in full).
+    expect(CONCISE_STYLE_PROMPT).toContain('건너뛰지');
+    expect(CONCISE_STYLE_PROMPT).not.toContain('접혀');
   });
 });

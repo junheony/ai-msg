@@ -2885,13 +2885,7 @@ mark.find-hit.current { background: var(--accent); color: var(--on-accent); box-
 /* ── 간결 모드 (prefs.conciseMode, default on): tuck chrome, keep results. Full mode unchanged when data-concise=off. ── */
 html[data-concise='on'] .context-gauge-detail,
 html[data-concise='on'] .route-preview-reason { display: none; }
-html[data-concise='on'] .concise-progress {
-  font-size: var(--fs-label);
-  color: var(--muted);
-  padding: 2px 0 8px;
-}
 html[data-concise='on'] .turn-status.concise .status-verb { color: var(--fg); }
-html[data-concise='on'] .concise-lead { color: var(--fg); margin-bottom: 2px; }
 html[data-concise='on'] .note.concise-note { font-size: var(--fs-meta); color: var(--faint); }
 
 /* 백그라운드 작업: cards in the originating chat, and 작업으로 next to send. */

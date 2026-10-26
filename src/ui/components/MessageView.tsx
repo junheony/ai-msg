@@ -6,7 +6,6 @@ import remarkGfm from 'remark-gfm';
 import { HANDOFF_PROMPT } from '../../shared/handoff';
 import { parseUserText, type InjectedNotice } from '../injected';
 import { usePrefs } from '../usePrefs';
-import { conciseCut, conciseLead } from '../../shared/concise';
 import { codeFileName, useCodeWrap } from '../codeWrap';
 import { DocLinkContext, FileRootContext, SidePanelContext, filePathIn, inSessionFolder, viewFor } from '../sidePanel';
 import { resolveDocLink } from '../sideView';
@@ -811,17 +810,8 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
   const closeMenu = () => setMenu(false);
   // 텍스트 선택: the text the selection sheet shows while it is open.
   const [selecting, setSelecting] = useState<string | null>(null);
-  // 간결 모드, live turn: the raw text before the last tool call (ToolCallItem.textAt counts item.text) folds into a lead
-  // line, memoized so a delta only re-slices; the rest streams. Hooks stay above the early returns.
-  const liveCuts = concise && item.kind === 'assistant' && item.streaming ? item.toolCalls.map((t) => t.textAt) : null;
-  const liveCut = liveCuts && item.kind === 'assistant' ? conciseCut(item.text.length, liveCuts) : 0;
-  const liveHead = liveCuts && item.kind === 'assistant' ? item.text.slice(0, liveCut) : '';
-  const cutKey = liveCuts?.join(',') ?? '';
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- cutKey stands for liveCuts (a new array every render)
-  const liveLead = useMemo(() => (liveCuts ? conciseLead(liveHead, liveCuts) : null), [liveHead, cutKey]);
   const foldChoices = useRef(new Map<number, FoldChoice>()).current;
   const streaming = item.kind === 'assistant' && item.streaming;
-  const foldBase = useMemo(() => nonSpace(liveHead), [liveHead]);
   // Copy feedback as one toast (a status: read out once). The hover row's ✓ already says it on a desktop; on touch the
   // icon alone is easy to miss, so the row's copy toasts too.
   const feedback = useFileActions();
@@ -893,10 +883,8 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
   const pick = !pickable || item.streaming ? undefined : turn && branchFrom ? (m: ModelChoice) => branchFrom(turn, m) : retry ? regen.retryWith : undefined;
   // deck-choices (GPT, Gemini, Grok): the block becomes option cards; only the last reply's cards can be clicked.
   const { text: shownText, choices } = splitDeckChoices(item.text, item.streaming);
-  // deck-choices are cut from the live stretch only (textAt counts the raw text).
-  const split = liveCuts ? { lead: liveLead, live: splitDeckChoices(item.text.slice(liveCut), true).text } : null;
   const reply = last && !item.streaming ? actions.onReply : undefined;
-  const early = item.streaming && !split && !shownText;
+  const early = item.streaming && !shownText;
   const hasActions = !item.streaming && (!!item.text || !!retry || !!again || !!pick);
   const regenPick: RegenPick | null = pick && regen ? { models: regen.models, current: regen.current, sticky: !!(turn && branchFrom), onPick: pick } : null;
   return (
@@ -914,19 +902,12 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
             {run.map((c) => <ToolCalls key={c.toolUseId} calls={[c]} live={item.streaming} cwd={cwd} />)}
           </div>
         : <ToolCalls key={run[0]!.toolUseId} calls={run} live={item.streaming} cwd={cwd} />))}
-      {/* Concise, mid-turn: text before the last tool call folds into a gray lead line; the text since streams live below it.
-          With tool calls the progress ("계속 작업 중 · 단계 N") is the meta line's tools item, so this shows the lead only. */}
-      {split && (!split.live || item.toolCalls.length > 0) && (split.lead || item.toolCalls.length === 0) && (
-        <div className="concise-progress" data-testid="concise-progress" aria-live="polite">
-          {split.lead && <div className="concise-lead" data-testid="concise-lead">{split.lead}</div>}
-          {item.toolCalls.length > 0 ? null : item.thinking ? '생각하는 중…' : '처리 중…'}
-        </div>
-      )}
-      <CodeFoldContext.Provider value={{ streaming, base: foldBase, text: (split ? split.live : shownText) ?? '', choices: foldChoices }}>
-        {split ? split.live && <Markdown text={split.live} quoteCopy /> : shownText && <Markdown text={shownText} quoteCopy />}
+      {/* 간결 모드 too, mid-turn: the whole text streams (a report written before a tool call stays readable). */}
+      <CodeFoldContext.Provider value={{ streaming, base: 0, text: shownText ?? '', choices: foldChoices }}>
+        {shownText && <Markdown text={shownText} quoteCopy />}
       </CodeFoldContext.Provider>
       {choices && !item.streaming && <ChoiceCards choices={choices} onPick={reply} />}
-      {item.streaming && (!split || !!split.live) && !early && <span className="cursor">▍</span>}
+      {item.streaming && !early && <span className="cursor">▍</span>}
       {item.error && !(!item.streaming && isAbortError(item.error, !!item.interrupted)) && <TurnError error={item.error} />}
       <TurnMeta
         item={item} turnEnd={turnEnd} repeatModel={repeatModel} notices={notices} last={last} concise={concise} cwd={cwd} markdown={renderMarkdown}
