@@ -13,7 +13,7 @@ export function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
   };
   return (
     <form className="login" onSubmit={submit}>
-      <h1><DeckMark className="spark" />deck</h1>
+      <h1><DeckMark className="spark" />Crew</h1>
       {/* `…` in the hint is a command: shown as code. */}
       <p>{SETUP_TEXTS.loginHint.split('`').map((part, i) => (i % 2 ? <code key={i}>{part}</code> : part))}</p>
       <input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="로그인 토큰" autoFocus />

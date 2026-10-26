@@ -236,7 +236,7 @@ function grokSeatData(seat: Seat, snap: GrokUsage, now: number, bot?: GrokBotUsa
   const extraPopover = (
     <>
       {tier && <div className="usage-pop-row" data-testid={`${seat}-tier`}><span>구독</span><b>{tier}</b></div>}
-      <div className="usage-pop-row" data-testid={`${seat}-today`}><span>deck 오늘</span><b>{`${g.today.turns}턴 · ${tally}`}</b></div>
+      <div className="usage-pop-row" data-testid={`${seat}-today`}><span>Crew 오늘</span><b>{`${g.today.turns}턴 · ${tally}`}</b></div>
       {bot && <div className="usage-pop-row" data-testid={`${seat}-grokbot`}><span>Grok Bot</span><b>{grokBotLine(bot, now)}</b></div>}
     </>
   );
@@ -275,7 +275,7 @@ export function staleNote(ago: string, polled = false): string {
 /** The sheet's one line on an old seat. */
 export const REFRESH_HINT = '지금은 이보다 적게 남았을 수 있어요 · 이 계정으로 한 턴 돌리면 갱신돼요';
 /** The same for numbers deck's `/usage` poll read: deck reads them again by itself. */
-export const REFRESH_HINT_POLLED = '지금은 이보다 적게 남았을 수 있어요 · deck 이 자동으로 다시 확인해요';
+export const REFRESH_HINT_POLLED = '지금은 이보다 적게 남았을 수 있어요 · Crew 가 자동으로 다시 확인해요';
 
 /** Remaining % as shown: whole numbers (Gemini buckets report "98.5"); a sliver above 0 still reads 1, not 소진. */
 export function shownPct(w: UsageWindow | null): number | null {
@@ -386,7 +386,7 @@ export function buildSeats(usage: UsageSnapshot, active: readonly { id: Account 
     {
       seat: 'gpt', engine: 'gpt', mark: <OpenAIMark className="usage-mark gpt" />, rows: gptRows(gpt), status: gpt.status as SeatData['status'],
       credits: creditsText(gpt.credits), fetchedAt: gpt.fetchedAt,
-      ...(gpt.status === 'down' ? { hint: cli ? 'GPT 사용량 불명 — 아직 Codex 기록에서 한도 값을 읽지 못했습니다' : 'GPT 사용량 불명 — usage-deck 의 codex 카드가 setup_needed 상태입니다' } : {}),
+      ...(gpt.status === 'down' ? { hint: cli ? 'GPT 사용량 불명 — 아직 Codex 기록에서 한도 값을 읽지 못했습니다' : 'GPT 사용량 불명 — 사용량 대시보드의 codex 카드가 setup_needed 상태입니다' } : {}),
     },
     ...GEMINI_ACCOUNTS.filter((a) => geminiOf(a) !== undefined).map((a): SeatData => {
       const g = geminiOf(a)!;

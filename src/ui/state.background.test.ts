@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ServerMessage } from '../shared/protocol';
-import { initialState, reducer, type AppState, type ChatItem } from './state';
+import { BG_DONE_NOTICE, initialState, reducer, type AppState, type ChatItem } from './state';
 
 function play(msgs: ServerMessage[], start: AppState): AppState {
   return msgs.reduce((s, msg) => reducer(s, { type: 'server', msg }), start);
@@ -23,8 +23,11 @@ describe('reducer: background work (turn_background, 백그라운드 계속)', (
     expect(s.panes[0]!.activeTurnId).toBeNull();
     expect(s.panes[0]!.runStartedAt).toBeNull();
 
+    s = play([{ type: 'turn_background', turnId: 't1', ...scope, tasks: [] }], s);
+    expect(s.panes[0]!.bg).toBeNull();
+    expect(s.panes[0]!.notices?.map((n) => n.message)).toEqual([BG_DONE_NOTICE]);
+
     s = play([
-      { type: 'turn_background', turnId: 't1', ...scope, tasks: [] },
       started('t1:bg1', '백그라운드 계속'),
       { type: 'turn_notice', turnId: 't1:bg1', ...scope, message: '백그라운드 계속 — 백그라운드 작업이 끝나 이어서 진행합니다' },
       { type: 'delta', turnId: 't1:bg1', ...scope, text: 'found' },
@@ -35,6 +38,8 @@ describe('reducer: background work (turn_background, 백그라운드 계속)', (
     expect(items[1]).toMatchObject({ turnId: 't1:bg1', text: 'found', streaming: true, notes: [expect.stringContaining('백그라운드 계속')] });
     expect(s.panes[0]!.activeTurnId).toBe('t1:bg1');
     expect(s.panes[0]!.runStartedAt).toBeTypeOf('number');
+    // The continuation turn says the work ended; the pane line does not stay up beside it.
+    expect(s.panes[0]!.notices?.some((n) => n.message === BG_DONE_NOTICE)).toBe(false);
   });
 
   it('after a reload the pill comes back from the replayed turn_background', () => {

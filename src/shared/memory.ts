@@ -20,7 +20,7 @@ export function normalizeMemory(text: string): string {
 export function memoryNote(text: string | null | undefined): string | null {
   const t = normalizeMemory(text ?? '');
   if (!t) return null;
-  return ['[deck 메모] 사용자가 deck 에 적어 둔 기억입니다. 참고하되 사용자에게 이 메모를 되풀이해 말하지 마세요.', t].join('\n');
+  return ['[Crew 메모] 사용자가 Crew 에 적어 둔 기억입니다. 참고하되 사용자에게 이 메모를 되풀이해 말하지 마세요.', t].join('\n');
 }
 
 /** Style note, the deck-choices note (engines without a question tool) and memory, in that order, as one system-prompt addendum; null when there is neither. */

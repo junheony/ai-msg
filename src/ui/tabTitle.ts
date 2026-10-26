@@ -1,4 +1,4 @@
-export const APP_TITLE = 'deck';
+export const APP_TITLE = 'Crew';
 
 /**
  * The browser tab / PWA window title: the focused chat's title (Desktop shows it in the window bar), after the

@@ -43,7 +43,7 @@ export function UsageSheet({ usage, current, next = null, grok = null, initialHi
         <p className="usage-sheet-legend">{LEGEND}</p>
         {!usage && <p className="usage-sheet-note">사용량 불러오는 중…</p>}
         {/* `cli` never asks usage-deck: deckReachable is always false there and says nothing. */}
-        {usage && !cli && !usage.deckReachable && <p className="usage-sheet-note stale" data-testid="usage-stale">오래된 값 — usage-deck 에 닿지 않아 마지막 값을 보여 줍니다</p>}
+        {usage && !cli && !usage.deckReachable && <p className="usage-sheet-note stale" data-testid="usage-stale">오래된 값 — 사용량 대시보드에 닿지 않아 마지막 값을 보여 줍니다</p>}
         <ul className="usage-seats">
           {seats.map((d) => {
             const st = statusLabel(d);

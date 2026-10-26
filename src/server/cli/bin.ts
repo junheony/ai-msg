@@ -2,7 +2,7 @@
 // Package entry (`ai-msg`). node: built-ins only: it must run on an old Node long enough to say so.
 const major = Number(process.versions.node.split('.')[0]);
 if (major < 24) {
-  console.error(`AI-MSG 는 Node 24 이상이 필요합니다 (지금 ${process.versions.node})`);
+  console.error(`Crew 는 Node 24 이상이 필요합니다 (지금 ${process.versions.node})`);
   process.exitCode = 1;
 } else {
   const app = (await import(new URL('./app.js', import.meta.url).href)) as { runCli: (argv: string[]) => Promise<number> };

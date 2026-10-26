@@ -270,6 +270,6 @@ export class BottleneckWatch {
   }
 
   private title(sessionId: string | null, cwd: string): string {
-    return clip(this.deps.titleOf(sessionId, cwd) || 'deck', TITLE_MAX);
+    return clip(this.deps.titleOf(sessionId, cwd) || 'Crew', TITLE_MAX);
   }
 }

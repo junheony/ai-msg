@@ -397,6 +397,9 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .chat { position: relative; }
 .drop-overlay { position: absolute; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; pointer-events: none; background: color-mix(in srgb, var(--bg) 82%, transparent); border: 2px dashed var(--accent); border-radius: 12px; margin: 6px; font-size: 15px; color: var(--fg-strong); }
 .drop-overlay.blocked { border-color: var(--line-strong); color: var(--muted); }
+.chat-empty { margin: auto; max-width: 28rem; padding: 28px 16px; text-align: center; color: var(--muted); font-size: calc(14px * var(--font-scale, 1)); line-height: 1.5; }
+.chat-empty p { margin: 0; }
+.chat-empty-hint { margin-top: 6px !important; color: var(--faint); font-size: calc(13px * var(--font-scale, 1)); }
 .chat-loading { display: flex; flex-direction: column; gap: 14px; padding: 8px 0; }
 .chat-loading .skeleton-line { display: block; height: 14px; border-radius: var(--r-xs); background: color-mix(in srgb, currentColor 9%, transparent); animation: skeleton-pulse 1.4s ease-in-out infinite; }
 .chat-loading .skeleton-line.mine { align-self: flex-end; height: 32px; border-radius: var(--r-md); }
@@ -492,14 +495,11 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .switch-track { position: relative; width: 28px; height: 16px; border-radius: var(--r-sm); background: var(--line-strong); flex-shrink: 0; transition: background .15s; }
 .switch-knob { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg-raised); transition: transform .15s; }
 /* === usage header === */
-/* The usage strip: every seat at a glance, in the top bar (desktop / tablet) or a thin line under it (phone). One
-   button (it opens the usage sheet) holding a segment per seat: label · a 28px bar of the fullest window's USED % · the %
-   · its reset. As room runs out it steps down full → mid (no bar; the reset only when amber / red / spent) → min (label
-   and %); past min it leaves the bar for a line of its own under it, mid stage, as on a phone (UsageStrip.tsx pickStage /
-   barRoom). In the bar it takes only the width of its stage and the session chip (.topbar-head) grows into the rest;
-   barRoom reads the bar, never the strip, so the switches cannot feed back. The strip sits on --bg and the session's seat
-   on --panel: the amber / red text keeps 4.5:1 there in the light theme (on --sidebar it does not). Colour follows what is used up: ≥80%
-   amber, ≥95% red, stale a dashed outline, estimated a dashed underline. The session's seat is lifted (data-current). */
+/* The usage strip is one pill in the top bar (desktop and phone): the tightest seat's remaining % (or 소진 / 쿨다운).
+   A press opens a popover with every seat at full — label · a 28px bar of what is LEFT · the % · its reset — and 자세히
+   opens the usage sheet. The pill sits on --bg: amber / red text keeps 4.5:1 there in the light theme (on --sidebar it
+   does not). Colour follows what is left: ≤20% amber, ≤5% red, spent an empty red track. The session's seat is lifted
+   (data-current) inside the popover. */
 .usage-strip-wrap { order: 2; position: relative; display: flex; flex: none; }
 .usage-strip-wrap + .topbar-end { margin-left: 0; }
 .usage-strip {
@@ -510,6 +510,23 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 }
 .usage-strip:hover, .usage-strip[aria-expanded="true"] { box-shadow: inset 0 0 0 1px var(--line-strong), var(--shadow-sm); }
 .usage-strip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The collapsed pill names one seat. Its colours follow that seat, the same thresholds as a segment. */
+.usage-summary { display: inline-flex; align-items: center; gap: 5px; height: 24px; }
+.usage-strip-caret { padding: 0 2px 0 1px; font-size: var(--fs-meta); color: var(--muted); }
+.usage-strip.warn .usage-seg-num { color: var(--warn); font-weight: 600; }
+.usage-strip.warn .usage-seg-bar > i { background: var(--warn); }
+.usage-strip:is(.danger, .spent, .cooldown) .usage-seg-num { color: var(--danger); font-weight: 600; }
+.usage-strip:is(.danger, .spent, .cooldown) .usage-seg-bar > i { background: var(--danger); }
+.usage-strip.spent .usage-seg-bar { background: color-mix(in srgb, var(--danger) 35%, var(--track)); }
+.usage-strip.stale:not(.ok, .warn, .danger, .spent, .estimated, .cooldown) .usage-seg-num { color: var(--muted); font-weight: 500; }
+.usage-strip.estimated .usage-seg-num { text-decoration: underline dashed color-mix(in srgb, var(--muted) 70%, transparent); text-underline-offset: 3px; }
+/* Every seat, full stage, under the pill. Wraps inside the bar's width; the sheet stays one press away (자세히). */
+.usage-strip-pop {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 8; display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
+  width: max-content; max-width: min(560px, calc(100vw - 16px)); padding: 6px; border-radius: var(--r-md);
+  background: var(--bg); box-shadow: var(--shadow-lg), inset 0 0 0 1px var(--line);
+}
+.usage-strip-more { flex: 1 0 auto; margin-left: auto; height: 28px; }
 .usage-seg { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 7px; border-radius: var(--r-full); }
 .usage-seg[data-current] { background: var(--panel); box-shadow: inset 0 0 0 1px var(--line-strong), var(--shadow-sm); }
 .usage-seg-who { font-weight: 600; color: var(--fg); }

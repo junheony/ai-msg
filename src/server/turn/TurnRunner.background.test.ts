@@ -336,9 +336,9 @@ describe('TurnRunner: background work after the turn result', () => {
     const notices = of(msgs, 'turn_notice').map((m) => m.message as string);
     expect(notices).toContain('백그라운드 작업 1개가 0분 한도로 끊김: slow analysis — 이어서 진행하도록 자동으로 보냅니다');
     const at = new Date(NOW).toTimeString().slice(0, 5);
-    expect(notices).toContain(`${at} 백그라운드 작업 0분 한도로 백그라운드 작업 1개가 끊겼습니다: slow analysis — deck 이 자동으로 이어갑니다`);
+    expect(notices).toContain(`${at} 백그라운드 작업 0분 한도로 백그라운드 작업 1개가 끊겼습니다: slow analysis — Crew 가 자동으로 이어갑니다`);
     expect(of(msgs, 'turn_started')[1]).toMatchObject({ turnId: 't1:cap1', sessionId: SID });
-    expect(await promptNote(procs[1])).toEqual(expect.stringMatching(/"slow analysis".*deck 이 자동으로 이어 보낸 것입니다.*한 줄로 알리세요\.$/));
+    expect(await promptNote(procs[1])).toEqual(expect.stringMatching(/"slow analysis".*Crew 가 자동으로 이어 보낸 것입니다.*한 줄로 알리세요\.$/));
     expect(of(msgs, 'turn_result').at(-1)).toMatchObject({ turnId: 't1:cap1', ok: true, text: 'resumed' });
     // The continuation got the note through: nothing is carried to the user's next message.
     expect(store.get(SID)).not.toHaveProperty('interrupted');
@@ -418,7 +418,7 @@ describe('TurnRunner: background work after the turn result', () => {
     const d = new Date(yesterday);
     const at = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${d.toTimeString().slice(0, 5)}`;
     expect(of(msgs, 'turn_notice').map((m) => m.message)).toContain(`${at} 서버 재시작으로 백그라운드 작업 1개가 끊겼습니다: build — 모델에게 알렸습니다`);
-    expect(await promptNote(procs[1])).toContain(`${at} 에 deck 서버 재시작으로`);
+    expect(await promptNote(procs[1])).toContain(`${at} 에 Crew 서버 재시작으로`);
     expect(store.get(SID)).not.toHaveProperty('interrupted');
   });
 

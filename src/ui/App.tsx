@@ -127,7 +127,7 @@ function maxedPane(id: string | null, state: Pick<AppState, 'panes' | 'activePan
   const active = state.panes.find((p) => p.id === state.activePaneId);
   return !active || active.id === id || active.float ? id : null;
 }
-/** Tab title: "● <chat> — deck" while any turn runs; "✓ …" when one finished while the tab was hidden, until it is shown. */
+  /** Tab title: "● <chat> — Crew" while any turn runs; "✓ …" when one finished while the tab was hidden, until it is shown. */
 function useTabTitle(running: boolean, chat: string | null) {
   const was = useRef(running);
   const [done, setDone] = useState(false);
@@ -704,7 +704,7 @@ export function App() {
     return (
       <div className="center boot-wait" role="status">
         <div>서버 응답 없음 — 3초마다 다시 시도합니다</div>
-        <div className="boot-wait-hint">deck 서버가 꺼져 있거나 Tailscale 연결이 끊겼을 수 있습니다. 연결되면 자동으로 들어갑니다.</div>
+        <div className="boot-wait-hint">Crew 서버가 꺼져 있거나 Tailscale 연결이 끊겼을 수 있습니다. 연결되면 자동으로 들어갑니다.</div>
         <button type="button" className="text-btn" onClick={() => location.reload()}>지금 다시 시도</button>
       </div>
     );
@@ -1300,8 +1300,7 @@ export function App() {
         {!phone && <button type="button" className="icon-btn sidebar-toggle" aria-label={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} title={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} aria-pressed={!sidebarHidden} onClick={toggleSidebar} onMouseEnter={peekable && !peek ? armPeek : undefined} onMouseLeave={peekable ? () => { unlatchPeek(); leavePeek(); } : undefined}>☰</button>}
         {/* The session chip of the one pane (desktop) / the shown pane (phone) renders here (Pane → Chat, a portal). */}
         <div className="topbar-head" ref={setHeadSlot} />
-        {/* Every seat's usage: in the bar, shrinking in steps; when even its narrowest does not fit (and always on a phone)
-            a line of its own under the bar (the slot below, a portal). */}
+        {/* Every seat's usage, collapsed to the tightest remaining amount. The list of seats opens under the pill. */}
         <UsageStrip usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} phone={phone} rowSlot={stripRow} open={usageOpen !== null} onToggle={() => setUsageOpen((v) => (v ? null : 'limits'))} />
         <div className="topbar-end">
           {!phone && <button type="button" className="icon-btn split" onClick={addPane} aria-label="새 분할" title={`새 분할 (${mod}⇧O) — 세션 칩을 끌어 순서를 바꾸거나 카드로 떼어낼 수 있어요`}><SplitIcon /></button>}
@@ -1425,7 +1424,7 @@ export function App() {
             // The avatar is the person using deck, not the shown session's account (that one is the usage chip's): the
             // same letter on the new-session screen and in any chat.
             avatar="D"
-            avatarTitle="deck"
+            avatarTitle="Crew"
             footMenu={[
               { label: '설정', hint: `${mod},`, run: () => setSettingsOpen(true) },
               { label: '사용량 기록', run: () => setUsageOpen('history') },

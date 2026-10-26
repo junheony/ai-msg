@@ -62,7 +62,7 @@ if [ "$ok" = 1 ]; then
   if [ "$prev_alerted" = 1 ]; then
     mins=""
     if [ -n "$down_since" ]; then s=$(date -d "$down_since" +%s 2>/dev/null || date -j -f '%Y-%m-%dT%H:%M:%S%z' "$down_since" +%s 2>/dev/null || echo ""); [ -n "$s" ] && mins=" · $(( ($(date +%s) - s) / 60 ))분 중단"; fi
-    notify "🟢 deck 복구 — $(clock) 다시 응답${mins}"
+    notify "🟢 Crew 복구 — $(clock) 다시 응답${mins}"
     echo "$(now) RECOVERED (HTTP $code)${mins}" >> "$LOG"
   elif [ "$prev_fails" -gt 0 ]; then
     echo "$(now) OK again after $prev_fails miss(es) (HTTP $code)" >> "$LOG"
@@ -77,7 +77,7 @@ echo "$(now) FAIL $fails (HTTP $code)" >> "$LOG"
 alerted=$prev_alerted
 if [ "$fails" -ge "$FAIL_THRESHOLD" ] && [ "$prev_alerted" = 0 ]; then
   if [ "$code" = "000" ]; then why="응답 없음 — 서버가 죽었거나 Mac 이 tailnet 에서 빠짐"; else why="HTTP $code"; fi
-  notify "🔴 deck 서버 ${why} · $(clock)부터 (${fails}회 연속). 확인: Mac 에서 ~/.config/deck/relaunch.sh status · tail ~/.config/deck/deck.log"
+  notify "🔴 Crew 서버 ${why} · $(clock)부터 (${fails}회 연속). 확인: Mac 에서 ~/.config/deck/relaunch.sh status · tail ~/.config/deck/deck.log"
   alerted=1
 fi
 printf '%s %s %s\n' "$fails" "$alerted" "$down_since" > "$STATE"

@@ -286,7 +286,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     // PWA: the MagicDNS name too, so `tailscale serve` (https://<name>/ → 127.0.0.1:port) is accepted without DECK_EXTRA_HOSTS.
     const dnsName = cfg.loopbackOnly ? null : tailscaleDnsName();
     const extraHosts = [...addresses, ...(dnsName ? [dnsName] : []), ...cfg.extraHosts];
-    const titleOf = (sessionId: string | null, cwd: string) => (sessionId ? index.lookup(sessionId)?.title ?? index.codexOwned(store.codexEntries()).find((e) => e.sessionId === sessionId)?.title : undefined) ?? cwd.split('/').filter(Boolean).pop() ?? 'deck';
+    const titleOf = (sessionId: string | null, cwd: string) => (sessionId ? index.lookup(sessionId)?.title ?? index.codexOwned(store.codexEntries()).find((e) => e.sessionId === sessionId)?.title : undefined) ?? cwd.split('/').filter(Boolean).pop() ?? 'Crew';
     const push = new PushNotifier({
       store: pushSubs,
       vapid: await loadOrCreateVapid(cfg.vapidFile),

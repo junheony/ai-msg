@@ -20,7 +20,7 @@ export function useOpenInDesktop(sessionId: string | null, onError: (message: st
       try {
         const r = await openInDesktop(sessionId);
         if (!r.ok) { onError('기록이 갈라져 있어 먼저 맞춰야 합니다 (머리글의 \'갈라짐\' 메뉴)'); return; }
-        if (r.busy && !window.confirm('deck 에서 아직 작업 중이라 Desktop 이 열기를 거절할 수 있습니다. 계속할까요?')) return;
+        if (r.busy && !window.confirm('Crew 에서 아직 작업 중이라 Desktop 이 열기를 거절할 수 있습니다. 계속할까요?')) return;
         navigate(r.url);
       } catch (err) {
         onError(err instanceof Error ? err.message : 'Desktop 에서 열기 실패');

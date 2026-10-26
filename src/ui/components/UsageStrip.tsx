@@ -1,5 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useRef, useState } from 'react';
 import type { GrokStatus } from '../../shared/protocol';
 import type { Seat } from '../../shared/accounts';
 import type { UsageSnapshot } from '../../shared/usage-types';
@@ -9,8 +8,8 @@ import { ClockIcon, RefreshIcon } from './icons';
 
 /**
  * How much each segment says, widest first: full = label · bar · % · reset; mid = label · % (the reset only when amber /
- * red / spent); min = label · %. row = not even min fits in the top bar: the strip moves to a line of its own under the
- * bar (mid, scrolled sideways), as on a phone — every seat stays in view, never a one-seat summary.
+ * red / spent); min = label · %. The header pill does not use these stages: it stays a one-seat summary, and the
+ * popover always shows full. `row` remains the "does not fit" result of pickStage.
  */
 export type StripStage = 'full' | 'mid' | 'min' | 'row';
 const STAGES = ['full', 'mid', 'min'] as const;
@@ -118,6 +117,19 @@ const STRIP_TITLE = '계정별 남은 사용량 — 숫자와 막대는 남은 �
 /** The reset is said in mid only when it matters: amber, red, spent, a cooldown's end. */
 const loud = (k: ChipKind) => k === 'warn' || k === 'danger' || k === 'spent' || k === 'cooldown';
 
+/** A remaining percent ("58%"), as opposed to 소진 / 쿨다운 / 리셋됨 / 가능 / ?. */
+const percentValue = (v: string) => /^\d+%$/.test(v);
+
+/**
+ * The seat the collapsed pill names. Any seat with a remaining % (spent counts as 0) beats a seat with no number;
+ * the smallest % wins, the earlier seat on a tie. With no number at all, a cooldown beats 리셋됨 / 가능 / ?.
+ */
+export function tightestSeg(segs: StripSeg[]): StripSeg {
+  const numbered = segs.filter((s) => s.bar !== null);
+  if (numbered.length > 0) return numbered.reduce((best, s) => (s.bar! < best.bar! ? s : best));
+  return segs.find((s) => s.kind === 'cooldown') ?? segs[0]!;
+}
+
 /**
  * Old numbers by stage: full = muted bar · "70%" · clock "3일 전"; mid = "70%" · clock "3일 전"; min = "70%" · clock.
  * Past the reset: refresh "리셋됨" in the number's place (min: the icon alone). The words are in the title and aria.
@@ -145,110 +157,74 @@ function Segment({ s, stage, measure }: { s: StripSeg; stage: Exclude<StripStage
 }
 
 /**
- * Every seat's usage in one row; a press opens the usage sheet. Rendered in the top bar: on a desktop / tablet the
- * strip takes just the width its stage needs (the session chip grows into the rest) and steps down full → mid → min as
- * the bar's room (barRoom) runs out; past min it goes to `rowSlot` (a line under the bar, a portal) and the bar keeps
- * nothing of it. A phone always has that line. The session's seat is highlighted; "→" marks where the next turn goes
- * when that is another seat.
+ * One pill in the header for every seat: the tightest remaining amount (tightestSeg). A press opens the seat list
+ * (label · bar · remaining % · reset, the same segments as before) under the pill; 자세히 opens the usage sheet.
+ * The same pill on a phone — the list is the popover, not a second row of every seat. `phone` and `rowSlot` stay on
+ * the props so the header call site is unchanged.
  */
-export function UsageStrip({ usage, current, next = null, grok = null, phone = false, rowSlot = null, open = false, onToggle, now: fixedNow }: {
+export function UsageStrip({ usage, current, next = null, grok = null, open = false, onToggle, now: fixedNow }: {
   usage: UsageSnapshot | null; current: Seat | null; next?: RouteNext | null; grok?: GrokStatus | null;
-  /** Phone: the line under the bar always (mid, scrolled sideways when it does not fit). */
   phone?: boolean;
-  /** Where the line under the top bar goes (null: rendered in place, e.g. in tests). */
   rowSlot?: HTMLElement | null;
+  /** The usage sheet is open (자세히). The pill's own list closes so it does not sit under the sheet. */
   open?: boolean; onToggle: () => void; now?: number;
 }) {
   const now = useClock(fixedNow);
   const { active, label } = useAccounts();
   const wrapRef = useRef<HTMLDivElement>(null);
-  const rowRef = useRef<HTMLDivElement>(null);
-  const measureRef = useRef<HTMLDivElement>(null);
-  const [stage, setStage] = useState<StripStage>('full');
-  const stageRef = useRef<StripStage>('full');
-  /** The strip had the focus when it moved between the bar and the line: the new button takes it. */
-  const refocus = useRef(false);
-  const check = useRef<() => void>(() => {});
+  const [pop, setPop] = useState(false);
   const seats = usage ? buildSeats(usage, active, grok, now) : [];
   const shown = seats.length > 0 && (!!current || !!next || seats.some((s) => pickMain(s.rows)));
-  // jsdom (tests) has no layout and no ResizeObserver: the strip stays full there.
-  const canMeasure = shown && !phone && typeof ResizeObserver !== 'undefined';
 
-  useLayoutEffect(() => {
-    const m = measureRef.current;
-    const bar = m?.parentElement;
-    if (!canMeasure || !m || !bar) return;
-    const kids = [...m.children] as HTMLElement[];
-    const own = (el: Element) => el === m || el === wrapRef.current || el === rowRef.current;
-    check.current = () => {
-      const w = (k: HTMLElement | undefined) => k?.getBoundingClientRect().width ?? 0;
-      const cur = stageRef.current;
-      const nextStage = pickStage(cur, barRoom(bar, own), { full: w(kids[0]), mid: w(kids[1]), min: w(kids[2]) });
-      if (nextStage === cur) return;
-      if ((nextStage === 'row') !== (cur === 'row')) {
-        const a = document.activeElement;
-        refocus.current = !!a && (!!wrapRef.current?.contains(a) || !!rowRef.current?.contains(a));
-      }
-      stageRef.current = nextStage;
-      setStage(nextStage);
-    };
-    const ro = new ResizeObserver(() => check.current());
-    ro.observe(bar);
-    for (const el of bar.children) if (!own(el)) ro.observe(el);
-    for (const k of kids) ro.observe(k);
-    check.current();
-    return () => { ro.disconnect(); check.current = () => {}; };
-  }, [canMeasure]);
-  // After every render too (a seat added, a number widened): judged before paint, not a frame later via the observer.
-  useLayoutEffect(() => check.current());
-
-  const inRow = phone || stage === 'row';
-  useLayoutEffect(() => {
-    if (!refocus.current) return;
-    refocus.current = false;
-    (inRow ? rowRef : wrapRef).current?.querySelector<HTMLElement>('button.usage-strip')?.focus();
-  }, [inRow]);
+  useEffect(() => { if (open) setPop(false); }, [open]);
   useEffect(() => {
-    if (!inRow || !current) return;
-    const seg = rowRef.current?.querySelector<HTMLElement>('[data-current]');
-    if (seg && typeof seg.scrollIntoView === 'function') seg.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-  }, [inRow, current, shown, rowSlot]);
+    if (!pop) return;
+    const onDown = (e: MouseEvent) => { if (!wrapRef.current?.contains(e.target as Node)) setPop(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented && !e.isComposing) setPop(false); };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => { window.removeEventListener('mousedown', onDown); window.removeEventListener('keydown', onKey); };
+  }, [pop]);
 
   if (!usage || !shown) return null;
   const segs = stripSegs({ seats, current, next, stale: usage.usageMode !== 'cli' && !usage.deckReachable, now, label });
+  const sum = tightestSeg(segs);
   const nextSays = next && (next.account !== current || next.asOpus) ? `; 다음 턴 ${label(next.account)}${next.asOpus ? '(Opus)' : ''}` : '';
   const aria = `계정별 남은 사용량: ${segs.map((s) => `${s.current ? '지금 ' : ''}${s.spoken}`).join('; ')}${nextSays}`;
   const title = [STRIP_TITLE, ...segs.map((s) => s.note), next ? `다음 턴: ${label(next.account)}${next.asOpus ? ' · Opus' : ''} — ${next.reason}` : ''].filter(Boolean).join('\n');
-  const button = (st: Exclude<StripStage, 'row'>) => (
-    <button
-      type="button"
-      className="usage-strip"
-      data-testid="usage-strip"
-      aria-label={aria}
-      aria-haspopup="dialog"
-      aria-expanded={open}
-      data-sheet-return=""
-      title={title}
-      onClick={onToggle}
-    >
-      <span className="usage-strip-head" aria-hidden="true">남음</span>
-      {segs.map((s) => <Segment key={s.seat} s={s} stage={st} />)}
-    </button>
-  );
-  const row = inRow && <div ref={rowRef} className="usage-strip-row" data-stage="row">{button('mid')}</div>;
-  const placedRow = row && rowSlot ? createPortal(row, rowSlot) : row;
-  if (phone) return placedRow;
-
+  const showLeft = percentValue(sum.value);
   return (
-    <>
-      {!inRow && <div ref={wrapRef} className="usage-strip-wrap" data-stage={stage}>{button(stage as Exclude<StripStage, 'row'>)}</div>}
-      {/* Off-screen copies of the three stages (position: fixed: not a flex item of the bar, never in its gaps). */}
-      {canMeasure && (
-        <div ref={measureRef} className="usage-strip-measure" aria-hidden="true">
-          {STAGES.map((st) => <div key={st} className="usage-strip"><span className="usage-strip-head">남음</span>{segs.map((s) => <Segment key={s.seat} s={s} stage={st} measure />)}</div>)}
+    <div ref={wrapRef} className="usage-strip-wrap" data-summary="">
+      <button
+        type="button"
+        className={`usage-strip ${sum.kind}${sum.stale && sum.kind !== 'stale' ? ' stale' : ''}`}
+        data-testid="usage-strip"
+        aria-label={aria}
+        aria-haspopup="true"
+        aria-expanded={pop}
+        aria-controls="usage-strip-pop"
+        data-sheet-return=""
+        title={title}
+        onClick={() => setPop((v) => !v)}
+      >
+        {showLeft && <span className="usage-strip-head" aria-hidden="true">남음</span>}
+        <span className="usage-summary" data-testid="usage-summary">
+          <span className="usage-seg-who">{sum.label}</span>
+          <span className="usage-seg-bar" aria-hidden="true"><i style={{ width: `${sum.bar ?? 0}%` }} /></span>
+          <span className="usage-seg-num">
+            {sum.icon === 'refresh' && <RefreshIcon className="usage-seg-icon" />}
+            {sum.icon === 'clock' && <ClockIcon className="usage-seg-icon" />}
+            {sum.value}
+          </span>
+        </span>
+        <span className="usage-strip-caret" aria-hidden="true">{pop ? '▴' : '▾'}</span>
+      </button>
+      {pop && (
+        <div id="usage-strip-pop" className="usage-strip-pop" role="group" aria-label="계정별 남은 사용량" data-testid="usage-strip-pop">
+          {segs.map((s) => <Segment key={s.seat} s={s} stage="full" />)}
+          <button type="button" className="text-btn usage-strip-more" onClick={onToggle}>자세히</button>
         </div>
       )}
-      {placedRow}
-    </>
+    </div>
   );
 }

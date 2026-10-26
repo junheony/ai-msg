@@ -7,7 +7,7 @@ import readline from 'node:readline';
 import { pathToFileURL } from 'node:url';
 
 export const TOOL_NAME = 'permission';
-export const RELAY_FAILED_MESSAGE = '권한 요청을 deck 에 전달하지 못해 거부했습니다';
+export const RELAY_FAILED_MESSAGE = '권한 요청을 Crew 에 전달하지 못해 거부했습니다';
 
 export function postBridge(sock: string, token: string, urlPath: string, body: unknown, signal?: AbortSignal): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {

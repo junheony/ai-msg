@@ -11,5 +11,5 @@ export function elsewhereNotice(o: { engine: 'claude' | 'codex' | 'grok' | 'gemi
   const where = WHERE[o.engine];
   const mins = Math.floor(Math.max(0, o.ageMs) / 60_000);
   const when = mins < 1 ? '방금' : `${mins}분 전에`;
-  return `${name}${what}의 기록 파일이 ${when} deck 밖(${where})에서 바뀌었어요. 그쪽에서 아직 열려 있다면 한 곳에서만 이어 쓰세요 — 두 곳에서 동시에 쓰면 서로의 새 메시지를 못 본 채 대화가 두 갈래로 나뉩니다.`;
+  return `${name}${what}의 기록 파일이 ${when} Crew 밖(${where})에서 바뀌었어요. 그쪽에서 아직 열려 있다면 한 곳에서만 이어 쓰세요 — 두 곳에서 동시에 쓰면 서로의 새 메시지를 못 본 채 대화가 두 갈래로 나뉩니다.`;
 }

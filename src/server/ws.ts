@@ -11,6 +11,8 @@ import { CLIENT_REF_MAX, ClientMessageSchema, FEATURES, accountInfos, type Clien
 import type { SessionEntry } from '../shared/session-types';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
+import { clientFileError } from './clientError';
+import { withFileRetry } from './fsRetry';
 import type { AcceptedRefs } from './sessions/AcceptedRefs';
 import { DirError, resolveUnderRoots } from './dirs';
 import { HANDOFF_PROMPT, handoffTitle } from '../shared/handoff';
@@ -54,7 +56,7 @@ export const FAST_WAIT_BEHIND = '백그라운드 작업(↯ 설정 바뀜)';
 export const FAST_STEER_REJECTED = '↯ 빠르게 설정이 바뀌어 이 턴이 끝난 뒤 새로 보냅니다';
 /** Whether a send asks for ⚡ 빠르게 (never on a handoff — TurnRunner.fastTurn). */
 const fastSend = (m: { fast?: boolean; handoff?: boolean }) => m.fast === true && !m.handoff;
-export const recycleNotice = (n: number) => `deck 밖(Claude Desktop 등)에서 이어진 대화를 이어받느라, 기다리던 백그라운드 작업 ${n}개가 중단됐습니다`;
+export const recycleNotice = (n: number) => `Crew 밖(Claude Desktop 등)에서 이어진 대화를 이어받느라, 기다리던 백그라운드 작업 ${n}개가 중단됐습니다`;
 
 /** How often, while a browser is connected, deck looks for outside holders (one `ps`), outside writes to the open sessions and newer mtimes of the listed transcripts (a stat each). */
 export const OUTSIDE_POLL_MS = 15_000;
@@ -1231,7 +1233,12 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     const best = st ? await deps.index.bestCopy(sessionId, st.projectDir, st.account).catch(() => null) : null;
     // Stamped before the read: an entry written while reading is looked at again by the outside poll.
     const at = Date.now();
-    const messages = await readTranscript(best?.file ?? (st ? `${st.projectDir}/${sessionId}.jsonl` : found.file)).catch(() => readTranscript(found.file));
+    // A move renames the transcript for a moment (ENOENT). Retry that; a permission error is not transient.
+    const primary = best?.file ?? (st ? `${st.projectDir}/${sessionId}.jsonl` : found.file);
+    const messages = await withFileRetry(() => readTranscript(primary).catch((err: unknown) => {
+      if (primary === found.file) throw err;
+      return readTranscript(found.file);
+    }));
     return { found, st, at, messages };
   };
   const sendClaudeHistory = (ws: WebSocket, sessionId: string, { found, st, at, messages }: ClaudeHistory, clean?: Map<string, number>) => {
@@ -1385,8 +1392,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           // deck's copy and Desktop's (home profile) went separate ways: say so on open, not only after a turn.
           void deps.runner.forkStatus(sessionId).then((f) => { if (f?.diverged) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: found.cwd, message: FORK_NOTICE }); }, () => undefined);
         })
-        .catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId, message: `기록을 읽지 못했습니다: ${errMsg(err)}` }));
-    })().catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId, message: `세션을 열지 못했습니다: ${errMsg(err)}` }));
+        .catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId, message: clientFileError('기록을 읽지 못했습니다', err) }));
+    })().catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId, message: clientFileError('세션을 열지 못했습니다', err) }));
   };
 
   wss.on('connection', (ws: WebSocket) => {
@@ -1495,7 +1502,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         case 'refresh_index':
           void rescanIndex()
             .then(() => broadcast(indexMsg()))
-            .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `세션 목록을 읽지 못했습니다: ${errMsg(err)}` }));
+            .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: clientFileError('세션 목록을 읽지 못했습니다', err) }));
           break;
         case 'set_account_pin': {
           const badPin = msg.pin === null ? null : pinRefusal(msg.pin);
@@ -1580,7 +1587,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const st = deps.store.get(id);
           const entry = deps.index.lookup(id);
           const imported = st || entry ? null : deps.index.importOf(id);
-          if (imported?.source === 'grokbot') { send(ws, { type: 'error', turnId: null, sessionId: id, message: 'Grok Bot 대화는 복제할 수 없어요 — deck Grok 새 세션으로 이어가기를 쓰세요' }); break; }
+          if (imported?.source === 'grokbot') { send(ws, { type: 'error', turnId: null, sessionId: id, message: 'Grok Bot 대화는 복제할 수 없어요 — Crew Grok 새 세션으로 이어가기를 쓰세요' }); break; }
           const cwd = st?.cwd ?? entry?.cwd ?? imported?.cwd;
           if (!cwd) { send(ws, { type: 'error', turnId: null, sessionId: id, message: `복제할 수 없는 세션입니다: ${id}` }); break; }
           const old = deps.meta?.title?.(id) ?? entry?.title ?? deps.index.codexOwned(deps.store.codexEntries()).find((e) => e.sessionId === id)?.title ?? imported?.title ?? id.slice(0, 8);
