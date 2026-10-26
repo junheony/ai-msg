@@ -1,4 +1,4 @@
-import { INSTALL_COMMAND, GLOBAL_INSTALL_COMMAND } from './install';
+import { INSTALL_COMMAND, GLOBAL_INSTALL_COMMAND, SERVICE_INSTALL_COMMAND } from './install';
 import { PRICING } from './pricing';
 import type { SiteContent } from './types';
 
@@ -10,7 +10,7 @@ export const en: SiteContent = {
     description: 'Claude Code, Codex, Gemini and Grok side by side in one inbox. When one hits its limit, the work carries on — from your desk or your phone. Free and open source.',
     ogAlt: 'The AI-MSG home screen: sessions from four coding agents, what needs you, and usage left on every account',
   },
-  nav: { features: 'Features', pricing: 'Pricing', faq: 'FAQ', security: 'Security', install: 'Install', github: 'GitHub', skip: 'Skip to content' },
+  nav: { label: 'Sections', features: 'Features', pricing: 'Pricing', faq: 'FAQ', security: 'Security', install: 'Install', skip: 'Skip to content' },
   hero: {
     eyebrow: 'The messenger for coding agents',
     headline: 'AI-MSG — one inbox for all your coding agents.',
@@ -42,15 +42,14 @@ export const en: SiteContent = {
       { title: 'Auto routing', body: 'Auto picks the engine and model from your first message and the limits you have left, and shows why on the turn.', claim: 'autoRouting' },
       { title: 'Usage left, every account', body: 'A usage bar shows what is left and when it resets for each account and vendor, so you know where the next turn goes.', claim: 'usageBars' },
       { title: 'Split view', body: 'Two to four sessions side by side, each its own conversation, with saved layouts.', claim: 'splitView' },
-      { title: 'Approvals you can trust', body: 'New sessions ask before tool calls. Approve once or for the session, answer questions, and switch permission modes per session.', claim: 'approvals' },
-      { title: 'On your phone, too', body: 'The same UI works on a phone or tablet over your own network or Tailscale, so you can pick up a running session from the couch.', claim: 'phoneWeb' },
+      { title: 'Approvals, engine by engine', body: 'Claude Code and Grok ask before tool calls that need permission: approve once or for the session, or answer their questions. Codex runs with no approval cards, inside a sandbox: the project folder with network access, or read-only. Gemini is read-only, or edits files in the project folder with shell commands refused.', claim: 'approvals' },
+      { title: 'On your phone, too', body: 'The same UI works on a phone or tablet over Tailscale, so you can pick up a running session from the couch.', claim: 'phoneWeb' },
+      { title: 'Push notifications', body: 'Web Push to your browsers and phones (up to 20) when a turn finishes or needs you. Needs HTTPS, for example with tailscale serve.', claim: 'pushNotifications' },
+      { title: 'Never miss a waiting agent', body: 'An unanswered approval is pushed again after 10 minutes, and a failed turn after 10, 30 and 60 minutes.', claim: 'reminders' },
       { title: 'Handoff to a new session', body: 'When a conversation gets long, continue in a new session with a handoff note written from the old one.', claim: 'handoffNote' },
       { title: 'Commander', body: 'Optional: give a session a goal and a done condition, and it keeps going turn by turn — stopping for you on approvals and at a turn cap.', claim: 'commander' },
-      { title: 'As many accounts as you own', body: 'Use as many accounts per vendor as you own, with combined usage across all of them.', claim: 'proAccounts', pro: true },
-      { title: 'Phone relay, no setup', body: 'Reach your Mac from your phone anywhere through an end-to-end encrypted relay — no tailnet needed.', claim: 'proRelay', pro: true },
-      { title: 'Push to your devices', body: 'Web Push on up to three devices when a turn finishes or needs you.', claim: 'proPush', pro: true },
-      { title: 'Never miss a waiting agent', body: 'Reminders for unanswered approvals and failed turns, sent to your phone.', claim: 'proReminders', pro: true },
-      { title: 'One-tap vendor handoff', body: 'Move a session to another vendor in one tap, with a summary and the git state carried over.', claim: 'proOneTapHandoff', pro: true },
+      { title: 'Your phone, anywhere', body: 'Follow your sessions and approve from your phone wherever you are, through an end-to-end encrypted relay — no Tailscale or HTTPS setup.', claim: 'proRelay', pro: true },
+      { title: 'Push through the relay', body: 'Notifications and reminders will reach your phone through the relay, with no tailnet or HTTPS of your own.', claim: 'proRelayPush', pro: true },
     ],
   },
   pricing: {
@@ -61,18 +60,17 @@ export const en: SiteContent = {
       tagline: 'Free and open source (Apache-2.0)',
       price: '$0',
       period: 'forever',
-      features: ['All four vendors in one inbox', 'Carry-on at the limit and auto routing', 'Usage bars, split view, approvals', 'Your phone over your own network or Tailscale'],
+      features: ['All four vendors in one inbox', 'Carry-on at the limit and auto routing', 'Usage bars, split view, approvals', 'Your phone over Tailscale, push and reminders'],
     },
     pro: {
       name: 'Pro',
       tagline: 'For when you step away from your desk',
       price: `$${P.monthlyUsd}`,
       period: 'per month',
-      features: ['Everything in Community', 'As many accounts per vendor as you own', 'Encrypted phone relay and push on 3 devices', 'Reminders and one-tap vendor handoff'],
+      features: ['Everything in Community', 'Your phone from anywhere, through an encrypted relay', 'Approve without setting up Tailscale or HTTPS', 'Push and reminders through the relay'],
     },
     freeCta: 'Install free',
     comingSoon: 'Coming soon',
-    monthly: `$${P.monthlyUsd} / month`,
     yearly: `or $${P.yearlyUsd} / year`,
     founding: `Founding customers: $${P.foundingYearlyUsd} / year`,
     trial: `${P.trialDays}-day free trial${P.cardRequiredForTrial ? '' : ', no card required'}`,
@@ -83,12 +81,12 @@ export const en: SiteContent = {
   faq: {
     heading: 'Questions',
     items: [
-      { q: 'Is this allowed by the vendors’ terms?', a: 'AI-MSG runs the official, unmodified CLIs with your own logins, the way you would in a terminal. It never touches their tokens. Moving a session between accounts of the same vendor is off by default, and turning it on asks you to confirm the accounts are your own.' },
-      { q: 'Does my code or login leave my machine?', a: 'No. The server runs on your computer and listens only on 127.0.0.1 and your Tailscale address. Your code goes only where your CLIs already send it. The Pro relay, when it ships, carries only encrypted bytes.' },
+      { q: 'Is this allowed by the vendors’ terms?', a: 'AI-MSG runs the official, unmodified CLIs with your own logins, the way you would in a terminal, and never touches their tokens. Moving a session between accounts of the same vendor is off by default, and turning it on asks you to confirm the accounts are your own. Whether your use, including the use of more than one account, complies with each service’s terms is your responsibility.' },
+      { q: 'Where do my code and conversations go?', a: 'To the vendor of the CLI you are using, the same as in a terminal — never to us. AI-MSG has no server of its own in between: it runs on your computer and listens only on 127.0.0.1 and your Tailscale address. If you leave carry-on at the limit turned on, a turn that carries on goes to the other vendor’s CLI too. The Pro relay, when it ships, will carry only encrypted bytes.' },
       { q: 'Do I need API keys?', a: 'No. AI-MSG reuses the subscriptions you already pay for, through the CLIs you are logged in to.' },
       { q: 'What happens when I hit a limit?', a: 'The usage bar shows it coming. When an agent runs out, the turn can continue on another AI you use, and pick up again when the limit resets. You choose which engines Auto may use.' },
       { q: 'Which platforms?', a: 'macOS is the supported platform. Linux runs the server and the Claude and Codex engines but is less tested. Windows is not supported yet. You need Node.js 24 or newer.' },
-      { q: 'What does Pro add?', a: 'Pro is for working away from your desk: an encrypted relay to your phone, push on up to three devices, reminders for waiting agents, one-tap handoff between vendors, and as many accounts per vendor as you own. It is coming soon; Community stays free.' },
+      { q: 'What does Pro add?', a: 'Pro is for working away from your desk: an end-to-end encrypted relay, so your phone reaches your sessions from anywhere without Tailscale or HTTPS setup, with push and reminders through it. It is coming soon; Community stays free and keeps every feature it has today.' },
       { q: 'How do the trial and refunds work?', a: `Pro will start with a ${P.trialDays}-day free trial${P.cardRequiredForTrial ? '' : ' without a card'}. Payments and refunds are handled by our merchant of record.` },
       { q: 'Is it open source?', a: 'Yes. Community is open source under the Apache-2.0 license.' },
     ],
@@ -99,11 +97,11 @@ export const en: SiteContent = {
     points: [
       { title: 'Local first', body: 'The server runs on your computer and binds to 127.0.0.1 and your Tailscale address — never 0.0.0.0. Credentials stay on your machine, and AI-MSG puts no server of its own between you and your agents.', claim: 'localFirst' },
       { title: 'Official logins only', body: 'Each CLI logs in its own way. AI-MSG never reads, stores or forwards their tokens or keychain entries.', claim: 'noCredentialReads' },
-      { title: 'You approve tool calls', body: 'New sessions ask before each tool call that needs a decision. Every decision is written to an audit log.', claim: 'auditLog' },
+      { title: 'Approvals, engine by engine', body: 'Claude Code and Grok ask before each tool call that needs permission. Codex has no approval cards: it runs in a sandbox — the project folder with network access by default, or read-only. Gemini is read-only, or edits in the project folder with shell commands refused. A turn that carries on to another engine never gets more than the session allowed. Every card you answer is written to an audit log.', claim: 'engineApprovals' },
       { title: 'Rotation off by default', body: 'Moving between accounts of the same vendor is off until you turn it on and confirm the accounts are yours.', claim: 'rotationOffByDefault' },
       { title: 'Clean public repository', body: 'Tests check the published source for keys and personal paths.', claim: 'publicHygiene' },
-      { title: 'Relay sees ciphertext only (Pro, coming soon)', body: 'The relay will pass encrypted bytes between your Mac and the phone you paired; it cannot read your sessions.', claim: 'relayCiphertext' },
-      { title: 'The Mac keeps the keys (Pro, coming soon)', body: 'Over the relay, new sessions use your Mac’s defaults. Raising a session’s permissions, settings that widen permissions, safety switches, consent to send code to another vendor and global instructions stay on the Mac.', claim: 'relayMacOnly' },
+      { title: 'Relay sees ciphertext only', body: 'The relay will pass encrypted bytes between your Mac and the phone you paired; it will not be able to read your sessions.', claim: 'relayCiphertext' },
+      { title: 'The Mac keeps the keys', body: 'Over the relay, new sessions will use your Mac’s defaults. Raising a session’s permissions, settings that widen permissions, safety switches, consent to send code to another vendor and global instructions will stay on the Mac.', claim: 'relayMacOnly' },
     ],
     more: 'Read SECURITY.md',
   },
@@ -112,7 +110,8 @@ export const en: SiteContent = {
     steps: [
       { title: 'Run it', body: 'You need Node.js 24 or newer and at least one of the Claude Code, Codex, Gemini or Grok CLIs.', command: INSTALL_COMMAND },
       { title: 'Open the address it prints', body: 'The terminal shows a login address. The first-run setup checks which CLIs are installed and logged in.' },
-      { title: 'Keep it running', body: 'Install it globally to run it as a service.', command: GLOBAL_INSTALL_COMMAND },
+      { title: 'Install it globally', body: 'To keep it running, install the package globally first (a service cannot run from the npx cache).', command: GLOBAL_INSTALL_COMMAND },
+      { title: 'Run it as a service', body: 'Sets up a launchd service on macOS or a systemd user service on Linux, so it starts on its own.', command: SERVICE_INSTALL_COMMAND },
     ],
     docsLink: 'Full install guide',
   },

@@ -1,6 +1,7 @@
 import type { Locale } from '../src/shared/locale';
 import type { Checkout } from './content/pricing';
 import type { Plan, SiteContent } from './content/types';
+import { CLAIMS } from './content/claims';
 import { REPO_URL } from './content/install';
 
 export type ImageSize = { width: number; height: number };
@@ -64,7 +65,7 @@ export function renderPage(c: SiteContent, ctx: RenderContext): string {
 
   const nav = `<header class="top"><div class="wrap bar">
 <a class="brand" href="#hero">${img('assets/icon.png', '', ' class="logo"')}<span>AI-MSG</span></a>
-<nav aria-label="${e(c.nav.features)}"><a href="#features">${e(c.nav.features)}</a><a href="#pricing">${e(c.nav.pricing)}</a><a href="#security">${e(c.nav.security)}</a><a href="#faq">${e(c.nav.faq)}</a><a href="#install">${e(c.nav.install)}</a></nav>
+<nav aria-label="${e(c.nav.label)}"><a href="#features">${e(c.nav.features)}</a><a href="#pricing">${e(c.nav.pricing)}</a><a href="#security">${e(c.nav.security)}</a><a href="#faq">${e(c.nav.faq)}</a><a href="#install">${e(c.nav.install)}</a></nav>
 <a class="lang" href="${locale === 'en' ? 'ko/' : '../'}" hreflang="${other}" lang="${other}">${e(c.langSwitch)}</a>
 </div></header>`;
 
@@ -87,13 +88,14 @@ ${demoBody}
 <p class="caption">${e(c.demo.caption)}</p>
 </div></section>`;
 
-  const feature = (f: SiteContent['features']['items'][number]) => `<li><h3>${e(f.title)}</h3><p>${e(f.body)}</p></li>`;
+  const soon = ` <span class="badge soon">${e(c.features.proBadge)}</span>`;
+  const feature = (f: SiteContent['features']['items'][number]) => `<li data-claim="${e(f.claim)}"><h3>${e(f.title)}</h3><p>${e(f.body)}</p></li>`;
   const free = c.features.items.filter((f) => !f.pro), pro = c.features.items.filter((f) => f.pro);
   const features = `<section id="features"><div class="wrap">
 <h2>${e(c.features.heading)}</h2>
 <p class="lead">${e(c.features.sub)}</p>
 <ul class="grid">${free.map(feature).join('\n')}</ul>
-<h3 class="pro-head">${e(c.features.proHeading)} <span class="badge soon">${e(c.features.proBadge)}</span></h3>
+<h3 class="pro-head">${e(c.features.proHeading)}${soon}</h3>
 <ul class="grid pro">${pro.map(feature).join('\n')}</ul>
 </div></section>`;
 
@@ -104,17 +106,19 @@ ${demoBody}
   const buy = (plan: 'pro-monthly' | 'pro-yearly', url: string | null, label: string) => url
     ? `<a class="btn buy" data-plan="${plan}" href="${e(url)}">${e(label)}</a>`
     : `<a class="btn buy" data-plan="${plan}" href="#pricing" aria-disabled="true">${e(label)}</a>`;
-  const anyMissing = !ctx.checkout.proMonthly || !ctx.checkout.proYearly;
+  // On sale only with both links (the build refuses one alone): then both buttons work and nothing says "coming soon".
+  const onSale = !!ctx.checkout.proMonthly && !!ctx.checkout.proYearly;
+  const link = (u: string | null) => (onSale ? u : null);
   const pricing = `<section id="pricing"><div class="wrap">
 <h2>${e(p.heading)}</h2>
 <p class="lead">${e(p.sub)}</p>
 <div class="plans">
 <article class="plan">${planHead(p.free)}${planList(p.free)}<a class="btn primary" href="#install">${e(p.freeCta)}</a></article>
-<article class="plan pro">${planHead(p.pro, ` <span class="badge soon">${e(p.comingSoon)}</span>`)}
+<article class="plan pro">${planHead(p.pro, onSale ? '' : ` <span class="badge soon">${e(p.comingSoon)}</span>`)}
 <p class="terms">${e(p.yearly)} · ${e(p.founding)}<br>${e(p.trial)}</p>
 ${planList(p.pro)}
-<div class="buys">${buy('pro-monthly', ctx.checkout.proMonthly, p.buyMonthly)}${buy('pro-yearly', ctx.checkout.proYearly, p.buyYearly)}</div>
-${anyMissing ? `<p class="unavailable">${e(p.unavailable)}</p>` : ''}
+<div class="buys">${buy('pro-monthly', link(ctx.checkout.proMonthly), p.buyMonthly)}${buy('pro-yearly', link(ctx.checkout.proYearly), p.buyYearly)}</div>
+${onSale ? '' : `<p class="unavailable">${e(p.unavailable)}</p>`}
 </article>
 </div>
 </div></section>`;
@@ -122,7 +126,7 @@ ${anyMissing ? `<p class="unavailable">${e(p.unavailable)}</p>` : ''}
   const security = `<section id="security"><div class="wrap">
 <h2>${e(c.security.heading)}</h2>
 <p class="lead">${e(c.security.sub)}</p>
-<ul class="grid">${c.security.points.map((s) => `<li data-claim="${e(s.claim)}"><h3>${e(s.title)}</h3><p>${e(s.body)}</p></li>`).join('\n')}</ul>
+<ul class="grid">${c.security.points.map((s) => `<li data-claim="${e(s.claim)}"><h3>${e(s.title)}${CLAIMS[s.claim].owner === 'plan4' ? soon : ''}</h3><p>${e(s.body)}</p></li>`).join('\n')}</ul>
 <p><a href="${REPO_URL}/blob/main/SECURITY.md">${e(c.security.more)}</a></p>
 </div></section>`;
 
@@ -160,6 +164,7 @@ ${faq}
 ${install}
 </main>
 ${footer}
+<p id="copy-status" class="sr-only" role="status" aria-live="polite"></p>
 </body>
 </html>
 `;

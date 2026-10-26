@@ -3,9 +3,12 @@ document.addEventListener('click', (ev) => {
   const btn = ev.target instanceof Element ? ev.target.closest('button[data-copy]') : null;
   if (!btn || !navigator.clipboard) return;
   const label = btn.textContent;
+  const status = document.getElementById('copy-status');
   navigator.clipboard.writeText(btn.getAttribute('data-copy') || '').then(() => {
     btn.textContent = btn.getAttribute('data-copied') || label;
-    setTimeout(() => { btn.textContent = label; }, 1600);
+    // Screen readers hear the result from the live region (the button's own text change is not announced reliably).
+    if (status) status.textContent = btn.getAttribute('data-copied') || '';
+    setTimeout(() => { btn.textContent = label; if (status) status.textContent = ''; }, 1600);
   }, () => {});
 });
 // A Pro button without a checkout link goes nowhere.

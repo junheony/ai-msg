@@ -1,4 +1,4 @@
-import { INSTALL_COMMAND, GLOBAL_INSTALL_COMMAND } from './install';
+import { INSTALL_COMMAND, GLOBAL_INSTALL_COMMAND, SERVICE_INSTALL_COMMAND } from './install';
 import { PRICING } from './pricing';
 import type { SiteContent } from './types';
 
@@ -10,7 +10,7 @@ export const ko: SiteContent = {
     description: 'Claude Code·Codex·Gemini·Grok 을 한 받은편지함에 나란히. 한 곳이 한도에 걸려도 작업은 이어집니다 — 책상에서도, 폰에서도. 무료 오픈소스.',
     ogAlt: 'AI-MSG 홈 화면: 네 가지 코딩 에이전트의 세션, 확인이 필요한 일, 계정마다 남은 사용량',
   },
-  nav: { features: '기능', pricing: '가격', faq: '자주 묻는 질문', security: '보안', install: '설치', github: 'GitHub', skip: '본문으로 건너뛰기' },
+  nav: { label: '섹션', features: '기능', pricing: '가격', faq: '자주 묻는 질문', security: '보안', install: '설치', skip: '본문으로 건너뛰기' },
   hero: {
     eyebrow: '코딩 에이전트를 위한 메신저',
     headline: 'AI-MSG — 모든 코딩 에이전트를 한 받은편지함에서.',
@@ -42,15 +42,14 @@ export const ko: SiteContent = {
       { title: '자동 분배', body: '첫 메시지와 남은 한도를 보고 엔진과 모델을 고르고, 왜 골랐는지 턴에 보여 줍니다.', claim: 'autoRouting' },
       { title: '계정마다 남은 사용량', body: '사용량 띠가 계정·벤더마다 남은 양과 리셋 시각을 보여 줘서, 다음 턴이 어디로 갈지 알 수 있어요.', claim: 'usageBars' },
       { title: '분할 보기', body: '세션 2~4개를 나란히, 각자 따로 대화. 배치를 저장해 둘 수 있어요.', claim: 'splitView' },
-      { title: '믿을 수 있는 승인', body: '새 세션은 도구를 쓰기 전에 묻습니다. 한 번만·이 세션 동안 허용, 질문에 답하기, 세션별 권한 모드.', claim: 'approvals' },
-      { title: '폰에서도', body: '내 네트워크나 Tailscale 로 폰·태블릿에서 같은 화면을 열어, 돌고 있는 세션을 이어 볼 수 있어요.', claim: 'phoneWeb' },
+      { title: '엔진마다 다른 승인', body: 'Claude Code·Grok 은 권한이 필요한 도구 호출마다 묻습니다. 한 번만·이 세션 동안 허용하거나 질문에 답하면 돼요. Codex 는 승인 카드 없이 샌드박스 안에서 돕니다: 작업 폴더 쓰기와 네트워크, 또는 읽기 전용. Gemini 는 읽기 전용이거나, 작업 폴더의 파일 편집만 하고 셸 명령은 거부됩니다.', claim: 'approvals' },
+      { title: '폰에서도', body: 'Tailscale 로 폰·태블릿에서 같은 화면을 열어, 돌고 있는 세션을 이어 볼 수 있어요.', claim: 'phoneWeb' },
+      { title: '푸시 알림', body: '턴이 끝나거나 내가 필요할 때 브라우저와 폰(최대 20개)으로 웹 푸시를 보냅니다. HTTPS 가 필요해요(예: tailscale serve).', claim: 'pushNotifications' },
+      { title: '기다리는 에이전트를 놓치지 않게', body: '답하지 않은 승인은 10분 뒤에, 실패한 턴은 10분·30분·60분 뒤에 다시 알려 줍니다.', claim: 'reminders' },
       { title: '새 세션으로 이어가기', body: '대화가 길어지면 옛 세션이 쓴 인계 메모를 들고 새 세션에서 이어 갑니다.', claim: 'handoffNote' },
       { title: '총사령탑', body: '선택 기능: 세션에 목표와 완료 조건을 주면 턴마다 다음 지시를 정해 이어 가고, 승인이 필요하거나 턴 상한에 닿으면 멈춥니다.', claim: 'commander' },
-      { title: '가진 계정 전부', body: '벤더마다 가진 계정을 전부 쓰고, 사용량을 한데 모아 봅니다.', claim: 'proAccounts', pro: true },
-      { title: '설정 없는 폰 릴레이', body: '종단간 암호화 릴레이로 어디서든 폰에서 Mac 에 닿습니다. tailnet 이 필요 없어요.', claim: 'proRelay', pro: true },
-      { title: '기기로 푸시', body: '턴이 끝나거나 내가 필요할 때 기기 3대까지 웹 푸시.', claim: 'proPush', pro: true },
-      { title: '기다리는 에이전트를 놓치지 않게', body: '답하지 않은 승인과 실패한 턴을 폰으로 다시 알려 줍니다.', claim: 'proReminders', pro: true },
-      { title: '한 번 눌러 벤더 간 인계', body: '요약과 git 상태를 들고 세션을 다른 벤더로 한 번에 옮깁니다.', claim: 'proOneTapHandoff', pro: true },
+      { title: '어디서든 폰으로', body: '종단간 암호화 릴레이로, Tailscale·HTTPS 설정 없이 어디서든 폰에서 세션을 이어 보고 승인할 수 있게 될 예정입니다.', claim: 'proRelay', pro: true },
+      { title: '릴레이로 오는 푸시', body: '알림과 다시 알림도 릴레이를 거쳐, 내 tailnet·HTTPS 없이 폰에 닿을 예정입니다.', claim: 'proRelayPush', pro: true },
     ],
   },
   pricing: {
@@ -61,18 +60,17 @@ export const ko: SiteContent = {
       tagline: '무료 오픈소스 (Apache-2.0)',
       price: '$0',
       period: '계속 무료',
-      features: ['벤더 넷을 한 받은편지함에', '한도에서 이어가기·자동 분배', '사용량 띠·분할 보기·승인', '내 네트워크·Tailscale 로 폰에서'],
+      features: ['벤더 넷을 한 받은편지함에', '한도에서 이어가기·자동 분배', '사용량 띠·분할 보기·승인', 'Tailscale 로 폰에서, 푸시·다시 알림'],
     },
     pro: {
       name: 'Pro',
       tagline: '책상을 떠나 있을 때를 위해',
       price: `$${P.monthlyUsd}`,
       period: '월',
-      features: ['Community 의 모든 기능', '벤더마다 가진 계정 전부', '암호화 폰 릴레이·기기 3대 푸시', '다시 알림·한 번 눌러 벤더 간 인계'],
+      features: ['Community 의 모든 기능', '암호화 릴레이로 어디서든 폰에서', 'Tailscale·HTTPS 설정 없이 승인', '릴레이로 오는 푸시·다시 알림'],
     },
     freeCta: '무료로 설치',
     comingSoon: '출시 예정',
-    monthly: `월 $${P.monthlyUsd}`,
     yearly: `또는 연 $${P.yearlyUsd}`,
     founding: `창립 고객: 연 $${P.foundingYearlyUsd}`,
     trial: `${P.trialDays}일 무료 체험${P.cardRequiredForTrial ? '' : ', 카드 없이'}`,
@@ -83,12 +81,12 @@ export const ko: SiteContent = {
   faq: {
     heading: '자주 묻는 질문',
     items: [
-      { q: '벤더 약관상 괜찮나요?', a: 'AI-MSG 는 손대지 않은 공식 CLI 를 내 로그인으로, 터미널에서 쓰듯 실행합니다. CLI 의 토큰은 건드리지 않아요. 같은 벤더 계정끼리 옮겨 가는 기능은 기본으로 꺼져 있고, 켤 때 본인 계정인지 확인합니다.' },
-      { q: '내 코드나 로그인이 기기 밖으로 나가나요?', a: '아니요. 서버는 내 컴퓨터에서 돌고 127.0.0.1 과 내 Tailscale 주소에서만 받습니다. 코드는 CLI 가 원래 보내던 곳으로만 갑니다. Pro 릴레이가 나오면 그 릴레이는 암호문만 나릅니다.' },
+      { q: '벤더 약관상 괜찮나요?', a: 'AI-MSG 는 손대지 않은 공식 CLI 를 내 로그인으로, 터미널에서 쓰듯 실행하고 CLI 의 토큰은 건드리지 않습니다. 같은 벤더 계정끼리 옮겨 가는 기능은 기본으로 꺼져 있고, 켤 때 본인 계정인지 확인합니다. 여러 계정을 쓰는 것을 포함해, 자신의 사용이 각 서비스의 약관에 맞는지는 사용자 책임입니다.' },
+      { q: '내 코드와 대화는 어디로 가나요?', a: '터미널에서 쓸 때처럼 사용 중인 CLI 의 벤더에게만 가고, 우리(AI-MSG)에게는 오지 않습니다. 중간에 AI-MSG 의 서버는 없어요: 서버는 내 컴퓨터에서 돌고 127.0.0.1 과 내 Tailscale 주소에서만 받습니다. 한도 이어가기를 켜 두면 이어 가는 턴은 다른 벤더의 CLI 로도 갑니다. Pro 릴레이가 나오면 그 릴레이는 암호문만 나를 예정입니다.' },
       { q: 'API 키가 필요한가요?', a: '아니요. 로그인해 둔 CLI 를 통해 이미 내고 있는 구독을 그대로 씁니다.' },
       { q: '한도에 걸리면 어떻게 되나요?', a: '사용량 띠가 미리 보여 줍니다. 에이전트가 한도에 걸리면 쓰고 있는 다른 AI 로 턴을 이어 가고, 한도가 풀리면 다시 이어 갈 수 있어요. 자동이 쓸 엔진은 직접 고릅니다.' },
       { q: '어떤 운영체제에서 되나요?', a: 'macOS 를 지원합니다. Linux 에서도 서버와 Claude·Codex 엔진이 돌지만 덜 검증됐어요. Windows 는 아직 지원하지 않습니다. Node.js 24 이상이 필요합니다.' },
-      { q: 'Pro 는 무엇이 더 있나요?', a: '책상을 떠나 있을 때를 위한 기능입니다: 폰으로 가는 암호화 릴레이, 기기 3대까지 푸시, 기다리는 에이전트 다시 알림, 한 번 눌러 벤더 간 인계, 벤더마다 가진 계정 전부. 곧 나오고, Community 는 계속 무료입니다.' },
+      { q: 'Pro 는 무엇이 더 있나요?', a: '책상을 떠나 있을 때를 위한 기능입니다: 종단간 암호화 릴레이로 Tailscale·HTTPS 설정 없이 어디서든 폰에서 세션에 닿고, 푸시와 다시 알림도 릴레이로 받게 될 예정입니다. Community 는 지금 있는 기능 그대로 계속 무료입니다.' },
       { q: '체험과 환불은요?', a: `Pro 는 ${P.trialDays}일 무료 체험${P.cardRequiredForTrial ? '' : '(카드 없이)'}으로 시작합니다. 결제와 환불은 판매 대행사(merchant of record)가 처리합니다.` },
       { q: '오픈소스인가요?', a: '네. Community 는 Apache-2.0 라이선스의 오픈소스입니다.' },
     ],
@@ -99,11 +97,11 @@ export const ko: SiteContent = {
     points: [
       { title: '로컬 우선', body: '서버는 내 컴퓨터에서 돌고 127.0.0.1 과 내 Tailscale 주소에만 묶입니다(0.0.0.0 은 쓰지 않음). 자격증명은 기기에 남고, 나와 에이전트 사이에 AI-MSG 의 서버를 두지 않습니다.', claim: 'localFirst' },
       { title: '공식 로그인만', body: '로그인은 각 CLI 가 직접 합니다. AI-MSG 는 그 토큰이나 키체인 항목을 읽거나 저장하거나 넘기지 않습니다.', claim: 'noCredentialReads' },
-      { title: '도구 사용은 내가 승인', body: '새 세션은 결정이 필요한 도구 호출마다 묻습니다. 모든 결정은 감사 기록에 남아요.', claim: 'auditLog' },
+      { title: '엔진마다 다른 승인', body: 'Claude Code·Grok 은 권한이 필요한 도구 호출마다 묻습니다. Codex 는 승인 카드 없이 샌드박스 안에서 돕니다: 기본은 작업 폴더 쓰기와 네트워크, 또는 읽기 전용. Gemini 는 읽기 전용이거나, 작업 폴더 편집만 하고 셸 명령은 거부됩니다. 다른 엔진으로 이어 가는 턴은 원래 세션이 허용한 것보다 넓게 돌지 않습니다. 내가 답한 카드는 모두 감사 기록에 남아요.', claim: 'engineApprovals' },
       { title: '계정 순환은 기본 꺼짐', body: '같은 벤더 계정끼리 옮겨 가는 기능은 직접 켜고 본인 계정임을 확인하기 전까지 꺼져 있습니다.', claim: 'rotationOffByDefault' },
       { title: '깨끗한 공개 저장소', body: '공개 소스에 키나 개인 경로가 없는지 테스트로 검사합니다.', claim: 'publicHygiene' },
-      { title: '릴레이는 암호문만 (Pro, 출시 예정)', body: '릴레이는 Mac 과 짝지은 폰 사이의 암호화된 바이트만 나르고, 세션 내용을 읽을 수 없습니다.', claim: 'relayCiphertext' },
-      { title: '중요한 건 Mac 에서만 (Pro, 출시 예정)', body: '릴레이로 연 새 세션은 Mac 의 기본값을 씁니다. 기존 세션 권한 올리기, 권한을 넓히는 설정, 안전 스위치, 다른 벤더로 코드를 보내는 동의, 전역 지시는 Mac 에서만 바꿀 수 있어요.', claim: 'relayMacOnly' },
+      { title: '릴레이는 암호문만', body: '릴레이는 Mac 과 짝지은 폰 사이의 암호화된 바이트만 나르고, 세션 내용을 읽을 수 없게 만들 예정입니다.', claim: 'relayCiphertext' },
+      { title: '중요한 건 Mac 에서만', body: '릴레이로 연 새 세션은 Mac 의 기본값을 쓸 예정입니다. 기존 세션 권한 올리기, 권한을 넓히는 설정, 안전 스위치, 다른 벤더로 코드를 보내는 동의, 전역 지시는 Mac 에서만 바꿀 수 있게 할 예정입니다.', claim: 'relayMacOnly' },
     ],
     more: 'SECURITY.md 읽기',
   },
@@ -112,7 +110,8 @@ export const ko: SiteContent = {
     steps: [
       { title: '실행하기', body: 'Node.js 24 이상과 Claude Code·Codex·Gemini·Grok CLI 중 하나 이상이 필요합니다.', command: INSTALL_COMMAND },
       { title: '출력된 주소 열기', body: '터미널에 로그인 주소가 나옵니다. 첫 실행 설정이 어떤 CLI 가 설치·로그인돼 있는지 확인해요.' },
-      { title: '계속 켜 두기', body: '전역으로 설치하면 서비스로 돌릴 수 있습니다.', command: GLOBAL_INSTALL_COMMAND },
+      { title: '전역으로 설치하기', body: '계속 켜 두려면 먼저 전역으로 설치합니다(npx 캐시에서는 서비스를 돌릴 수 없어요).', command: GLOBAL_INSTALL_COMMAND },
+      { title: '서비스로 돌리기', body: 'macOS 는 launchd 서비스, Linux 는 systemd 사용자 서비스로 등록해 저절로 켜지게 합니다.', command: SERVICE_INSTALL_COMMAND },
     ],
     docsLink: '설치 안내 전체 보기',
   },
