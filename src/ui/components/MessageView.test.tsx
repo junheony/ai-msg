@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { MessageView, errorSummary } from './MessageView';
+import { Markdown, MessageView, errorSummary } from './MessageView';
+import { SidePanelContext } from '../sidePanel';
 import { codeFileName } from '../codeWrap';
 import { toolsState } from './TurnMeta';
 import { DEFAULT_PREFS, PREFS_KEY } from '../prefs';
@@ -369,37 +370,61 @@ describe('MessageView code blocks and turn footer', () => {
 
 describe('MessageView · 인용문 복사', () => {
   afterEach(cleanup);
-  const reply = (text: string) => ({ kind: 'assistant' as const, turnId: 't', text, toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [] });
-  const writeText = vi.fn(() => Promise.resolve());
+  const reply = (text: string, streaming = false) => ({ kind: 'assistant' as const, turnId: 't', text, toolCalls: [], badge: null, streaming, error: null, notes: [], attempts: [] });
+  const writeText = vi.fn((_: string) => Promise.resolve());
   beforeEach(() => {
     writeText.mockClear();
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true });
   });
-
-  it('a quote gets one copy button that copies its paragraphs (inline code included); code blocks keep theirs', async () => {
-    const text = '아래를 붙여 넣으세요.\n\n> 안녕하세요, `deck` 입니다.\n>\n> 두 번째 문단\n> 같은 문단 줄\n\n```\nx\n```';
-    const { container } = render(<MessageView item={reply(text)} />);
-    const btn = container.querySelectorAll('blockquote .md-quote-copy');
-    expect(btn).toHaveLength(1);
-    expect(container.querySelectorAll('.code-block .code-copy')).toHaveLength(1);
-    fireEvent.click(btn[0]!);
+  const view = (text: string, streaming = false) => render(
+    <SidePanelContext.Provider value={() => {}}><MessageView item={reply(text, streaming)} /></SidePanelContext.Provider>,
+  );
+  const copied = async (container: HTMLElement) => {
+    const btns = container.querySelectorAll('.md-quote-copy');
+    expect(btns).toHaveLength(1);
+    fireEvent.click(btns[0]!);
     await Promise.resolve();
-    expect(writeText).toHaveBeenCalledWith('안녕하세요, deck 입니다.\n\n두 번째 문단\n같은 문단 줄');
+    return writeText.mock.calls.at(-1)?.[0];
+  };
+
+  it('a quote gets one copy button: paragraphs, inline code and a hard line break; code blocks keep their own', async () => {
+    const { container } = view('붙여 넣으세요.\n\n> 안녕하세요, `deck` 입니다.\n>\n> 두 번째  \n> 줄\n\n```\nx\n```');
+    expect(container.querySelectorAll('.code-block .code-copy')).toHaveLength(1);
+    expect(await copied(container)).toBe('안녕하세요, deck 입니다.\n\n두 번째\n줄');
+  });
+
+  it('a file path in code and a local link keep their text (they render as buttons)', async () => {
+    const { container } = view('> 수정한 파일은 `src/a.ts` 와 [문서](docs/b.md) 입니다.');
+    expect(container.querySelector('blockquote .file-link')).not.toBeNull();
+    expect(await copied(container)).toBe('수정한 파일은 src/a.ts 와 문서 (docs/b.md) 입니다.');
+  });
+
+  it('a web link keeps its URL', async () => {
+    const { container } = view('> 보세요 [여기](https://a.b/c)');
+    expect(await copied(container)).toBe('보세요 여기 (https://a.b/c)');
+  });
+
+  it('code block inside a quote: no language label; table rows stay lines; nested list kept', async () => {
+    const { container } = view('> ```ts\n> const a = 1;\n> ```\n>\n> | a | b |\n> | - | - |\n> | 1 | 2 |\n>\n> - 하나\n>   - 둘');
+    expect(await copied(container)).toBe('const a = 1;\n\n| a | b |\n| 1 | 2 |\n\n• 하나\n  • 둘');
   });
 
   it('a nested quote has no button of its own; the outer copy includes it', async () => {
-    const { container } = render(<MessageView item={reply('> 바깥\n>\n> > 안쪽')} />);
-    expect(container.querySelectorAll('.md-quote-copy')).toHaveLength(1);
+    const { container } = view('> 바깥\n>\n> > 안쪽');
     expect(container.querySelectorAll('blockquote')).toHaveLength(2);
-    fireEvent.click(container.querySelector('.md-quote-copy')!);
-    await Promise.resolve();
-    expect(writeText).toHaveBeenCalledWith('바깥\n\n안쪽');
+    expect(await copied(container)).toBe('바깥\n\n안쪽');
   });
 
   it('a streaming, half-written quote renders with its button', () => {
-    const { container } = render(<MessageView item={{ ...reply('> 쓰는 중'), streaming: true }} />);
+    const { container } = view('> 쓰는 중', true);
     expect(container.querySelectorAll('.md-quote-copy')).toHaveLength(1);
+  });
+
+  it('other Markdown (no reply body flag) has no quote button', () => {
+    const { container } = render(<Markdown text={'> 인용'} />);
+    expect(container.querySelector('blockquote')).not.toBeNull();
+    expect(container.querySelector('.md-quote-copy')).toBeNull();
   });
 });
 

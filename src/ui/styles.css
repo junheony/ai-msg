@@ -897,11 +897,12 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .markdown blockquote > :last-child { margin-bottom: 0; }
 /* The outermost quote of a reply carries a copy button at its top right: shown on hover / focus (desktop), always on touch. */
 .markdown blockquote.md-quote { position: relative; padding-right: calc(var(--icon-btn) + var(--s2)); }
-.md-quote-copy { position: absolute; top: var(--s1); right: var(--s1); min-width: 28px; height: 28px; opacity: 0; transition: opacity var(--t-fast) ease; }
+.markdown .md-quote-copy { position: absolute; top: var(--s1); right: var(--s1); min-width: 28px; height: 28px; opacity: 0; transition: opacity var(--t-fast) ease; }
 .md-quote:hover > .md-quote-copy, .md-quote-copy:focus-visible, .md-quote:focus-within > .md-quote-copy { opacity: 1; }
 .md-quote-copy .msg-act-said { display: none; }
 @media (hover: none) { .md-quote-copy { opacity: 1; } }
-:where(:root[data-phone]) { .md-quote-copy { opacity: 1; min-width: var(--phone-tap); height: var(--phone-tap); top: 0; right: 0; } .markdown blockquote.md-quote { padding-right: var(--phone-tap); } }
+/* Phone: the 28px look keeps a one-line quote's height; the 44px touch area is its ::after. */
+:where(:root[data-phone]) { .md-quote-copy::after { content: ""; position: absolute; inset: calc((28px - var(--phone-tap)) / 2); } }
 .markdown del { color: var(--muted); }
 /* Task list: GFM's checkboxes are disabled (read-only), which the browser greys out whatever accent-color says, so they
    are drawn here — a brand-colour box with a tick when done, an outlined one when not. */

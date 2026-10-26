@@ -200,56 +200,35 @@ function MdTable({ children }: { children?: ReactNode }) {
   return <div className="md-table-frame"><div ref={ref} className="md-table"><table>{children}</table></div></div>;
 }
 
-const BLOCK_TAGS = new Set(['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'PRE', 'BLOCKQUOTE', 'UL', 'OL', 'LI', 'TABLE', 'HR', 'DIV']);
-const isBlock = (n: Node): n is Element => n.nodeType === 1 && BLOCK_TAGS.has((n as Element).tagName);
-
-/** Text inside a block: line breaks (<br>) kept; the copy button itself skipped. */
-function inlineText(n: Node): string {
-  if (n.nodeType === 3) return n.textContent ?? '';
-  if (n.nodeType !== 1) return '';
-  const el = n as Element;
-  if (el.tagName === 'BR') return '\n';
-  if (el.tagName === 'BUTTON') return '';
-  return Array.from(el.childNodes).map(inlineText).join('');
-}
-
-/** An element's on-screen text: paragraphs apart by a blank line, list items by a line (with their marker). jsdom has no innerText. */
-function blockText(el: Element): string {
-  const kids = Array.from(el.childNodes);
-  if (!kids.some(isBlock)) return inlineText(el).trim();
-  const parts: string[] = [];
-  let run = '';
-  const flush = () => { const t = run.trim(); if (t) parts.push(t); run = ''; };
-  let item = 0;
-  for (const kid of kids) {
-    if (!isBlock(kid)) { run += inlineText(kid); continue; }
-    flush();
-    if (kid.tagName === 'LI') {
-      const marker = el.tagName === 'OL' ? `${++item}. ` : '- ';
-      parts.push(marker + blockText(kid).replace(/\n/g, '\n  '));
-    } else {
-      const t = blockText(kid);
-      if (t) parts.push(t);
-    }
-  }
-  flush();
-  return parts.join(el.tagName === 'UL' || el.tagName === 'OL' ? '\n' : '\n\n');
-}
-
+/** The markdown source of the assistant reply being rendered, set only for its body: a quote there gets a copy button. */
+const QuoteSourceContext = createContext<string | null>(null);
 /** A blockquote inside another one: the outer one carries the only copy button. */
 const InQuoteContext = createContext(false);
 
-/** An assistant reply's quote (often a draft to paste elsewhere): a copy button at its top right, only on the outermost. */
-function MdQuote({ children }: { children?: ReactNode }) {
+/** A quote's source lines with its own `>` level taken off (a nested quote keeps its marks for plainOf to drop); a hard break's trailing spaces go. */
+function quoteSource(md: string): string {
+  return md.split('\n').map((l) => l.replace(/^\s{0,3}>[ \t]?/, '').trimEnd()).join('\n');
+}
+
+/**
+ * An assistant reply's quote (often a draft to paste elsewhere): a copy button at its top right, only on the outermost.
+ * The copy is made from the quote's markdown source (position offsets) through plainOf, not from the DOM — file chips,
+ * code-block labels, tables and links render as widgets whose text is not the reply's text. No source / position (not a
+ * reply body, or a node without one): a plain quote.
+ */
+function MdQuote({ node, children }: { node?: { position?: { start: { offset?: number }; end: { offset?: number } } }; children?: ReactNode }) {
   const nested = useContext(InQuoteContext);
-  const ref = useRef<HTMLQuoteElement>(null);
+  const source = useContext(QuoteSourceContext);
+  const coarse = useContext(MessageActionsContext).coarse;
   const feedback = useFileActions();
-  if (nested) return <blockquote>{children}</blockquote>;
-  const touch = typeof window !== 'undefined' && window.matchMedia?.('(hover: none)').matches === true;
-  const done = touch ? (ok: boolean) => feedback.toast(ok ? ui().chat.quote.copied : ui().chat.quote.failed, ok ? 'info' : 'error') : undefined;
+  const start = node?.position?.start.offset;
+  const end = node?.position?.end.offset;
+  if (nested || source === null || start === undefined || end === undefined) return <blockquote>{children}</blockquote>;
+  const t = ui().chat.quote;
+  const done = coarse ? (ok: boolean) => feedback.toast(ok ? t.copied : t.failed, ok ? 'info' : 'error') : undefined;
   return (
-    <blockquote ref={ref} className="md-quote">
-      <CopyButton icon className="md-quote-copy" label={ui().chat.quote.copy} text={() => (ref.current ? blockText(ref.current) : '')} {...(done ? { onDone: done } : {})} />
+    <blockquote className="md-quote">
+      <CopyButton icon className="md-quote-copy" label={t.copy} text={() => plainOf(quoteSource(source.slice(start, end)))} {...(done ? { onDone: done } : {})} />
       <InQuoteContext.Provider value>{children}</InQuoteContext.Provider>
       {feedback.node}
     </blockquote>
@@ -257,7 +236,7 @@ function MdQuote({ children }: { children?: ReactNode }) {
 }
 
 const MD_COMPONENTS: Components = {
-  blockquote: ({ children }) => <MdQuote>{children}</MdQuote>,
+  blockquote: ({ node, children }) => <MdQuote node={node}>{children}</MdQuote>,
   img: ({ src, alt }) => <MdImage src={src} alt={alt} />,
   a: ({ href, children }) => <MdLink href={href}>{children}</MdLink>,
   // Inline code naming a file opens it in the pane's side panel (fenced code ends with a newline, so it never matches).
@@ -289,7 +268,7 @@ function loadEnhance(): Promise<void> {
 const NEEDS_ENHANCE = /```|~~~|\$\$|\\[([]/;
 
 /** Memoized on its text: parsing is the expensive part, and a streaming turn re-creates its item on every delta. */
-export const Markdown = memo(function Markdown({ text, className = 'markdown' }: { text: string; className?: string }) {
+export const Markdown = memo(function Markdown({ text, className = 'markdown', quoteCopy = false }: { text: string; className?: string; /** A reply body: its quotes get a copy button. */ quoteCopy?: boolean }) {
   const wants = NEEDS_ENHANCE.test(text);
   const [, ready] = useState(enhance !== null);
   useEffect(() => {
@@ -298,7 +277,9 @@ export const Markdown = memo(function Markdown({ text, className = 'markdown' }:
   const on = wants && enhance !== null;
   return (
     <div className={className}>
-      <ReactMarkdown components={MD_COMPONENTS} remarkPlugins={on ? [...MD_PLUGINS, ...enhance!.REMARK_ENHANCE] : MD_PLUGINS} rehypePlugins={on ? enhance!.REHYPE_ENHANCE : undefined}>{text}</ReactMarkdown>
+      <QuoteSourceContext.Provider value={quoteCopy ? text : null}>
+        <ReactMarkdown components={MD_COMPONENTS} remarkPlugins={on ? [...MD_PLUGINS, ...enhance!.REMARK_ENHANCE] : MD_PLUGINS} rehypePlugins={on ? enhance!.REHYPE_ENHANCE : undefined}>{text}</ReactMarkdown>
+      </QuoteSourceContext.Provider>
     </div>
   );
 });
@@ -942,7 +923,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
         </div>
       )}
       <CodeFoldContext.Provider value={{ streaming, base: foldBase, text: (split ? split.live : shownText) ?? '', choices: foldChoices }}>
-        {split ? split.live && <Markdown text={split.live} /> : shownText && <Markdown text={shownText} />}
+        {split ? split.live && <Markdown text={split.live} quoteCopy /> : shownText && <Markdown text={shownText} quoteCopy />}
       </CodeFoldContext.Provider>
       {choices && !item.streaming && <ChoiceCards choices={choices} onPick={reply} />}
       {item.streaming && (!split || !!split.live) && !early && <span className="cursor">▍</span>}
