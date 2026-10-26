@@ -8,6 +8,7 @@ import { AttachmentTooLarge, IMAGE_TYPES, MAX_ATTACHMENT_BYTES, isAttachmentId, 
 import { DirError, listDirs, resolveUnderHome } from './dirs';
 import { isAllowedHost, isAllowedOrigin, isAuthed, loginCookieHeader, logoutCookieHeader, tokenMatches } from './auth';
 import type { SlashCommandCache } from './engine/slashCommands';
+import { errnoOf, withFileRetry } from './fsRetry';
 import { FileReadError, type FileLister } from './files';
 import type { PushNotifier } from './push/PushNotifier';
 import { isPushEndpoint, parseSubscription, type SubscriptionStore } from './push/SubscriptionStore';
@@ -223,7 +224,49 @@ function tooLarge(req: http.IncomingMessage, res: http.ServerResponse, message: 
   drainAndClose(req);
 }
 
-function serveStatic(uiDir: string, urlPath: string, res: http.ServerResponse): void {
+/** Shown when index.html is not there yet (dev, or a build that has not written it). */
+export const STATIC_NO_BUILD = 'UI 빌드가 없습니다. `npm run build` 를 먼저 실행하세요.';
+/** Open failed for a reason that is not "missing" and not a permission denial. */
+export const STATIC_UNREADABLE = '파일을 읽지 못했습니다';
+/**
+ * Open failed with EPERM/EACCES. macOS TCC can refuse ~/Documents to a long-lived node until that process
+ * is restarted (or Full Disk Access is granted). The path stays in the server log.
+ */
+export const STATIC_UNREADABLE_PERM = '파일을 읽지 못했습니다. 권한이 없습니다 — 서버를 다시 시작하거나, macOS라면 전체 디스크 접근에서 node 를 허용하세요.';
+
+/** Extensions the browser would execute or parse. A missing one is 404, never index.html. */
+const ASSET_EXT = new Set(['.js', '.mjs', '.css', '.map', '.png', '.svg', '.ico', '.woff2', '.webmanifest', '.json']);
+const PERM_OPEN = new Set(['EPERM', 'EACCES']);
+
+/** Status and body for a static open/stat failure. `indexHtml`: the request had already fallen back to the SPA shell. */
+export function staticOpenFailure(code: string | undefined, indexHtml: boolean): { status: number; error: string } {
+  if (!code || code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR') {
+    return indexHtml ? { status: 503, error: STATIC_NO_BUILD } : { status: 404, error: 'not found' };
+  }
+  if (PERM_OPEN.has(code)) return { status: 500, error: STATIC_UNREADABLE_PERM };
+  return { status: 500, error: STATIC_UNREADABLE };
+}
+
+function failStatic(res: http.ServerResponse, code: string | undefined, rel: string, indexHtml: boolean): void {
+  const mapped = staticOpenFailure(code, indexHtml);
+  // 404/503 are ordinary (missing asset, build not written yet). 500 is the outage: log the code and the relative name.
+  if (mapped.status === 500) console.error('deck http: static open', code ?? 'ERR', rel);
+  if (res.headersSent) { res.destroy(); return; }
+  json(res, mapped.status, { error: mapped.error });
+}
+
+/** Stream errors after headers are sent must not escape (2026-10-10: an unhandled 'error' took the process down). */
+function pipeBody(src: NodeJS.ReadableStream, res: http.ServerResponse, label: string): void {
+  pipeline(src, res, (err) => {
+    if (!err) return;
+    const code = errnoOf(err);
+    if (code === 'ERR_STREAM_PREMATURE_CLOSE' || code === 'ECONNRESET' || code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED') return;
+    console.error(`deck http: ${label}`, code ?? (err instanceof Error ? err.message.split('\n')[0] : err));
+    if (!res.writableEnded) res.destroy();
+  });
+}
+
+async function serveStatic(uiDir: string, urlPath: string, method: string, res: http.ServerResponse): Promise<void> {
   const root = path.resolve(uiDir);
   let decoded: string;
   try {
@@ -233,21 +276,56 @@ function serveStatic(uiDir: string, urlPath: string, res: http.ServerResponse): 
     return;
   }
   const normalized = path.normalize(decoded).replace(/^(\.\.[/\\])+/, '');
-  let file = path.resolve(root, '.' + normalized);
-  if (!file.startsWith(root + path.sep) && file !== root) { json(res, 404, { error: 'not found' }); return; }
-  if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(root, 'index.html');
-  if (!fs.existsSync(file)) { json(res, 503, { error: 'UI 빌드가 없습니다. `npm run build` 를 먼저 실행하세요.' }); return; }
-  const rel = path.relative(root, file);
-  // PWA: the service worker and manifest are revalidated every time so a new build takes over promptly.
-  const cache = rel === 'index.html' ? 'no-store' : rel === 'sw.js' || rel === 'manifest.webmanifest' ? 'no-cache' : 'public, max-age=3600';
-  // Headers only once the file is open: macOS TCC can start refusing ~/Documents to a running server
-  // (EPERM on open), and an unhandled stream 'error' would take the whole process down.
-  const src = fs.createReadStream(file);
-  src.once('error', () => { if (!res.headersSent) json(res, 500, { error: '파일을 읽지 못했습니다' }); });
-  src.once('open', () => {
-    res.writeHead(200, { 'content-type': MIME[path.extname(file)] ?? 'application/octet-stream', 'cache-control': cache, ...(rel === 'sw.js' ? { 'service-worker-allowed': '/' } : {}) });
-    pipeline(src, res, () => {});
-  });
+  const requested = path.resolve(root, '.' + normalized);
+  if (!requested.startsWith(root + path.sep) && requested !== root) { json(res, 404, { error: 'not found' }); return; }
+  const relReq = path.relative(root, requested);
+  const asset = ASSET_EXT.has(path.extname(relReq).toLowerCase());
+  let st: fs.Stats | null = null;
+  try {
+    st = fs.statSync(requested);
+  } catch (err) {
+    const code = errnoOf(err);
+    // Missing is the SPA / 404 path below. Anything else (EPERM on the folder) is the open failure, said as such.
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') { failStatic(res, code, relReq || '.', false); return; }
+  }
+  let file = requested;
+  let indexFallback = false;
+  if (!st || st.isDirectory()) {
+    if (!st && asset) { json(res, 404, { error: 'not found' }); return; }
+    file = path.join(root, 'index.html');
+    indexFallback = true;
+  }
+  let fh: fs.promises.FileHandle;
+  try {
+    // One retry window for an atomic replace (vite writes index.html via rename). Permission errors are not retried.
+    fh = await withFileRetry(() => fs.promises.open(file, 'r'));
+  } catch (err) {
+    failStatic(res, errnoOf(err), indexFallback ? 'index.html' : (path.relative(root, file) || '.'), indexFallback);
+    return;
+  }
+  let streaming = false;
+  try {
+    const fst = await fh.stat();
+    if (!fst.isFile()) {
+      json(res, indexFallback ? 503 : 404, { error: indexFallback ? STATIC_NO_BUILD : 'not found' });
+      return;
+    }
+    const rel = path.relative(root, file);
+    // PWA: the service worker and manifest are revalidated every time so a new build takes over promptly.
+    const cache = rel === 'index.html' ? 'no-store' : rel === 'sw.js' || rel === 'manifest.webmanifest' ? 'no-cache' : 'public, max-age=3600';
+    res.writeHead(200, {
+      'content-type': MIME[path.extname(file)] ?? 'application/octet-stream',
+      'content-length': String(fst.size),
+      'cache-control': cache,
+      ...(rel === 'sw.js' ? { 'service-worker-allowed': '/' } : {}),
+    });
+    if (method === 'HEAD') { res.end(); return; }
+    streaming = true;
+    // autoClose on the handle's stream closes `fh`. A read error is logged and ends the response; it does not escape.
+    pipeBody(fh.createReadStream(), res, 'static read');
+  } finally {
+    if (!streaming) await fh.close().catch(() => {});
+  }
 }
 
 /**
@@ -534,7 +612,7 @@ export function createRequestHandler(deps: HttpDeps) {
               });
               // Cut at the size that was announced: a file an agent is still appending to must not overrun Content-Length.
               if (r.size === 0) { void r.fh.close(); res.end(); return; }
-              pipeline(r.fh.createReadStream({ start: 0, end: r.size - 1 }), res, () => {});
+              pipeBody(r.fh.createReadStream({ start: 0, end: r.size - 1 }), res, 'file read');
               return;
             }
             json(res, 200, await deps.files.read(cwd, file));
@@ -663,7 +741,7 @@ export function createRequestHandler(deps: HttpDeps) {
         return;
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') { json(res, 405, { error: 'method not allowed' }); return; }
-      serveStatic(deps.uiDir, url.pathname, res);
+      await serveStatic(deps.uiDir, url.pathname, req.method ?? 'GET', res);
     })().catch((err: unknown) => {
       // Review M5: details (paths, messages) stay in the server log.
       console.error('deck http: 500', req.method, url.pathname, err);

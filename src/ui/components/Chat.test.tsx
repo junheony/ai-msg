@@ -26,6 +26,19 @@ const chatProps = (items: ChatItem[]): ChatProps => ({ items, pending: [], quest
 describe('Chat', () => {
   afterEach(cleanup);
 
+  it('an open session with no messages says so, and hides that while history is loading', () => {
+    renderChat([]);
+    expect(screen.getByTestId('chat-empty').textContent).toContain('아직 메시지가 없어요');
+    expect(screen.getByTestId('chat-empty').textContent).toContain('아래에 보내면 시작합니다.');
+    cleanup();
+    renderChat([], false, vi.fn(), { loading: true });
+    expect(screen.queryByTestId('chat-empty')).toBeNull();
+    expect(screen.getByTestId('chat-loading')).toBeTruthy();
+    cleanup();
+    renderChat([], false, vi.fn(), { readOnly: '읽기만 할 수 있어요' });
+    expect(screen.getByTestId('chat-empty').textContent).toBe('표시할 대화가 없어요');
+  });
+
   it('a Grok session: Grok models only, the permission picker works (approval cards), no sandbox picker', () => {
     expect(modelChoices('grok')).toEqual(GROK_MODELS);
     const onPermMode = vi.fn();

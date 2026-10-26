@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { cookieValueFor } from './auth';
 import { AttachmentStore } from './attachments/AttachmentStore';
-import { createRequestHandler } from './http';
+import { createRequestHandler, STATIC_NO_BUILD, STATIC_UNREADABLE_PERM, staticOpenFailure } from './http';
 import { PushNotifier, type PushSender } from './push/PushNotifier';
 import { SubscriptionStore } from './push/SubscriptionStore';
 import { PinStore } from './sessions/PinStore';
@@ -118,7 +118,18 @@ describe('http', () => {
   });
 
   it('serves the UI when built, 503 when not, never outside uiDir', async () => {
-    expect((await fetch(`${base}/`)).status).toBe(503);
+    const logged: unknown[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => { logged.push(a); };
+    let missingBuild: Response;
+    try {
+      missingBuild = await fetch(`${base}/`);
+    } finally {
+      console.error = orig;
+    }
+    // A build that has not been written yet is ordinary, not an outage line.
+    expect(missingBuild.status).toBe(503);
+    expect(JSON.stringify(logged)).not.toContain('static open');
     await fs.writeFile(path.join(uiDir, 'index.html'), '<html>deck</html>');
     await fs.mkdir(path.join(uiDir, 'assets'));
     await fs.writeFile(path.join(uiDir, 'assets', 'app.js'), 'console.log(1)');
@@ -126,9 +137,21 @@ describe('http', () => {
     expect(await (await fetch(`${base}/some/spa/route`)).text()).toBe('<html>deck</html>');
     const js = await fetch(`${base}/assets/app.js`);
     expect(js.headers.get('content-type')).toContain('javascript');
-    // fetch() normalizes '..' itself; the encoded form reaches the server as-is. Either way only index.html comes back, never package.json.
-    expect(await (await fetch(`${base}/assets/../../package.json`)).text()).toBe('<html>deck</html>');
-    expect(await (await fetch(`${base}/assets/%2e%2e/%2e%2e/package.json`)).text()).toBe('<html>deck</html>');
+    // A missing build asset is 404, not the HTML shell (the browser would parse HTML as script).
+    const missing = await fetch(`${base}/assets/missing.js`);
+    expect(missing.status).toBe(404);
+    expect(await missing.text()).not.toContain('<html>');
+    // HEAD carries the length and no body.
+    const head = await fetch(`${base}/`, { method: 'HEAD' });
+    expect(head.status).toBe(200);
+    expect(head.headers.get('content-type')).toContain('text/html');
+    expect(head.headers.get('content-length')).toBe(String('<html>deck</html>'.length));
+    expect(await head.text()).toBe('');
+    // fetch() normalizes '..' itself; the encoded form reaches the server as-is. Neither answer is a file from outside uiDir.
+    expect((await fetch(`${base}/assets/../../package.json`)).status).toBe(404);
+    const enc = await fetch(`${base}/assets/%2e%2e/%2e%2e/package.json`);
+    expect(enc.status).toBe(404);
+    expect(await enc.text()).not.toContain('private');
   });
 
   // 2026-10-10: macOS started refusing ~/Documents to the running server (EPERM on open) and the unhandled
@@ -164,14 +187,31 @@ describe('http', () => {
     const locked = path.join(uiDir, 'locked.png');
     await fs.writeFile(locked, 'x');
     await fs.chmod(locked, 0o000);
+    const logged: unknown[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => { logged.push(a); };
     try {
       const res = await fetch(`${base}/locked.png`);
       expect(res.status).toBe(500);
       expect(res.headers.get('cache-control')).toBe('no-store');
+      const body = await res.text();
+      expect(body).toContain(STATIC_UNREADABLE_PERM);
+      expect(body).not.toContain(uiDir);
+      expect(JSON.stringify(logged)).toContain('EACCES');
+      expect(JSON.stringify(logged)).not.toContain(uiDir);
       expect(await (await fetch(`${base}/`)).text()).toBe('<html>deck</html>');
     } finally {
+      console.error = orig;
       await fs.chmod(locked, 0o600);
     }
+  });
+
+  it('a missing shell is 503, a permission failure stays 500, anything else is the generic unread message', () => {
+    expect(staticOpenFailure('ENOENT', true)).toEqual({ status: 503, error: STATIC_NO_BUILD });
+    expect(staticOpenFailure('ENOENT', false)).toEqual({ status: 404, error: 'not found' });
+    expect(staticOpenFailure('EPERM', true).status).toBe(500);
+    expect(staticOpenFailure('EPERM', true).error).toContain('권한이 없습니다');
+    expect(staticOpenFailure('EIO', false)).toEqual({ status: 500, error: '파일을 읽지 못했습니다' });
   });
 
   it('every response carries CSP, nosniff and no-referrer — static, API, and error responses', async () => {

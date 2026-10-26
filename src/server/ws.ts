@@ -11,6 +11,8 @@ import { CLIENT_REF_MAX, ClientMessageSchema, FEATURES, accountInfos, type Clien
 import type { SessionEntry } from '../shared/session-types';
 import type { PermissionDecision, QuestionAnswers } from '../shared/turn-types';
 import { checkUpgrade } from './auth';
+import { clientFileError } from './clientError';
+import { withFileRetry } from './fsRetry';
 import type { AcceptedRefs } from './sessions/AcceptedRefs';
 import { DirError, resolveUnderRoots } from './dirs';
 import { HANDOFF_PROMPT, handoffTitle } from '../shared/handoff';
@@ -1231,7 +1233,12 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     const best = st ? await deps.index.bestCopy(sessionId, st.projectDir, st.account).catch(() => null) : null;
     // Stamped before the read: an entry written while reading is looked at again by the outside poll.
     const at = Date.now();
-    const messages = await readTranscript(best?.file ?? (st ? `${st.projectDir}/${sessionId}.jsonl` : found.file)).catch(() => readTranscript(found.file));
+    // A move renames the transcript for a moment (ENOENT). Retry that; a permission error is not transient.
+    const primary = best?.file ?? (st ? `${st.projectDir}/${sessionId}.jsonl` : found.file);
+    const messages = await withFileRetry(() => readTranscript(primary).catch((err: unknown) => {
+      if (primary === found.file) throw err;
+      return readTranscript(found.file);
+    }));
     return { found, st, at, messages };
   };
   const sendClaudeHistory = (ws: WebSocket, sessionId: string, { found, st, at, messages }: ClaudeHistory, clean?: Map<string, number>) => {
@@ -1385,8 +1392,8 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           // deck's copy and Desktop's (home profile) went separate ways: say so on open, not only after a turn.
           void deps.runner.forkStatus(sessionId).then((f) => { if (f?.diverged) send(ws, { type: 'turn_notice', turnId: '', sessionId, cwd: found.cwd, message: FORK_NOTICE }); }, () => undefined);
         })
-        .catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId, message: `기록을 읽지 못했습니다: ${errMsg(err)}` }));
-    })().catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId, message: `세션을 열지 못했습니다: ${errMsg(err)}` }));
+        .catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId, message: clientFileError('기록을 읽지 못했습니다', err) }));
+    })().catch((err: unknown) => send(ws, { type: 'error', turnId: null, sessionId, message: clientFileError('세션을 열지 못했습니다', err) }));
   };
 
   wss.on('connection', (ws: WebSocket) => {
@@ -1495,7 +1502,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         case 'refresh_index':
           void rescanIndex()
             .then(() => broadcast(indexMsg()))
-            .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: `세션 목록을 읽지 못했습니다: ${errMsg(err)}` }));
+            .catch((err: unknown) => send(ws, { type: 'error', turnId: null, message: clientFileError('세션 목록을 읽지 못했습니다', err) }));
           break;
         case 'set_account_pin': {
           const badPin = msg.pin === null ? null : pinRefusal(msg.pin);

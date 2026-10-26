@@ -397,6 +397,9 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .chat { position: relative; }
 .drop-overlay { position: absolute; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; pointer-events: none; background: color-mix(in srgb, var(--bg) 82%, transparent); border: 2px dashed var(--accent); border-radius: 12px; margin: 6px; font-size: 15px; color: var(--fg-strong); }
 .drop-overlay.blocked { border-color: var(--line-strong); color: var(--muted); }
+.chat-empty { margin: auto; max-width: 28rem; padding: 28px 16px; text-align: center; color: var(--muted); font-size: calc(14px * var(--font-scale, 1)); line-height: 1.5; }
+.chat-empty p { margin: 0; }
+.chat-empty-hint { margin-top: 6px !important; color: var(--faint); font-size: calc(13px * var(--font-scale, 1)); }
 .chat-loading { display: flex; flex-direction: column; gap: 14px; padding: 8px 0; }
 .chat-loading .skeleton-line { display: block; height: 14px; border-radius: var(--r-xs); background: color-mix(in srgb, currentColor 9%, transparent); animation: skeleton-pulse 1.4s ease-in-out infinite; }
 .chat-loading .skeleton-line.mine { align-self: flex-end; height: 32px; border-radius: var(--r-md); }

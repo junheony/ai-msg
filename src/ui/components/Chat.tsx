@@ -600,6 +600,12 @@ export function Chat(p: ChatProps) {
             {[72, 46, 88, 60].map((w, i) => <span key={i} className={`skeleton-line ${i % 2 ? 'mine' : ''}`} style={{ width: `${w}%` }} aria-hidden="true" />)}
           </div>
         )}
+        {!p.loading && shown.length === 0 && (
+          <div className="chat-empty" data-testid="chat-empty">
+            <p>{p.readOnly ? '표시할 대화가 없어요' : '아직 메시지가 없어요'}</p>
+            {!p.readOnly && <p className="chat-empty-hint">아래에 보내면 시작합니다.</p>}
+          </div>
+        )}
         {/* Reopened from the recent cache: the kept transcript shows while the fresh history is on its way. */}
         {p.loading && p.items.length > 0 && <div className="chat-refreshing" role="status" data-testid="chat-refreshing">불러오는 중…</div>}
         <AgentContext.Provider value={agentCtx}>

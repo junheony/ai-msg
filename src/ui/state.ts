@@ -311,6 +311,14 @@ export type PaneNotice = { sessionId: string | null; message: string; level: 'no
 /** Adds a bar (a repeat moves to the end) and keeps the newest three. */
 const withNotice = (p: PaneState, n: PaneNotice): PaneState => ({ ...p, notices: [...(p.notices ?? []).filter((x) => x.message !== n.message), n].slice(-3) });
 
+/** The activity bar's pill just cleared and no new turn has started. Dropped when work continues. */
+export const BG_DONE_NOTICE = '백그라운드 작업이 끝났어요';
+
+function withoutBgDone(p: PaneState): PaneState {
+  if (!p.notices?.some((n) => n.message === BG_DONE_NOTICE)) return p;
+  return { ...p, notices: p.notices.filter((n) => n.message !== BG_DONE_NOTICE) };
+}
+
 export type AppState = {
   connected: boolean;
   /** 백그라운드 작업 ('tasks' servers): the server's list and soft cap (null = not known yet / an older server). */
@@ -783,7 +791,8 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       // The session's model as stored after this send (picked on another pane or device): a pane that picked none shows it.
       const follow = msg.sessionModel && !p.modelPicked && (msg.engine ?? 'claude') === 'claude' ? { model: msg.sessionModel } : {};
       const turnRoute = { model: msg.model, engine: (msg.engine ?? 'claude') as EngineKind, account: msg.account, reason: msg.reason };
-      return { ...p, items, activeTurnId: msg.turnId, runStartedAt, progress: p.activeTurnId === msg.turnId ? p.progress : null, turnRoute, ...follow };
+      // A turn starting means the "background finished" line is stale (the continuation says so itself, or the user sent).
+      return withoutBgDone({ ...p, items, activeTurnId: msg.turnId, runStartedAt, progress: p.activeTurnId === msg.turnId ? p.progress : null, turnRoute, ...follow });
     }
     // The server holds this pane's send behind a streaming segment: said on the status row instead of 시작하는 중…
     // (matched by the send's ref only — the turn id is new to the pane until its turn_started).
@@ -889,11 +898,14 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       return updateTurn(pane, msg.turnId, ({ thinking: _drop, ...it }) => ({ ...it, text: '', toolCalls: it.toolCalls.map(({ textAt: _at, ...t }) => t), attempts: it.text ? [...it.attempts, it.text] : it.attempts, notes: [...it.notes, `재시도 ${seatLabel(accounts, msg.fromAccount)} → ${seatLabel(accounts, msg.toAccount)}: ${msg.reason}`] }));
     case 'turn_background': {
       if (!belongs(pane, msg)) return pane;
-      // One pill per pane (one process per session); [] clears it.
-      if (!msg.tasks.length) return pane.bg ? { ...pane, bg: null } : pane;
+      // One pill per pane (one process per session). [] clears it and leaves a short completion line until a turn starts.
+      if (!msg.tasks.length) {
+        if (!pane.bg) return pane;
+        return withNotice({ ...pane, bg: null }, { sessionId: msg.sessionId ?? pane.session?.sessionId ?? null, message: BG_DONE_NOTICE, level: 'notice' });
+      }
       // The task set changed (one finished, one started; the id may now be a continuation segment's): what was last seen
-      // is still the newest thing seen.
-      return { ...pane, bg: { turnId: msg.turnId, tasks: msg.tasks, detail: msg.detail ?? [], receivedAt: Date.now(), canStop: msg.canStop === true, last: pane.bg?.last ?? null } };
+      // is still the newest thing seen. A new pill replaces the completion line.
+      return { ...withoutBgDone(pane), bg: { turnId: msg.turnId, tasks: msg.tasks, detail: msg.detail ?? [], receivedAt: Date.now(), canStop: msg.canStop === true, last: pane.bg?.last ?? null } };
     }
     case 'turn_notice': {
       if (!belongs(pane, msg)) return pane;
