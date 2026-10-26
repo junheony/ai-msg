@@ -73,7 +73,7 @@ npm --prefix cloud test        # miniflare 안의 workerd, 네트워크 없음
 ### 순서
 
 1. **Paddle**
-   - 판매자 가입·KYC, 상품 "AI msg Pro" 와 가격 둘(월·연), 창립 고객 할인 코드.
+   - 판매자 가입·KYC, 상품 "AI msg Pro" 와 가격 둘(월 $10·연 $100), 창립 고객 할인 코드(연 $80 상당).
    - 샌드박스·라이브 각각 알림 대상을 만든다. 주소는 `https://<app 출처>/v1/paddle/webhook`, 이벤트는 `subscription.*`·`transaction.completed`·`adjustment.*` 와 **`customer.created`·`customer.updated`**(빠지면 customer 연결이 보류에서 멈춘다). 그 비밀을 `PADDLE_WEBHOOK_SECRET` 으로 넣는다.
    - API 키를 위 권한으로 만들어 `PADDLE_API_KEY` 로 넣는다. `vars` 의 `PADDLE_ENV`(`sandbox`/`production`)와 키 환경을 맞춘다. 샌드박스 키는 샌드박스 주소에서만 통한다.
    - 결제 승인 도메인에는 **app 출처만** 넣는다(relay 출처는 넣지 않는다).

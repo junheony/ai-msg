@@ -2483,7 +2483,7 @@ it('hello carries pro; a gate change rides on the settings broadcast', async () 
 - **5a 착수 전 iOS 실기 확인(2차 필수 2):** "Task 5 앞 실기 확인" 의 탐침을 HTTPS 정적 호스팅에 올리고 iPhone 에서 Safari ↔ 홈 화면 앱 저장소 공유 여부, `persist()`, 카메라, `BarcodeDetector`, `PushManager` 를 확인해 결과 표를 넘긴다.
 - **Paddle**
   - 판매자 가입·KYC(한국 개인/개인사업자), USD 수취 계좌·정산 비용 확인(스펙 §5.4).
-  - 상품 "AI msg Pro" 와 가격 둘(월 $15, 연 $150), 창립 고객 할인 코드(연 $120 상당).
+  - 상품 "AI msg Pro" 와 가격 둘(월 $10, 연 $100), 창립 고객 할인 코드(연 $80 상당) — 2026-10-27 인하.
   - 샌드박스·라이브 각각 알림 대상(웹훅 주소 `https://app.aimsg.app/v1/paddle/webhook`, 구독·거래·조정 이벤트 선택)을 만들고, 그 비밀을 `wrangler secret put PADDLE_WEBHOOK_SECRET` 로 넣는다.
   - API 키는 `PADDLE_API_KEY` 로 넣는다. 권한은 고객 포털 세션 생성과 **구독 해지**(전액 환불·차지백 자동 해지, D15) 둘이다. 권한 이름은 Task 9·10 Step 1 에서 확인한 것을 `cloud/README.md` 에 적는다. client-side token 과 가격 id 는 `wrangler.jsonc` vars 로 넣는다.
   - 승인 도메인에 **app 출처만** 넣는다(relay 출처는 넣지 않는다). 그 밖의 Paddle.js 체크아웃 요구사항은 Task 10 Step 1 에서 확인한다.

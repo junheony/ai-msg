@@ -455,7 +455,7 @@ it('the UI bundle does not include prompt text', () => { /* src/ui 아래 어떤
 
 **Interfaces:**
 - `site/content/install.ts`: `INSTALL_COMMAND = 'npx ai-msg'`, `GLOBAL_INSTALL_COMMAND = 'npm i -g ai-msg'`(D13 결과에 따라 이 두 줄만 바뀜).
-- `site/content/pricing.ts`: `PRICING = { pro: { monthlyUsd: 15, yearlyUsd: 150, foundingYearlyUsd: 120, trialDays: 7, cardRequiredForTrial: false } } as const`(스펙 §0·§4·§5.4). `checkoutUrls(env): { proMonthly: string | null; proYearly: string | null }` — `AIMSG_CHECKOUT_PRO_MONTHLY`·`AIMSG_CHECKOUT_PRO_YEARLY`(https 만, 아니면 null).
+- `site/content/pricing.ts`: `PRICING = { pro: { monthlyUsd: 10, yearlyUsd: 100, foundingYearlyUsd: 80, trialDays: 7, cardRequiredForTrial: false } } as const`(스펙 §0·§4·§5.4). `checkoutUrls(env): { proMonthly: string | null; proYearly: string | null }` — `AIMSG_CHECKOUT_PRO_MONTHLY`·`AIMSG_CHECKOUT_PRO_YEARLY`(https 만, 아니면 null).
 - `site/content/types.ts`: `SiteContent = { meta: { title; description; ogAlt }; nav: {...}; hero: { headline; sub; installLabel; copied; secondaryCta }; demo: { heading; caption; videoLabel; stills: { file; alt; caption }[] }; features: { heading; items: { title; body; shot?: string; pro?: boolean }[] }; pricing: { heading; free: Plan; pro: Plan; monthly; yearly; founding; trial; buyMonthly; buyYearly; unavailable }; faq: { heading; items: { q; a }[] }; security: { heading; points: { title; body; claim: ClaimId }[] }; install: { heading; steps: { title; body; command?: string }[]; docsLink }; footer: {...}; langSwitch: string }`. `ko: SiteContent` 로 키 일치를 `tsc` 가.
   - 히어로 문장(en): 스펙 §1 한 줄을 AI msg 로 — "AI msg — the cockpit for your local coding agents. Claude Code, Codex, Gemini and Grok in one place, from your desk or your phone, and they keep going when you step away."
   - 기능(스펙 §4 Community 열 + Pro 열, Pro 항목은 배지): 한 화면 여러 세션·분할·배치, 다벤더·통합 사용량 띠, 자동 분배, 폰에서 승인·답, 다른 앱 대화 가져오기, 빠르게(사용 크레딧), Pro: 계정 수 제한 없음("as many accounts per vendor as you own"), 병목 알림·리셋 시각 자동 재시도, 한 번 눌러 벤더 간 인계, 릴레이 + 웹 푸시(기기 3대). "출시 뒤" 항목(유휴 할당량 작업·교차 검증)은 넣지 않는다.
@@ -484,7 +484,7 @@ it('English page has no Hangul except the language switch', async () => {
   expect(textOf(en)).not.toMatch(HANGUL);
 });
 it('install line is INSTALL_COMMAND verbatim on both pages', async () => { /* … */ });
-it('prices come from PRICING', async () => { /* '$15', '$150', '$120', '7-day' (ko: '7일') */ });
+it('prices come from PRICING', async () => { /* '$10', '$100', '$80', '7-day' (ko: '7일') */ });
 it('no banned marketing words in either locale', async () => { /* unlimited|bypass|circumvent|100% quota|무제한|한도 우회|할당량 100% */ });
 it('buy buttons: data-plan + checkout URL; preview build marks them unavailable', async () => {
   const pre = read(await build(), 'index.html');
