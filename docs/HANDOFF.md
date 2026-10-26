@@ -19,6 +19,7 @@
 - **남은 일:**
   - **재시작:** 상단 배치·간결 모드(접기 제거 포함)·요금제 표시·결제 행·폰 텍스트 선택·인용문 복사·쿨다운 표시가 빌드와 재시작을 기다려요("재시작 ㄱ" 때 한 번에).
   - **B·C 로그인 만료 (10-27):** B 는 OAuth 만료로 auth 쿨다운, C 는 `/usage` 폴 실패로 오래됨 → 세션이 전부 A 로 감. 사용자가 `CLAUDE_CONFIG_DIR=~/.claude-b claude` → `/login`(C 도 동일). 원인 가설(검증 안 됨): 같은 계정을 여러 프로세스가 동시에 써서 refresh token 회전이 경합. 추적과 UI 재로그인 버튼은 제안만 함.
+  - **설치 문서 완료 (10-27, i18n-landing 계획 Task 8):** 영어 우선 `README.md`·`docs/install.md` + 한국어판, 저장소 실행·launchd 개발 절은 `CONTRIBUTING.md` 로. 문서 속 `ai-msg` 명령은 `parseCli` 로 파싱 테스트. npm 이름 미확보라 `private: true` 유지, "npm 에 아직 없음" 줄은 `<!-- npm-pending -->` 표식(문서 4개) — 이름 확보 뒤 지우고 `packaging.test.ts` 기대 변경. 안 한 것: `pack-smoke.sh`(npm i -g 필요), 영어 모드 임시 서버 실기, Linux·다른 맥 실기, 영어 문구 감수. 리뷰 2회 승인.
   - **쿨다운 LOW:** 백그라운드 구간은 첫 이벤트 때 기준값을 잡아 그 사이에 쓰인 쿨다운을 지울 수 있음(창 짧음, 주석 권장) / 백그라운드 성공 시 해제 테스트 없음 / 다른 프로세스가 쓴 쿨다운은 다음 폴 때 카드에 뜸.
   - **iPhone 탐침 → 5a·5b·5c:** 탐침 서버가 시간 제한으로 꺼졌어요. 사용자가 준비되면 `scripts/probe/ios-pwa` 를 127.0.0.1:3200 으로 다시 띄워요(tailscale serve :3400 그대로). 결과는 계획의 "근거·미확인"에 표로 넣어요.
   - **사용자 몫:** Paddle 가입·KYC(최우선), Cloudflare·도메인 aimsg.app, Resend, `docs/legal/` 빈칸 126개, 개인정보 문서를 `docs/privacy-data-inventory.md` 에 맞추기(푸시 데이터 없음·보관 기간·삭제 뒤 남는 것·처리자·Cloudflare IP 로그·Mac 이름·속도 제한 키·누락 항목), 벤더 서면 확인.
