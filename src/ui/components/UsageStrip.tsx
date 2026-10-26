@@ -5,7 +5,7 @@ import type { Seat } from '../../shared/accounts';
 import type { UsageSnapshot } from '../../shared/usage-types';
 import { useAccounts } from '../accounts';
 import { ui } from '../i18n';
-import { buildSeats, chipCountdown, chipState, pickMain, windowPassed, RESET_PASSED_SAID, resetPassedNote, spokenCountdown, staleNote, useClock, type ChipKind, type RouteNext, type SeatData, type SeatRow } from './usageSeats';
+import { buildSeats, chipCountdown, LOGIN_EXPIRED_BADGE, chipState, pickMain, windowPassed, RESET_PASSED_SAID, resetPassedNote, spokenCountdown, staleNote, useClock, type ChipKind, type RouteNext, type SeatData, type SeatRow } from './usageSeats';
 import { ClockIcon, RefreshIcon } from './icons';
 import { usePhoneMode } from '../useIsPhone';
 
@@ -96,11 +96,12 @@ export function stripSegs({ seats, current, next, stale, now, label }: {
     const st = chipState({ seats, current: d.seat, next: null, stale, now, label })!;
     const spent = st.kind === 'spent';
     const cooldown = st.kind === 'cooldown';
-    const until = cooldown ? chipCountdown(d.until, now) : '';
+    // An expired login: no countdown (the end of the cooldown does not bring the login back).
+    const until = cooldown && !d.loginExpired ? chipCountdown(d.until, now) : '';
     const name = label(d.seat);
-    const value = cooldown ? '쿨다운' : st.resetPassed ? '리셋됨' : spent ? '소진' : st.left !== null ? `${st.left}%` : st.text;
+    const value = cooldown ? st.text : st.resetPassed ? '리셋됨' : spent ? '소진' : st.left !== null ? `${st.left}%` : st.text;
     const reset = cooldown ? until : spent ? st.reset : st.left !== null ? (st.stale ? st.ago || '오래됨' : st.reset) : '';
-    const said = cooldown ? `쿨다운${until ? ` ${spokenCountdown(until)} 뒤 해제` : ''}`
+    const said = d.loginExpired ? LOGIN_EXPIRED_BADGE.replace(' · ', ', ') : cooldown ? `쿨다운${until ? ` ${spokenCountdown(until)} 뒤 해제` : ''}`
       : st.resetPassed ? (d.autoPoll ? resetPassedNote(d).replaceAll(' · ', ', ') : RESET_PASSED_SAID)
       : spent ? '소진' : st.left !== null ? `${st.left}퍼센트 남음` : st.text === '가능' ? '사용 가능' : '알 수 없음';
     const resetSaid = (spent || st.left !== null) && st.reset ? `, ${spokenCountdown(st.reset)} 뒤 초기화` : '';
@@ -111,9 +112,9 @@ export function stripSegs({ seats, current, next, stale, now, label }: {
     const note = old ? staleNote(st.ago, d.polled) : '';
     const spoken = `${name} ${said}${resetSaid}${old ? `, ${note.replace('. ', ', ')}` : st.kind === 'estimated' ? ', 추정' : ''}`;
     return {
-      seat: d.seat, label: name, kind: st.kind, stale: st.stale || st.kind === 'stale', icon: st.resetPassed ? 'refresh' : old ? 'clock' : null,
+      seat: d.seat, label: name, kind: st.kind, stale: st.stale || st.kind === 'stale' || !!d.loginExpired, icon: st.resetPassed ? 'refresh' : old ? 'clock' : null,
       bar: spent ? 0 : cooldown ? null : st.left, value, period, reset, dot: (spent || cooldown) && !old, spoken,
-      note: st.resetPassed ? `${name} — ${resetPassedNote(d)}` : old ? `${name} ${st.left}% — ${note}` : '',
+      note: d.loginExpired ? `${name} — ${LOGIN_EXPIRED_BADGE} · ${d.reasonLine ?? ''}` : st.resetPassed ? `${name} — ${resetPassedNote(d)}` : old ? `${name} ${st.left}% — ${note}` : '',
       current: d.seat === current, next: !!next && next.account === d.seat && next.account !== current,
     };
   });

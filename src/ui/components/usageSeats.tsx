@@ -4,7 +4,7 @@ import type { GrokStatus } from '../../shared/protocol';
 import { EngineBadge } from './EngineMark';
 import { RefreshIcon } from './icons';
 import { ui } from '../i18n';
-import { emptyAccountUsage, grokBillingWindow, leftPct, localDay, parseIsoUtc, remainingPct, trusted, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type GrokBotUsage, type GrokUsage, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
+import { emptyAccountUsage, grokBillingWindow, leftPct, localDay, parseIsoUtc, remainingPct, trusted, usageOf, type AccountUsage, type ClaudeCooldown, type GeminiUsage, type GptCredits, type GrokBotUsage, type GrokUsage, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 
 export function countdown(resetsAt: string | null, now: number): string {
   if (!resetsAt) return '';
@@ -80,6 +80,23 @@ export function observedText(u: AccountUsage, now: number): string {
   return kept ? `추정 · 마지막 턴 ${ago}` : `마지막 턴 기준 · ${ago}`;
 }
 
+/** A Claude account cooled for an auth failure: its login expired (the strip's word, and the sheet's badge). */
+export const LOGIN_EXPIRED = '로그인 만료';
+export const LOGIN_EXPIRED_BADGE = `${LOGIN_EXPIRED} · 다시 로그인하세요`;
+
+/**
+ * A Claude cooldown's line on its card: auth → "~05:23까지 자동 배정 제외"; a limit (or a cooldown written elsewhere) →
+ * the other engines' "쿨다운 · 40분 뒤 해제".
+ */
+function claudeCooldownLine(cd: ClaudeCooldown, now: number): string {
+  if (cd.kind === 'auth') {
+    const d = new Date(parseIsoUtc(cd.until));
+    return `~${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}까지 자동 배정 제외`;
+  }
+  const left = chipCountdown(cd.until, now);
+  return `쿨다운${left ? ` · ${spokenCountdown(left)} 뒤 해제` : ''}`;
+}
+
 /** `cli` usage mode: the Fable row when no turn told a value (rate_limit_event has no Fable window). */
 const CLI_NO_FABLE = 'CLI 미제공';
 
@@ -143,8 +160,10 @@ export type SeatData = {
   credits?: string | null;
   /** No usable window at all (Grok, a logged-out/broken Gemini seat), or a state that wins over the numbers (a cooldown). */
   reasonLine?: string;
-  /** A live cooldown's end (Grok), when known. */
+  /** A live cooldown's end (Grok, Claude), when known. */
   until?: string;
+  /** Claude: the cooldown is for an expired login (re-login needed); its numbers are old. */
+  loginExpired?: boolean;
   /** When the seat's numbers were last read (ISO), for the strip's "3일 전" on old numbers; absent when unknown. */
   fetchedAt?: string | null;
   /** Claude, `cli` mode: those numbers came from deck's `/usage` poll, not a turn (old ones are said "확인한 값"). */
@@ -361,6 +380,7 @@ export type RouteNext = { account: Seat; reason: string; asOpus?: boolean };
 
 /** One word for a seat's state in the sheet ('' for a healthy seat). */
 export function statusLabel(d: SeatData): string {
+  if (d.loginExpired) return LOGIN_EXPIRED_BADGE;
   if (d.dim || d.status === 'stale') return '오래됨';
   if (d.status === 'kept') return '추정(유지)';
   if (d.status === 'cooldown') return '쿨다운';
@@ -388,12 +408,16 @@ export function buildSeats(usage: UsageSnapshot, active: readonly { id: Account 
       const u = usageOf(usage, a);
       const kept = cli && u.status === 'stale' && trusted(u, now);
       const dim = cli && u.status === 'stale' && !kept;
+      const cd = usage.claudeCooldowns?.[a];
+      // The snapshot is pushed on changes and polls only: a cooldown whose end has passed is over here already.
+      const cooled = cd && parseIsoUtc(cd.until) > now ? cd : null;
       return {
         seat: a, engine: 'claude', mark: <EngineBadge engine="claude" className="usage-mark" />, rows: claudeRows(u, cli),
         status: (kept ? 'kept' : u.status) as SeatData['status'], dim, fetchedAt: u.fetchedAt,
         ...(cli || u.observedBy === 'poll' ? { observed: observedText(u, now) } : {}),
         ...(u.observedBy === 'poll' ? { polled: true } : {}),
         ...(usage.claudePoll ? { autoPoll: true } : {}),
+        ...(cooled ? { status: 'cooldown' as const, until: cooled.until, reasonLine: claudeCooldownLine(cooled, now), ...(cooled.kind === 'auth' ? { loginExpired: true } : {}) } : {}),
       };
     }),
     {
@@ -510,7 +534,9 @@ export function chipState({ seats, current, next, stale: snapshotStale, now, lab
   let compactText: string;
   let spoken: string;
   if (d.status === 'cooldown') {
-    kind = 'cooldown'; text = '쿨다운'; compactText = '쿨다운'; spoken = '쿨다운 중';
+    kind = 'cooldown';
+    if (d.loginExpired) { text = LOGIN_EXPIRED; compactText = LOGIN_EXPIRED; spoken = LOGIN_EXPIRED_BADGE.replace(' · ', ', '); }
+    else { text = '쿨다운'; compactText = '쿨다운'; spoken = '쿨다운 중'; }
   } else if (resetPassed) {
     kind = 'stale'; text = '리셋됨'; compactText = text; spoken = d.autoPoll ? resetPassedNote(d).replace(' · ', ', ') : RESET_PASSED_SAID;
   } else if (main && main.rem === 0) {

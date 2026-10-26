@@ -43,6 +43,27 @@ describe('usage seats in the sheet', () => {
     expect(screen.getByTestId('a-status').textContent).toBe('오래됨');
   });
 
+  it('Claude cooldowns: an expired login says so (badge, until when it is left out, old numbers); a limit says when it ends; a passed one is gone', () => {
+    const until = new Date(NOW + 6 * 3_600_000);
+    const hhmm = `${String(until.getHours()).padStart(2, '0')}:${String(until.getMinutes()).padStart(2, '0')}`;
+    const u: UsageSnapshot = { ...usage, deckReachable: true, accounts: { ...usage.accounts, a: { ...usage.accounts.a!, status: 'ok' } }, claudeCooldowns: {
+      a: { until: new Date(NOW - 60_000).toISOString(), kind: 'limit' },
+      b: { until: until.toISOString(), kind: 'auth' },
+      c: { until: new Date(NOW + 40 * 60_000).toISOString(), kind: 'limit' },
+    } };
+    sheet(u, 'a');
+    expect(screen.getByTestId('b-status').textContent).toBe('로그인 만료 · 다시 로그인하세요');
+    expect(screen.getByTestId('b-main').textContent).toBe(`~${hhmm}까지 자동 배정 제외`);
+    expect(screen.getByTestId('account-b').className).toContain('old');
+    expect(screen.getByTestId('b-fiveHour').className).toContain('old');
+    expect(screen.queryByTestId('b-refresh')).toBeNull();
+    expect(screen.getByTestId('c-status').textContent).toBe('쿨다운');
+    expect(screen.getByTestId('c-main').textContent).toBe('쿨다운 · 40분 뒤 해제');
+    expect(screen.getByTestId('c-weekly').className).not.toContain('old');
+    expect(screen.queryByTestId('a-status')).toBeNull();
+    expect(screen.queryByTestId('a-main')).toBeNull();
+  });
+
   it('renders a placeholder without data', () => {
     sheet(null, null);
     expect(screen.getByText('사용량 불러오는 중…')).toBeTruthy();

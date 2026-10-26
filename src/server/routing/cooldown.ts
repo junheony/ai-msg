@@ -41,3 +41,8 @@ export function writeCooldown(dir: string, account: Account, untilMs: number): v
     throw err;
   }
 }
+
+/** A turn on `account` just worked: its cooldown no longer holds (a missing file is fine). */
+export function clearCooldown(dir: string, account: Account): void {
+  fs.rmSync(path.join(dir, account), { force: true });
+}

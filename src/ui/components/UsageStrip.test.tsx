@@ -95,6 +95,17 @@ describe('UsageStrip', () => {
     expect(el().getAttribute('aria-label')).toContain('다음 턴 C(Opus)');
   });
 
+  it('Claude cooldowns: an expired login reads 로그인 만료 (dimmed, no countdown); a limit reads like the other engines', () => {
+    strip(snap({ claudeCooldowns: { b: { until: at(6 * 3_600_000), kind: 'auth' }, c: { until: at(40 * 60_000), kind: 'limit' } } }), 'a');
+    expect(seg('b').className).toContain('cooldown');
+    expect(seg('b').className).toContain('stale');
+    expect(seg('b').querySelector('.usage-seg-num')!.textContent).toBe('로그인 만료');
+    expect(seg('b').querySelector('.usage-seg-reset')).toBeNull();
+    expect(el().getAttribute('aria-label')).toContain('B 로그인 만료, 다시 로그인하세요');
+    expect(seg('c').textContent).toBe('C쿨다운· 40m');
+    expect(el().getAttribute('aria-label')).toContain('C 쿨다운 40분 뒤 해제');
+  });
+
   it('쿨다운 (only what is known), Grok without numbers (가능 / ?), stale (오래됨, a spent seat too) and estimated', () => {
     const grok = { bin: true } as GrokStatus;
     strip(snap({ grokSeats: { x1: { status: 'cooldown', lastTurnAt: null, lastError: null, cooldownUntil: at(30 * 60_000), today } } }), 'a', { grok });

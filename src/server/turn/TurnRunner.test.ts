@@ -280,6 +280,28 @@ describe('TurnRunner', () => {
     expect(th.join('')).not.toContain('AbCdEf');
   });
 
+  it('Claude cooldown on the usage cards: a file written elsewhere has no kind; a turn that works there clears it; a passed one goes', async () => {
+    let now = NOW;
+    let dir = '';
+    // b cools while its turn runs (another session, or claude-pick): the turn then works there anyway.
+    const eng = new StubEngine((req) => { if (req.account === 'b') writeCooldown(dir, 'b', NOW + 10 * 60_000); return ok('w1'); });
+    const c = await ctx(eng, { now: () => now });
+    dir = c.deps.cooldownDir;
+    writeCooldown(dir, 'c', NOW + 20 * 60_000);
+    const runner = new TurnRunner(c.deps);
+    c.deps.usage.refreshClaudeCooldowns();
+    expect(c.deps.usage.snapshot().claudeCooldowns).toEqual({ c: { until: new Date(NOW + 20 * 60_000).toISOString(), kind: null } });
+    await runner.run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
+    expect(eng.calls[0]).toMatchObject({ account: 'b' });
+    expect(readCooldownUntilMs(dir, 'b', NOW)).toBeNull();
+    expect(c.deps.usage.snapshot().claudeCooldowns).toEqual({ c: { until: new Date(NOW + 20 * 60_000).toISOString(), kind: null } });
+    now = NOW + 21 * 60_000;
+    const later = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }), now: () => new Date(now) });
+    new TurnRunner({ ...c.deps, usage: later });
+    later.refreshClaudeCooldowns();
+    expect(later.snapshot()).not.toHaveProperty('claudeCooldowns');
+  });
+
   it('limit on first account → cooldown, move, retry on next; auth failure likewise; third failure ends', async () => {
     const eng = new StubEngine((req, call) => {
       if (call === 0) return [{ kind: 'init', sessionId: 'n1', model: 'm' }, { kind: 'rate_limit', info: { status: 'rejected', fiveHour: null, weekly: null } }, failResult('limit', { sessionId: 'n1' })];
@@ -295,6 +317,11 @@ describe('TurnRunner', () => {
     expect(msgsOf(c, 'turn_retry')).toMatchObject([{ fromAccount: 'b', toAccount: 'a', attempt: 1 }, { fromAccount: 'a', toAccount: 'c', attempt: 2 }]);
     expect(c.moves.map((m) => (m as { targetProjectsRoot: string }).targetProjectsRoot)).toEqual([c.roots.a, c.roots.c]);
     expect(msgsOf(c, 'turn_result')[0]).toMatchObject({ ok: true, badge: { account: 'c' } });
+    // The usage cards hear each cooldown and why (auth = the login expired).
+    expect(c.deps.usage.snapshot().claudeCooldowns).toEqual({
+      b: { until: new Date(NOW + 3_600_000).toISOString(), kind: 'limit' },
+      a: { until: new Date(NOW + 6 * 3_600_000).toISOString(), kind: 'auth' },
+    });
 
     const eng3 = new StubEngine(() => [failResult('usage limit reached')]);
     const c3 = await ctx(eng3);

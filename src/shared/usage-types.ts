@@ -90,6 +90,13 @@ export function grokBillingWindow(b: GrokBilling | null | undefined, nowMs: numb
   return { usedPct: Math.max(0, Math.min(100, b.usedPct)), resetsAt: b.windowEnd };
 }
 
+/**
+ * A Claude account's cooldown (the cooldown file shared with claude-pick): 자동 분배 leaves the account out until `until`
+ * (ISO). `kind`: why deck wrote it — 'auth' = the login expired, 'limit' = a usage limit; null = written elsewhere
+ * (claude-pick/offload) or before this server run.
+ */
+export type ClaudeCooldown = { until: string; kind: 'auth' | 'limit' | null };
+
 export type UsageSnapshot = {
   generatedAt: string;
   deckReachable: boolean;
@@ -113,6 +120,8 @@ export type UsageSnapshot = {
   usageMode?: UsageMode;
   /** true = the server reads each Claude account's limits by itself (ClaudeUsagePoller, `claude -p /usage`); absent = only turns do. */
   claudePoll?: boolean;
+  /** Claude accounts still in cooldown, by id; absent = none (or an older server). A successful turn there drops it. */
+  claudeCooldowns?: Partial<Record<Account, ClaudeCooldown>>;
 };
 
 export type UsageMode = 'cli' | 'usage-deck';

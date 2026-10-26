@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { type Account, type AccountNames, type GrokAccount, type UsageSeat } from '../../shared/accounts';
-import { emptyAccountUsage, emptySnapshot, parseIsoUtc, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type GrokBotUsage, type GrokUsage, type UsageMode, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
+import { emptyAccountUsage, emptySnapshot, parseIsoUtc, usageOf, type AccountUsage, type ClaudeCooldown, type GeminiUsage, type GptCredits, type GrokBotUsage, type GrokUsage, type UsageMode, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 import { STALE_MAX_MS } from '../routing/AccountRouter';
 
 export type TurnWindows = { fiveHour?: UsageWindow; weekly?: UsageWindow; /** GPT only (Codex rollout) */ credits?: GptCredits; /** Claude, `cli` mode only: a Fable/Opus value the CLI told (see stream.ts fableSpentOf). */ fable?: UsageWindow };
@@ -135,6 +135,8 @@ export class UsageService {
   private cliObs = new Map<Account, CliAccountObs>();
   /** `cli` mode: when ClaudeUsagePoller last read each account (this run; see cliObservedAt). */
   private cliPollAt = new Map<Account, number>();
+  /** The Claude cooldowns as of now (TurnRunner: the cooldown files + why deck wrote them); null = none carried. */
+  private claudeCooldownSource: ((nowMs: number) => Partial<Record<Account, ClaudeCooldown>>) | null = null;
 
   /**
    * `accounts`: the registry.
@@ -304,6 +306,11 @@ export class UsageService {
 
   private withSource(s: UsageSnapshot): UsageSnapshot {
     const usageSource = this.source();
+    // Read again on every publish (polls included), so a passed cooldown goes away by itself.
+    const { claudeCooldowns: _was, ...rest } = s;
+    s = rest;
+    const cooled = this.claudeCooldownSource?.(this.now().getTime());
+    if (cooled && Object.keys(cooled).length > 0) s = { ...s, claudeCooldowns: cooled };
     if (this.claudePoll) s = { ...s, claudePoll: true };
     if (usageSource === null) return s;
     return { ...s, usageSource };
@@ -353,6 +360,16 @@ export class UsageService {
   /** GrokUsageTracker: a Grok turn just ended on `account` (usage header design §4/§7-4). */
   applyGrok(account: GrokAccount, u: GrokUsage): void {
     this.publish({ ...this.snap, generatedAt: this.now().toISOString(), grokSeats: { ...this.snap.grokSeats, [account]: u } });
+  }
+
+  /** TurnRunner: where the snapshot's `claudeCooldowns` come from. */
+  setClaudeCooldownSource(fn: (nowMs: number) => Partial<Record<Account, ClaudeCooldown>>): void {
+    this.claudeCooldownSource = fn;
+  }
+
+  /** TurnRunner: a Claude cooldown was written or cleared — the cards hear it now, not at the next poll. */
+  refreshClaudeCooldowns(): void {
+    this.publish({ ...this.snap, generatedAt: this.now().toISOString() });
   }
 
   /** GrokBotIndex: the Grok Bot app's cached weekly usage after a scan (null = none / expired: the line goes away). */

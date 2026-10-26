@@ -30,7 +30,7 @@ import { chooseAutoModel } from '../routing/AutoModel';
 import { chooseRoute, clampEffort, classifyTask, turnFits, type RouteDecision } from '../routing/AutoRoute';
 import { buildEngineLimits, geminiGroupOf } from '../routing/engineLimits';
 import { chooseEngine } from '../routing/EngineChoice';
-import { readAllCooldownsMs, writeCooldown } from '../routing/cooldown';
+import { clearCooldown, readAllCooldownsMs, readCooldownUntilMs, writeCooldown } from '../routing/cooldown';
 import { resolveModel } from '../routing/ModelPolicy';
 import type { SessionIndex } from '../sessions/SessionIndex';
 import { findCopies, resolveCopies } from '../sessions/copies';
@@ -45,7 +45,7 @@ import { isAncestor, moveSession } from '../sessions/SessionMover';
 import { moveToTrash, restoreFromTrash } from '../sessions/SessionTrash';
 import { projectSlug } from '../sessions/slug';
 import type { UsageService } from '../usage/UsageService';
-import { grokBillingWindow, parseIsoUtc, usageOf, type GrokBilling, type UsageWindow } from '../../shared/usage-types';
+import { grokBillingWindow, parseIsoUtc, usageOf, type ClaudeCooldown, type GrokBilling, type UsageWindow } from '../../shared/usage-types';
 import { isCodexState, isGeminiState, isGrokState, isOtherEngineState, type ClaudeSessionState, type CodexSessionState, type GeminiSessionState, type GrokSessionState, type SessionState, type SessionStateStore } from './SessionState';
 
 export type TurnSink = {
@@ -429,6 +429,8 @@ export class TurnRunner {
   private readonly fastSaid = new Map<string, Set<FastModeKind>>();
   /** setSandbox on a Codex Desktop / CLI thread deck has not run yet (no stored state): its first turn uses and stores it. */
   private readonly importSandboxes = new Map<string, CodexSandbox>();
+  /** Why deck last cooled each Claude account and until when (the usage cards say it); dropped by a successful turn there. */
+  private readonly claudeCooled = new Map<Account, { kind: 'auth' | 'limit'; untilMs: number }>();
   /** In-memory, per Gemini account, after a quota failure: new Gemini sessions open on the other account. */
   private geminiCooldownUntil: Partial<Record<GeminiAccount, number>> = {};
   /** In-memory, per Grok account, after a quota failure (design §8). Shown in the badge reason; never switches engines. */
@@ -472,6 +474,35 @@ export class TurnRunner {
     this.maxRetries = deps.maxRetries ?? 2;
     this.findRollout = deps.findRollout ?? findRolloutFile;
     this.readRateLimits = deps.readRateLimits ?? readRolloutRateLimits;
+    deps.usage.setClaudeCooldownSource((nowMs) => this.claudeCooldowns(nowMs));
+  }
+
+  /** The Claude cooldown files as the usage cards show them, with why deck wrote each one (null: not deck, or not this run). */
+  private claudeCooldowns(nowMs: number): Partial<Record<Account, ClaudeCooldown>> {
+    const out: Partial<Record<Account, ClaudeCooldown>> = {};
+    for (const [account, untilMs] of Object.entries(readAllCooldownsMs(this.deps.cooldownDir, nowMs, this.accounts.list()))) {
+      if (untilMs === undefined) continue;
+      const mine = this.claudeCooled.get(account);
+      // The file holds whole seconds (writeCooldown rounds up): deck's own write reads back as exactly that.
+      out[account] = { until: new Date(untilMs).toISOString(), kind: mine && Math.ceil(mine.untilMs / 1000) * 1000 === untilMs ? mine.kind : null };
+    }
+    return out;
+  }
+
+  /** Spec §8: a limit / auth failure cools the Claude account (the file claude-pick shares) and says why on its card. */
+  private coolClaude(account: Account, kind: 'auth' | 'limit'): void {
+    const untilMs = this.now() + COOLDOWN_MS[kind];
+    writeCooldown(this.deps.cooldownDir, account, untilMs);
+    this.claudeCooled.set(account, { kind, untilMs });
+    this.deps.usage.refreshClaudeCooldowns();
+  }
+
+  /** A Claude turn on `account` worked: a cooldown there no longer holds (routing takes it again, the card clears). */
+  private claudeWorked(account: Account): void {
+    const had = this.claudeCooled.delete(account);
+    if (!had && readCooldownUntilMs(this.deps.cooldownDir, account, this.now()) === null) return;
+    clearCooldown(this.deps.cooldownDir, account);
+    this.deps.usage.refreshClaudeCooldowns();
   }
 
   /**
@@ -1497,7 +1528,7 @@ export class TurnRunner {
             const fastFailed = fastFailureOf(p, ev, sink.signal.aborted);
             const failure = !ev.ok && !sink.signal.aborted && !fastFailed ? classifyFailure({ ok: false, errorText: ev.errorText, errorKind: ev.errorKind, rateLimitStatus: null }) : null;
             if (s && (failure === 'limit' || failure === 'auth')) {
-              writeCooldown(this.deps.cooldownDir, account, this.now() + COOLDOWN_MS[failure]);
+              this.coolClaude(account, failure);
               // No follow-up goes into the closing process: one arriving now waits in the queue (still registered, so
               // `closing` queues it) and goes on with the rest — the queue is taken only once the process is closed, so
               // nothing sent meanwhile is left behind or refused as busy. The line takes over in `finally`.
@@ -1506,6 +1537,7 @@ export class TurnRunner {
               failover = { failure, errorText: ev.errorText, seg: { turnId: s.turnId, reason: s.reason }, followUp: s.followUp ?? null, worked: s.worked === true, tasks: [...tasks], queued: queue.splice(0) };
               break;
             }
+            if (ev.ok) this.claudeWorked(account);
             if (s) {
               sink.emit({ type: 'turn_result', turnId: s.turnId, sessionId, cwd, ok: ev.ok, text: ev.text, badge: { account, model, reason: s.reason, usage: ev.usage, modelNote: s.modelNote }, errorText: ev.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(ev.errorText, ev.stderr), ...(fastFailed ? { errorCode: 'fast_refused' as const } : {}), ...(fastFailed === 'exhausted' ? { fastOff: true as const } : {}) });
             }
@@ -2409,7 +2441,7 @@ export class TurnRunner {
       }
 
       // The account works for deck even if its usage-deck card says setup_needed (down).
-      if (res.ok) deps.usage.noteTurnOk(account);
+      if (res.ok) { deps.usage.noteTurnOk(account); this.claudeWorked(account); }
       // ⚡ A fast turn refused for fast mode / credits: shown as it is, no cooldown, no account move, no booked retry —
       // the person picks 표준으로 다시 보내기 (errorCode). Credits used up turn the session's switch off (fastOff).
       const fastFailed = fastFailureOf(p, res, sink.signal.aborted, a.rateLimit?.status ?? null);
@@ -2462,7 +2494,7 @@ export class TurnRunner {
       this.rejectSteers(p.turnId, sink, { turnId: p.turnId, sessionId, cwd }, '재시도 중이라 턴이 끝난 뒤 보냅니다');
 
       // Spec §8: limit/auth → cooldown (shared with claude-pick) → move → retry on the next account.
-      writeCooldown(deps.cooldownDir, account, this.now() + COOLDOWN_MS[failure]);
+      this.coolClaude(account, failure);
       tried.push(account);
       const why = failure === 'limit' ? '한도 도달' : '인증 실패';
       // Review M1: a refused move rules that account out for this turn; ask the router again.
