@@ -1,4 +1,4 @@
-import { createContext, isValidElement, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { createContext, isValidElement, memo, useContext, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { splitDeckChoices, type DeckChoices } from '../../shared/choices';
 import ReactMarkdown, { type Components } from 'react-markdown';
