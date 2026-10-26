@@ -32,6 +32,6 @@ describe('DeckMark', () => {
     const { container } = render(<Login onLoggedIn={() => {}} />);
     expect(container.querySelector('h1 svg.deck-mark')).not.toBeNull();
     expect(container.querySelector('h1 svg.claude-mark')).toBeNull();
-    expect(container.querySelector('h1')?.textContent).toBe('deck');
+    expect(container.querySelector('h1')?.textContent).toBe('Crew');
   });
 });

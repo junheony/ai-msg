@@ -54,7 +54,7 @@ export function splitDeckChoices(text: string, streaming = false): { text: strin
 
 /** What the non-Claude engines are told (with the style note and deck 메모; never in the transcript). */
 export const DECK_CHOICES_PROMPT = [
-  '[deck 선택지] 이 화면은 선택지 카드를 보여 줄 수 있습니다. 사용자가 골라야 할 결정이 있으면 문장으로 길게 묻지 말고, 답의 맨 끝에 아래 형식의 블록 하나로 2–4개의 짧은 선택지를 주세요(사용자가 누르면 그 문구가 답으로 옵니다).',
+  '[Crew 선택지] 이 화면은 선택지 카드를 보여 줄 수 있습니다. 사용자가 골라야 할 결정이 있으면 문장으로 길게 묻지 말고, 답의 맨 끝에 아래 형식의 블록 하나로 2–4개의 짧은 선택지를 주세요(사용자가 누르면 그 문구가 답으로 옵니다).',
   '```deck-choices',
   '? 짧은 질문',
   '- 선택지 1',

@@ -15,7 +15,7 @@ describe('deck 메모', () => {
     expect(memoryNote('')).toBeNull();
     expect(memoryNote(null)).toBeNull();
     const n = memoryNote('  답은 한국어로  ')!;
-    expect(n.startsWith('[deck 메모]')).toBe(true);
+    expect(n.startsWith('[Crew 메모]')).toBe(true);
     expect(n.endsWith('\n답은 한국어로')).toBe(true);
   });
   it('deckAddendum: style first, then memory; null with neither', () => {

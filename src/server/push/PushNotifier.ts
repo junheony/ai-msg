@@ -37,7 +37,7 @@ export function firstLine(text: string): string {
  * Whether the user is already looking is decided by the service worker (a focused deck window suppresses it).
  */
 export function selectPush(msg: ServerMessage, titleOf: (sessionId: string | null, cwd: string) => string): PushPayload | null {
-  const head = (sessionId: string | null, cwd: string) => clip(titleOf(sessionId, cwd) || 'deck', TITLE_MAX);
+  const head = (sessionId: string | null, cwd: string) => clip(titleOf(sessionId, cwd) || 'Crew', TITLE_MAX);
   switch (msg.type) {
     case 'turn_result': {
       const line = firstLine(msg.ok ? msg.text : (msg.errorText ?? msg.text));

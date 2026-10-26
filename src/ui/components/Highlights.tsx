@@ -116,7 +116,7 @@ function Card({ c, now, engine, onOpen, need }: {
   need?: { text: string; tone: 'warn' | 'danger' } | undefined;
 }) {
   const [open, setOpen] = useState(false);
-  const project = c.server ? 'deck' : c.cwd.split('/').filter(Boolean).pop() ?? c.cwd;
+  const project = c.server ? 'Crew' : c.cwd.split('/').filter(Boolean).pop() ?? c.cwd;
   const summary = summaryOf(c);
   const head = (
     <>

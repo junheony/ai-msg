@@ -125,7 +125,7 @@ describe('usage seats in the sheet', () => {
     cleanup();
     sheet(usage, null);
     expect(screen.getByTestId('gpt-weekly').textContent).toContain('—');
-    expect(screen.getByTestId('account-gpt').title).toContain('usage-deck');
+    expect(screen.getByTestId('account-gpt').title).toContain('사용량 대시보드');
   });
 
   it('a window at 0% collapses into a 소진 pill with the absolute reset time instead of 0%', () => {
@@ -275,7 +275,7 @@ describe('usage seats · cli usage mode (observed times)', () => {
     expect(observedText(kept, NOW)).toBe('추정 · 12분 전 확인');
     sheet({ ...cliUsage, accounts: { ...cliUsage.accounts, a: { ...cliUsage.accounts.a!, observedBy: 'poll' } } }, null);
     expect(screen.getByTestId('a-observed').textContent).toContain('12분 전 확인');
-    expect(screen.getByTestId('a-refresh').textContent).toBe('12분 전 확인한 값 · 지금은 이보다 적게 남았을 수 있어요 · deck 이 자동으로 다시 확인해요');
+    expect(screen.getByTestId('a-refresh').textContent).toBe('12분 전 확인한 값 · 지금은 이보다 적게 남았을 수 있어요 · Crew 가 자동으로 다시 확인해요');
     expect(screen.getByTestId('a-weekly').title).toContain('예전에 확인한 값');
   });
 
@@ -350,7 +350,7 @@ describe('usage seats · Grok (cooldown expiry, midnight, subscription)', () => 
     unmount();
     sheet(grokUsage({}), null, bin);
     expect(screen.getByTestId('x1-main').textContent).toBe('사용 가능 · 마지막 턴 10분 전');
-    expect(screen.getByTestId('x1-today').textContent).toBe('deck 오늘3턴 · 입력 1,200 · 출력 34');
+    expect(screen.getByTestId('x1-today').textContent).toBe('Crew 오늘3턴 · 입력 1,200 · 출력 34');
     expect(screen.getByTestId('account-x1').querySelector('svg.usage-mark.grok')).not.toBeNull();
   });
 
@@ -370,7 +370,7 @@ describe('usage seats · Grok (cooldown expiry, midnight, subscription)', () => 
 
   it('after local midnight, yesterday\'s tally reads 0 until the next turn', () => {
     sheet(grokUsage({ today: { inputTokens: 1200, outputTokens: 34, turns: 3, day: yesterday } }), null, bin);
-    expect(screen.getByTestId('x1-today').textContent).toBe('deck 오늘0턴 · 입력 0 · 출력 0');
+    expect(screen.getByTestId('x1-today').textContent).toBe('Crew 오늘0턴 · 입력 0 · 출력 0');
   });
 
   const billing = (usedPct: number, endMs = NOW + 6 * 86_400_000 + 2 * 3_600_000) => ({
@@ -384,7 +384,7 @@ describe('usage seats · Grok (cooldown expiry, midnight, subscription)', () => 
     expect(screen.getByTestId('x1-week').textContent).toContain('99% 남음');
     expect(screen.getByTestId('x1-week').querySelector('.usage-bar > i')!.getAttribute('style')).toContain('width: 99%');
     expect(screen.getByTestId('x1-tier').textContent).toBe('구독SuperGrok Heavy');
-    expect(screen.getByTestId('x1-today').textContent).toBe('deck 오늘3턴 · 입력 1,200 · 출력 34');
+    expect(screen.getByTestId('x1-today').textContent).toBe('Crew 오늘3턴 · 입력 1,200 · 출력 34');
     expect(screen.getByTestId('x1-observed').textContent).toContain('확인');
     expect(screen.queryByTestId('x1-main')).toBeNull();
   });

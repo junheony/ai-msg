@@ -56,7 +56,7 @@ export const FAST_WAIT_BEHIND = '백그라운드 작업(↯ 설정 바뀜)';
 export const FAST_STEER_REJECTED = '↯ 빠르게 설정이 바뀌어 이 턴이 끝난 뒤 새로 보냅니다';
 /** Whether a send asks for ⚡ 빠르게 (never on a handoff — TurnRunner.fastTurn). */
 const fastSend = (m: { fast?: boolean; handoff?: boolean }) => m.fast === true && !m.handoff;
-export const recycleNotice = (n: number) => `deck 밖(Claude Desktop 등)에서 이어진 대화를 이어받느라, 기다리던 백그라운드 작업 ${n}개가 중단됐습니다`;
+export const recycleNotice = (n: number) => `Crew 밖(Claude Desktop 등)에서 이어진 대화를 이어받느라, 기다리던 백그라운드 작업 ${n}개가 중단됐습니다`;
 
 /** How often, while a browser is connected, deck looks for outside holders (one `ps`), outside writes to the open sessions and newer mtimes of the listed transcripts (a stat each). */
 export const OUTSIDE_POLL_MS = 15_000;
@@ -1587,7 +1587,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
           const st = deps.store.get(id);
           const entry = deps.index.lookup(id);
           const imported = st || entry ? null : deps.index.importOf(id);
-          if (imported?.source === 'grokbot') { send(ws, { type: 'error', turnId: null, sessionId: id, message: 'Grok Bot 대화는 복제할 수 없어요 — deck Grok 새 세션으로 이어가기를 쓰세요' }); break; }
+          if (imported?.source === 'grokbot') { send(ws, { type: 'error', turnId: null, sessionId: id, message: 'Grok Bot 대화는 복제할 수 없어요 — Crew Grok 새 세션으로 이어가기를 쓰세요' }); break; }
           const cwd = st?.cwd ?? entry?.cwd ?? imported?.cwd;
           if (!cwd) { send(ws, { type: 'error', turnId: null, sessionId: id, message: `복제할 수 없는 세션입니다: ${id}` }); break; }
           const old = deps.meta?.title?.(id) ?? entry?.title ?? deps.index.codexOwned(deps.store.codexEntries()).find((e) => e.sessionId === id)?.title ?? imported?.title ?? id.slice(0, 8);

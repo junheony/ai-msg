@@ -67,7 +67,7 @@ async function setup(): Promise<Ctx> {
 const fileOf = (c: Ctx, a: Account, dir = DIR) => path.join(c.roots[a]!, dir, `${SID}.jsonl`);
 const read = (f: string) => fs.readFile(f, 'utf8');
 /** The concurrent-open warning (TurnRunner's elsewhereNotice for Claude). */
-const ELSEWHERE = 'deck 밖(Claude Desktop 또는 Claude CLI)에서 바뀌었어요';
+const ELSEWHERE = 'Crew 밖(Claude Desktop 또는 Claude CLI)에서 바뀌었어요';
 const notices = (c: Ctx) => c.msgs.filter((m): m is Extract<ServerMessage, { type: 'turn_notice' }> => m.type === 'turn_notice').map((m) => m.message);
 
 async function put(c: Ctx, a: Account, content: string, mtimeMs?: number, dir = DIR) {
@@ -500,7 +500,7 @@ describe('TurnRunner: concurrent-open warning', () => {
     expect(i).toBeGreaterThan(started);
     // Says when (A's copy: 30 s ago), what goes wrong and what to do.
     const msg = (c.msgs[i] as Extract<ServerMessage, { type: 'turn_notice' }>).message;
-    expect(msg).toContain('방금 deck 밖');
+    expect(msg).toContain('방금 Crew 밖');
     expect(msg).toContain('한 곳에서만 이어 쓰세요');
     expect(msg).toContain('두 갈래로 나뉩니다');
     expect(c.msgs.filter((m) => m.type === 'turn_result').every((m) => m.type === 'turn_result' && m.ok)).toBe(true);

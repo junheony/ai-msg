@@ -520,15 +520,15 @@ describe('Sidebar: Desktop parity (새 세션, avatar menu, empty copy, menu key
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
-  it('the avatar menu ends with "deck v…": an information row (aria-disabled) that closes nothing and runs nothing', () => {
+  it('the avatar menu ends with "Crew v…": an information row (aria-disabled) that closes nothing and runs nothing', () => {
     const settings = vi.fn();
     render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} footMenu={[{ label: '설정', run: settings }]} />);
     fireEvent.click(screen.getByRole('button', { name: '설정 및 계정' }));
     const items = screen.getAllByRole('menuitem');
     const version = items.at(-1)!;
     expect(version).toBe(screen.getByTestId('foot-menu-version'));
-    // Under vitest there is no __DECK_VERSION__; the build has `deck v<package.json version>`.
-    expect(DECK_VERSION_LINE).toMatch(/^deck (v\d+\.\d+\.\d+|개발 모드)$/);
+    // Under vitest there is no __DECK_VERSION__; the build has `Crew v<package.json version>`.
+    expect(DECK_VERSION_LINE).toMatch(/^Crew (v\d+\.\d+\.\d+|개발 모드)$/);
     expect(version.textContent).toBe(DECK_VERSION_LINE);
     expect(version.getAttribute('aria-disabled')).toBe('true');
     fireEvent.click(version);
@@ -579,9 +579,9 @@ describe('Sidebar: Desktop parity (새 세션, avatar menu, empty copy, menu key
     };
     const imported = del('imported');
     expect(imported.getAttribute('aria-disabled')).toBe('true');
-    expect(imported.getAttribute('title')).toBe('Codex 앱 기록은 deck에서 지울 수 없어요');
+    expect(imported.getAttribute('title')).toBe('Codex 앱 기록은 Crew에서 지울 수 없어요');
     // touch screens show no tooltip: the reason is also on screen, under the item
-    expect(imported.querySelector('.menu-note')?.textContent).toBe('Codex 앱 기록은 deck에서 지울 수 없어요');
+    expect(imported.querySelector('.menu-note')?.textContent).toBe('Codex 앱 기록은 Crew에서 지울 수 없어요');
     expect(imported.getAttribute('aria-describedby')).toBe(imported.querySelector('.menu-note')!.id);
     fireEvent.click(imported);
     expect(onDelete).not.toHaveBeenCalled();
@@ -818,7 +818,7 @@ describe('Sidebar rows: list rows (avatar, title + time, meta, ⋯ on demand)', 
     const p = [{ cwd: '/w/one', name: 'one', pinned: false, sessions: [s('s1', '/w/one', 'first')] }];
     const { container } = render(<Sidebar projects={p} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onOpenPalette={onOpenPalette} onOpenFolder={noop} />);
     const brand = container.querySelector('.sidebar-head .sidebar-brand')!;
-    expect(brand.textContent).toBe('deck');
+    expect(brand.textContent).toBe('Crew');
     expect(brand.querySelector('svg.deck-mark')).not.toBeNull();
     expect(screen.queryByLabelText('세션 검색')).toBeNull();
     openSearch();

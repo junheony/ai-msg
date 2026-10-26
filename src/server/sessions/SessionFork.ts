@@ -156,7 +156,7 @@ async function divergedAndMove(opts: DivergedOpts, makeFork: boolean): Promise<R
     bFile = path.join(backupDir, `${id}.jsonl`);
     bComp = path.join(backupDir, id);
     if (!makeFork) {
-      await fs.writeFile(path.join(backupDir, KEEP_MARKER), `deck 이 ${targetDir} 의 갈라진 사본(${id})을 덮어쓰기 전에 백업했습니다. 이 사본에만 있는 대화가 있을 수 있어 자동 정리에서 빠집니다.\n`, { flag: 'wx' });
+      await fs.writeFile(path.join(backupDir, KEEP_MARKER), `Crew 가 ${targetDir} 의 갈라진 사본(${id})을 덮어쓰기 전에 백업했습니다. 이 사본에만 있는 대화가 있을 수 있어 자동 정리에서 빠집니다.\n`, { flag: 'wx' });
     }
     await fs.copyFile(tFile, bFile, FS.COPYFILE_EXCL);
     if (!(await sameFile(tFile, bFile))) throw new Error('백업 검증 실패(jsonl)');

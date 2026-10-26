@@ -31,8 +31,8 @@ describe('ForkMenu', () => {
     const onResolved = vi.fn();
     render(<ForkMenu sessionId={SID} busy={false} onResolved={onResolved} onError={() => {}} />);
     fireEvent.click(await screen.findByText('갈라짐'));
-    expect(screen.getByText('deck 을 Desktop 대화로 맞추기')).toBeTruthy();
-    fireEvent.click(screen.getByText('Desktop 쪽을 deck 대화로 맞추기'));
+    expect(screen.getByText('Crew 를 Desktop 대화로 맞추기')).toBeTruthy();
+    fireEvent.click(screen.getByText('Desktop 쪽을 Crew 대화로 맞추기'));
     await waitFor(() => expect(onResolved).toHaveBeenCalled());
     expect(calls.find((c) => c.body)).toEqual({ url: '/api/session-fork', body: { sessionId: SID, keep: 'deck' } });
   });
