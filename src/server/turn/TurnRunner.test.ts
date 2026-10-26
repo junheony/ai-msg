@@ -12,7 +12,7 @@ import type { GeminiAccount } from '../../shared/accounts';
 import type { GrokTurnRequest } from '../engine/GrokEngine';
 import type { EngineEvent, EngineResult } from '../engine/Engine';
 import { chooseAutoModel } from '../routing/AutoModel';
-import { readCooldownUntilMs, writeCooldown } from '../routing/cooldown';
+import { readCooldownKind, readCooldownUntilMs, writeCooldown, writeCooldownKind } from '../routing/cooldown';
 import { COOLDOWN_MS } from '../engine/limitDetect';
 import { hashInput } from '../audit';
 import { CODEX_ARCHIVED_NOTICE } from '../sessions/CodexImports';
@@ -280,10 +280,10 @@ describe('TurnRunner', () => {
     expect(th.join('')).not.toContain('AbCdEf');
   });
 
-  it('Claude cooldown on the usage cards: a file written elsewhere has no kind; a turn that works there clears it; a passed one goes', async () => {
+  it('Claude cooldown on the usage cards: one written during a turn stays (newer news); one written elsewhere has no kind; a passed one goes', async () => {
     let now = NOW;
     let dir = '';
-    // b cools while its turn runs (another session, or claude-pick): the turn then works there anyway.
+    // b cools while its turn runs (another session, or claude-pick): the turn's success does not take that back.
     const eng = new StubEngine((req) => { if (req.account === 'b') writeCooldown(dir, 'b', NOW + 10 * 60_000); return ok('w1'); });
     const c = await ctx(eng, { now: () => now });
     dir = c.deps.cooldownDir;
@@ -293,13 +293,36 @@ describe('TurnRunner', () => {
     expect(c.deps.usage.snapshot().claudeCooldowns).toEqual({ c: { until: new Date(NOW + 20 * 60_000).toISOString(), kind: null } });
     await runner.run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
     expect(eng.calls[0]).toMatchObject({ account: 'b' });
-    expect(readCooldownUntilMs(dir, 'b', NOW)).toBeNull();
-    expect(c.deps.usage.snapshot().claudeCooldowns).toEqual({ c: { until: new Date(NOW + 20 * 60_000).toISOString(), kind: null } });
+    expect(readCooldownUntilMs(dir, 'b', NOW)).toBe(NOW + 10 * 60_000);
+    c.deps.usage.refreshClaudeCooldowns(); // the next poll
+    expect(c.deps.usage.snapshot().claudeCooldowns).toEqual({ b: { until: new Date(NOW + 10 * 60_000).toISOString(), kind: null }, c: { until: new Date(NOW + 20 * 60_000).toISOString(), kind: null } });
     now = NOW + 21 * 60_000;
     const later = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }), now: () => new Date(now) });
     new TurnRunner({ ...c.deps, usage: later });
     later.refreshClaudeCooldowns();
     expect(later.snapshot()).not.toHaveProperty('claudeCooldowns');
+  });
+
+  it('Claude cooldown: one there before the try started is cleared by its success (file, kind and card); the kind survives a restart', async () => {
+    const eng = new StubEngine(() => ok('w2'));
+    const c = await ctx(eng, { sameVendorRotation: () => false });
+    const dir = c.deps.cooldownDir;
+    writeCooldown(dir, 'a', NOW + 6 * 3_600_000);
+    writeCooldownKind(dir, 'a', 'auth', NOW + 6 * 3_600_000);
+    // A new runner (a server restart) still knows why: the kind file pairs with the cooldown's end.
+    const runner = new TurnRunner(c.deps);
+    c.deps.usage.refreshClaudeCooldowns();
+    expect(c.deps.usage.snapshot().claudeCooldowns).toEqual({ a: { until: new Date(NOW + 6 * 3_600_000).toISOString(), kind: 'auth' } });
+    await runner.run({ turnId: 't', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
+    expect(eng.calls[0]).toMatchObject({ account: 'a' });
+    expect(readCooldownUntilMs(dir, 'a', NOW)).toBeNull();
+    expect(readCooldownKind(dir, 'a', NOW + 6 * 3_600_000)).toBeNull();
+    expect(c.deps.usage.snapshot()).not.toHaveProperty('claudeCooldowns');
+    // claude-pick writing over the cooldown: the old kind no longer pairs with it.
+    writeCooldownKind(dir, 'b', 'auth', NOW + 6 * 3_600_000);
+    writeCooldown(dir, 'b', NOW + 3_600_000);
+    c.deps.usage.refreshClaudeCooldowns();
+    expect(c.deps.usage.snapshot().claudeCooldowns).toEqual({ b: { until: new Date(NOW + 3_600_000).toISOString(), kind: null } });
   });
 
   it('limit on first account → cooldown, move, retry on next; auth failure likewise; third failure ends', async () => {

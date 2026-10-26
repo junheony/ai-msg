@@ -651,6 +651,8 @@ describe('TurnRunner: background work after the turn result', () => {
       await done;
 
       expect(readCooldownUntilMs(deps.cooldownDir, 'b', NOW)).toBe(NOW + 3_600_000);
+      // The usage cards hear why (a limit), from the background failover too.
+      expect(deps.usage.snapshot().claudeCooldowns).toEqual({ b: { until: new Date(NOW + 3_600_000).toISOString(), kind: 'limit' } });
       expect(of(msgs, 'turn_retry')).toMatchObject([{ turnId: 't1:bg1', sessionId: SID, fromAccount: 'b', toAccount: 'a', attempt: 1, reason: expect.stringMatching(/^사용 한도 도달 · 03:50 리셋 → /) }]);
       expect(of(msgs, 'turn_notice').map((m) => m.message)).toContain('B 계정 사용 한도 도달 (03:50 리셋) — A 계정으로 이어서 진행합니다');
       expect(of(msgs, 'turn_started').map((m) => [m.turnId, m.account])).toEqual([['t1', 'b'], ['t1:bg1', 'b'], ['t1:bg1', 'a']]);
