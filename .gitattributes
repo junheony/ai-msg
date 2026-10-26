@@ -1,9 +1,12 @@
 # Left out of the public export (scripts/export-public.sh → `git archive`).
-# `/**` (not a bare directory) so `git check-attr` agrees with `git archive` — src/hygiene.ts uses it.
+# `/**` (not a bare directory) so `git check-attr` agrees with `git archive` — src/hygiene.ts uses it. The bare
+# directory line beside it keeps `git archive` from leaving the directory itself behind, empty.
 .gitattributes                export-ignore
 .hygiene-private.json         export-ignore
+cloud                         export-ignore
 cloud/**                      export-ignore
 docs/HANDOFF.md               export-ignore
+docs/superpowers              export-ignore
 docs/superpowers/**           export-ignore
 scripts/export-public.sh      export-ignore
 src/hygiene.private.test.ts   export-ignore
