@@ -900,9 +900,9 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .markdown .md-quote-copy { position: absolute; top: var(--s1); right: var(--s1); min-width: 28px; height: 28px; opacity: 0; transition: opacity var(--t-fast) ease; }
 .md-quote:hover > .md-quote-copy, .md-quote-copy:focus-visible, .md-quote:focus-within > .md-quote-copy { opacity: 1; }
 .md-quote-copy .msg-act-said { display: none; }
-@media (hover: none) { .md-quote-copy { opacity: 1; } }
+@media (hover: none) { .markdown .md-quote-copy { opacity: 1; } }
 /* Phone: the 28px look keeps a one-line quote's height; the 44px touch area is its ::after. */
-:where(:root[data-phone]) { .md-quote-copy::after { content: ""; position: absolute; inset: calc((28px - var(--phone-tap)) / 2); } }
+:where(:root[data-phone]) { .markdown .md-quote-copy { opacity: 1; } .md-quote-copy::after { content: ""; position: absolute; inset: calc((28px - var(--phone-tap)) / 2); } }
 .markdown del { color: var(--muted); }
 /* Task list: GFM's checkboxes are disabled (read-only), which the browser greys out whatever accent-color says, so they
    are drawn here — a brand-colour box with a tick when done, an outlined one when not. */

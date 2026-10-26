@@ -207,7 +207,7 @@ const InQuoteContext = createContext(false);
 
 /** A quote's source lines with its own `>` level taken off (a nested quote keeps its marks for plainOf to drop); a hard break's trailing spaces go. */
 function quoteSource(md: string): string {
-  return md.split('\n').map((l) => l.replace(/^\s{0,3}>[ \t]?/, '').trimEnd()).join('\n');
+  return md.split('\n').map((l) => l.replace(/^[ \t]*>[ \t]?/, '').trimEnd()).join('\n');
 }
 
 /**
