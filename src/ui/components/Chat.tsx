@@ -625,7 +625,7 @@ export function Chat(p: ChatProps) {
         </AgentContext.Provider>
         {retryPrompt !== null && <button type="button" className="btn ghost retry" onClick={() => { p.onSend(retryPrompt); scroll.attach(); }}>재시도</button>}
         {fastRefused && <button type="button" className="btn ghost retry" data-testid="fast-standard-retry" onClick={() => { p.onSendStandard?.(retryPrompt!); scroll.attach(); }}>표준으로 다시 보내기</button>}
-        {lockedTurn !== null && p.onCodexHandoff && <button type="button" className="btn ghost retry" data-testid="codex-handoff" onClick={() => p.onCodexHandoff?.(lockedTurn)}>Crew 에서 새 GPT 세션으로 이어가기</button>}
+        {lockedTurn !== null && p.onCodexHandoff && <button type="button" className="btn ghost retry" data-testid="codex-handoff" onClick={() => p.onCodexHandoff?.(lockedTurn)}>MSG 에서 새 GPT 세션으로 이어가기</button>}
         {p.pending.map((r) => <PermissionCard key={r.requestId} req={r} onDecide={p.onDecide} />)}
         {p.questions.map((q) => <QuestionCard key={q.requestId} req={q} onAnswer={p.onAnswer} />)}
         {p.tasks && p.tasks.length > 0 && <TaskCards tasks={p.tasks} cap={p.taskCap ?? null} {...(p.onOpenTask ? { onOpen: p.onOpenTask } : {})} {...(p.onDismissTask ? { onDismiss: p.onDismissTask } : {})} {...(p.onCancelTask ? { onCancel: p.onCancelTask } : {})} />}
@@ -653,7 +653,7 @@ export function Chat(p: ChatProps) {
         {!p.busy && <ContextHint info={ctx} onHandoff={p.onHandoff} cold={!pillCold} />}
         {p.composerNote && <div className="pane-notice notice composer-note" role="status" data-testid="composer-note"><span className="pane-notice-text">{p.composerNote}</span></div>}
         {p.onPickCwd && <button type="button" className="btn ghost retry" data-testid="grokbot-handoff-cwd" onClick={p.onPickCwd}>작업 폴더 바꾸기</button>}
-        {p.onGrokBotHandoff && <button type="button" className="btn ghost retry" data-testid="grokbot-handoff" onClick={p.onGrokBotHandoff}>Crew Grok 새 세션으로 이어가기</button>}
+        {p.onGrokBotHandoff && <button type="button" className="btn ghost retry" data-testid="grokbot-handoff" onClick={p.onGrokBotHandoff}>MSG Grok 새 세션으로 이어가기</button>}
         <Composer
           dragover={drag && !p.readOnly}
           popup={suggest.popup}

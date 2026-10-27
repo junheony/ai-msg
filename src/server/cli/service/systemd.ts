@@ -10,7 +10,7 @@ export function systemdUnit(r: ServiceRecord, envFile: string): string {
   return [
     `# ${MARKER_LINE}`,
     '[Unit]',
-    'Description=Crew local server',
+    'Description=MSG local server',
     'After=network-online.target',
     '',
     '[Service]',

@@ -56,7 +56,7 @@ describe('scripts/monitor/deck-uptime.sh', () => {
     await run();
     const alerts = await sent();
     expect(alerts).toHaveLength(1);
-    expect(alerts[0]).toContain('🔴 Crew 서버 응답 없음');
+    expect(alerts[0]).toContain('🔴 MSG 서버 응답 없음');
     expect(alerts[0]).toContain('relaunch.sh status');
     await run();
     expect(await sent()).toHaveLength(1); // still down: no repeat
@@ -66,7 +66,7 @@ describe('scripts/monitor/deck-uptime.sh', () => {
     await run();
     const after = await sent();
     expect(after).toHaveLength(2);
-    expect(after[1]).toMatch(/🟢 Crew 복구 .* 0분 중단/);
+    expect(after[1]).toMatch(/🟢 MSG 복구 .* 0분 중단/);
     expect(await fs.readFile(path.join(dir, 'uptime.state'), 'utf8')).toBe('0 0 \n');
   }, 20_000);
 

@@ -42,7 +42,7 @@ describe('Grok Bot conversation pane', () => {
     expect(screen.queryByText('복제')).toBeNull();
     const del = screen.getByRole('menuitem', { name: '삭제…' });
     expect(del.getAttribute('aria-disabled')).toBe('true');
-    expect(del.querySelector('.menu-note')?.textContent).toBe('Grok Bot 앱 기록은 Crew에서 지울 수 없어요');
+    expect(del.querySelector('.menu-note')?.textContent).toBe('Grok Bot 앱 기록은 MSG에서 지울 수 없어요');
     fireEvent.click(del);
     expect(a.onDelete).not.toHaveBeenCalled();
   });
@@ -103,10 +103,10 @@ describe('Sidebar menu on Grok Bot conversations', () => {
     for (const t of ['Grok Bot 대화', '옛 대화']) {
       const m = menuOf(t);
       expect(m.names).not.toContain('복제');
-      expect(m.reason).toBe('Grok Bot 앱 기록은 Crew에서 지울 수 없어요');
+      expect(m.reason).toBe('Grok Bot 앱 기록은 MSG에서 지울 수 없어요');
     }
     const cli = menuOf('CLI 대화');
     expect(cli.names).toContain('복제');
-    expect(cli.reason).toBe('Grok CLI 기록은 Crew에서 지울 수 없어요');
+    expect(cli.reason).toBe('Grok CLI 기록은 MSG에서 지울 수 없어요');
   });
 });

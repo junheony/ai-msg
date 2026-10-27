@@ -674,7 +674,7 @@ export function createRequestHandler(deps: HttpDeps) {
           if (url.pathname === '/api/push/unsubscribe') { await push.store.remove(endpoint); json(res, 200, { ok: true }); return; }
           if (url.pathname === '/api/push/status') { json(res, 200, { subscribed: push.store.has(endpoint) }); return; }
           if (url.pathname === '/api/push/test') {
-            const ok = await push.notifier.sendTo(endpoint, { kind: 'test', title: 'Crew', body: '테스트 알림입니다', sessionId: null, tag: 'test' });
+            const ok = await push.notifier.sendTo(endpoint, { kind: 'test', title: 'MSG', body: '테스트 알림입니다', sessionId: null, tag: 'test' });
             json(res, ok ? 200 : 502, ok ? { ok: true } : { error: '알림을 보내지 못했습니다 (구독이 없거나 전송 실패)' });
             return;
           }

@@ -204,8 +204,8 @@ describe('TurnRunner · deck intro note', () => {
     const c = await setup(eng);
     await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: '안녕' }, c.sink);
     expect(eng.calls[0]?.systemNote).toBe(DECK_INTRO_NOTE);
-    expect(eng.calls[0]?.systemNote).toContain('[Crew] 사용자는');
-    expect(JSON.stringify(c.msgs)).not.toContain('[Crew] 사용자는');
+    expect(eng.calls[0]?.systemNote).toContain('[MSG] 사용자는');
+    expect(JSON.stringify(c.msgs)).not.toContain('[MSG] 사용자는');
   });
   it('is not repeated when resuming an existing session', async () => {
     const eng = new StubEngine(() => ok(PARENT));
@@ -231,7 +231,7 @@ describe('TurnRunner · 간결 모드 style note', () => {
     const c = await setup(eng);
     await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: '안녕', concise: true }, c.sink);
     expect(eng.calls[0]?.appendSystemPrompt).toBe(CONCISE_STYLE_PROMPT);
-    expect(JSON.stringify(c.msgs)).not.toContain('[Crew 간결 모드]');
+    expect(JSON.stringify(c.msgs)).not.toContain('[MSG 간결 모드]');
   });
   it('leaves a non-concise turn, a handoff note turn and an automatic (commander) turn alone', async () => {
     const eng = new StubEngine(() => ok(PARENT));
@@ -256,7 +256,7 @@ describe('TurnRunner · 간결 모드 style note', () => {
     await c.runner.run({ turnId: 't5', cwd: '/w/one', sessionId: PARENT, text: '계속' }, c.sink);
     const [a, b, cmd, handoff, blank] = eng.calls.map((x) => x.appendSystemPrompt);
     expect(a).toBe(deckAddendum({ style: CONCISE_STYLE_PROMPT, memory: '배포는 금요일에 하지 않음' }));
-    expect(a!.indexOf('[Crew 간결 모드]')).toBeLessThan(a!.indexOf('[Crew 메모]'));
+    expect(a!.indexOf('[MSG 간결 모드]')).toBeLessThan(a!.indexOf('[MSG 메모]'));
     expect(b).toBe(memoryNote('배포는 금요일에 하지 않음'));
     expect(cmd).toBe(b); // a 총사령탑 hop: memory, no style note
     expect(handoff).toBeUndefined();

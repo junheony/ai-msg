@@ -33,7 +33,7 @@ export const RECENT_FOLDERS = 3;
 /** Injected by vite.config.ts (package.json version); absent under vitest. */
 declare const __DECK_VERSION__: string | undefined;
 /** The avatar menu's last line (spec §3.2/§3.6: 정보 → "deck v…"), an information row that does nothing. */
-export const DECK_VERSION_LINE = `Crew ${typeof __DECK_VERSION__ === 'string' ? `v${__DECK_VERSION__}` : '개발 모드'}`;
+export const DECK_VERSION_LINE = `MSG ${typeof __DECK_VERSION__ === 'string' ? `v${__DECK_VERSION__}` : '개발 모드'}`;
 /** One entry of the avatar (설정 및 계정) menu at the bottom left. */
 export type SidebarMenuItem = { label: string; hint?: string; run: () => void };
 
@@ -499,7 +499,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
       }}
       onScroll={revealed ? () => setRevealed(null) : undefined}>
       <div className="sidebar-head">
-        <span className="sidebar-brand"><DeckMark className="sidebar-brand-mark" />Crew</span>
+        <span className="sidebar-brand"><DeckMark className="sidebar-brand-mark" />MSG</span>
         <span className="grow" />
         <button ref={searchBtn} type="button" className="icon-btn" aria-label="검색" title="세션 검색" aria-expanded={searchOpen} onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}><SearchIcon /></button>
         <span className="new-menu-wrap">
@@ -608,10 +608,10 @@ export function importTitle(s: SessionEntry): string {
   const preview = s.preview ? `\n\n${s.preview}` : '';
   if (s.source === 'grokbot') return `Grok Bot 앱 대화 — 읽기만 할 수 있습니다 (Grok Bot 앱에서 이어가세요)${preview}`;
   if (s.cwdMissing) return `폴더가 없어 이어서 보낼 수 없음 — 읽기만 할 수 있습니다${preview}`;
-  if (s.engine === 'grok') return `${s.autoRun ? 'grok 헤드리스로 자동 실행된' : '터미널 Grok CLI 에서 만든'} 대화 — 메시지를 보내면 Crew 에서 이어갑니다${preview}`;
-  if (s.engine === 'gemini') return `agy 에서 만든 대화 — 메시지를 보내면 Crew 에서 이어갑니다 (이전 메시지는 Crew 에 보이지 않음)${preview}`;
+  if (s.engine === 'grok') return `${s.autoRun ? 'grok 헤드리스로 자동 실행된' : '터미널 Grok CLI 에서 만든'} 대화 — 메시지를 보내면 MSG 에서 이어갑니다${preview}`;
+  if (s.engine === 'gemini') return `agy 에서 만든 대화 — 메시지를 보내면 MSG 에서 이어갑니다 (이전 메시지는 MSG 에 보이지 않음)${preview}`;
   if (s.codexArchived) return 'Codex 에서 보관한 대화 — 읽기만 할 수 있습니다';
-  return s.codexExec ? 'codex exec 로 자동 실행된 대화 — 메시지를 보내면 Crew 에서 이어갑니다' : 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 Crew 에서 이어갑니다';
+  return s.codexExec ? 'codex exec 로 자동 실행된 대화 — 메시지를 보내면 MSG 에서 이어갑니다' : 'Codex 앱/CLI 에서 만든 대화 — 메시지를 보내면 MSG 에서 이어갑니다';
 }
 
 /** A non-Claude engine's name, for the row's tooltip. */

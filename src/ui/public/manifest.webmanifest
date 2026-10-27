@@ -1,6 +1,6 @@
 {
-  "name": "Crew",
-  "short_name": "Crew",
+  "name": "MSG",
+  "short_name": "MSG",
   "description": "Claude · GPT 세션 셸",
   "id": "/",
   "start_url": "/",

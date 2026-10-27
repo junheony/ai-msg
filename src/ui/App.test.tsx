@@ -1104,7 +1104,7 @@ describe('App new build without a server restart', () => {
     expect(labels[2]).toMatch(/^테마: /);
     expect(labels[3]).toMatch(/^단축키/);
     expect(labels[4]).toBe('새로고침');
-    expect(labels[5]).toMatch(/^Crew /);
+    expect(labels[5]).toMatch(/^MSG /);
     expect(screen.getByTestId('foot-menu-version').getAttribute('aria-disabled')).toBe('true');
   });
 });

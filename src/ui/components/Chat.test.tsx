@@ -99,7 +99,7 @@ describe('Chat', () => {
   });
 
   it('a GPT turn refused by the thread lock offers deck 에서 새 GPT 세션으로 이어가기 next to 재시도 (errorCode, or an older server\'s text)', () => {
-    const label = 'Crew 에서 새 GPT 세션으로 이어가기';
+    const label = 'MSG 에서 새 GPT 세션으로 이어가기';
     const onCodexHandoff = vi.fn();
     const lockedItem: ChatItem = { ...failed, turnId: 'tl', error: THREAD_LOCKED_MESSAGE, errorCode: 'thread_locked' };
     renderChat([{ kind: 'user', text: 'go' }, lockedItem], false, vi.fn(), { sessionEngine: 'codex', model: 'gpt-6-sol', onCodexHandoff });
@@ -436,12 +436,12 @@ describe('Chat title ⌄ menu', () => {
   });
 
   it('삭제 is disabled with the reason for sessions deck cannot delete; no menu without actions', () => {
-    const tm = menu({ deleteBlocked: 'Codex 앱 기록은 Crew에서 지울 수 없어요' });
+    const tm = menu({ deleteBlocked: 'Codex 앱 기록은 MSG에서 지울 수 없어요' });
     renderChat([], false, vi.fn(), { title: 'gpt', sessionId: 's1', titleMenu: tm });
     fireEvent.click(screen.getByRole('button', { name: /gpt/ }));
     const del = screen.getByRole('menuitem', { name: '삭제…' });
     expect(del.getAttribute('aria-disabled')).toBe('true');
-    expect(del.getAttribute('title')).toBe('Codex 앱 기록은 Crew에서 지울 수 없어요');
+    expect(del.getAttribute('title')).toBe('Codex 앱 기록은 MSG에서 지울 수 없어요');
     fireEvent.click(del);
     expect(tm.onDelete).not.toHaveBeenCalled();
     cleanup();

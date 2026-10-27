@@ -105,7 +105,7 @@ describe('file chip menu', () => {
     mockFetch(404);
     fireEvent.contextMenu(chip, { clientX: 1, clientY: 1 });
     fireEvent.click(screen.getByRole('menuitem', { name: 'Finder 에서 보기 (서버 Mac)' }));
-    expect(await screen.findByText('이 Crew 서버는 아직 Finder 열기를 지원하지 않아요')).toBeTruthy();
+    expect(await screen.findByText('이 MSG 서버는 아직 Finder 열기를 지원하지 않아요')).toBeTruthy();
   });
 
   it('다운로드 clicks an <a download> on the raw=1&download=1 URL', () => {
