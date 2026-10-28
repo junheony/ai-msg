@@ -28,6 +28,8 @@ import type { UsageService } from './usage/UsageService';
 import type { ClaudeProfileProbe, SetupStatus } from '../shared/setup-types';
 import { ProfileError } from './setup/profiles';
 import { PROFILE_TEXTS } from './setup/texts';
+import { handleAuthLogin } from './authLogin/http';
+import type { AuthLoginHub } from './authLogin/hub';
 
 /** Deviation (added per review I5): devOrigins/extraHosts feed the Origin+Host checks below. */
 export type HttpDeps = {
@@ -64,6 +66,8 @@ export type HttpDeps = {
   serverUpdate?: ServerUpdateDeps;
   /** 첫 실행 마법사 (SetupService); absent = no /api/setup*. */
   setup?: SetupDeps;
+  /** In-app login window (allowlisted `claude auth login` and the same for Codex / Grok). Absent = no /api/auth-login. */
+  authLogin?: AuthLoginHub;
 };
 
 export type SetupDeps = {
@@ -467,6 +471,12 @@ export function createRequestHandler(deps: HttpDeps) {
           json(res, 404, { error: 'not found' });
           return;
         }
+        if (url.pathname === '/api/auth-login' || url.pathname.startsWith('/api/auth-login/')) {
+          const authLogin = deps.authLogin;
+          if (!authLogin) { json(res, 404, { error: 'not found' }); return; }
+          const handled = await handleAuthLogin(req, res, url, authLogin, readBody, json);
+          if (handled) return;
+        }
         if (url.pathname === '/api/bootstrap') { json(res, 200, { usage: deps.usage.snapshot(), projects: deps.index.projects(deps.extraSessions?.() ?? []), pins: deps.pins?.list() ?? [], desktop: deps.index.desktop() }); return; }
         if (url.pathname === '/api/memory' && (req.method === 'GET' || req.method === 'PUT')) {
           if (!deps.memory) { json(res, 404, { error: 'not found' }); return; }
@@ -674,7 +684,7 @@ export function createRequestHandler(deps: HttpDeps) {
           if (url.pathname === '/api/push/unsubscribe') { await push.store.remove(endpoint); json(res, 200, { ok: true }); return; }
           if (url.pathname === '/api/push/status') { json(res, 200, { subscribed: push.store.has(endpoint) }); return; }
           if (url.pathname === '/api/push/test') {
-            const ok = await push.notifier.sendTo(endpoint, { kind: 'test', title: 'Crew', body: '테스트 알림입니다', sessionId: null, tag: 'test' });
+            const ok = await push.notifier.sendTo(endpoint, { kind: 'test', title: 'MSG', body: '테스트 알림입니다', sessionId: null, tag: 'test' });
             json(res, ok ? 200 : 502, ok ? { ok: true } : { error: '알림을 보내지 못했습니다 (구독이 없거나 전송 실패)' });
             return;
           }

@@ -10,6 +10,7 @@ describe('isThreadLocked', () => {
     expect(isThreadLocked(null, null)).toBe(false);
     expect(isThreadLocked(undefined, `앞말 ${THREAD_LOCKED_MESSAGE}`)).toBe(false);
     expect(isThreadLocked(undefined, '이 GPT 스레드를 다른 프로그램이 쓰고 있어 deck 에서 이어갈 수 없습니다 — 예전 서버')).toBe(true);
+    expect(isThreadLocked(undefined, '이 GPT 스레드를 다른 프로그램이 쓰고 있어 Crew 에서 이어갈 수 없습니다 — 예전 서버')).toBe(true);
   });
 });
 
@@ -69,7 +70,7 @@ describe('codexHandoffMessage', () => {
   it('says why, names the old session, carries the excerpt, then the failed request on its own', () => {
     const excerpt = codexHandoffExcerpt([{ kind: 'user', text: '이전 질문' }, { kind: 'assistant', text: '이전 답' }]);
     const m = codexHandoffMessage('작업', 'tid-1', excerpt, '이 함수 고쳐줘');
-    expect(m).toContain('이전 GPT 세션(작업, tid-1)이 다른 앱에 열려 있어 Crew 에서 새 세션으로 이어갑니다.');
+    expect(m).toContain('이전 GPT 세션(작업, tid-1)이 다른 앱에 열려 있어 MSG 에서 새 세션으로 이어갑니다.');
     expect(m).toContain('아래는 이전 대화 발췌입니다(도구 호출 제외).');
     expect(m).toContain('**사용자:** 이전 질문\n\n**GPT:** 이전 답');
     expect(m.trimEnd().endsWith('이어서 할 요청:\n\n이 함수 고쳐줘')).toBe(true);

@@ -19,6 +19,8 @@ describe('systemdUnit', () => {
     expect(u).not.toContain('EnvironmentFile=-');
     expect(u).toContain('KillMode=mixed');
     expect(u).toContain('TimeoutStopSec=1620');
+    expect(u).toContain('Description=MSG local server');
+    expect(u).not.toContain('Crew');
     expect(u).toContain('Environment=DECK_SUPERVISOR=systemd');
     expect(u).toContain('Restart=always');
     expect(u).toContain('RestartPreventExitStatus=78');
@@ -37,8 +39,10 @@ describe('systemdUnit', () => {
     expect(systemdQuote('a $b `c` "d" \\e', 'envFile')).toBe('"a \\$b \\`c\\` \\"d\\" \\\\e"');
   });
 
-  it('unit verifies with systemd-analyze when available', () => {
+  it('unit verifies with systemd-analyze when the user manager is available', () => {
     if (process.platform !== 'linux' || !has('systemd-analyze')) return;
+    // A container with the binary but no user bus cannot load the manager (`--user` looks up RuntimeDirectory).
+    try { execFileSync('systemctl', ['--user', 'show-environment'], { stdio: 'ignore' }); } catch { return; }
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deck-unit-'));
     try {
       const envFile = path.join(dir, 'service.env');

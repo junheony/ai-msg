@@ -527,6 +527,20 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   background: var(--bg); box-shadow: var(--shadow-lg), inset 0 0 0 1px var(--line);
 }
 .usage-strip-more { flex: 1 0 auto; margin-left: auto; height: 28px; }
+.usage-reauth { flex: 1 0 100%; display: flex; align-items: center; gap: 8px; padding: 2px 7px 4px; color: var(--warn); font-size: var(--fs-meta); }
+.usage-reauth .text-btn { color: var(--link); font-weight: 600; min-height: 32px; }
+.usage-reauth-btn { margin-left: auto; color: var(--link); font-weight: 600; }
+.auth-term { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.auth-note { margin: 0; color: var(--muted); font-size: var(--fs-meta); }
+.auth-note code { color: var(--fg); }
+.auth-term-out { margin: 0; min-height: 8em; max-height: min(40vh, 320px); overflow: auto; padding: 10px; border-radius: var(--r-sm); background: var(--code-bg); box-shadow: inset 0 0 0 1px var(--line); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.auth-term-out a { color: var(--link); overflow-wrap: anywhere; }
+.auth-term-row { display: flex; gap: 8px; align-items: center; }
+.auth-term-row input { flex: 1; min-width: 0; min-height: 40px; font: inherit; padding: 8px 10px; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--bg-raised); color: var(--fg); }
+@media (max-width: 720px) {
+  .choice { min-height: var(--phone-tap); }
+  .auth-term-row input, .auth-term-row .btn, .usage-reauth .text-btn { min-height: var(--phone-tap); }
+}
 .usage-seg { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 7px; border-radius: var(--r-full); }
 .usage-seg[data-current] { background: var(--panel); box-shadow: inset 0 0 0 1px var(--line-strong), var(--shadow-sm); }
 .usage-seg-who { font-weight: 600; color: var(--fg); }
@@ -2348,8 +2362,9 @@ html[data-concise='on'] .note.concise-note { font-size: calc(12.5px * var(--font
 /* deck-choices option cards (GPT · Gemini · Grok decisions) */
 .choice-cards { margin: 8px 0 4px; display: flex; flex-direction: column; gap: 6px; }
 .choice-q { color: var(--fg-strong); font-weight: 600; }
-.choice-list { display: flex; flex-wrap: wrap; gap: 6px; }
-.choice { border: 1px solid var(--line-strong); border-radius: 10px; background: var(--bg-raised); color: var(--fg); padding: 7px 12px; font: inherit; text-align: left; cursor: pointer; max-width: 100%; }
+.choice-hint { margin: 0; font-size: var(--fs-meta); }
+.choice-list { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+.choice { border: 1px solid var(--line-strong); border-radius: 10px; background: var(--bg-raised); color: var(--fg); padding: 7px 12px; min-height: 40px; width: 100%; font: inherit; text-align: left; cursor: pointer; max-width: 100%; }
 .choice:hover:not(:disabled) { background: var(--hover); border-color: var(--accent); }
 .choice:disabled { cursor: default; opacity: .6; }
 .choice.picked { opacity: 1; border-color: var(--accent); background: var(--accent-soft); }

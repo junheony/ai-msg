@@ -371,4 +371,21 @@ describe('UsageStrip', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByTestId('usage-strip-pop')).toBeNull();
   });
+
+  it('a logged-out seat with no remaining numbers still opens the pill for 재로그인', () => {
+    const onReauth = vi.fn();
+    render(<UsageStrip usage={snap({ accounts: { a: acct(null, null) }, gpt: acct(null, null) })} current={null} reauth={['a']} onReauth={onReauth} now={NOW} onToggle={() => {}} />);
+    fireEvent.click(screen.getByTestId('usage-strip'));
+    fireEvent.click(screen.getByTestId('reauth-a').querySelector('button')!);
+    expect(onReauth).toHaveBeenCalledWith('a');
+  });
+
+  it('a logged-out seat in the list offers 재로그인 and nothing else does', () => {
+    const onReauth = vi.fn();
+    render(<UsageStrip usage={snap()} current="a" reauth={['b']} onReauth={onReauth} now={NOW} onToggle={() => {}} />);
+    fireEvent.click(screen.getByTestId('usage-strip'));
+    expect(screen.queryByTestId('reauth-a')).toBeNull();
+    fireEvent.click(screen.getByTestId('reauth-b').querySelector('button')!);
+    expect(onReauth).toHaveBeenCalledWith('b');
+  });
 });

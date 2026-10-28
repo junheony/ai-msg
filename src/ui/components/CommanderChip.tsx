@@ -22,7 +22,7 @@ export function canResume(v: CommanderView): boolean {
 export const REFUSAL_TEXT: Record<Extract<RefusalCode, `commander_${string}`>, string> = {
   commander_bypass: '모두 자동 승인 세션에는 걸 수 없습니다',
   commander_active: '이미 진행 중입니다 — 먼저 정지하세요',
-  commander_engine: 'Crew 에서 돌린 Claude 세션에만 걸 수 있습니다',
+  commander_engine: 'MSG 에서 돌린 Claude 세션에만 걸 수 있습니다',
   commander_disabled: '총사령탑이 꺼져 있습니다 — 설정에서 켜세요',
   commander_stale_epoch: '화면이 오래됐습니다 — 다시 시도',
 };

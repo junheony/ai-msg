@@ -118,6 +118,11 @@ export type ChatProps = {
   bg?: PaneBackground | null;
   onDecide: (requestId: string, decision: PermissionDecision) => void;
   onAnswer: (requestId: string, answers: QuestionAnswers) => void;
+  /**
+   * 총사령탑이 사람 확인에서 멈춘 상태. 재개는 다음 지시를 보내고, 정지는 더 진행하지 않는다.
+   * Absent unless the server is waiting_human.
+   */
+  commanderHold?: { note: string | null; next: string | null; onResume: () => void; onStop: () => void } | null;
   onModel: (m: ModelChoice) => void;
   onEffort: (e: Effort | null) => void;
   onEngine: (e: EngineChoice) => void;
@@ -625,9 +630,21 @@ export function Chat(p: ChatProps) {
         </AgentContext.Provider>
         {retryPrompt !== null && <button type="button" className="btn ghost retry" onClick={() => { p.onSend(retryPrompt); scroll.attach(); }}>재시도</button>}
         {fastRefused && <button type="button" className="btn ghost retry" data-testid="fast-standard-retry" onClick={() => { p.onSendStandard?.(retryPrompt!); scroll.attach(); }}>표준으로 다시 보내기</button>}
-        {lockedTurn !== null && p.onCodexHandoff && <button type="button" className="btn ghost retry" data-testid="codex-handoff" onClick={() => p.onCodexHandoff?.(lockedTurn)}>Crew 에서 새 GPT 세션으로 이어가기</button>}
+        {lockedTurn !== null && p.onCodexHandoff && <button type="button" className="btn ghost retry" data-testid="codex-handoff" onClick={() => p.onCodexHandoff?.(lockedTurn)}>MSG 에서 새 GPT 세션으로 이어가기</button>}
         {p.pending.map((r) => <PermissionCard key={r.requestId} req={r} onDecide={p.onDecide} />)}
         {p.questions.map((q) => <QuestionCard key={q.requestId} req={q} onAnswer={p.onAnswer} />)}
+        {p.commanderHold && (
+          <div className="permission-card" role="group" aria-label="사람 확인" data-testid="commander-hold">
+            <div className="permission-head"><span className="dot" aria-hidden="true" />사람 확인</div>
+            <p className="permission-reason">자동으로 이어가기 전에 확인합니다. 재개하면 아래 지시가 이 세션에 보내집니다.</p>
+            {p.commanderHold.note && <div className="permission-reason muted">{p.commanderHold.note}</div>}
+            {p.commanderHold.next && <div className="permission-title" data-testid="commander-hold-next">다음 지시: {p.commanderHold.next}</div>}
+            <div className="permission-actions">
+              <button type="button" className="btn deny" onClick={p.commanderHold.onStop}>정지</button>
+              <button type="button" className="btn primary" onClick={p.commanderHold.onResume}>재개</button>
+            </div>
+          </div>
+        )}
         {p.tasks && p.tasks.length > 0 && <TaskCards tasks={p.tasks} cap={p.taskCap ?? null} {...(p.onOpenTask ? { onOpen: p.onOpenTask } : {})} {...(p.onDismissTask ? { onDismiss: p.onDismissTask } : {})} {...(p.onCancelTask ? { onCancel: p.onCancelTask } : {})} />}
         {p.nextSession && <button type="button" className="session-link next" data-testid="handoff-next" onClick={p.nextSession.open} title={p.nextSession.title}>→ 새 세션으로 이어감 · {p.nextSession.title}</button>}
       </div>
@@ -653,7 +670,7 @@ export function Chat(p: ChatProps) {
         {!p.busy && <ContextHint info={ctx} onHandoff={p.onHandoff} cold={!pillCold} />}
         {p.composerNote && <div className="pane-notice notice composer-note" role="status" data-testid="composer-note"><span className="pane-notice-text">{p.composerNote}</span></div>}
         {p.onPickCwd && <button type="button" className="btn ghost retry" data-testid="grokbot-handoff-cwd" onClick={p.onPickCwd}>작업 폴더 바꾸기</button>}
-        {p.onGrokBotHandoff && <button type="button" className="btn ghost retry" data-testid="grokbot-handoff" onClick={p.onGrokBotHandoff}>Crew Grok 새 세션으로 이어가기</button>}
+        {p.onGrokBotHandoff && <button type="button" className="btn ghost retry" data-testid="grokbot-handoff" onClick={p.onGrokBotHandoff}>MSG Grok 새 세션으로 이어가기</button>}
         <Composer
           dragover={drag && !p.readOnly}
           popup={suggest.popup}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { SessionActivity } from '../../shared/protocol';
-import type { TaskInfo } from '../../shared/tasks';
+import type { TaskInfo, TaskStatus } from '../../shared/tasks';
 import type { PendingPermission, PendingQuestion } from '../state';
 import { ActivitySheet, type ActivitySheetProps, type ServerUpdateInfo, type WorkRow } from './ActivitySheet';
 
@@ -112,7 +112,9 @@ export function useHighlightCount(ready: boolean, enabled: boolean, running: num
   return count;
 }
 
-/** A one-time notice the app shows as a toast (and reads out): a new 승인 대기 elsewhere, or 재시작됨. */
+const NO_TASKS: TaskInfo[] = [];
+
+/** A one-time notice the app shows as a toast (and reads out): a new 승인 대기 elsewhere, a finished background task, or 재시작됨. */
 export type ActivityAlert = { text: string; open?: () => void };
 
 /**
@@ -144,7 +146,7 @@ export function ActivityButton({ ready, serverUpdate, highlights, visibleSession
   const update = useServerUpdate(ready, serverUpdate, fetchFn);
   const running = sheet.activity.filter((a) => a.running).length;
   const hlCount = useHighlightCount(ready, highlights, running, fetchFn);
-  const tasks = sheet.tasks ?? [];
+  const tasks = sheet.tasks ?? NO_TASKS;
   const updateWaiting = update?.supervised === true && update.changedFiles > 0;
   const summary = activitySummary({ pending: sheet.pending, questions: sheet.questions, tasks, activity: sheet.activity, connected: sheet.connected, serverWaiting: sheet.server.draining || updateWaiting });
   const label = activityLabel(summary);
@@ -192,6 +194,28 @@ export function ActivityButton({ ready, serverUpdate, highlights, visibleSession
       alert.current({ text: `${title} · 승인 대기`, open: () => openRow.current({ key: sid, sessionId: sid, turnId: c.turnId, title, cwd: c.cwd, status: '승인 대기', waiting: true }) });
     }
   }, [sheet.pending, sheet.questions, shown, ready]);
+
+  // A background task that finishes after this tab has connected: a toast, including while the window is open
+  // (push stays quiet then). Tasks already done at connect are the snapshot, not news.
+  const taskSeen = useRef<Map<string, TaskStatus>>(new Map());
+  const openTask = useRef(sheet.onOpenTask);
+  openTask.current = sheet.onOpenTask;
+  useEffect(() => {
+    if (!ready || seeding.current === null) return;
+    const live = new Set(tasks.map((t) => t.taskId));
+    for (const id of taskSeen.current.keys()) if (!live.has(id)) taskSeen.current.delete(id);
+    for (const t of tasks) {
+      const prev = taskSeen.current.get(t.taskId);
+      taskSeen.current.set(t.taskId, t.status);
+      if (seeding.current !== false) continue;
+      if (t.status !== 'done' && t.status !== 'failed') continue;
+      // Only a task this tab watched leave queued/running. One that arrives already finished is history.
+      if (prev !== 'queued' && prev !== 'running') continue;
+      const title = t.title || '백그라운드 작업';
+      const text = t.status === 'done' ? `백그라운드 작업 완료 · ${title}` : `백그라운드 작업 실패 · ${title}`;
+      alert.current({ text, ...(t.sessionId ? { open: () => openTask.current?.(t) } : {}) });
+    }
+  }, [tasks, ready]);
 
   // 재시작됨: one toast when this tab sees the server come back as a new process (not for one restored by a reload).
   const lastRestart = useRef(sheet.server.restartedAt);

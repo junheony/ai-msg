@@ -22,6 +22,9 @@ import { Pane, sendFromPane, TOGGLE_SIDE_EVENT, useQueueRunner } from './compone
 import { Sidebar } from './components/Sidebar';
 import { UsageStrip } from './components/UsageStrip';
 import { UsageSheet } from './components/UsageSheet';
+import { AuthTerminal } from './components/AuthTerminal';
+import { getSetup } from './setupApi';
+import { reauthSeats } from './reauth';
 import { Highlights } from './components/Highlights';
 import { ActivityButton, type ActivityAlert } from './components/ActivityButton';
 import type { WorkRow } from './components/ActivitySheet';
@@ -127,7 +130,7 @@ function maxedPane(id: string | null, state: Pick<AppState, 'panes' | 'activePan
   const active = state.panes.find((p) => p.id === state.activePaneId);
   return !active || active.id === id || active.float ? id : null;
 }
-  /** Tab title: "● <chat> — Crew" while any turn runs; "✓ …" when one finished while the tab was hidden, until it is shown. */
+  /** Tab title: "● <chat> — MSG" while any turn runs; "✓ …" when one finished while the tab was hidden, until it is shown. */
 function useTabTitle(running: boolean, chat: string | null) {
   const was = useRef(running);
   const [done, setDone] = useState(false);
@@ -183,6 +186,10 @@ export function App() {
   /** 설치 점검: opened by itself once per page when the server says the first-run wizard is still to be shown. */
   const [setupOpen, setSetupOpen] = useState(false);
   const setupAsked = useRef(false);
+  /** Seats whose CLI login is missing (authLogin). `authEpoch` bumps after a login window exits 0 so the probe runs again. */
+  const [reauth, setReauth] = useState<string[]>([]);
+  const [authSeat, setAuthSeat] = useState<string | null>(null);
+  const [authEpoch, setAuthEpoch] = useState(0);
   const [buildId, setBuildId] = useState<string | null>(null);
   const [prefs, setPref] = usePrefs();
   const themeRef = useRef(prefs.theme);
@@ -699,12 +706,19 @@ export function App() {
   const fastEntry = fastPane?.sessionId ? state.projects.flatMap((p) => p.sessions).find((x) => x.sessionId === fastPane.sessionId) : undefined;
   const fastSession = fastPane?.sessionId && (fastPane.engine ?? 'claude') === 'claude' && !(fastEntry?.imported && fastEntry.cwdMissing) ? fastPane.sessionId : null;
   const fastOn = useFast(fastSession);
+  const authReady = state.ready;
+  useEffect(() => {
+    if (!authReady || !has('authLogin')) { setReauth([]); return; }
+    let live = true;
+    getSetup().then((s) => { if (live) setReauth(reauthSeats(s)); }, () => { if (live) setReauth([]); });
+    return () => { live = false; };
+  }, [authReady, authEpoch]);
   if (authed === null) {
     if (bootFails < BOOT_NOTICE_FAILS) return <div className="center">확인 중…</div>;
     return (
       <div className="center boot-wait" role="status">
         <div>서버 응답 없음 — 3초마다 다시 시도합니다</div>
-        <div className="boot-wait-hint">Crew 서버가 꺼져 있거나 Tailscale 연결이 끊겼을 수 있습니다. 연결되면 자동으로 들어갑니다.</div>
+        <div className="boot-wait-hint">MSG 서버가 꺼져 있거나 Tailscale 연결이 끊겼을 수 있습니다. 연결되면 자동으로 들어갑니다.</div>
         <button type="button" className="text-btn" onClick={() => location.reload()}>지금 다시 시도</button>
       </div>
     );
@@ -1279,6 +1293,7 @@ export function App() {
     ?? (cwd ? cwd.split('/').filter(Boolean).pop() : undefined)
     ?? sessionId.slice(0, 8);
   const preview = previewKey && state.routePreview && state.routePreview.sessionId === previewKey.sessionId ? state.routePreview : null;
+  const authTitle = authSeat === 'gpt' ? 'GPT' : authSeat === 'x1' ? 'Grok' : (state.accounts.find((a) => a.id === authSeat)?.label ?? authSeat?.toUpperCase() ?? '');
   /** 활동 점: a new 승인 대기 elsewhere (8 s toast with 열기) or 재시작됨; the toast's role="status" reads it out (once). */
   const onActivityAlert = (a: ActivityAlert) => {
     setToasts((t) => [...t, { id: ++toastSeq.current, text: a.text, kind: 'info', ms: 8_000, ...(a.open ? { action: { label: '열기', run: a.open } } : {}) }]);
@@ -1301,7 +1316,7 @@ export function App() {
         {/* The session chip of the one pane (desktop) / the shown pane (phone) renders here (Pane → Chat, a portal). */}
         <div className="topbar-head" ref={setHeadSlot} />
         {/* Every seat's usage, collapsed to the tightest remaining amount. The list of seats opens under the pill. */}
-        <UsageStrip usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} phone={phone} rowSlot={stripRow} open={usageOpen !== null} onToggle={() => setUsageOpen((v) => (v ? null : 'limits'))} />
+        <UsageStrip usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} phone={phone} rowSlot={stripRow} open={usageOpen !== null} onToggle={() => setUsageOpen((v) => (v ? null : 'limits'))} reauth={reauth} onReauth={has('authLogin') ? setAuthSeat : undefined} />
         <div className="topbar-end">
           {!phone && <button type="button" className="icon-btn split" onClick={addPane} aria-label="새 분할" title={`새 분할 (${mod}⇧O) — 세션 칩을 끌어 순서를 바꾸거나 카드로 떼어낼 수 있어요`}><SplitIcon /></button>}
           <ActivityButton
@@ -1330,7 +1345,8 @@ export function App() {
           <button type="button" className="text-btn" onClick={retryNow}>다시 시도</button>
         </div>
       )}
-      {usageOpen && <UsageSheet usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} initialHistory={usageOpen === 'history'} onClose={() => setUsageOpen(null)} />}
+      {usageOpen && <UsageSheet usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} initialHistory={usageOpen === 'history'} onClose={() => setUsageOpen(null)} reauth={reauth} onReauth={has('authLogin') ? (seat) => { setUsageOpen(null); setAuthSeat(seat); } : undefined} />}
+      {authSeat && <AuthTerminal seat={authSeat} title={authTitle} onClose={() => setAuthSeat(null)} onLoggedIn={() => setAuthEpoch((n) => n + 1)} />}
       {highlightsOpen && <Highlights onClose={() => setHighlightsOpen(false)} live={{ waiting: [...state.pending.map((c) => ({ sessionId: c.sessionId, kind: 'permission' as const })), ...state.questions.map((c) => ({ sessionId: c.sessionId, kind: 'question' as const }))], activity: state.activity }} engineOf={(id) => paletteSessions.find((x) => x.sessionId === id)?.engine} onOpenSession={(sessionId, cwd, title) => { setHighlightsOpen(false); if (!openById.current(sessionId)) openIn(active.id, sessionId, cwd, title); }} />}
       {settingsOpen && <SettingsView build={buildId} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} sameVendorRotation={state.sameVendorRotation} onSameVendorRotation={(sameVendorRotation) => send({ type: 'set_settings', sameVendorRotation })} commanderEnabled={state.commanderEnabled} onCommanderEnabled={(commanderEnabled) => send({ type: 'set_settings', commanderEnabled })} autoRoute={state.autoRoute} onAutoRoute={(patch) => send({ type: 'set_settings', ...patch })} claudeAccounts={state.accounts.filter((a) => !a.retired).length} grokLocked={state.grok?.locked ?? null} onGrokUnlock={() => send({ type: 'grok_unlock' })} taskCap={has('tasks') ? (state.taskCap ?? null) : null} onTaskCap={(taskSoftCap) => send({ type: 'set_settings', taskSoftCap })} onSetup={has('setup') ? () => { setSettingsOpen(false); setSetupOpen(true); } : undefined} onClose={() => setSettingsOpen(false)} />}
       {setupOpen && <SetupWizard activity={state.activity} onDone={() => setSetupOpen(false)} onClose={() => setSetupOpen(false)} />}
@@ -1424,7 +1440,7 @@ export function App() {
             // The avatar is the person using deck, not the shown session's account (that one is the usage chip's): the
             // same letter on the new-session screen and in any chat.
             avatar="D"
-            avatarTitle="Crew"
+            avatarTitle="MSG"
             footMenu={[
               { label: '설정', hint: `${mod},`, run: () => setSettingsOpen(true) },
               { label: '사용량 기록', run: () => setUsageOpen('history') },

@@ -134,7 +134,7 @@ describe('ws · 백그라운드 작업', () => {
     const callA = calls.find((c) => c.prompt === 'slow-a')!;
     expect(callA.resumeSessionId).toBeNull();
     expect(callA.cwd).toBe(work);
-    expect(callA.appendSystemPrompt).toContain('[Crew 간결 모드]');
+    expect(callA.appendSystemPrompt).toContain('[MSG 간결 모드]');
     // The chat it came from is not the task's session, and nobody got the task's turn events.
     expect(a.fromSessionId).toBe('from-1');
     expect(msgs.some((m) => m.type === 'turn_started')).toBe(false);
@@ -208,7 +208,7 @@ describe('ws · 백그라운드 작업', () => {
     const running = await until(() => { const t = byTitle(msgs, 'ask-perm'); return t?.status === 'running' && t.waiting ? t : null; });
     // Nobody watches a task: its concise note asks no AskUserQuestion card.
     const call = calls.find((c) => c.prompt === 'ask-perm')!;
-    expect(call.appendSystemPrompt).toContain('[Crew 간결 모드]');
+    expect(call.appendSystemPrompt).toContain('[MSG 간결 모드]');
     expect(call.appendSystemPrompt).not.toContain('AskUserQuestion');
     const queued = await until(() => byTitle(msgs, 'never-runs')?.status === 'queued' && byTitle(msgs, 'never-runs'));
     ws.send(JSON.stringify({ type: 'cancel_task', taskId: queued.taskId }));

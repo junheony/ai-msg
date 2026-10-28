@@ -39,10 +39,10 @@ The name: "AI-MSG" plays on the Korean word "머시기" ("whatsit") and on messa
 |---|---|
 | Node.js | 24 or newer (`engines` in `package.json`) |
 | Claude Code | Logged in with `claude` on this machine. One account is enough. |
-| OS | macOS is the development and supported platform. |
+| OS | Linux (systemd user service) and macOS. Node 24. Linux steps: [docs/linux-host.md](docs/linux-host.md). |
 | Optional | Codex CLI 0.159 or newer (`codex login`), Gemini CLI, Grok CLI (`grok login`), Tailscale |
 
-**Linux:** the server, the Claude and Codex engines and Tailscale binding are not macOS-specific, and the unit tests run on Linux in CI as an informational job. Not available on Linux: the launchd service scripts (`scripts/install-launchd.sh`), Claude Desktop session records (the default path is macOS's `~/Library/Application Support/Claude`), and the Gemini write sandbox (macOS seatbelt). Linux is not regularly used by the author.
+**Linux is a first-class host.** `ai-msg service install` writes a systemd user unit (`ai-msg.service`) and `~/.config/deck/service.env`. macOS keeps the LaunchAgent scripts. Still macOS-only: `scripts/install-launchd.sh`, Claude Desktop session records (the default path is macOS's `~/Library/Application Support/Claude`; set `DECK_DESKTOP_SESSIONS_DIR` to read a store elsewhere), and the Grok Bot app cache.
 
 ## Quick start
 
@@ -72,7 +72,20 @@ The token is generated on first start (file mode `0600`) and never printed. The 
 
 New Claude sessions ask before each tool call that needs a decision. Auto-approval is opt-in; read [Security model](#security-model) before turning it on.
 
-### Run as a service (macOS)
+### Run as a service
+
+On Linux, install the user unit (full notes in [docs/linux-host.md](docs/linux-host.md)):
+
+```bash
+npm install && npm run build && npm run build:server
+node dist/server/bin.js service install --yes
+loginctl enable-linger "$USER"          # keep the user service after logout
+journalctl --user -u ai-msg.service -n 100 --no-pager
+```
+
+`service install` writes `~/.config/systemd/user/ai-msg.service` and `~/.config/deck/service.env` (mode 0600) and enables the unit. That env file is not the LaunchAgent's `~/.config/deck/env`. If `systemctl --user` has no session, install refuses; log in as that user, or enable linger, and run it again.
+
+#### macOS (LaunchAgent)
 
 ```bash
 scripts/install-launchd.sh              # install a user LaunchAgent (com.deck.server) and start it
@@ -202,7 +215,7 @@ All settings are environment variables. None is required.
 | `CODEX_HOME` | `~/.codex` | Where Codex session rollouts are read from. |
 | `DECK_GEMINI_BIN` | search `PATH`, `~/.local/bin` | Path to `gemini`. |
 | `DECK_GROK_BIN` | search `PATH`, `~/.grok/bin` | Path to `grok`. Grok always uses `~/.grok` as its home (a `GROK_HOME` in the shell is ignored). |
-| `DECK_DESKTOP_SESSIONS_DIR` | `~/Library/Application Support/Claude/claude-code-sessions` | Claude Desktop session records (read-only). |
+| `DECK_DESKTOP_SESSIONS_DIR` | macOS: `~/Library/Application Support/Claude/claude-code-sessions`. Linux: none unless set. | Claude Desktop session records (read-only). |
 | `DECK_VAPID_SUBJECT` | derived | `https:` or `mailto:` subject for Web Push. |
 | `DECK_UI_DIR` | `dist/ui` | Built UI directory. |
 | `DECK_EXTRA_CWD_ROOTS` | empty | Comma-separated absolute paths where new sessions may start in addition to the home directory. Honoured only with `DECK_LOOPBACK_ONLY=1`; `/` is never accepted. Meant for test harnesses. |
@@ -257,6 +270,7 @@ AI-MSG can run commands on your machine. Treat access to it like shell access.
 - **Claude settings apply.** Turns load your user, project and local Claude Code settings, including allow rules and hooks, exactly as the CLI would.
 - **Audit log.** Every permission decision is appended to `~/.config/deck/audit.log` as JSON lines: time, session, tool name, decision, who decided, and a SHA-256 of the tool input (not the input itself). The file rotates to `audit.log.1` at 5 MiB.
 - **Credentials.** AI-MSG does not read, store or forward CLI credentials. It starts the official CLIs with a profile directory selected; for Gemini it checks only whether the credential file exists. Before a Claude turn it removes `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_AUTH_TOKEN` and base-URL variables from the child environment, so a turn cannot silently bill a different account.
+- **Re-login window.** The in-app login panel runs only the server-chosen command (`claude auth login`, the same command with `CLAUDE_CONFIG_DIR` for another Claude profile, `codex login`, `grok login`). The client sends a seat id, not a command string. Input is one line (the auth code) or Enter. Gemini (`agy`) is not in this window.
 - **File access.** New sessions must start inside your home directory (or a `DECK_EXTRA_CWD_ROOTS` path on a loopback-only server). The file preview API refuses the config directory, dot-directories directly under home, and common secret files (`.env`, private keys, credential files).
 
 Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
@@ -283,7 +297,7 @@ Under `~/.config/deck` (or `DECK_CONFIG_DIR`):
 | `usage-source.json` | Written once, the first time a usage dashboard answers (`{"deckSeenAt": ...}`). |
 | `gemini/<id>/` | Gemini CLI home per Gemini account (follows `DECK_CONFIG_DIR`). |
 
-The launchd service additionally uses `~/.config/deck/env` (environment for the service) and writes its output to `~/.config/deck/deck.log`.
+The Linux unit reads `~/.config/deck/service.env` (written by `ai-msg service install`, mode 0600) and logs to the user journal (`journalctl --user -u ai-msg.service`). The macOS LaunchAgent additionally uses `~/.config/deck/env` and writes its output to `~/.config/deck/deck.log`.
 
 Conversation transcripts stay where the CLIs keep them (`<profile>/projects/` for Claude, `$CODEX_HOME/sessions` for Codex).
 
@@ -311,13 +325,14 @@ src/server/          HTTP + WebSocket server (Node, TypeScript)
   push/              Web Push
 src/shared/          types and the WebSocket protocol shared by server and UI
 src/ui/              React UI (Vite)
-scripts/             launchd service and restart helpers
+scripts/             macOS LaunchAgent and restart helpers (Linux uses `ai-msg service install`)
 tests/e2e/           end-to-end tests against real accounts
 docs/                architecture and protocol notes
 ```
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how the pieces fit together.
 - [docs/protocol.md](docs/protocol.md) (Korean) — rules for changing the WebSocket protocol. The UI and the server are deployed separately, so every change must stay compatible in both directions.
+- [docs/linux-host.md](docs/linux-host.md) (Korean) — systemd user service on a Linux host.
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Disclaimer

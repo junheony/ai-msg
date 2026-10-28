@@ -33,19 +33,22 @@ export function handoffFirstMessage(oldTitle: string, oldSessionId: string, note
  * codex-cli takes a per-thread writer lock; while the ChatGPT desktop app has the thread loaded, `codex exec resume`
  * fails with "already has an active writer" and deck shows this (CodexEngine). The server marks such a turn_result
  * `errorCode: 'thread_locked'`; an older server only sends this text.
- * The UI recognises a locked turn by this prefix (isThreadLocked). Servers that still say "deck" are recognised too.
+ * The UI recognises a locked turn by this prefix (isThreadLocked). Servers that still say "deck" or "Crew" are recognised too.
  */
 export const THREAD_LOCKED_MESSAGE =
-  '이 GPT 스레드를 다른 프로그램이 쓰고 있어 Crew 에서 이어갈 수 없습니다 — 보통 ChatGPT 데스크톱 앱(Codex)이 이 스레드를 열어 두고 있을 때입니다(/goal 자동 진행 포함). ' +
+  '이 GPT 스레드를 다른 프로그램이 쓰고 있어 MSG 에서 이어갈 수 없습니다 — 보통 ChatGPT 데스크톱 앱(Codex)이 이 스레드를 열어 두고 있을 때입니다(/goal 자동 진행 포함). ' +
   '데스크톱 앱에서 이어가거나, 데스크톱 앱을 종료(⌘Q)한 뒤 재시도하세요.';
 
-/** Prefix an older server sent, before the product name was Crew. */
-const THREAD_LOCKED_LEGACY_PREFIX = '이 GPT 스레드를 다른 프로그램이 쓰고 있어 deck 에서 이어갈 수 없습니다';
+/** Prefixes older servers sent, before the visible product name was MSG. */
+const THREAD_LOCKED_LEGACY_PREFIXES = [
+  '이 GPT 스레드를 다른 프로그램이 쓰고 있어 deck 에서 이어갈 수 없습니다',
+  '이 GPT 스레드를 다른 프로그램이 쓰고 있어 Crew 에서 이어갈 수 없습니다',
+];
 
 /** A failed GPT turn the desktop app's thread lock refused: its error code, or (an older server) its error text. */
 export function isThreadLocked(errorCode: string | null | undefined, errorText: string | null | undefined): boolean {
   const text = errorText ?? '';
-  return errorCode === 'thread_locked' || text.startsWith(THREAD_LOCKED_MESSAGE) || text.startsWith(THREAD_LOCKED_LEGACY_PREFIX);
+  return errorCode === 'thread_locked' || text.startsWith(THREAD_LOCKED_MESSAGE) || THREAD_LOCKED_LEGACY_PREFIXES.some((prefix) => text.startsWith(prefix));
 }
 
 /** "deck 에서 새 GPT 세션으로 이어가기": each excerpted message is cut at this many characters… */
@@ -81,7 +84,7 @@ export function codexHandoffExcerpt(items: readonly { kind: string; text?: strin
 /** The new GPT session's first message (prefilled, sent only when the user presses Enter). */
 export function codexHandoffMessage(oldTitle: string, oldSessionId: string, excerpt: string, request: string): string {
   return [
-    `이전 GPT 세션(${oldTitle}, ${oldSessionId})이 다른 앱에 열려 있어 Crew 에서 새 세션으로 이어갑니다. 아래는 이전 대화 발췌입니다(도구 호출 제외).`,
+    `이전 GPT 세션(${oldTitle}, ${oldSessionId})이 다른 앱에 열려 있어 MSG 에서 새 세션으로 이어갑니다. 아래는 이전 대화 발췌입니다(도구 호출 제외).`,
     excerpt.trim() || '(발췌할 이전 대화가 없습니다)',
     '이어서 할 요청:',
     request,
@@ -91,7 +94,7 @@ export function codexHandoffMessage(oldTitle: string, oldSessionId: string, exce
 /** The first message of a deck Grok session continuing a Grok Bot app conversation (prefilled, sent only when the user does). */
 export function grokBotHandoffMessage(oldTitle: string, excerpt: string): string {
   return [
-    `Grok Bot 앱 대화(${oldTitle})를 Crew Grok 새 세션으로 이어갑니다. 아래는 이전 대화 발췌입니다(도구 호출 제외).`,
+    `Grok Bot 앱 대화(${oldTitle})를 MSG Grok 새 세션으로 이어갑니다. 아래는 이전 대화 발췌입니다(도구 호출 제외).`,
     excerpt.trim() || '(발췌할 이전 대화가 없습니다)',
     '이어서 할 요청:',
     '',
@@ -99,4 +102,4 @@ export function grokBotHandoffMessage(oldTitle: string, excerpt: string): string
 }
 
 /** Shown under the composer of an imported agy (Gemini) conversation: its past messages are not replayed in deck. */
-export const GEMINI_IMPORT_NOTE = '이전 메시지는 Crew 에 보이지 않지만 agy 가 기억하고 이어갑니다';
+export const GEMINI_IMPORT_NOTE = '이전 메시지는 MSG 에 보이지 않지만 agy 가 기억하고 이어갑니다';

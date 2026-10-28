@@ -213,7 +213,7 @@ export const SHUTDOWN_ABORTED = '서버가 다시 시작되어 중단됨';
 /** The error text of an aborted turn: the user's stop (interrupt, 지금 전송; also a recycle) vs. the server shutting down. */
 export const abortedText = (signal: AbortSignal): string => (signal.reason === SHUTDOWN_ABORT ? SHUTDOWN_ABORTED : ABORTED);
 /** Told to the model once, with the first prompt of a brand-new session (systemNote; never shown in the pane). */
-export const DECK_INTRO_NOTE = '[Crew] 사용자는 Crew 웹 UI(대개 폰·다른 기기의 브라우저)로 이 대화를 봅니다. 파일이나 URL 을 open/xdg-open/code 로 띄우지 마세요 — 서버에서만 열리고 사용자에게는 보이지 않습니다. 보여줄 파일은 경로를 인라인 코드로 적으면 사용자가 클릭해 사이드 패널에서 봅니다(세션 폴더 안의 파일만; 밖의 파일은 핵심 내용을 답장에 옮기세요).';
+export const DECK_INTRO_NOTE = '[MSG] 사용자는 MSG 웹 UI(대개 폰·다른 기기의 브라우저)로 이 대화를 봅니다. 파일이나 URL 을 open/xdg-open/code 로 띄우지 마세요 — 서버에서만 열리고 사용자에게는 보이지 않습니다. 보여줄 파일은 경로를 인라인 코드로 적으면 사용자가 클릭해 사이드 패널에서 봅니다(세션 폴더 안의 파일만; 밖의 파일은 핵심 내용을 답장에 옮기세요).';
 
 /** A Grok turn's mode moved into or out of plan mid-turn (other modes apply to the next request at once). */
 export const GROK_MODE_NEXT_TURN_NOTICE = 'Grok 은 다음 턴부터 계획 모드 변경을 씁니다';
@@ -570,7 +570,7 @@ export class TurnRunner {
       const pair = await this.forkPair(sessionId);
       if (!pair || !(await this.forkStatus(sessionId))?.diverged) return { ok: false as const, error: '갈라진 사본이 없습니다' };
       if (keep === 'home' && (this.active.has(sessionId) || this.live.has(sessionId))) {
-        return { ok: false as const, error: 'Crew 에서 이 세션이 실행 중입니다 — 끝난 뒤 다시 시도하세요' };
+        return { ok: false as const, error: 'MSG 에서 이 세션이 실행 중입니다 — 끝난 뒤 다시 시도하세요' };
       }
       const [srcDir, dstDir] = keep === 'deck' ? [pair.st.projectDir, pair.homeDir] : [pair.homeDir, pair.st.projectDir];
       const stamp = `deck-fork-${new Date().toISOString().replace(/[:.]/g, '-')}`;
@@ -1876,8 +1876,8 @@ export class TurnRunner {
       // sessions stay listed (and deletable); the projects dir of an account removed from the settings is not scanned
       // any more, so such a session stays listed only while another account has a copy of it.
       const readOnly = (account: Account): string | null => {
-        if (!this.accounts.has(account) || !this.roots.has(account)) return `설정에 없는 계정(${this.label(account)})의 세션이라 이어갈 수 없습니다 — 이어 쓰려면 accounts.json 에 {"id": ${JSON.stringify(account)}, "configDir": "그 계정의 설정 폴더"} 를 추가하고 Crew 를 다시 시작하세요. 필요 없는 세션이면 삭제해도 됩니다.`;
-        if (this.accounts.isRetired(account)) return `${this.label(account)} 계정은 뺀 계정(retired)이라 이 세션을 이어갈 수 없습니다 — 기록은 그대로 볼 수 있습니다. 이어 쓰려면 accounts.json 에서 이 계정의 "retired" 를 지우고 Crew 를 다시 시작하거나, 새 세션에서 이어가세요.`;
+        if (!this.accounts.has(account) || !this.roots.has(account)) return `설정에 없는 계정(${this.label(account)})의 세션이라 이어갈 수 없습니다 — 이어 쓰려면 accounts.json 에 {"id": ${JSON.stringify(account)}, "configDir": "그 계정의 설정 폴더"} 를 추가하고 MSG 를 다시 시작하세요. 필요 없는 세션이면 삭제해도 됩니다.`;
+        if (this.accounts.isRetired(account)) return `${this.label(account)} 계정은 뺀 계정(retired)이라 이 세션을 이어갈 수 없습니다 — 기록은 그대로 볼 수 있습니다. 이어 쓰려면 accounts.json 에서 이 계정의 "retired" 를 지우고 MSG 를 다시 시작하거나, 새 세션에서 이어가세요.`;
         return null;
       };
       let refused = state ? readOnly(state.account) : null;
@@ -2039,18 +2039,18 @@ export class TurnRunner {
         // The background wait limit cut the work (continueAfterCap): this turn is deck's own continuation, or — the auto
         // hops used up — the user's next message, which then carries the note.
         const auto = !!p.bgCapHop;
-        early.push(`${at} ${cut.cause}로 백그라운드 작업 ${n}개가 끊겼습니다: ${cut.tasks.join(', ')} — ${auto ? 'Crew 가 자동으로 이어갑니다' : '모델에게 알렸습니다'}`);
-        systemNote = `[Crew] 이 세션의 이전 프로세스는 ${at} 에 ${cut.cause}로 종료되었고, 그때 돌고 있던 백그라운드 작업 ${n}개는 끊겨 결과가 오지 않습니다: ${list}. ${auto ? '이 턴은 Crew 가 자동으로 이어 보낸 것입니다(사용자가 보낸 메시지가 아닙니다). ' : ''}끊긴 작업이 파일 등에 남긴 부분 결과가 있으면 확인하고, 필요한 작업은 더 작은 단위로 다시 띄우거나 직접 마무리해 보고까지 끝내세요. 끊겼던 사실을 사용자에게 한 줄로 알리세요.`;
+        early.push(`${at} ${cut.cause}로 백그라운드 작업 ${n}개가 끊겼습니다: ${cut.tasks.join(', ')} — ${auto ? 'MSG 가 자동으로 이어갑니다' : '모델에게 알렸습니다'}`);
+        systemNote = `[MSG] 이 세션의 이전 프로세스는 ${at} 에 ${cut.cause}로 종료되었고, 그때 돌고 있던 백그라운드 작업 ${n}개는 끊겨 결과가 오지 않습니다: ${list}. ${auto ? '이 턴은 MSG 가 자동으로 이어 보낸 것입니다(사용자가 보낸 메시지가 아닙니다). ' : ''}끊긴 작업이 파일 등에 남긴 부분 결과가 있으면 확인하고, 필요한 작업은 더 작은 단위로 다시 띄우거나 직접 마무리해 보고까지 끝내세요. 끊겼던 사실을 사용자에게 한 줄로 알리세요.`;
       } else if (!cut.cause) {
         early.push(`${at} 서버 재시작으로 백그라운드 작업 ${n}개가 끊겼습니다: ${cut.tasks.join(', ')} — 모델에게 알렸습니다`);
-        systemNote = `[Crew] 이 세션의 이전 프로세스는 ${at} 에 Crew 서버 재시작으로 종료되었고, 그때 돌고 있던 백그라운드 작업 ${n}개는 끊겨 결과가 오지 않습니다: ${list}. 필요한 작업은 다시 띄우고, 끊겼던 사실을 사용자에게 한 줄로 알리세요. 이미 다시 띄웠거나 더 필요 없으면 무시하세요.`;
+        systemNote = `[MSG] 이 세션의 이전 프로세스는 ${at} 에 MSG 서버 재시작으로 종료되었고, 그때 돌고 있던 백그라운드 작업 ${n}개는 끊겨 결과가 오지 않습니다: ${list}. 필요한 작업은 다시 띄우고, 끊겼던 사실을 사용자에게 한 줄로 알리세요. 이미 다시 띄웠거나 더 필요 없으면 무시하세요.`;
       } else if (n) {
         // A limit / auth failure of the held-open process (failoverAfterBackground): this turn runs on another account.
         early.push(`${at} ${cut.cause}로 백그라운드 작업 ${n}개가 끊겼습니다: ${cut.tasks.join(', ')} — 다른 계정에서 이어갑니다 (모델에게 알렸습니다)`);
-        systemNote = `[Crew] 이 세션의 이전 프로세스는 ${at} 에 ${cut.cause}로 종료되었고, 그때 돌고 있던 백그라운드 작업 ${n}개는 끊겨 결과가 오지 않습니다: ${list}. 이 턴은 다른 계정에서 이어 갑니다. 필요한 작업은 다시 띄우고, 끊겼던 사실을 사용자에게 한 줄로 알리세요. 이미 다시 띄웠거나 더 필요 없으면 무시하세요.`;
+        systemNote = `[MSG] 이 세션의 이전 프로세스는 ${at} 에 ${cut.cause}로 종료되었고, 그때 돌고 있던 백그라운드 작업 ${n}개는 끊겨 결과가 오지 않습니다: ${list}. 이 턴은 다른 계정에서 이어 갑니다. 필요한 작업은 다시 띄우고, 끊겼던 사실을 사용자에게 한 줄로 알리세요. 이미 다시 띄웠거나 더 필요 없으면 무시하세요.`;
       } else {
         early.push(`${at} ${cut.cause}로 이전 프로세스가 끝났습니다 — 다른 계정에서 이어갑니다 (모델에게 알렸습니다)`);
-        systemNote = `[Crew] 이 세션의 이전 프로세스는 ${at} 에 ${cut.cause}로 응답 도중 종료되었습니다. 이 턴은 다른 계정에서 이어 갑니다. 마지막으로 하던 작업이 어디까지 됐는지 확인하고 이어서 진행하되, 끊겼던 사실을 사용자에게 한 줄로 알리세요.`;
+        systemNote = `[MSG] 이 세션의 이전 프로세스는 ${at} 에 ${cut.cause}로 응답 도중 종료되었습니다. 이 턴은 다른 계정에서 이어 갑니다. 마지막으로 하던 작업이 어디까지 됐는지 확인하고 이어서 진행하되, 끊겼던 사실을 사용자에게 한 줄로 알리세요.`;
       }
     }
     if (!state?.sessionId && !forkAt && !p.handoff) systemNote = systemNote ? `${systemNote}\n\n${DECK_INTRO_NOTE}` : DECK_INTRO_NOTE;
