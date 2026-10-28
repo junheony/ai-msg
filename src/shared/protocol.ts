@@ -235,8 +235,10 @@ export type SessionActivity = { sessionId: string; cwd: string; turnId: string; 
  *   the settings turn it on (`commanderEnabled`); a `settings` broadcast that changes it carries the new list.
  * - setup: `hello.setup.needed` says whether the first-run wizard is still to be shown; GET /api/setup, POST
  *   /api/setup/refresh|profiles|done answer (설치 점검).
+ * - authLogin: POST /api/auth-login starts an allowlisted login (`claude auth login`, `codex login`, `grok login`)
+ *   and GET/POST the stream, the pasted code and cancel. Gemini is not included.
  */
-export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate', 'commander', 'grok', 'tasks', 'setup'] as const;
+export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate', 'commander', 'grok', 'tasks', 'setup', 'authLogin'] as const;
 export type Feature = (typeof FEATURES)[number];
 
 /**

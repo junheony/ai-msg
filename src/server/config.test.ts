@@ -49,6 +49,15 @@ describe('config', () => {
     expect(loadConfig({ DECK_CONFIG_DIR: '/cfg', DECK_SUPERVISED: '1' }, home, '/repo').supervised).toBe(true);
   });
 
+  it('Claude Desktop session metadata follows the macOS app path only on darwin', () => {
+    const home = path.join(dir, 'home-desk');
+    fs.mkdirSync(path.join(home, '.claude', 'projects'), { recursive: true });
+    const cfg = loadConfig({ DECK_CONFIG_DIR: '/cfg' }, home, '/repo');
+    if (process.platform === 'darwin') expect(cfg.desktopSessionsRoot).toBe(path.join(home, 'Library', 'Application Support', 'Claude', 'claude-code-sessions'));
+    else expect(cfg.desktopSessionsRoot).toBe('');
+    expect(loadConfig({ DECK_CONFIG_DIR: '/cfg', DECK_DESKTOP_SESSIONS_DIR: '/opt/desktop' }, home, '/repo').desktopSessionsRoot).toBe('/opt/desktop');
+  });
+
   it('supervisor: DECK_SUPERVISOR systemd|launchd, else relaunch for DECK_SUPERVISED=1, else null', () => {
     expect(supervisorOf({})).toBeNull();
     expect(supervisorOf({ DECK_SUPERVISED: '1' })).toBe('relaunch');

@@ -10,7 +10,7 @@ Include the commit you tested, how to reproduce it, and what an attacker gains. 
 
 ## Scope
 
-In scope: authentication and session handling, the `Host` / `Origin` checks, the permission flow, file and attachment APIs, and anything that lets a web page or another tailnet device act without the login token.
+In scope: authentication and session handling, the `Host` / `Origin` checks, the permission flow, the in-app re-login window (it may run only the server-chosen login command for a seat — `claude auth login`, the same command with `CLAUDE_CONFIG_DIR`, `codex login`, or `grok login` — and accepts one auth-code line or Enter, never a command string), file and attachment APIs, and anything that lets a web page or another tailnet device act without the login token.
 
 Out of scope: exposing the port to the public internet (unsupported), and behavior of the Claude Code, Codex or Gemini CLIs themselves.
 

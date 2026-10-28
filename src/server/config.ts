@@ -252,7 +252,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     pinsFile: path.join(configDir, 'pins.json'),
     settingsFile: path.join(configDir, 'settings.json'),
     cwdRoots: [home, ...extraCwdRoots(env)],
-    desktopSessionsRoot: env.DECK_DESKTOP_SESSIONS_DIR || path.join(home, 'Library', 'Application Support', 'Claude', 'claude-code-sessions'),
+    // Claude Desktop's session store is a macOS app path. On Linux it is off unless DECK_DESKTOP_SESSIONS_DIR is set
+    // (an empty string is "no Desktop list" — SessionIndex skips a falsy root).
+    desktopSessionsRoot: env.DECK_DESKTOP_SESSIONS_DIR || (process.platform === 'darwin' ? path.join(home, 'Library', 'Application Support', 'Claude', 'claude-code-sessions') : ''),
     drainMaxMs: limitMinutes(env.DECK_DRAIN_MAX_MIN),
     repoRoot,
     supervisor: supervisorOf(env),

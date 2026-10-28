@@ -291,6 +291,26 @@ describe('활동 점 · 알림', () => {
     expect(onAlert).toHaveBeenCalledTimes(2);
   });
 
+  it('a background task that finishes after connect raises a completion toast; one already finished does not', () => {
+    vi.useFakeTimers();
+    const onAlert = vi.fn();
+    const onOpenTask = vi.fn();
+    const task = (status: 'running' | 'done' | 'failed', taskId = 'k1') => ({
+      taskId, fromSessionId: 's1', cwd: '/w', title: '빌드', status, sessionId: 's9', createdAt: 1,
+    });
+    const props = (tasks: ReturnType<typeof task>[]) => base({ tasks, onAlert, onOpenTask, serverUpdate: false });
+    const { rerender } = render(<ActivityButton {...props([task('running'), task('done', 'old')])} />);
+    act(() => { vi.advanceTimersByTime(ALERT_SEED_MS); });
+    expect(onAlert).not.toHaveBeenCalled();
+    rerender(<ActivityButton {...props([task('done'), task('done', 'old')])} />);
+    expect(onAlert).toHaveBeenCalledOnce();
+    expect(onAlert.mock.calls[0]![0].text).toBe('백그라운드 작업 완료 · 빌드');
+    onAlert.mock.calls[0]![0].open();
+    expect(onOpenTask).toHaveBeenCalledWith(expect.objectContaining({ taskId: 'k1' }));
+    rerender(<ActivityButton {...props([task('failed', 'k2')])} />);
+    expect(onAlert).toHaveBeenCalledOnce();
+  });
+
   it('the badge caps at 99+', () => {
     render(<ActivityButton {...base({ pending: Array.from({ length: 120 }, (_, i) => card('s1', i)) as unknown as Props['pending'], visibleSessions: ['s1'], serverUpdate: false })} />);
     expect(screen.getByTestId('activity-badge').textContent).toBe('99+');

@@ -528,6 +528,7 @@ function ChoiceCards({ choices, onPick }: { choices: DeckChoices; onPick: ((text
   return (
     <div className="choice-cards" role="group" aria-label={choices.question ?? '선택지'} data-testid="choice-cards">
       {choices.question && <div className="choice-q">{choices.question}</div>}
+      <p className="choice-hint muted">누르면 그 문장만 바로 보냅니다</p>
       <div className="choice-list">
         {choices.options.map((o) => (
           <button key={o} type="button" className={`choice${picked === o ? ' picked' : ''}`} data-testid="choice" disabled={!onPick || picked !== null}

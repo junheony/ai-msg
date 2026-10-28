@@ -95,7 +95,7 @@ export const SERVICE_TEXTS = {
   notOurs: (file: string) => `남이 만든 파일이라 건드리지 않습니다: ${file}`,
   lockHeld: (pid: number, port: number) => `이 설정 폴더를 쓰는 서버(pid ${pid}, 포트 ${port})가 이미 있습니다 — 먼저 끄세요`,
   portBusy: (port: number) => `포트 ${port} 에 이미 서버가 있습니다 — 그 서버를 끄거나 --port 로 다른 포트를 지정하세요`,
-  noUserBus: 'systemd 사용자 세션이 없습니다(systemctl --user 가 동작하지 않음) — 로그인 세션에서 실행하세요',
+  noUserBus: 'systemd 사용자 세션이 없습니다(systemctl --user 가 동작하지 않음) — 이 사용자로 로그인한 뒤 실행하거나, loginctl enable-linger 로 로그아웃 뒤에도 사용자 서비스를 켜 두세요',
   noGui: 'macOS 에 로그인한 GUI 세션에서 실행하세요(SSH 에서는 LaunchAgent 를 올릴 수 없습니다)',
   legacy: '이 맥은 저장소 방식 서비스(com.deck.server/relaunch)로 돌고 있습니다 — 패키지 서비스는 설치하지 않습니다',
   needConfirm: '확인이 필요합니다 — --yes 또는 --dry-run',

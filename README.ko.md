@@ -36,10 +36,10 @@ AI-MSG 는 자기 컴퓨터에서 실행한다. 공식 Claude Code CLI(헤드리
 |---|---|
 | Node.js | 24 이상(`package.json` 의 `engines`) |
 | Claude Code | 이 컴퓨터에서 `claude` 로 로그인돼 있을 것. 계정 하나로도 된다. |
-| OS | macOS 에서 개발하고 지원한다. |
-| 선택 | Codex CLI 0.159 이상(`codex login`), Gemini CLI, Tailscale |
+| OS | Linux(systemd 사용자 서비스)와 macOS. Node 24. 리눅스 절차는 [docs/linux-host.md](docs/linux-host.md). |
+| 선택 | Codex CLI 0.159 이상(`codex login`), Gemini CLI, Grok CLI(`grok login`), Tailscale |
 
-**Linux:** 서버, Claude·Codex 엔진, Tailscale 바인딩은 macOS 전용이 아니며, 단위 테스트는 CI 에서 Linux 로도 참고용으로 돈다. Linux 에서 안 되는 것: launchd 서비스 스크립트(`scripts/install-launchd.sh`), Claude Desktop 세션 기록(기본 경로가 macOS 의 `~/Library/Application Support/Claude`), Gemini 쓰기 샌드박스(macOS seatbelt). 저자는 Linux 에서 상시로 쓰지 않는다.
+**Linux 가 기준 호스트다.** `ai-msg service install` 이 systemd 사용자 유닛(`ai-msg.service`)과 `~/.config/deck/service.env` 를 쓴다. macOS 는 LaunchAgent 스크립트를 그대로 둔다. macOS 에만 있는 것: `scripts/install-launchd.sh`, Claude Desktop 세션 기록(기본 경로는 macOS 의 `~/Library/Application Support/Claude`. 다른 곳의 저장소를 읽으려면 `DECK_DESKTOP_SESSIONS_DIR`), Grok Bot 앱 캐시.
 
 ## 빠른 시작
 
@@ -69,7 +69,20 @@ cat ~/.config/deck/token
 
 새 Claude 세션은 결정이 필요한 도구 호출마다 먼저 묻는다. 자동 승인은 직접 켜는 선택 사항이며, 켜기 전에 [보안 모델](#보안-모델)을 읽는다.
 
-### 서비스로 실행(macOS)
+### 서비스로 실행
+
+Linux 에서는 사용자 유닛을 설치한다. 전체는 [docs/linux-host.md](docs/linux-host.md).
+
+```bash
+npm install && npm run build && npm run build:server
+node dist/server/bin.js service install --yes
+loginctl enable-linger "$USER"          # 로그아웃 뒤에도 사용자 서비스 유지
+journalctl --user -u ai-msg.service -n 100 --no-pager
+```
+
+`service install` 이 `~/.config/systemd/user/ai-msg.service` 와 `~/.config/deck/service.env`(권한 0600)를 쓰고 유닛을 활성화한다. 이 파일은 LaunchAgent 가 읽는 `~/.config/deck/env` 와 다르다. `systemctl --user` 세션이 없으면 설치가 거절된다. 그 사용자로 로그인하거나 linger 를 켠 뒤 다시 실행한다.
+
+#### macOS (LaunchAgent)
 
 ```bash
 scripts/install-launchd.sh              # 사용자 LaunchAgent(com.deck.server) 설치 후 시작
@@ -185,7 +198,7 @@ CLAUDE_CONFIG_DIR=~/.claude-c claude     # 셋째 계정 -> ~/.claude-c  (계정
 | `DECK_CODEX_BIN` | `PATH`, `~/.local/bin`, `~/.nvm` 순으로 탐색 | `codex` 경로. 직접 지정하면 버전 검사를 건너뛴다. |
 | `CODEX_HOME` | `~/.codex` | Codex 세션 롤아웃을 읽는 위치. |
 | `DECK_GEMINI_BIN` | `PATH`, `~/.local/bin` 순으로 탐색 | `gemini` 경로. |
-| `DECK_DESKTOP_SESSIONS_DIR` | `~/Library/Application Support/Claude/claude-code-sessions` | Claude Desktop 세션 기록(읽기 전용). |
+| `DECK_DESKTOP_SESSIONS_DIR` | macOS: `~/Library/Application Support/Claude/claude-code-sessions`. Linux: 지정하지 않으면 없음. | Claude Desktop 세션 기록(읽기 전용). |
 | `DECK_VAPID_SUBJECT` | 자동 | Web Push 의 `https:` 또는 `mailto:` subject. |
 | `DECK_UI_DIR` | `dist/ui` | 빌드된 UI 디렉터리. |
 | `DECK_EXTRA_CWD_ROOTS` | 없음 | 홈 디렉터리 외에 새 세션을 시작할 수 있게 할 절대 경로(콤마 구분). `DECK_LOOPBACK_ONLY=1` 일 때만 적용되고 `/` 는 받지 않는다. 테스트 하네스용. |
@@ -240,6 +253,7 @@ AI-MSG 는 내 컴퓨터에서 명령을 실행할 수 있다. 여기에 접속�
 - **Claude 설정이 그대로 적용된다.** 턴은 사용자·프로젝트·로컬 Claude Code 설정(허용 규칙과 훅 포함)을 CLI 와 똑같이 읽는다.
 - **감사 로그.** 모든 권한 결정이 `~/.config/deck/audit.log` 에 JSON 한 줄씩 쌓인다: 시각, 세션, 도구 이름, 결정, 누가 결정했는지, 도구 입력의 SHA-256(입력 자체는 남기지 않는다). 5 MiB 가 되면 `audit.log.1` 로 넘어간다.
 - **자격 증명.** AI-MSG 는 CLI 의 자격 증명을 읽거나 저장하거나 전달하지 않는다. 프로필 디렉터리를 골라 공식 CLI 를 띄울 뿐이고, Gemini 는 자격 파일이 있는지만 확인한다. Claude 턴을 띄우기 전에 자식 환경에서 `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_AUTH_TOKEN` 과 베이스 URL 변수를 지워서, 턴이 조용히 다른 계정으로 과금되지 않게 한다.
+- **로그인 재인증 창.** 화면 안 로그인 창은 서버가 고른 명령만 실행한다(`claude auth login`, 다른 Claude 프로필이면 `CLAUDE_CONFIG_DIR` 만 더한 같은 명령, `codex login`, `grok login`). 클라이언트가 보내는 것은 자리 id 이고 명령 문자열이 아니다. 입력은 한 줄(인증 코드) 또는 Enter 다. Gemini(`agy`)는 이 창에 없다.
 - **파일 접근.** 새 세션은 홈 디렉터리 안(또는 루프백 전용 서버에서 `DECK_EXTRA_CWD_ROOTS` 로 지정한 경로)에서만 시작할 수 있다. 파일 미리보기 API 는 설정 디렉터리, 홈 바로 아래의 점(.) 디렉터리, 흔한 비밀 파일(`.env`, 개인 키, 자격 파일)을 거부한다.
 
 취약점은 [SECURITY.md](SECURITY.md) 대로 제보한다.
@@ -265,7 +279,7 @@ AI-MSG 는 내 컴퓨터에서 명령을 실행할 수 있다. 여기에 접속�
 | `usage-source.json` | 사용량 대시보드가 처음 응답했을 때 한 번 기록(`{"deckSeenAt": ...}`). |
 | `gemini/<id>/` | Gemini 계정별 Gemini CLI 홈(`DECK_CONFIG_DIR` 를 따른다). |
 
-launchd 서비스는 여기에 더해 `~/.config/deck/env`(서비스용 환경변수)를 읽고 출력을 `~/.config/deck/deck.log` 에 쓴다.
+Linux 유닛은 `~/.config/deck/service.env`(`ai-msg service install` 이 씀, 권한 0600)를 읽고 로그는 사용자 저널에 남긴다(`journalctl --user -u ai-msg.service`). macOS LaunchAgent 는 `~/.config/deck/env` 를 읽고 출력을 `~/.config/deck/deck.log` 에 쓴다.
 
 대화 기록은 각 CLI 가 두는 자리에 그대로 있다(Claude 는 `<프로필>/projects/`, Codex 는 `$CODEX_HOME/sessions`).
 
@@ -293,13 +307,14 @@ src/server/          HTTP + WebSocket 서버 (Node, TypeScript)
   push/              Web Push
 src/shared/          서버와 UI 가 함께 쓰는 타입과 WebSocket 프로토콜
 src/ui/              React UI (Vite)
-scripts/             launchd 서비스와 재시작 도구
+scripts/             macOS LaunchAgent 와 재시작 도구(Linux 는 `ai-msg service install`)
 tests/e2e/           실제 계정으로 도는 종단 테스트
 docs/                구조와 프로토콜 문서
 ```
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)(영어) — 각 부분이 어떻게 맞물리는지.
 - [docs/protocol.md](docs/protocol.md) — WebSocket 프로토콜을 바꿀 때의 규칙. UI 와 서버는 따로 배포되므로 모든 변경은 양방향으로 호환돼야 한다.
+- [docs/linux-host.md](docs/linux-host.md) — Linux 호스트의 systemd 사용자 서비스.
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## 면책

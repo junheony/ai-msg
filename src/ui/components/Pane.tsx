@@ -436,6 +436,14 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const commanderOn = isCommanderActive(commander);
   const clearRefusal = () => { if (commandSid && commanderRefusal) dispatch({ type: 'commander_refusal_clear', sessionId: commandSid }); };
   const commanderStop = (epoch: number) => { if (commandSid) { clearRefusal(); send({ type: 'commander_stop', sessionId: commandSid, epoch }); } };
+  const commanderHold: ChatProps['commanderHold'] = commander && commandSid && commander.state.status === 'waiting_human'
+    ? {
+        note: commander.note ?? null,
+        next: commander.lastVerdict?.next ?? null,
+        onStop: () => commanderStop(commander.state.epoch),
+        onResume: () => { clearRefusal(); send({ type: 'commander_resume', sessionId: commandSid, epoch: commander.state.epoch }); },
+      }
+    : null;
   if (commandSid) {
     fileMenu.push(commanderOn && commander
       ? { label: '총사령탑 정지', run: () => commanderStop(commander.state.epoch), group: 'commander' }
@@ -684,6 +692,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
             dispatch({ type: 'queue_send_now', id, paneId: pane.id });
             if (pane.activeTurnId) sendInterrupt(pane.activeTurnId);
           }}
+          commanderHold={commanderHold}
           onDecide={(requestId, decision) => send({ type: 'permission_response', requestId, decision })}
           onAnswer={(requestId, answers) => send({ type: 'question_response', requestId, answers })}
           onModel={onModel}

@@ -25,11 +25,14 @@ function trapTab(e: KeyboardEvent<HTMLDivElement>) {
  * Every account's limits (all windows, resets, credits, hints) plus the token history, in one sheet (design §3.5):
  * a bottom sheet on a phone, a side panel on a desktop. Opened from the usage chip, the palette, settings, the menu.
  */
-export function UsageSheet({ usage, current, next = null, grok = null, initialHistory = false, onClose, now: fixedNow, fetchFn }: {
+export function UsageSheet({ usage, current, next = null, grok = null, initialHistory = false, onClose, now: fixedNow, fetchFn, reauth = [], onReauth }: {
   usage: UsageSnapshot | null; current: Seat | null; next?: RouteNext | null; grok?: GrokStatus | null;
   /** Open with the history already expanded (settings / menu "사용량 기록"). */
   initialHistory?: boolean;
   onClose: () => void; now?: number; fetchFn?: typeof fetch;
+  /** Seats whose login probe is `no` (authLogin). */
+  reauth?: readonly string[];
+  onReauth?: (seat: string) => void;
 }) {
   const now = useClock(fixedNow);
   const { active, label } = useAccounts();
@@ -58,6 +61,9 @@ export function UsageSheet({ usage, current, next = null, grok = null, initialHi
                   {d.seat === current && <span className="usage-tag current">현재</span>}
                   {isNext && <span className="usage-tag next" data-testid={`sheet-next-${d.seat}`} title={`다음 턴은 이 계정으로 갑니다: ${next!.reason}`}>{next!.asOpus ? '다음 턴 여기 · Opus' : '다음 턴 여기'}</span>}
                   {st && <span className={`usage-tag status ${d.status}`} data-testid={`${d.seat}-status`}>{old && <ClockIcon className="usage-icon" />}{st}</span>}
+                  {onReauth && reauth.includes(d.seat) && (
+                    <button type="button" className="text-btn usage-reauth-btn" data-testid={`reauth-${d.seat}`} onClick={() => onReauth(d.seat)}>로그인 만료 · 재로그인</button>
+                  )}
                 </div>
                 {d.hint && d.reasonLine === undefined && <div className="usage-pop-row hint">{d.hint}</div>}
                 {d.reasonLine !== undefined && <div className="usage-pop-row hint" data-testid={`${d.seat}-main`}>{d.reasonLine}</div>}

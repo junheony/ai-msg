@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import type { GrokStatus } from '../../shared/protocol';
 import type { Seat } from '../../shared/accounts';
 import type { UsageSnapshot } from '../../shared/usage-types';
@@ -162,19 +162,23 @@ function Segment({ s, stage, measure }: { s: StripSeg; stage: Exclude<StripStage
  * The same pill on a phone — the list is the popover, not a second row of every seat. `phone` and `rowSlot` stay on
  * the props so the header call site is unchanged.
  */
-export function UsageStrip({ usage, current, next = null, grok = null, open = false, onToggle, now: fixedNow }: {
+export function UsageStrip({ usage, current, next = null, grok = null, open = false, onToggle, now: fixedNow, reauth = [], onReauth }: {
   usage: UsageSnapshot | null; current: Seat | null; next?: RouteNext | null; grok?: GrokStatus | null;
   phone?: boolean;
   rowSlot?: HTMLElement | null;
   /** The usage sheet is open (자세히). The pill's own list closes so it does not sit under the sheet. */
   open?: boolean; onToggle: () => void; now?: number;
+  /** Seats whose login probe is `no` (authLogin). */
+  reauth?: readonly string[];
+  onReauth?: (seat: string) => void;
 }) {
   const now = useClock(fixedNow);
   const { active, label } = useAccounts();
   const wrapRef = useRef<HTMLDivElement>(null);
   const [pop, setPop] = useState(false);
   const seats = usage ? buildSeats(usage, active, grok, now) : [];
-  const shown = seats.length > 0 && (!!current || !!next || seats.some((s) => pickMain(s.rows)));
+  // A logged-out seat still needs the pill: with no remaining-% yet there is otherwise nothing to press for 재로그인.
+  const shown = seats.length > 0 && (!!current || !!next || seats.some((s) => pickMain(s.rows)) || reauth.length > 0);
 
   useEffect(() => { if (open) setPop(false); }, [open]);
   useEffect(() => {
@@ -221,7 +225,17 @@ export function UsageStrip({ usage, current, next = null, grok = null, open = fa
       </button>
       {pop && (
         <div id="usage-strip-pop" className="usage-strip-pop" role="group" aria-label="계정별 남은 사용량" data-testid="usage-strip-pop">
-          {segs.map((s) => <Segment key={s.seat} s={s} stage="full" />)}
+          {segs.map((s) => (
+            <Fragment key={s.seat}>
+              <Segment s={s} stage="full" />
+              {onReauth && reauth.includes(s.seat) && (
+                <span className="usage-reauth" data-testid={`reauth-${s.seat}`}>
+                  <span>로그인 만료</span>
+                  <button type="button" className="text-btn" onClick={() => { setPop(false); onReauth(s.seat); }}>재로그인</button>
+                </span>
+              )}
+            </Fragment>
+          ))}
           <button type="button" className="text-btn usage-strip-more" onClick={onToggle}>자세히</button>
         </div>
       )}
