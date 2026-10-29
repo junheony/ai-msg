@@ -33,6 +33,19 @@ describe('ClaudeProcess', () => {
     expect(fake.inputs[0]!.uuid).toBe('u1');
   });
 
+  it('kick wakes a blocked reader and the following stdout line is kept', async () => {
+    const fake = fakeClaudeCli({ exitOnStdinClose: false });
+    const p = mk(fake);
+    p.start();
+    const it = p.messages()[Symbol.asyncIterator]();
+    const pending = it.next();
+    p.kick();
+    expect((await pending).value).toMatchObject({ type: 'unknown', subtype: 'deck_wake' });
+    fake.push(cli.init());
+    expect(((await it.next()).value as CliMessage).type).toBe('system');
+    p.stop();
+  });
+
   it('skips non-JSON stdout lines', async () => {
     const fake = fakeClaudeCli();
     const p = mk(fake);

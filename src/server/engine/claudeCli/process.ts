@@ -23,7 +23,8 @@ export function exitFailureText(e: ProcessExit): string {
 /**
  * One `claude -p --input-format stream-json` child. Abort is SIGINT (the CLI ends the turn and
  * still writes its result); stdin stays open so deck can keep the process for background tasks
- * and steers, and closing it is how a finished process is let go. The only control frame written is `initialize`.
+ * and steers, and closing it is how a finished process is let go. Control frames written are `initialize` and,
+ * when a turn asks for a context breakdown, `get_context_usage`.
  */
 export class ClaudeProcess {
   readonly exited: Promise<ProcessExit>;
@@ -36,6 +37,8 @@ export class ClaudeProcess {
   private readonly timers = new Set<NodeJS.Timeout>();
   private readonly grace: number;
   private readonly drain: number;
+  /** Resolves the in-flight stdout read so a timer can wake `messages()` without dropping the next line. */
+  private wakeResolve: (() => void) | null = null;
 
   constructor(private readonly o: ClaudeProcessOpts) {
     this.exited = new Promise((r) => { this.resolveExit = r; });
@@ -63,15 +66,60 @@ export class ClaudeProcess {
     c.once('exit', (code, signal) => this.finish({ code, signal, spawnError: null }));
   }
 
+  /**
+   * Unblocks `messages()` while it is waiting on stdout. The next yield is `{ type: 'unknown', subtype: 'deck_wake' }`;
+   * the in-flight line is kept and yielded afterwards.
+   */
+  kick(): void {
+    this.wakeResolve?.();
+  }
+
   /** stdout frames until stdout closes — or `drainMs` after exit, in case a descendant kept the pipe open. */
   async *messages(): AsyncGenerator<CliMessage> {
     const c = this.child;
     if (!c) return;
     const rl = readline.createInterface({ input: c.stdout, crlfDelay: Infinity });
     void this.exited.then(() => { const t = setTimeout(() => rl.close(), this.drain); t.unref?.(); });
-    for await (const line of rl) {
-      const m = parseLine(line);
-      if (m) yield m;
+    const it = rl[Symbol.asyncIterator]();
+    let pending: Promise<IteratorResult<string>> | null = null;
+    try {
+      for (;;) {
+        pending ??= it.next();
+        const line = await new Promise<IteratorResult<string> | 'wake'>((resolve, reject) => {
+          let settled = false;
+          this.wakeResolve = () => {
+            if (settled) return;
+            settled = true;
+            this.wakeResolve = null;
+            resolve('wake');
+          };
+          pending!.then(
+            (r) => {
+              if (settled) return;
+              settled = true;
+              this.wakeResolve = null;
+              pending = null;
+              resolve(r);
+            },
+            (err) => {
+              if (settled) return;
+              settled = true;
+              this.wakeResolve = null;
+              pending = null;
+              reject(err);
+            },
+          );
+        });
+        if (line === 'wake') {
+          yield { type: 'unknown', subtype: 'deck_wake' };
+          continue;
+        }
+        if (line.done) break;
+        const m = parseLine(line.value);
+        if (m) yield m;
+      }
+    } finally {
+      this.wakeResolve = null;
     }
   }
 

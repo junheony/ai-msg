@@ -64,6 +64,9 @@ describe('MessageView', () => {
       { toolUseId: '1', name: 'Agent', input: { subagent_type: 'explore', model: 'sonnet', description: 'find' }, result: 'ok', isError: false },
       { toolUseId: '2', name: 'Bash', input: { command: 'offload cross "x"' }, result: 'ok', isError: false },
     ], badge: null, streaming: false, error: null, notes: [], attempts: [] }} />);
+    expect(container.querySelector('.role-toggle')?.textContent).toBe('서브에이전트 1 · offload 1');
+    expect(container.querySelector('.role-list')).toBeNull();
+    fireEvent.click(container.querySelector('.role-toggle')!);
     expect(container.querySelector('.role-badge')?.textContent).toContain('explore');
     expect(container.querySelector('.role-badge')?.textContent).toContain('offload cross');
     cleanup();

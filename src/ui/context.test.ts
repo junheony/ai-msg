@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { contextWindowOf } from '../shared/models';
 import { contextUsageOf } from '../shared/turn-types';
-import { COLD_HINT, LONG_HINT, WARM_MS, cacheHitPct, coldWriteNote, contextHint, contextLabel, contextPct, contextTokens, fmtTokens, isCacheCold, isLongContext, latestContext, type ContextInfo } from './context';
+import { COLD_HINT, LONG_HINT, WARM_MS, cacheHitPct, coldWriteNote, contextHint, contextInfoFromTurn, contextLabel, contextPct, contextTokens, fmtTokens, isCacheCold, isLongContext, latestContext, type ContextInfo } from './context';
 
 const ctx = (inputTokens: number, cacheReadTokens: number, cacheCreationTokens: number, over: Partial<ContextInfo> = {}): ContextInfo =>
   ({ usage: { inputTokens, cacheReadTokens, cacheCreationTokens }, window: 1_000_000, at: 0, model: 'opus', account: 'b', ...over });
@@ -30,6 +30,20 @@ describe('context size', () => {
   it('window: 1M for current Claude models and [1m], 200k for Haiku, old models and unknowns', () => {
     for (const m of ['opus', 'sonnet', 'fable', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1', 'claude-sonnet-4-5[1m]']) expect(contextWindowOf(m)).toBe(1_000_000);
     for (const m of ['claude-haiku-4-5', 'claude-sonnet-4-5', 'gpt-6-sol', null, '<synthetic>']) expect(contextWindowOf(m)).toBe(200_000);
+  });
+  it('contextInfoFromTurn keeps categories and the last call, and hides a fill when the engine has none', () => {
+    const usage = { inputTokens: 9, outputTokens: 4, cacheReadTokens: 1, cacheCreationTokens: 2, context: { inputTokens: 9, cacheReadTokens: 1, cacheCreationTokens: 2 }, contextWindow: 1_000_000, contextCategories: [{ id: 'skills' as const, tokens: 30 }], lastCall: { inputTokens: 9, outputTokens: 4, cacheReadTokens: 1, cacheCreationTokens: 2 } };
+    expect(contextInfoFromTurn({ model: 'opus', account: 'b', usage, at: 5, window: 1_000_000 })).toMatchObject({
+      measured: true,
+      categories: [{ id: 'skills', tokens: 30 }],
+      last: { outputTokens: 4 },
+      window: 1_000_000,
+    });
+    const codex = contextInfoFromTurn({ model: 'gpt-6-sol', account: 'b', usage: { inputTokens: 3, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 }, at: 5, window: 200_000 });
+    expect(codex).toMatchObject({ measured: false, last: { inputTokens: 3, outputTokens: 1 }, window: 200_000 });
+    expect(codex?.categories).toBeUndefined();
+    expect(contextInfoFromTurn({ model: 'opus', account: 'b', usage: { inputTokens: 3, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 }, at: 5, window: 1_000_000 })).toBeNull();
+    expect(contextInfoFromTurn({ model: 'opus', account: 'b', usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }, at: 5, window: 200_000 })).toBeNull();
   });
   it('latestContext takes the last item that carries one', () => {
     const a = ctx(1, 2, 3);

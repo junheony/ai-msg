@@ -674,7 +674,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
               {regenPick && <RegenModelMenu models={regenPick.models} current={regenPick.current} sticky={regenPick.sticky} onPick={regenPick.onPick} />}
             </div>
           )}
-          <RoleBadge roles={roleSummary(item.toolCalls)} />
+          <RoleBadge roles={roleSummary(item.toolCalls)} live={item.streaming} />
         </div>
       )}
     </div>

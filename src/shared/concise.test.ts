@@ -116,4 +116,14 @@ describe('withConcise', () => {
     expect(CONCISE_STYLE_PROMPT).toContain('결과');
     expect(CONCISE_STYLE_PROMPT).toContain('초안');
   });
+  it('adds a short token and single-loop policy without the AskUserQuestion line', () => {
+    expect(CONCISE_STYLE_PROMPT).toContain('SUCCESS, PARTIAL, BLOCKED');
+    expect(CONCISE_STYLE_PROMPT).toContain('최대 2개');
+    expect(CONCISE_STYLE_PROMPT).toContain('wait·poll·sleep');
+    expect(CONCISE_STYLE_PROMPT).toContain('tail 이나 grep');
+    expect(CONCISE_STYLE_PROMPT).toContain('md 파일');
+    expect(CONCISE_STYLE_PROMPT).toContain('API > CLI > 앱 > 브라우저');
+    expect(CONCISE_STYLE_PROMPT).toContain('역할로 나누지 말 것');
+    expect(CONCISE_STYLE_PROMPT.length).toBeLessThan(1600);
+  });
 });

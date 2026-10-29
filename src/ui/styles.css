@@ -2436,3 +2436,24 @@ body.pane-dragging .head-chip { cursor: grabbing; }
 
 /* Phone: the 작업으로 button keeps its 44px square (this rule comes after the base .task-add above). */
 @media (max-width: 720px) { .task-add { width: var(--phone-tap); height: var(--phone-tap); padding: 0; } }
+
+/* ---- context sheet + subagent list (isolated from Sidebar / SessionIcon / NewChat) ---- */
+.ctx-sheet-btn { display: inline-flex; align-items: center; justify-content: center; height: 22px; min-width: 22px; padding: 0 4px; border-radius: var(--r-full); color: var(--muted); font-size: var(--fs-meta); line-height: 1; }
+.ctx-sheet-btn:hover, .ctx-sheet-btn:focus-visible { background: var(--hover); color: var(--fg-strong); }
+.ctx-sheet { position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; min-width: 220px; max-width: min(320px, 80vw); padding: var(--s3); border-radius: var(--r-md); background: var(--bg-raised); box-shadow: var(--shadow); color: var(--fg); font-size: var(--fs-meta); }
+.session-chip-wrap { position: relative; }
+.ctx-sheet-used { margin: 0 0 var(--s2); font-weight: 600; }
+.ctx-sheet-cats { list-style: none; margin: 0 0 var(--s2); padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.ctx-sheet-cats li, .ctx-sheet-last div { display: flex; justify-content: space-between; gap: var(--s3); }
+.ctx-sheet-last { margin: 0 0 var(--s2); }
+.ctx-sheet-last div { margin: 0; }
+.ctx-sheet-last dt { color: var(--muted); }
+.ctx-sheet-last dd { margin: 0; }
+.ctx-sheet-close { height: 28px; padding: 0 var(--s2); border-radius: var(--r-sm); color: var(--muted); }
+.role-toggle { color: var(--faint); font-size: inherit; }
+.role-toggle:hover { color: var(--fg); }
+.role-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; width: 100%; }
+.role-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.role-desc { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 16em; }
+.role-row.failed .role-status { color: var(--danger); }
+.role-row.running .role-status { color: var(--fg-strong); }

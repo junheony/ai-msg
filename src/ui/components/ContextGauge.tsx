@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { COLD_HINT, LONG_HINT, contextHint, contextPct, contextTokens, isLongContext, type ContextInfo } from '../context';
+import type { ContextCategoryId } from '../../shared/turn-types';
+import { COLD_HINT, LONG_HINT, contextHint, contextPct, contextTokens, fmtTokens, isLongContext, type ContextInfo } from '../context';
 
 /** Re-renders every `ms` so time-based hints (cache expiry) appear without new server messages. */
 function useNow(ms: number): number {
@@ -29,6 +30,56 @@ export function ContextRing({ info }: { info: ContextInfo }) {
       <circle className="ctx-track" cx="9" cy="9" r={R} />
       <circle className="ctx-arc" cx="9" cy="9" r={R} strokeDasharray={`${(C * Math.max(pct, 2)) / 100} ${C}`} transform="rotate(-90 9 9)" />
     </svg>
+  );
+}
+
+const CATEGORY_LABEL: Record<ContextCategoryId, string> = {
+  system_prompt: '시스템 프롬프트',
+  system_tools: '시스템 도구',
+  mcp_tools: 'MCP 도구',
+  mcp_instructions: 'MCP 지침',
+  custom_agents: '커스텀 에이전트',
+  memory_files: '메모리 파일',
+  skills: '스킬',
+  messages: '메시지',
+};
+
+/**
+ * Opened from the context ring (or the 토큰 button when there is no measured fill).
+ * Shows only sections the turn actually carried: used/limit, category rows, last-response tokens.
+ */
+export function ContextSheet({ info, onClose }: { info: ContextInfo; onClose: () => void }) {
+  const measured = info.measured !== false;
+  const cats = info.categories ?? [];
+  const last = info.last;
+  const lastAny = !!last && (last.inputTokens + last.outputTokens + last.cacheReadTokens + last.cacheCreationTokens) > 0;
+  return (
+    <div className="ctx-sheet" role="dialog" aria-label="컨텍스트 구성" data-testid="context-sheet">
+      {measured && (
+        <p className="ctx-sheet-used" data-testid="context-used">
+          사용 {fmtTokens(contextTokens(info.usage))} / 한도 {fmtTokens(info.window)}
+        </p>
+      )}
+      {cats.length > 0 && (
+        <ul className="ctx-sheet-cats" data-testid="context-categories">
+          {cats.map((c) => (
+            <li key={c.id}>
+              <span>{CATEGORY_LABEL[c.id]}</span>
+              <span>{fmtTokens(c.tokens)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {lastAny && last && (
+        <dl className="ctx-sheet-last" data-testid="context-last">
+          <div><dt>입력</dt><dd>{fmtTokens(last.inputTokens)}</dd></div>
+          <div><dt>출력</dt><dd>{fmtTokens(last.outputTokens)}</dd></div>
+          <div><dt>캐시 읽기</dt><dd>{fmtTokens(last.cacheReadTokens)}</dd></div>
+          <div><dt>캐시 쓰기</dt><dd>{fmtTokens(last.cacheCreationTokens)}</dd></div>
+        </dl>
+      )}
+      <button type="button" className="ctx-sheet-close" onClick={onClose}>닫기</button>
+    </div>
   );
 }
 

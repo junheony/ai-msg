@@ -315,7 +315,7 @@ describe('ClaudeEngine.runTurn — context size', () => {
     );
     const events = await drain(engine.runTurn(req()));
     const res = events.find((e) => e.kind === 'result');
-    expect(res).toMatchObject({ usage: { inputTokens: 3, cacheReadTokens: 250, cacheCreationTokens: 60, context: { inputTokens: 2, cacheReadTokens: 150, cacheCreationTokens: 10 }, contextWindow: 1_000_000 } });
+    expect(res).toMatchObject({ usage: { inputTokens: 3, cacheReadTokens: 250, cacheCreationTokens: 60, context: { inputTokens: 2, cacheReadTokens: 150, cacheCreationTokens: 10 }, contextWindow: 1_000_000, lastCall: { inputTokens: 2, outputTokens: 5, cacheReadTokens: 150, cacheCreationTokens: 10 } } });
   });
 });
 

@@ -1630,8 +1630,27 @@ describe('context gauge state', () => {
       { type: 'turn_result', turnId: 'tc', sessionId: S, cwd: '/w', ok: true, text: 'ok', errorText: null, badge: { account: 'c', model: 'opus', reason: '5h 한도 → C 전환', modelNote: null, usage: { ...usage0, cacheCreationTokens: 120_000, context: { inputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 120_000 }, contextWindow: 1_000_000 } } },
     ], s0);
     const last = pane(s).items.at(-1) as Extract<ChatItem, { kind: 'assistant' }>;
-    expect(last.ctx).toMatchObject({ usage: { cacheCreationTokens: 120_000 }, window: 1_000_000, model: 'opus', account: 'c' });
+    expect(last.ctx).toMatchObject({ usage: { cacheCreationTokens: 120_000 }, window: 1_000_000, model: 'opus', account: 'c', measured: true });
     expect(last.cacheNote).toBe('캐시 새로 씀 · 계정 전환');
+  });
+  it('keeps category rows and last-call tokens, and a turn without a context fill stays unmeasured', () => {
+    const s0 = play([{ type: 'history', sessionId: S, cwd: '/w', account: 'b', messages: [], runningTurnId: null }], openedOn(S));
+    const claude = play([
+      { type: 'turn_started', turnId: 'tc', sessionId: S, cwd: '/w', account: 'c', model: 'opus', reason: 'r', attempt: 1 },
+      { type: 'turn_result', turnId: 'tc', sessionId: S, cwd: '/w', ok: true, text: 'ok', errorText: null, badge: { account: 'c', model: 'opus', reason: 'r', modelNote: null, usage: { ...usage0, context: { inputTokens: 10, cacheReadTokens: 20, cacheCreationTokens: 0 }, contextCategories: [{ id: 'messages', tokens: 20 }], lastCall: { inputTokens: 10, outputTokens: 7, cacheReadTokens: 20, cacheCreationTokens: 0 } } } },
+    ], s0);
+    expect((pane(claude).items.at(-1) as Extract<ChatItem, { kind: 'assistant' }>).ctx).toMatchObject({
+      measured: true,
+      categories: [{ id: 'messages', tokens: 20 }],
+      last: { outputTokens: 7 },
+    });
+    const other = play([
+      { type: 'turn_started', turnId: 'tg', sessionId: S, cwd: '/w', account: 'b', model: 'gpt-6-sol', reason: 'r', attempt: 1 },
+      { type: 'turn_result', turnId: 'tg', sessionId: S, cwd: '/w', ok: true, text: 'ok', errorText: null, badge: { account: 'b', model: 'gpt-6-sol', reason: 'r', modelNote: null, usage: { inputTokens: 4, outputTokens: 2, cacheReadTokens: 0, cacheCreationTokens: 0 } } },
+    ], s0);
+    const ctx = (pane(other).items.at(-1) as Extract<ChatItem, { kind: 'assistant' }>).ctx;
+    expect(ctx).toMatchObject({ measured: false, last: { inputTokens: 4, outputTokens: 2 } });
+    expect(ctx?.categories).toBeUndefined();
   });
 });
 

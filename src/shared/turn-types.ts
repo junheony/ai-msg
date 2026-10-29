@@ -1,3 +1,19 @@
+/** One row of Claude's context breakdown (`get_context_usage` / assistant `context_usage`). Only ids MSG can name. */
+export type ContextCategoryId =
+  | 'system_prompt'
+  | 'system_tools'
+  | 'mcp_tools'
+  | 'mcp_instructions'
+  | 'custom_agents'
+  | 'memory_files'
+  | 'skills'
+  | 'messages';
+
+export type ContextCategory = { id: ContextCategoryId; tokens: number };
+
+/** One API call's full usage, including output. Distinct from ContextUsage, which is the prompt only. */
+export type LastCallUsage = { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number };
+
 export type TurnUsage = {
   inputTokens: number;
   outputTokens: number;
@@ -7,6 +23,10 @@ export type TurnUsage = {
   context?: ContextUsage;
   /** Claude: the model's context window as the SDK reports it (result.modelUsage[*].contextWindow). */
   contextWindow?: number;
+  /** Claude: that same last main-thread call, including output tokens. Absent when the CLI did not report one. */
+  lastCall?: LastCallUsage;
+  /** Claude: category rows from get_context_usage or context_usage. Absent when the CLI did not send them. */
+  contextCategories?: ContextCategory[];
 };
 
 /** One API call's prompt: input + cache read + cache write = what the model read this call. */
@@ -19,6 +39,15 @@ export function contextUsageOf(u: unknown): ContextUsage | null {
   const n = (k: string) => (typeof r[k] === 'number' ? (r[k] as number) : 0);
   const c = { inputTokens: n('input_tokens'), cacheReadTokens: n('cache_read_input_tokens'), cacheCreationTokens: n('cache_creation_input_tokens') };
   return c.inputTokens + c.cacheReadTokens + c.cacheCreationTokens > 0 ? c : null;
+}
+
+/** An API `usage` object → the whole call, output included; null when every count is 0. */
+export function lastCallUsageOf(u: unknown): LastCallUsage | null {
+  if (!u || typeof u !== 'object') return null;
+  const r = u as Record<string, unknown>;
+  const n = (k: string) => (typeof r[k] === 'number' ? (r[k] as number) : 0);
+  const c = { inputTokens: n('input_tokens'), outputTokens: n('output_tokens'), cacheReadTokens: n('cache_read_input_tokens'), cacheCreationTokens: n('cache_creation_input_tokens') };
+  return c.inputTokens + c.outputTokens + c.cacheReadTokens + c.cacheCreationTokens > 0 ? c : null;
 }
 
 export const ZERO_USAGE: TurnUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
