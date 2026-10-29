@@ -258,8 +258,13 @@ export class SessionIndex {
   /** The Grok / Gemini / Grok Bot import lists (Codex is `codex`). */
   private readonly others: ImportIndex[];
 
-  /** A deck rename wins over the transcript's title; archived entries (deck's or Codex's) carry the flag; a Claude session held open outside deck carries `heldBy`. Unchanged entries are returned as is. */
-  private decorate<T extends { sessionId: string; title: string; cwd?: string; engine?: string; archived?: boolean; codexArchived?: boolean; prevSession?: string; nextSession?: string; branch?: BranchLink; heldBy?: SessionHolder }>(e: T): T {
+  /**
+   * A deck rename wins over the transcript's title; archived entries (deck's or Codex's) carry the flag; a Claude
+   * session held open outside deck carries `heldBy`. An automated import (Codex exec, Grok headless) the owner has
+   * renamed, continued, or that deck is running drops that flag, so the sidebar keeps it in the main list. Unchanged
+   * entries are returned as is.
+   */
+  private decorate<T extends { sessionId: string; title: string; cwd?: string; engine?: string; archived?: boolean; codexArchived?: boolean; codexExec?: boolean; autoRun?: boolean; prevSession?: string; nextSession?: string; branch?: BranchLink; heldBy?: SessionHolder }>(e: T): T {
     const meta = this.opts.meta;
     const engine = e.engine ?? 'claude';
     const held = engine === 'claude' ? (this.opts.holders?.heldBy(e.sessionId) ?? null) : engine === 'grok' ? (this.opts.holders?.grokHeldBy?.(e.sessionId) ?? null) : null;
@@ -268,10 +273,14 @@ export class SessionIndex {
     const prev = meta?.prev?.(e.sessionId) ?? null;
     const next = meta?.next?.(e.sessionId) ?? null;
     const branch = meta?.branchOf?.(e.sessionId) ?? null;
-    const cwd = (e.engine ?? 'claude') === 'claude' ? (meta?.cwd?.(e.sessionId) ?? null) : null;
-    if (!meta && !held && !e.heldBy) return e;
-    if (!title && !archived && !(cwd && cwd !== e.cwd) && !e.archived && !prev && !next && !e.prevSession && !e.nextSession && !branch && !e.branch && !held && !e.heldBy) return e;
+    const metaCwd = meta?.cwd?.(e.sessionId) ?? null;
+    const cwd = engine === 'claude' ? metaCwd : null;
+    const kept = !!title || !!prev || !!next || !!branch || !!(metaCwd && metaCwd !== e.cwd) || !!this.known?.(e.sessionId);
+    const dropAuto = kept && (!!e.codexExec || !!e.autoRun);
+    if (!meta && !held && !e.heldBy && !dropAuto) return e;
+    if (!dropAuto && !title && !archived && !(cwd && cwd !== e.cwd) && !e.archived && !prev && !next && !e.prevSession && !e.nextSession && !branch && !e.branch && !held && !e.heldBy) return e;
     const out: T = { ...e, title: title ?? e.title };
+    if (dropAuto) { delete out.codexExec; delete out.autoRun; }
     if (archived) out.archived = true;
     else delete out.archived;
     if (prev) out.prevSession = prev;

@@ -394,12 +394,54 @@ describe('Sidebar imported Codex threads', () => {
     expect(onOpen).toHaveBeenCalledWith('tid', '/w', 'from codex');
   });
 
+  it('folds Codex exec and Grok headless under 자동 실행; pinned and search still reach them', () => {
+    const human = { sessionId: 'h1', account: 'a' as const, cwd: '/w', projectDir: '/p', file: '/f', title: 'real chat', lastModified: Date.now(), sizeBytes: 1 };
+    const exec = { sessionId: 'x1', account: 'gpt' as const, engine: 'codex' as const, cwd: '/dev', projectDir: '/r', file: '/r/f', title: '# 43차 리뷰 요청', lastModified: Date.now() - 60_000, sizeBytes: 1, imported: true, codexExec: true };
+    const grok = { sessionId: 'g1', account: 'x1' as const, engine: 'grok' as const, cwd: '/dev', projectDir: '/g', file: '/g/f', title: '# Critique request: sidebar', lastModified: Date.now() - 120_000, sizeBytes: 1, imported: true, autoRun: true };
+    const kept = { sessionId: 'k1', account: 'gpt' as const, engine: 'codex' as const, cwd: '/dev', projectDir: '/r', file: '/r/k', title: '내가 이어서 본 리뷰', lastModified: Date.now() - 30_000, sizeBytes: 1, imported: true };
+    const archivedExec = { ...exec, sessionId: 'xa', title: 'archived exec', archived: true, codexArchived: true };
+    const projects = [{ cwd: '/w', name: 'w', pinned: false, sessions: [human, exec, grok, kept, archivedExec] }];
+    const titles = () => [...document.querySelectorAll('.date-group .session-title')].map((e) => e.textContent);
+    const { rerender } = render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onArchive={noop} />);
+    expect(titles()).toEqual(['real chat', '내가 이어서 본 리뷰']);
+    const group = screen.getByTestId('autorun-group');
+    const toggle = within(group).getByRole('button', { name: '자동 실행 2' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(group.querySelectorAll('li')).toHaveLength(0);
+    fireEvent.click(toggle);
+    expect(within(group).getAllByRole('button', { name: '자동 실행 2' })[0]!.getAttribute('aria-expanded')).toBe('true');
+    expect([...group.querySelectorAll('.session-title')].map((e) => e.textContent)).toEqual(['# 43차 리뷰 요청', '# Critique request: sidebar']);
+    fireEvent.click(screen.getByRole('button', { name: '보관됨 1' }));
+    expect(screen.getByTestId('archived-group').textContent).toContain('archived exec');
+    expect(group.textContent).not.toContain('archived exec');
+
+    rerender(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onArchive={noop} pins={['x1']} onTogglePin={noop} />);
+    expect(screen.getByTestId('pinned-group').textContent).toContain('# 43차 리뷰 요청');
+    expect(within(screen.getByTestId('autorun-group')).getByRole('button', { name: '자동 실행 1' })).toBeTruthy();
+    expect(screen.getByTestId('autorun-group').textContent).not.toContain('# 43차 리뷰 요청');
+
+    cleanup();
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onArchive={noop} />);
+    openSearch();
+    fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'Critique' } });
+    const found = screen.getByTestId('autorun-group');
+    expect(found.querySelector('.session-title')?.textContent).toBe('# Critique request: sidebar');
+    expect(within(found).getByRole('button', { name: '자동 실행 1' }).getAttribute('aria-expanded')).toBe('true');
+    expect(titles()).toEqual([]);
+    fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'real chat' } });
+    expect(screen.queryByTestId('autorun-group')).toBeNull();
+    expect(titles()).toEqual(['real chat']);
+  });
+
   it('tags a `codex exec` thread 자동 실행 in the tooltip', () => {
     const e = { sessionId: 'x1', account: 'gpt' as const, engine: 'codex' as const, cwd: '/w', projectDir: '/r', file: '/r/f', title: 'You are the docs lane', lastModified: Date.now() - 120_000, sizeBytes: 1, imported: true, codexExec: true };
     const { container } = render(<Sidebar projects={[{ cwd: '/w', name: 'w', pinned: false, sessions: [e] }]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
-    expect(container.querySelector('.session-meta')?.textContent).toBe('w');
-    expect(container.querySelector('li')?.getAttribute('title')).toContain('자동 실행');
-    expect(container.querySelector('.meta-engine.codex')).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '자동 실행 1' }));
+    const li = screen.getByText('You are the docs lane').closest('li')!;
+    expect(li.querySelector('.session-meta')?.textContent).toBe('w');
+    expect(li.getAttribute('title')).toContain('자동 실행');
+    expect(li.querySelector('.meta-engine.codex')).not.toBeNull();
+    expect(container.querySelector('[data-testid="autorun-group"] li')).toBe(li);
   });
 
   it('tags a gone-folder thread 폴더 없음 and a Codex-archived one Codex 보관 (no 보관 해제: only Codex can)', () => {
@@ -642,6 +684,7 @@ describe('Sidebar rows: list rows (avatar, title + time, meta, ⋯ on demand)', 
   it('screen readers get what the tooltip says: folder (when a preview hides it), engine, 자동 실행, time — in the button', () => {
     const e = { sessionId: 'x1', account: 'gpt' as const, engine: 'codex' as const, cwd: '/w/one', projectDir: '/r', file: '/r/f', title: 'lane', lastModified: Date.now() - 120_000, sizeBytes: 1, imported: true, codexExec: true, preview: 'all done' };
     render(<Sidebar projects={[{ cwd: '/w/one', name: 'one', pinned: false, sessions: [e, s('p2', '/w/one', 'plain')] }]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
+    fireEvent.click(screen.getByRole('button', { name: '자동 실행 1' }));
     const spoken = screen.getByText('lane').closest('li')!.querySelector('.row-open > .sr-only')!.textContent!;
     for (const f of ['one', 'Codex (GPT)', '자동 실행', '2분 전']) expect(spoken).toContain(f);
     // Without a preview line 2 already says the folder: not repeated.

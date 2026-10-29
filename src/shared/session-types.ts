@@ -26,7 +26,7 @@ export type SessionEntry = {
   headless?: boolean;
   /** A Codex Desktop / CLI thread read from ~/.codex/sessions that deck has not run yet (becomes a deck Codex session on the first turn). */
   imported?: boolean;
-  /** An imported thread from a non-interactive `codex exec` run (shown with a 자동 실행 tag). */
+  /** An imported thread from a non-interactive `codex exec` run. The sidebar folds these under 자동 실행 (still searchable); a deck title, continue-link, or a running turn drops the flag so the thread stays in the main list. Pinned ones stay under 고정됨. */
   codexExec?: boolean;
   /** An imported thread from `~/.codex/archived_sessions` (archived in Codex): listed under 보관됨, view only. */
   codexArchived?: boolean;
@@ -42,7 +42,7 @@ export type SessionEntry = {
    * its own history in memory, so messages sent from both sides fork the conversation. Absent = nobody (or unknown).
    */
   heldBy?: SessionHolder;
-  /** An imported Grok CLI session from a non-interactive (`headless`) run: shown with the 자동 실행 tag, like `codexExec`. */
+  /** An imported Grok CLI session from a non-interactive (`headless`) run. Folded under 자동 실행 like `codexExec`; dropped once deck keeps a title, link, or turn for it. */
   autoRun?: boolean;
   /** An imported Grok CLI session's last model / effort (`summary.json`): the defaults when deck continues it. */
   grokModel?: string;

@@ -19,8 +19,12 @@ import { SessionGlyph, assignSessionIcons, sessionIconBase, type IconRow } from 
 /** 대화 내용 검색 starts at this many characters (the server's minimum), after a short pause in typing. */
 export const SEARCH_MIN_CHARS = 2;
 const SEARCH_DEBOUNCE_MS = 300;
-/** 최근 view: newest sessions across all projects, split by day. */
+/** 최근 view: newest sessions across all projects, split by day. Automated runs do not take these slots. */
 const MAX_RECENT = 150;
+/** Codex `exec` and Grok headless runs: folded under 자동 실행 unless the owner pinned them (a deck title or continue-link already dropped the flag). */
+export function isAutomatedSession(s: { codexExec?: boolean; autoRun?: boolean }): boolean {
+  return s.codexExec === true || s.autoRun === true;
+}
 /** How often the rows' "N분 전" (their tooltip, the 갈래 menu line, search hits) is recomputed. */
 export const META_TICK_MS = 60_000;
 
@@ -121,6 +125,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   const [footOpen, setFootOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [archivedOpen, setArchivedOpen] = useState(false);
+  const [autoOpen, setAutoOpen] = useState(false);
   const [menu, setMenu] = useState<string | null>(null);
   const [newMenu, setNewMenu] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -440,10 +445,25 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   // Before the 세션 검색 filter: the session glyphs step past neighbours here, so a search never changes a row's glyph.
   // A Desktop session whose folder deck already lists shows there; the Desktop rows only carry the rest.
   const recentAll: RecentItem[] = [
-    ...groupBranches([...byId.values()].filter(inView), links).filter((g) => !pinSet.has(g.entry.sessionId)).map((g): RecentItem => ({ kind: 'session', g, lastModified: g.entry.lastModified })),
+    ...groupBranches([...byId.values()].filter((s) => inView(s) && !isAutomatedSession(s)), links).filter((g) => !pinSet.has(g.entry.sessionId)).map((g): RecentItem => ({ kind: 'session', g, lastModified: g.entry.lastModified })),
     ...desktop.filter((d) => !byId.has(d.sessionId) && !pinSet.has(d.sessionId) && inView(d)).map((d): RecentItem => ({ kind: 'desktop', d, lastModified: d.lastModified })),
   ].sort((a, b) => b.lastModified - a.lastModified);
   const recentList = recentAll.filter(itemMatch).slice(0, MAX_RECENT);
+  // 자동 실행 N: Codex exec and Grok headless, newest first, folded at the end. A search opens the matches.
+  // Pinned ones stay in 고정됨. Archived ones stay in 보관됨. A deck rename or continue-link has already dropped the flag.
+  const auto = useMemo(() => {
+    const sessions = projects.flatMap((p) => p.sessions);
+    const pinnedIds = new Set(pins);
+    const hidden = sessions.filter((s) => isAutomatedSession(s) && !s.archived && !pinnedIds.has(s.sessionId));
+    const groupsAll = groupBranches(hidden, linksOf(sessions));
+    const groups = groupsAll.filter((g) => match(g.entry));
+    const show = autoOpen || (!!q && groups.length > 0);
+    const listAll = show
+      ? groupsAll.map((g): RecentItem => ({ kind: 'session', g, lastModified: g.entry.lastModified })).sort((a, b) => b.lastModified - a.lastModified)
+      : [];
+    return { count: groups.length, list: listAll.filter(itemMatch), all: listAll };
+    // match / itemMatch read only `q`.
+  }, [projects, pins, q, autoOpen]); // eslint-disable-line react-hooks/exhaustive-deps
   // 보관됨 N: archived sessions (pinned or not) and archived Desktop-only ones, newest first, in one folded section at the end.
   // The count is all a folded row needs: the rows are only built (and sorted) once it is open; neither on every tick.
   const archived = useMemo(() => {
@@ -470,7 +490,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
       const d = desktopById.get(id);
       return d && inView(d) ? [{ id, project: d.project }] : [];
     }),
-    [...recentAll.slice(0, MAX_RECENT), ...archived.all].map(listRow),
+    [...recentAll.slice(0, MAX_RECENT), ...auto.all, ...archived.all].map(listRow),
   );
   // A full-text hit in an archived session shows once 보관됨 is open (as its row does).
   const hitsShown = (found && found.q === fullQ ? found.hits : []).filter((h) => { const s = byId.get(h.sessionId); return !s || !s.archived || archivedOpen; });
@@ -542,7 +562,17 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           <ul>{g.items.map((t) => (t.kind === 'session' ? row(t.g.entry, 'recent', t.g) : desktopRow(t.d, 'recent')))}</ul>
         </section>
       ))}
-      {q && recentList.length === 0 && pinned.length === 0 && archived.count === 0 && hitsShown.length === 0 && !searching && <div className="muted sidebar-empty">“{query}” 와 맞는 세션이 없습니다.</div>}
+      {q && recentList.length === 0 && pinned.length === 0 && auto.count === 0 && archived.count === 0 && hitsShown.length === 0 && !searching && <div className="muted sidebar-empty">“{query}” 와 맞는 세션이 없습니다.</div>}
+      {auto.count > 0 && (
+        <section className={`project autorun-group ${auto.list.length > 0 ? '' : 'collapsed'}`} data-testid="autorun-group">
+          <button type="button" className="autorun-row" aria-expanded={auto.list.length > 0} aria-label={`자동 실행 ${auto.count}`} onClick={() => setAutoOpen((o) => !o)}>
+            <Chevron />
+            <span className="project-name">자동 실행</span>
+            <span className="autorun-count">{auto.count}</span>
+          </button>
+          {auto.list.length > 0 && <ul>{auto.list.map((t) => (t.kind === 'session' ? row(t.g.entry, 'autorun', t.g) : desktopRow(t.d, 'autorun')))}</ul>}
+        </section>
+      )}
       {onArchive && (!q || archived.count > 0) && (
         <section className={`project archived-group ${archivedOpen ? '' : 'collapsed'}`} data-testid="archived-group">
           <button type="button" className="archived-row" aria-expanded={archivedOpen} aria-label={`보관됨 ${archived.count}`} onClick={() => setArchivedOpen((o) => !o)}>
