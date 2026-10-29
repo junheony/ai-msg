@@ -39,10 +39,13 @@ describe('status parsers', () => {
     expect(parseCodexLogin(0, 'Logged in using ChatGPT\n')).toBe('yes');
     expect(parseCodexLogin(1, 'boom')).toBe('unknown');
   });
-  it('grok: first non-empty line', () => {
+  it('grok: a catalog wins over a stale not-authenticated header; otherwise the first non-empty line', () => {
     expect(parseGrokModels('You are logged in as …\nmodels:')).toBe('yes');
     expect(parseGrokModels('\n  You are not authenticated. Run grok login')).toBe('no');
+    expect(parseGrokModels('You are not logged in\n')).toBe('no');
     expect(parseGrokModels('models:\nYou are logged in')).toBe('unknown');
+    expect(parseGrokModels('You are not authenticated.\n\nAvailable models:\ngrok-4\n')).toBe('yes');
+    expect(parseGrokModels('Default model: grok-4\n')).toBe('yes');
   });
 });
 
@@ -63,7 +66,11 @@ describe('probeEngines', () => {
     expect(by.claude).toMatchObject({ bin: '/bin/claude', version: '2.1.283', login: 'yes' });
     expect(by.codex).toMatchObject({ version: 'codex-cli 0.159.2', login: 'no', loginCommand: 'codex login' });
     expect(by.gemini).toMatchObject({ version: '1.2.3', login: 'yes', loginCommand: 'agy' });
-    expect(by.grok).toMatchObject({ bin: '/h/.grok/bin/grok', version: 'grok 1.0.62', login: 'no', loginCommand: 'grok login' });
+    expect(by.grok).toMatchObject({ bin: '/h/.grok/bin/grok', version: 'grok 1.0.62', login: 'no', loginCommand: 'grok login --device-auth' });
+    expect(r.geminiSeats).toEqual([
+      { id: 'g1', label: 'G1', dir: '~/.gemini/antigravity-cli', login: 'yes', loginCommand: 'agy' },
+      { id: 'g2', label: 'G2', dir: '~/.agy-g2/.gemini/antigravity-cli', login: 'yes', loginCommand: 'HOME=~/.agy-g2 agy' },
+    ]);
     expect(r.claudeProfiles).toEqual([
       { id: 'a', label: 'A', dir: '~/.claude', home: true, active: true, login: 'no', loginCommand: 'claude auth login' },
       { id: 'b', label: 'B', dir: '~/.claude-b', home: false, active: true, login: 'yes', loginCommand: 'CLAUDE_CONFIG_DIR=~/.claude-b claude auth login' },
@@ -120,6 +127,19 @@ describe('probeEngines', () => {
     const { exec } = fakeExec({ 'agy models': ok('', 1) });
     const r = await probeEngines({ cfg, profiles, env: {}, exec });
     expect(r.engines.find((e) => e.engine === 'gemini')!.login).toBe('no');
+    expect(r.geminiSeats.map((s) => s.login)).toEqual(['no', 'no']);
+  });
+
+  it('gemini seats are probed with their own HOME and no D-Bus, and log in independently', async () => {
+    const { exec, calls } = fakeExec({
+      'agy models': (c) => (String(c.env.HOME).endsWith('/.agy-g2') ? ok('', 1) : ok('models\n')),
+    });
+    const r = await probeEngines({ cfg, profiles, env: { DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/bus', HOME: '/elsewhere' }, exec });
+    expect(r.engines.find((e) => e.engine === 'gemini')!.login).toBe('yes');
+    expect(r.geminiSeats.map((s) => [s.id, s.login])).toEqual([['g1', 'yes'], ['g2', 'no']]);
+    const models = calls.filter((c) => c.args[0] === 'models' && c.bin === '/bin/agy');
+    expect(models.map((c) => c.env.HOME)).toEqual(['/h', '/h/.agy-g2']);
+    for (const c of models) expect(c.env.DBUS_SESSION_BUS_ADDRESS).toBeUndefined();
   });
 
   it('missing binaries are reported with the hint, never probed', async () => {
@@ -208,6 +228,6 @@ describe('defaultExec', () => {
 
   it('returns exit code and stdout', async () => {
     const r = await defaultExec('/bin/sh', ['-c', 'echo hi; echo err >&2; exit 3'], { PATH: '/usr/bin:/bin' }, 5000);
-    expect(r).toEqual({ code: 3, stdout: 'hi\n', timedOut: false });
+    expect(r).toEqual({ code: 3, stdout: 'hi\n', stderr: 'err\n', timedOut: false });
   });
 });

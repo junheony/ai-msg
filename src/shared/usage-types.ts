@@ -99,7 +99,7 @@ export type UsageSnapshot = {
   gpt?: AccountUsage;
   /** Gemini via agy; absent = agy not installed (no card). Kept for older UIs — `geminiSeats.g1` carries the same value. */
   gemini?: GeminiUsage;
-  /** Gemini seats (usage header design §4/§7-1); absent/missing key = agy not installed or that seat never polled. g2 is unused until that seat exists. */
+  /** Gemini seats (usage header design §4/§7-1); absent/missing key = agy not installed or that seat never polled. g1 and g2 are polled separately. */
   geminiSeats?: Partial<Record<GeminiAccount, GeminiUsage>>;
   /** Grok seats (usage header design §4/§7-4); absent/missing key = no `grok` binary or no Grok turn yet on that seat. */
   grokSeats?: Partial<Record<GrokAccount, GrokUsage>>;

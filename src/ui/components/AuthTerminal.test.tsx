@@ -50,4 +50,28 @@ describe('AuthTerminal', () => {
     unmount();
     await waitFor(() => expect(calls.some((c) => c.url.endsWith('/cancel'))).toBe(true));
   });
+
+  it('sends Enter once when agy prints its login menu', async () => {
+    const calls: string[] = [];
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      if (typeof init?.body === 'string') calls.push(init.body);
+      if (url === '/api/auth-login' && init?.method === 'POST') {
+        return new Response(JSON.stringify({ id: '22222222-2222-4222-8222-222222222222', label: 'agy', seat: 'g1' }), { status: 200 });
+      }
+      if (String(url).endsWith('/stream')) {
+        const enc = new TextEncoder();
+        return new Response(new ReadableStream({
+          start(controller) {
+            controller.enqueue(enc.encode('event: out\ndata: {"text":"Select login method:\\n1. Google OAuth\\n"}\n\n'));
+          },
+        }), { status: 200 });
+      }
+      if (String(url).endsWith('/input')) return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      if (String(url).endsWith('/cancel')) return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      return new Response('no', { status: 404 });
+    });
+    const { unmount } = render(<AuthTerminal seat="g1" title="Gemini" onClose={() => {}} fetchFn={fetchFn as unknown as typeof fetch} />);
+    await waitFor(() => expect(calls.filter((b) => b === '{"enter":true}')).toHaveLength(1));
+    unmount();
+  });
 });

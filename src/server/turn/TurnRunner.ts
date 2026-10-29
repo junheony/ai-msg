@@ -1718,10 +1718,10 @@ export class TurnRunner {
     let account: GeminiAccount;
     if (state) {
       account = state.account;
-      if (!gem.loggedIn(account)) { fail(account, `Gemini ${GEMINI_LABEL[account]} 로그인 필요`); return; }
+      if (!gem.loggedIn(account)) { fail(account, `Gemini ${GEMINI_LABEL[account]} 로그인 필요 — 사용량에서 재로그인`); return; }
     } else {
       const loggedIn = GEMINI_ACCOUNTS.filter((a) => gem.loggedIn(a));
-      if (!loggedIn.length) { fail('g1', 'Gemini 로그인 필요 (docs/gemini-spike.md)'); return; }
+      if (!loggedIn.length) { fail('g1', 'Gemini 로그인 필요 — 사용량에서 재로그인 (docs/gemini-spike.md)'); return; }
       const free = loggedIn.find((a) => (this.geminiCooldownUntil[a] ?? 0) <= this.now());
       account = free ?? loggedIn[0]!;
       reason = `${reason} · ${GEMINI_LABEL[account]}${free ? '' : ' (모두 쿨다운)'}`;

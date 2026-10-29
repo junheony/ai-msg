@@ -24,8 +24,8 @@ export function linkify(text: string): ReactNode[] {
 }
 
 /**
- * A small window that runs one allowlisted login (`claude auth login`, or the same kind of command for GPT / Grok).
- * The only thing that can be sent is a pasted code or Enter. There is no shell.
+ * A small window that runs one allowlisted login (`claude auth login`, `codex login`, `grok login --device-auth`,
+ * or `agy` for one Gemini seat). The only thing that can be sent is a pasted code or Enter. There is no shell.
  */
 export function AuthTerminal({ seat, title, onClose, onLoggedIn, fetchFn = fetch }: {
   seat: string;
@@ -99,6 +99,22 @@ export function AuthTerminal({ seat, title, onClose, onLoggedIn, fetchFn = fetch
 
   useEffect(() => { if (outRef.current) outRef.current.scrollTop = outRef.current.scrollHeight; }, [out]);
 
+  const menuSent = useRef(false);
+  useEffect(() => {
+    if (menuSent.current || phase !== 'open' || !idRef.current) return;
+    if (!/Select login method/.test(out)) return;
+    menuSent.current = true;
+    void fetchFn(`/api/auth-login/${idRef.current}/input`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enter: true }),
+    }).catch(() => {});
+  }, [out, phase, fetchFn]);
+
+  const note = seat === 'g1' || seat === 'g2'
+    ? '이 창은 그 자리의 agy 만 실행합니다. Enter 가 Google 로그인을 고릅니다. 한 줄로 나온 주소를 열어 로그인하고, 브라우저가 준 코드를 붙여 넣으세요.'
+    : seat === 'x1'
+      ? '이 창은 grok login --device-auth 만 실행합니다. 나온 주소와 코드를 다른 기기에서 입력하고, 이 창은 로그인이 끝날 때까지 열어 두세요.'
+      : '이 창은 로그인 명령만 실행합니다. 다른 명령은 입력할 수 없습니다. 주소가 나오면 눌러 로그인하고, 받은 코드를 아래에 붙여 넣으세요.';
+
   const send = async (body: { text?: string; enter?: boolean }) => {
     const id = idRef.current;
     if (!id || sending || phase !== 'open') return;
@@ -117,7 +133,7 @@ export function AuthTerminal({ seat, title, onClose, onLoggedIn, fetchFn = fetch
     <Sheet className="auth-term-sheet" label={`${title} 다시 로그인`} onClose={onClose}>
       <div className="auth-term">
         <SheetHead title={`${title} 다시 로그인`} onClose={onClose} autoFocus={false} />
-        <p className="auth-note">이 창은 로그인 명령만 실행합니다. 다른 명령은 입력할 수 없습니다. 주소가 나오면 눌러 로그인하고, 받은 코드를 아래에 붙여 넣으세요.</p>
+        <p className="auth-note">{note}</p>
         {label && <p className="auth-note"><code>{label}</code></p>}
         <pre ref={outRef} className="auth-term-out" role="log" aria-live="polite" data-testid="auth-out">{out ? linkify(out) : (phase === 'starting' ? '여는 중…' : '')}</pre>
         {error && <p className="auth-note update-error" role="alert">{error}</p>}

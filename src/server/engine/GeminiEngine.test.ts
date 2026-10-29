@@ -143,8 +143,11 @@ describe('geminiEnv', () => {
     const base = {
       PATH: '/bin', HOME: '/h', GEMINI_API_KEY: 'k1', GOOGLE_API_KEY: 'k2', GOOGLE_APPLICATION_CREDENTIALS: '/adc.json', GOOGLE_GENAI_USE_VERTEXAI: 'true',
       GOOGLE_GEMINI_BASE_URL: 'http://evil', GEMINI_CLI_HOME: '/other', SEATBELT_PROFILE: 'permissive-open-yolo', ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o', GEMINI_SANDBOX: 'docker',
+      DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/bus',
     };
     expect(geminiEnv(base)).toEqual({ PATH: '/bin', HOME: '/h' });
+    expect(geminiEnv(base, { home: '/h/.agy-g2' }).HOME).toBe('/h/.agy-g2');
+    expect(geminiEnv(base, { home: '/h/.agy-g2' }).DBUS_SESSION_BUS_ADDRESS).toBeUndefined();
   });
 });
 
@@ -187,7 +190,7 @@ describe('GeminiEngine / GeminiLogin with a fake agy binary', () => {
   const req = (over: Partial<GeminiTurnRequest> = {}): GeminiTurnRequest => ({ account: 'g1', cwd: dir, resumeSessionId: null, model: 'gemini-pro', effort: 'medium', sandbox: 'read-only', prompt: '안녕\n--model evil', signal: new AbortController().signal, ...over });
   const script = (s: { lines: unknown[]; exitCode?: number; hang?: boolean; stderr?: string; delayMs?: number }) => fs.writeFile(path.join(dir, 'script.json'), JSON.stringify(s));
   const env = (extra: NodeJS.ProcessEnv = {}) => ({ PATH: process.env.PATH, FAKE_SCRIPT: path.join(dir, 'script.json'), FAKE_LOG: path.join(dir, 'log.json'), ...extra });
-  const engine = (extra: NodeJS.ProcessEnv = {}) => new GeminiEngine(bin, { baseEnv: env(extra) });
+  const engine = (extra: NodeJS.ProcessEnv = {}) => new GeminiEngine(bin, { baseEnv: env(extra), realHome: dir });
   const collect = async (it: AsyncIterable<EngineEvent>) => { const out: EngineEvent[] = []; for await (const e of it) out.push(e); return out; };
   const log = async () => JSON.parse(await fs.readFile(path.join(dir, 'log.json'), 'utf8')) as { argv: string[]; cwd: string; stdin: string; env: Record<string, string> };
 
@@ -212,6 +215,17 @@ describe('GeminiEngine / GeminiLogin with a fake agy binary', () => {
     expect(l.env.GEMINI_API_KEY).toBeUndefined();
     expect(l.env.GOOGLE_API_KEY).toBeUndefined();
     expect(l.env.GEMINI_CLI_HOME).toBeUndefined();
+    expect(l.env.HOME).toBe(dir);
+    expect(l.env.DBUS_SESSION_BUS_ADDRESS).toBeUndefined();
+  });
+
+  it('g2 runs with its own HOME and no D-Bus session', async () => {
+    await script({ lines: OK_RUN });
+    await collect(engine({ DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/bus' }).runTurn(req({ account: 'g2' })));
+    const l = await log();
+    expect(l.env.HOME).toBe(`${dir}/.agy-g2`);
+    expect(l.env.DBUS_SESSION_BUS_ADDRESS).toBeUndefined();
+    expect(l.env.SSH_CONNECTION).toBeUndefined();
   });
 
   it('resume passes --conversation <id>', async () => {
@@ -244,7 +258,7 @@ describe('GeminiEngine / GeminiLogin with a fake agy binary', () => {
   it('logged out: the auth stderr (even after the result line) turns the error into the login hint', async () => {
     await script({ lines: [AUTH_FAIL_LINE], exitCode: 1, stderr: "authentication required. Run 'agy' to log in\n" });
     const r = (await collect(engine().runTurn(req()))).at(-1) as EngineResult;
-    expect(r).toMatchObject({ ok: false, errorText: 'Gemini 로그인 필요 — 터미널에서 agy 실행 후 Google 로그인', stderr: expect.stringContaining('authentication required') });
+    expect(r).toMatchObject({ ok: false, errorText: 'Gemini 로그인 필요 — 사용량에서 재로그인', stderr: expect.stringContaining('authentication required') });
   });
 
   it('error result keeps the CLI message and stderr; exit without result → exit code', async () => {
@@ -271,43 +285,48 @@ describe('GeminiEngine / GeminiLogin with a fake agy binary', () => {
     const count = async () => Number(await fs.readFile(path.join(dir, 'log.json.count'), 'utf8').catch(() => '0'));
     const reset = () => fs.rm(path.join(dir, 'log.json.count'), { force: true });
 
-    it('exit 0 → logged in (g1 only); runs `agy models` in the tmp dir without API keys', async () => {
+    const loginOpts = (extra: NodeJS.ProcessEnv = {}, over: { timeoutMs?: number; ttlMs?: number; now?: () => number } = {}) =>
+      ({ baseEnv: env(extra), realHome: dir, ...over });
+
+    it('exit 0 → both seats logged in; each runs `agy models` in its own HOME without API keys or D-Bus', async () => {
       await script({ lines: [], exitCode: 0 });
-      const login = new GeminiLogin(bin, { baseEnv: env({ GEMINI_API_KEY: 'k' }) });
+      const login = new GeminiLogin(bin, loginOpts({ GEMINI_API_KEY: 'k', DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/bus' }));
       expect(login.get('g1')).toBe(false);
       expect(await login.refresh()).toBe(true);
       expect(login.get('g1')).toBe(true);
-      expect(login.get('g2')).toBe(false);
+      expect(login.get('g2')).toBe(true);
       const l = await log();
       expect(l.argv).toEqual(['models']);
       expect(l.cwd).toBe(await fs.realpath(os.tmpdir()));
+      expect(l.env.HOME).toBe(`${dir}/.agy-g2`);
       expect(l.env.GEMINI_API_KEY).toBeUndefined();
+      expect(l.env.DBUS_SESSION_BUS_ADDRESS).toBeUndefined();
     });
 
     it('non-zero exit, timeout or a missing binary → false', async () => {
       await script({ lines: [], exitCode: 1 });
-      expect(await new GeminiLogin(bin, { baseEnv: env() }).refresh()).toBe(false);
+      expect(await new GeminiLogin(bin, loginOpts()).refresh()).toBe(false);
       await script({ lines: [], hang: true });
-      expect(await new GeminiLogin(bin, { baseEnv: env(), timeoutMs: 200 }).refresh()).toBe(false);
-      expect(await new GeminiLogin(path.join(dir, 'nope'), { baseEnv: env() }).refresh()).toBe(false);
+      expect(await new GeminiLogin(bin, loginOpts({}, { timeoutMs: 200 })).refresh()).toBe(false);
+      expect(await new GeminiLogin(path.join(dir, 'nope'), loginOpts()).refresh()).toBe(false);
     });
 
-    it('concurrent refreshes share one probe; ensureFresh probes only when the cache is older than the ttl', async () => {
+    it('concurrent refreshes share one probe of both seats; ensureFresh probes only when the cache is older than the ttl', async () => {
       await script({ lines: [], exitCode: 0, delayMs: 100 });
       await reset();
       let t = 1000;
-      const login = new GeminiLogin(bin, { baseEnv: env(), ttlMs: 500, now: () => t });
+      const login = new GeminiLogin(bin, loginOpts({}, { ttlMs: 500, now: () => t }));
       const [a, b] = await Promise.all([login.refresh(), login.refresh()]);
       expect([a, b]).toEqual([true, true]);
-      expect(await count()).toBe(1);
+      expect(await count()).toBe(2);
       login.ensureFresh();
       t += 499;
       login.ensureFresh();
-      expect(await count()).toBe(1);
+      expect(await count()).toBe(2);
       t += 1;
       login.ensureFresh();
       await login.refresh(); // joins the background probe
-      expect(await count()).toBe(2);
+      expect(await count()).toBe(4);
     });
   });
 });

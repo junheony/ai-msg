@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
-import { geminiEnv, type GeminiAccount } from '../../shared/accounts';
+import { GEMINI_ACCOUNTS, geminiEnv, geminiSeatHome, type GeminiAccount } from '../../shared/accounts';
+import { ensureGeminiSeatHome } from './geminiHome';
 import { GEMINI_CLI_ALIAS, type CodexSandbox, type Effort, type GeminiModel } from '../../shared/models';
 import { ZERO_USAGE, type TurnUsage } from '../../shared/turn-types';
 import type { SpawnFn } from './CodexEngine';
@@ -18,7 +19,7 @@ const CONVERSATION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 /** agy's stderr when no Google account is logged in (`authentication required. Run 'agy' to log in`). */
 const NOT_LOGGED_IN_RE = /authentication required/i;
-const NOT_LOGGED_IN_TEXT = 'Gemini 로그인 필요 — 터미널에서 agy 실행 후 Google 로그인';
+export const GEMINI_LOGIN_HINT = 'Gemini 로그인 필요 — 사용량에서 재로그인';
 
 export type GeminiTurnRequest = {
   account: GeminiAccount;
@@ -206,10 +207,12 @@ export class GeminiEventMapper {
 export class GeminiEngine {
   private readonly spawnFn: SpawnFn;
   private readonly baseEnv: NodeJS.ProcessEnv;
+  private readonly realHome: string;
 
-  constructor(readonly bin: string, opts: { spawnFn?: SpawnFn; baseEnv?: NodeJS.ProcessEnv } = {}) {
+  constructor(readonly bin: string, opts: { spawnFn?: SpawnFn; baseEnv?: NodeJS.ProcessEnv; realHome?: string } = {}) {
     this.spawnFn = opts.spawnFn ?? ((b, args, o) => nodeSpawn(b, args, { cwd: o.cwd, env: o.env, stdio: ['pipe', 'pipe', 'pipe'] }));
     this.baseEnv = opts.baseEnv ?? process.env;
+    this.realHome = opts.realHome ?? this.baseEnv.HOME ?? os.homedir();
   }
 
   async *runTurn(req: GeminiTurnRequest): AsyncIterable<EngineEvent> {
@@ -222,7 +225,14 @@ export class GeminiEngine {
       yield mapper.result(false, ZERO_USAGE, '잘못된 세션 ID 형식');
       return;
     }
-    const child = this.spawnFn(this.bin, geminiArgs(req), { cwd: req.cwd, env: geminiEnv(this.baseEnv) });
+    if (req.account === 'g2') {
+      const ensured = ensureGeminiSeatHome('g2', this.realHome);
+      if (!ensured.ok) {
+        yield mapper.result(false, ZERO_USAGE, ensured.error);
+        return;
+      }
+    }
+    const child = this.spawnFn(this.bin, geminiArgs(req), { cwd: req.cwd, env: geminiEnv(this.baseEnv, { home: geminiSeatHome(req.account, this.realHome) }) });
     let stderrTail = '';
     child.stderr?.on('data', (chunk: Buffer | string) => { stderrTail = (stderrTail + String(chunk)).slice(-STDERR_MAX); });
     // stderr may still be draining at 'exit', and the soft-denial / login cause lives there (same as CodexEngine).
@@ -248,7 +258,7 @@ export class GeminiEngine {
     // The result waits for exit: agy's stderr (separate pipe) may name the cause (login, soft-denial) after the result line.
     const failed = (r: EngineResult): EngineResult => ({
       ...r, stderr: stderrTail || null,
-      errorText: !req.signal.aborted && NOT_LOGGED_IN_RE.test(`${stderrTail}\n${r.errorText ?? ''}`) ? NOT_LOGGED_IN_TEXT : r.errorText,
+      errorText: !req.signal.aborted && NOT_LOGGED_IN_RE.test(`${stderrTail}\n${r.errorText ?? ''}`) ? GEMINI_LOGIN_HINT : r.errorText,
     });
     let pending: EngineResult | null = null;
     try {
@@ -306,9 +316,8 @@ export function resolveGeminiBin(env: NodeJS.ProcessEnv, home: string, existsFn:
 }
 
 /**
- * Is agy logged in? Its Google login sits in the OS keychain (no file to check), so the probe is `agy models`: exit 0 =
- * logged in, anything else (not logged in, timeout, spawn failure) = false. Cached for `ttlMs`; one probe at a time.
- * agy holds one Google account → only g1 can be logged in.
+ * Is agy logged in on a seat? The probe is `agy models` with that seat's HOME (and no D-Bus session): exit 0 = logged
+ * in, anything else = false. Cached for `ttlMs`; one refresh at a time probes g1 then g2. `refresh()` resolves to g1.
  */
 export class GeminiLogin {
   private readonly spawnFn: SpawnFn;
@@ -316,29 +325,32 @@ export class GeminiLogin {
   private readonly timeoutMs: number;
   private readonly now: () => number;
   private readonly baseEnv: NodeJS.ProcessEnv;
-  private value = false;
+  private readonly realHome: string;
+  private values: Record<GeminiAccount, boolean> = { g1: false, g2: false };
   private checkedAt: number | null = null;
   private inFlight: Promise<boolean> | null = null;
 
-  constructor(readonly bin: string, opts: { spawnFn?: SpawnFn; ttlMs?: number; timeoutMs?: number; now?: () => number; baseEnv?: NodeJS.ProcessEnv } = {}) {
+  constructor(readonly bin: string, opts: { spawnFn?: SpawnFn; ttlMs?: number; timeoutMs?: number; now?: () => number; baseEnv?: NodeJS.ProcessEnv; realHome?: string } = {}) {
     this.spawnFn = opts.spawnFn ?? ((b, args, o) => nodeSpawn(b, args, { cwd: o.cwd, env: o.env, stdio: ['ignore', 'ignore', 'ignore'] }));
     this.ttlMs = opts.ttlMs ?? 300_000;
     this.timeoutMs = opts.timeoutMs ?? 15_000;
     this.now = opts.now ?? Date.now;
     this.baseEnv = opts.baseEnv ?? process.env;
+    this.realHome = opts.realHome ?? this.baseEnv.HOME ?? os.homedir();
   }
 
   get(account: GeminiAccount): boolean {
-    return account === 'g1' && this.value;
+    return this.values[account];
   }
 
+  /** g1's result. Both seats are updated before this resolves. */
   refresh(): Promise<boolean> {
     if (!this.inFlight) {
-      this.inFlight = this.probe().then((ok) => {
-        this.value = ok;
+      this.inFlight = this.probeAll().then((values) => {
+        this.values = values;
         this.checkedAt = this.now();
         this.inFlight = null;
-        return ok;
+        return values.g1;
       });
     }
     return this.inFlight;
@@ -349,13 +361,24 @@ export class GeminiLogin {
     if (this.checkedAt === null || this.now() - this.checkedAt >= this.ttlMs) void this.refresh();
   }
 
-  private probe(): Promise<boolean> {
+  private async probeAll(): Promise<Record<GeminiAccount, boolean>> {
+    const out: Record<GeminiAccount, boolean> = { g1: false, g2: false };
+    for (const account of GEMINI_ACCOUNTS) out[account] = await this.probeOne(account);
+    return out;
+  }
+
+  private probeOne(account: GeminiAccount): Promise<boolean> {
+    if (account === 'g2') {
+      const ensured = ensureGeminiSeatHome('g2', this.realHome);
+      if (!ensured.ok) return Promise.resolve(false);
+    }
+    const home = geminiSeatHome(account, this.realHome);
     return new Promise<boolean>((resolve) => {
       let settled = false;
       const done = (ok: boolean) => { if (!settled) { settled = true; clearTimeout(timer); resolve(ok); } };
       let child: ReturnType<SpawnFn>;
       try {
-        child = this.spawnFn(this.bin, ['models'], { cwd: os.tmpdir(), env: geminiEnv(this.baseEnv) });
+        child = this.spawnFn(this.bin, ['models'], { cwd: os.tmpdir(), env: geminiEnv(this.baseEnv, { home }) });
       } catch {
         resolve(false);
         return;

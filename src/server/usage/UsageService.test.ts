@@ -253,13 +253,13 @@ describe('UsageService', () => {
     s.onChange((snap) => seen.push(snap.gemini));
     expect(s.snapshot().gemini).toBeUndefined();
     const g = { status: 'ok' as const, fetchedAt: '2026-09-30T12:29:00Z', loggedIn: true, buckets: [{ name: 'gemini-4-argon', usedPct: 27, resetsAt: null }], error: null };
-    s.applyGemini(g);
+    s.applyGemini('g1', g);
     expect(s.snapshot().gemini).toEqual(g);
     await s.pollOnce();
     expect(s.snapshot().gemini).toEqual(g);
     expect(usageOf(s.snapshot(), 'a').status).toBe('ok');
     const down = svc(async () => { throw new Error('x'); });
-    down.applyGemini(g);
+    down.applyGemini('g1', g);
     await down.pollOnce();
     expect(down.snapshot().gemini).toEqual(g);
     expect(seen).toEqual([g, g]);
@@ -269,7 +269,7 @@ describe('UsageService', () => {
     const s = svc(async () => ({ ok: true, json: async () => LIVE }));
     const g = { status: 'ok' as const, fetchedAt: '2026-09-30T12:29:00Z', loggedIn: true, buckets: [], error: null };
     const x = { status: 'ok' as const, lastTurnAt: '2026-09-30T12:29:30.000Z', lastError: null, cooldownUntil: null, today: { inputTokens: 5, outputTokens: 2, turns: 1, day: '2026-09-30' } };
-    s.applyGemini(g);
+    s.applyGemini('g1', g);
     s.applyGrok('x1', x);
     expect(s.snapshot().geminiSeats).toEqual({ g1: g });
     expect(s.snapshot().grokSeats).toEqual({ x1: x });
@@ -733,7 +733,7 @@ describe('UsageService · cli mode (DECK_USAGE_SOURCE=cli: no usage-deck)', () =
     const s = make({ clock });
     s.applyTurn('gpt', { weekly: { usedPct: 40, resetsAt: null } });
     expect(s.snapshot().gpt).toMatchObject({ status: 'ok', weekly: { usedPct: 40 } });
-    s.applyGemini({ status: 'ok', fetchedAt: null, loggedIn: true, buckets: [] });
+    s.applyGemini('g1', { status: 'ok', fetchedAt: null, loggedIn: true, buckets: [] });
     expect(s.snapshot()).toMatchObject({ usageMode: 'cli', gemini: { status: 'ok' } });
   });
 

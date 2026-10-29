@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Account, AccountNames, AccountRegistry, AccountRoot } from '../shared/accounts';
+import { geminiStateDir as agyStateDir, type Account, type AccountNames, type AccountRegistry, type AccountRoot } from '../shared/accounts';
 import type { UsageMode } from '../shared/usage-types';
 import { loadAccountRegistry } from './accounts';
 import { resolveCodexBin } from './engine/CodexEngine';
@@ -41,7 +41,7 @@ export type DeckConfig = {
   grokBin: string | null;
   /** Seat x1's GROK_HOME: the real path of `<home>/.grok` (the shell's GROK_HOME is never used, design §5). */
   grokHome: string;
-  /** agy's state dir (g1): `<home>/.gemini/antigravity-cli` — conversation_summaries.db is copied from here, never opened in place. */
+  /** agy's g1 state dir: `<home>/.gemini/antigravity-cli`. g2 is `<home>/.agy-g2/.gemini/antigravity-cli`. Copied, never opened in place. */
   geminiStateDir: string;
   /** Where the Gemini summaries db copies are read (imports design §1.2); swept at start. */
   importTmpDir: string;
@@ -242,7 +242,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     geminiBin: resolveGeminiBin(env, home),
     grokBin: resolveGrokBin(env, home, isExecutable, log),
     grokHome: realOr(path.join(home, '.grok')),
-    geminiStateDir: path.join(home, '.gemini', 'antigravity-cli'),
+    geminiStateDir: agyStateDir('g1', home),
     importTmpDir: path.join(configDir, 'tmp', 'gemini-import'),
     grokBotDir: process.platform === 'darwin' ? path.join(home, 'Library', 'Application Support', 'Grok Bot', 'sand-client-persistence') : null,
     codexSessionsRoot: path.join(env.CODEX_HOME || path.join(home, '.codex'), 'sessions'),

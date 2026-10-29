@@ -180,7 +180,7 @@ export function bucketLabel(name: string): string {
 
 /** Gemini 로그인 필요 / a read failure, as the card's hint; '' when the numbers are fresh. */
 export function geminiHint(g: GeminiUsage): string {
-  if (!g.loggedIn) return 'Gemini 로그인 필요 — 터미널에서 agy 실행 후 Google 로그인하면 사용량이 보입니다';
+  if (!g.loggedIn) return 'Gemini 로그인 필요 — 사용량의 재로그인으로 Google 로그인하면 사용량이 보입니다';
   if (g.status === 'ok') return '';
   return g.error ? `Gemini 사용량 ${g.status === 'stale' ? '오래된 값' : '불명'} — ${g.error}` : 'Gemini 사용량 불명';
 }

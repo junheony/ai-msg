@@ -1,14 +1,15 @@
 import { EventEmitter } from 'node:events';
-import { readFileSync } from 'node:fs';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { GEMINI_USAGE_ARGS, GeminiUsagePoller, parseDuration, parseGeminiUsage, parseUsageText, toResetIso } from './GeminiUsagePoller';
 import type { ChildLike, SpawnFn } from '../engine/CodexEngine';
 
 const NOW = Date.parse('2026-10-14T08:00:00Z');
 /** The real `agy -p=/usage --output-format json` stdout (agy 1.4.2). */
-const USAGE_JSON = readFileSync(path.join(__dirname, '..', 'engine', 'fixtures', 'agy-1.4.2', 'usage.json'), 'utf8');
+const USAGE_JSON = fs.readFileSync(path.join(__dirname, '..', 'engine', 'fixtures', 'agy-1.4.2', 'usage.json'), 'utf8');
 
 describe('parseGeminiUsage', () => {
   it('reads the real agy 1.4.2 /usage json: remaining_fraction → used %, "<group> · <window>" names, the Claude/GPT group hidden', () => {
@@ -88,12 +89,16 @@ function fakeChild(): Fake {
   return { child: em, stdout, stderr, kill };
 }
 
+let realHome = '';
+beforeAll(() => { realHome = fs.mkdtempSync(path.join(os.tmpdir(), 'deck-agy-usage-')); });
+afterAll(() => { if (realHome) fs.rmSync(realHome, { recursive: true, force: true }); });
+
 function poller(opts: { loggedIn: boolean; script: (f: Fake) => void; now?: () => number; timeoutMs?: number }) {
   const applyGemini = vi.fn();
   const spawned: { bin: string; args: string[]; cwd: string; env: Record<string, string | undefined> }[] = [];
   const spawnFn: SpawnFn = (bin, args, o) => { spawned.push({ bin, args, cwd: o.cwd, env: o.env }); const f = fakeChild(); setTimeout(() => opts.script(f), 0); return f.child; };
   const login = { get: vi.fn(() => opts.loggedIn), refresh: vi.fn(async () => opts.loggedIn) };
-  const p = new GeminiUsagePoller({ bin: '/x/agy', usage: { applyGemini }, login, spawnFn, now: opts.now ?? (() => NOW), timeoutMs: opts.timeoutMs ?? 2_000, log: () => {}, baseEnv: { PATH: '/bin', GEMINI_API_KEY: 'k' } });
+  const p = new GeminiUsagePoller({ bin: '/x/agy', usage: { applyGemini }, login, spawnFn, now: opts.now ?? (() => NOW), timeoutMs: opts.timeoutMs ?? 2_000, log: () => {}, baseEnv: { PATH: '/bin', GEMINI_API_KEY: 'k', DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/bus' }, realHome });
   return { p, applyGemini, spawned, login };
 }
 
@@ -101,12 +106,17 @@ describe('GeminiUsagePoller', () => {
   it('runs agy -p=/usage --output-format json in a temp cwd with a cleaned env and publishes the buckets', async () => {
     const { p, applyGemini, spawned } = poller({ loggedIn: true, script: (f) => { f.stdout.end(JSON.stringify({ quota: { buckets: [{ name: 'gemini-4-argon', remaining_percentage: 60, reset_time: '2026-10-14T12:00:00Z' }] } }) + '\n'); f.child.emit('exit', 0); } });
     await p.pollOnce();
-    expect(spawned).toHaveLength(1);
+    expect(spawned).toHaveLength(2);
+    expect(spawned.map((s) => s.env.HOME)).toEqual([realHome, `${realHome}/.agy-g2`]);
     expect(spawned[0]!.bin).toBe('/x/agy');
     expect(spawned[0]!.args).toEqual([...GEMINI_USAGE_ARGS]);
     expect(spawned[0]!.args).not.toContain('--disable-slash-commands');
     expect(spawned[0]!.env.GEMINI_API_KEY).toBeUndefined();
-    expect(applyGemini).toHaveBeenCalledWith({ status: 'ok', fetchedAt: new Date(NOW).toISOString(), loggedIn: true, buckets: [{ name: 'gemini-4-argon', usedPct: 40, resetsAt: '2026-10-14T12:00:00.000Z' }], error: null });
+    expect(spawned[0]!.env.DBUS_SESSION_BUS_ADDRESS).toBeUndefined();
+    expect(spawned[0]!.env.SSH_CONNECTION).toBeUndefined();
+    const usage = { status: 'ok', fetchedAt: new Date(NOW).toISOString(), loggedIn: true, buckets: [{ name: 'gemini-4-argon', usedPct: 40, resetsAt: '2026-10-14T12:00:00.000Z' }], error: null };
+    expect(applyGemini).toHaveBeenCalledWith('g1', usage);
+    expect(applyGemini).toHaveBeenCalledWith('g2', usage);
     expect(p.current()?.status).toBe('ok');
   });
 
@@ -115,38 +125,39 @@ describe('GeminiUsagePoller', () => {
     await p.pollOnce();
     expect(spawned).toHaveLength(0);
     expect(login.refresh).toHaveBeenCalledTimes(1);
-    expect(applyGemini).toHaveBeenCalledWith({ status: 'down', fetchedAt: null, loggedIn: false, buckets: [], error: expect.stringContaining('로그인 필요') });
+    expect(applyGemini).toHaveBeenCalledWith('g1', { status: 'down', fetchedAt: null, loggedIn: false, buckets: [], error: expect.stringContaining('로그인 필요') });
+    expect(applyGemini).toHaveBeenCalledWith('g2', { status: 'down', fetchedAt: null, loggedIn: false, buckets: [], error: expect.stringContaining('로그인 필요') });
   });
 
   it('keeps the last buckets as stale when a later read fails, and reports down with the reason when there were none', async () => {
     let step = 0;
     const { p, applyGemini } = poller({ loggedIn: true, script: (f) => {
       step += 1;
-      if (step === 1) { f.stdout.end('{"quota":{"buckets":[{"name":"a","used_percentage":10}]}}\n'); f.child.emit('exit', 0); }
+      if (step <= 2) { f.stdout.end('{"quota":{"buckets":[{"name":"a","used_percentage":10}]}}\n'); f.child.emit('exit', 0); }
       else { f.stderr.end('Error: boom\n'); f.stdout.end(); f.child.emit('exit', 1); }
     } });
     await p.pollOnce();
     await p.pollOnce();
-    const last = applyGemini.mock.calls.at(-1)![0];
+    const last = applyGemini.mock.calls.at(-1)![1];
     expect(last.status).toBe('stale');
     expect(last.buckets).toEqual([{ name: 'a', usedPct: 10, resetsAt: null }]);
     expect(last.error).toContain('exit 1');
 
     const fresh = poller({ loggedIn: true, script: (f) => { f.stdout.end('not a report\n'); f.child.emit('exit', 0); } });
     await fresh.p.pollOnce();
-    expect(fresh.applyGemini).toHaveBeenCalledWith({ status: 'down', fetchedAt: null, loggedIn: true, buckets: [], error: '사용량 응답을 해석하지 못했습니다' });
+    expect(fresh.applyGemini).toHaveBeenCalledWith('g1', { status: 'down', fetchedAt: null, loggedIn: true, buckets: [], error: '사용량 응답을 해석하지 못했습니다' });
   });
 
   it('an "authentication required" answer reads as logged out, a hang is killed at the timeout', async () => {
     const auth = poller({ loggedIn: true, script: (f) => { f.stderr.end('authentication required. Run \'agy\' to log in\n'); f.stdout.end(); f.child.emit('exit', 1); } });
     await auth.p.pollOnce();
-    expect(auth.applyGemini.mock.calls.at(-1)![0].error).toContain('로그인 필요');
+    expect(auth.applyGemini.mock.calls.at(-1)![1].error).toContain('로그인 필요');
 
     let killed: Fake | null = null;
     const hang = poller({ loggedIn: true, timeoutMs: 30, script: (f) => { killed = f; f.kill.mockImplementation(() => { f.child.emit('exit', null); }); } });
     await hang.p.pollOnce();
     expect(killed!.kill).toHaveBeenCalledWith('SIGKILL');
-    expect(hang.applyGemini.mock.calls.at(-1)![0].error).toContain('시간 초과');
+    expect(hang.applyGemini.mock.calls.at(-1)![1].error).toContain('시간 초과');
   });
 
   it('bump() coalesces into one delayed read; concurrent pollOnce calls share a run', async () => {
@@ -155,11 +166,11 @@ describe('GeminiUsagePoller', () => {
       const { p, spawned } = poller({ loggedIn: true, script: (f) => { f.stdout.end('{"buckets":[{"name":"a","used_percentage":1}]}\n'); f.child.emit('exit', 0); } });
       p.bump(100); p.bump(100); p.bump(100);
       await vi.advanceTimersByTimeAsync(150);
-      expect(spawned).toHaveLength(1);
+      expect(spawned).toHaveLength(2);
       const a = p.pollOnce(), b = p.pollOnce();
       await vi.advanceTimersByTimeAsync(10);
       await Promise.all([a, b]);
-      expect(spawned).toHaveLength(2);
+      expect(spawned).toHaveLength(4);
       p.stop();
     } finally {
       vi.useRealTimers();

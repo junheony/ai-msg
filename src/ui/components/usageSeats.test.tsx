@@ -73,7 +73,7 @@ describe('usage seats in the sheet', () => {
     const out = { status: 'down' as const, fetchedAt: null, loggedIn: false, buckets: [], error: 'Gemini 로그인 필요 — 터미널에서 agy 실행 후 Google 로그인' };
     const { unmount } = sheet({ ...usage, gemini: out }, null);
     const card = screen.getByTestId('account-g1');
-    expect(card.title).toContain('agy 실행');
+    expect(card.title).toContain('재로그인');
     expect(card.className).toContain('down');
     expect(screen.getByTestId('g1-main').textContent).toContain('로그인');
     expect(screen.getByTestId('g1-status').textContent).toBe('로그인 필요');
