@@ -1,8 +1,8 @@
 import type { SetupStatus } from '../shared/setup-types';
 
 /**
- * Seats whose login probe said `no`, and whose re-login is a single allowlisted command (not Gemini's `agy`).
- * The usage strip shows 로그인 만료 · 재로그인 for these.
+ * Seats whose login probe said `no`. The usage strip shows 로그인 만료 · 재로그인 for these.
+ * Gemini is per seat (`geminiSeats`): g1 and g2 log in independently. A missing binary stays out.
  */
 export function reauthSeats(status: SetupStatus): string[] {
   const seats: string[] = [];
@@ -12,5 +12,6 @@ export function reauthSeats(status: SetupStatus): string[] {
     if (e.engine === 'codex') seats.push('gpt');
     else if (e.engine === 'grok') seats.push('x1');
   }
+  for (const s of status.geminiSeats ?? []) if (s.login === 'no') seats.push(s.id);
   return seats;
 }

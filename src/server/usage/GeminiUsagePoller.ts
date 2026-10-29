@@ -1,9 +1,10 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import os from 'node:os';
-import { geminiEnv } from '../../shared/accounts';
+import { GEMINI_ACCOUNTS, geminiEnv, geminiSeatHome, type GeminiAccount } from '../../shared/accounts';
 import { parseIsoUtc, type GeminiBucket, type GeminiUsage } from '../../shared/usage-types';
 import type { SpawnFn } from '../engine/CodexEngine';
-import type { GeminiLogin } from '../engine/GeminiEngine';
+import { GEMINI_LOGIN_HINT, type GeminiLogin } from '../engine/GeminiEngine';
+import { ensureGeminiSeatHome } from '../engine/geminiHome';
 import type { UsageService } from './UsageService';
 
 /**
@@ -147,21 +148,23 @@ export function parseGeminiUsage(stdout: string, nowMs: number): GeminiBucket[] 
 }
 
 /**
- * The Gemini seat's numbers: `agy -p=/usage --output-format json` on start, every `intervalMs` (5 min) and shortly after a
- * Gemini turn (`bump`). Only runs while the `agy models` login probe says logged in — unauthenticated print mode blocks
- * 60 s waiting for a browser login, which must never happen from deck. Reads quota only; never credentials.
+ * Each Gemini seat's numbers: `agy -p=/usage --output-format json` on start, every `intervalMs` (5 min) and shortly
+ * after a Gemini turn (`bump`), with that seat's HOME. A seat is skipped while its `agy models` probe says logged out
+ * — unauthenticated print mode blocks ~60 s waiting for a browser login, which must never happen from deck.
+ * Reads quota only; never credentials.
  */
 export class GeminiUsagePoller {
   private timer: ReturnType<typeof setInterval> | null = null;
   private bumpTimer: ReturnType<typeof setTimeout> | null = null;
   private running: Promise<void> | null = null;
-  private last: GeminiUsage | null = null;
+  private readonly last = new Map<GeminiAccount, GeminiUsage>();
   private loggedParseFailure = false;
   private readonly intervalMs: number;
   private readonly timeoutMs: number;
   private readonly spawnFn: SpawnFn;
   private readonly now: () => number;
   private readonly baseEnv: NodeJS.ProcessEnv;
+  private readonly realHome: string;
   private readonly log: (line: string) => void;
 
   constructor(private readonly opts: {
@@ -173,6 +176,7 @@ export class GeminiUsagePoller {
     spawnFn?: SpawnFn;
     now?: () => number;
     baseEnv?: NodeJS.ProcessEnv;
+    realHome?: string;
     log?: (line: string) => void;
   }) {
     this.intervalMs = opts.intervalMs ?? 300_000;
@@ -180,17 +184,18 @@ export class GeminiUsagePoller {
     this.spawnFn = opts.spawnFn ?? ((b, args, o) => nodeSpawn(b, args, { cwd: o.cwd, env: o.env, stdio: ['ignore', 'pipe', 'pipe'] }));
     this.now = opts.now ?? Date.now;
     this.baseEnv = opts.baseEnv ?? process.env;
+    this.realHome = opts.realHome ?? this.baseEnv.HOME ?? os.homedir();
     this.log = opts.log ?? ((line) => console.error(line));
   }
 
-  /** The last reading published (tests, status). */
+  /** g1's last reading (tests, status). */
   current(): GeminiUsage | null {
-    return this.last;
+    return this.last.get('g1') ?? null;
   }
 
-  private publish(u: GeminiUsage): void {
-    this.last = u;
-    this.opts.usage.applyGemini(u);
+  private publish(account: GeminiAccount, u: GeminiUsage): void {
+    this.last.set(account, u);
+    this.opts.usage.applyGemini(account, u);
   }
 
   /** One `/usage` read; concurrent calls share it. */
@@ -200,32 +205,41 @@ export class GeminiUsagePoller {
   }
 
   private async poll(): Promise<void> {
-    const loggedIn = this.opts.login.get('g1') || await this.opts.login.refresh();
-    if (!loggedIn) {
-      this.publish({ status: 'down', fetchedAt: this.last?.fetchedAt ?? null, loggedIn: false, buckets: [], error: 'Gemini 로그인 필요 — 터미널에서 agy 실행 후 Google 로그인' });
-      return;
+    if (GEMINI_ACCOUNTS.some((a) => !this.opts.login.get(a))) await this.opts.login.refresh();
+    for (const account of GEMINI_ACCOUNTS) {
+      if (!this.opts.login.get(account)) {
+        const prev = this.last.get(account);
+        this.publish(account, { status: 'down', fetchedAt: prev?.fetchedAt ?? null, loggedIn: false, buckets: [], error: GEMINI_LOGIN_HINT });
+        continue;
+      }
+      const run = await this.runUsage(account);
+      const nowMs = this.now();
+      const buckets = run.ok ? parseGeminiUsage(run.stdout, nowMs) : [];
+      if (buckets.length) {
+        this.publish(account, { status: 'ok', fetchedAt: new Date(nowMs).toISOString(), loggedIn: true, buckets, error: null });
+        continue;
+      }
+      const why = run.ok ? '사용량 응답을 해석하지 못했습니다' : run.error;
+      if (run.ok && !this.loggedParseFailure) {
+        this.loggedParseFailure = true;
+        this.log(`deck: agy /usage 응답을 해석하지 못했습니다 — 앞부분: ${run.stdout.replace(/\s+/g, ' ').slice(0, 600)}`);
+      }
+      const prev = this.last.get(account);
+      if (prev?.buckets.length) this.publish(account, { ...prev, status: 'stale', loggedIn: true, error: why });
+      else this.publish(account, { status: 'down', fetchedAt: null, loggedIn: true, buckets: [], error: why });
     }
-    const run = await this.runUsage();
-    const nowMs = this.now();
-    const buckets = run.ok ? parseGeminiUsage(run.stdout, nowMs) : [];
-    if (buckets.length) {
-      this.publish({ status: 'ok', fetchedAt: new Date(nowMs).toISOString(), loggedIn: true, buckets, error: null });
-      return;
-    }
-    const why = run.ok ? '사용량 응답을 해석하지 못했습니다' : run.error;
-    if (run.ok && !this.loggedParseFailure) {
-      this.loggedParseFailure = true;
-      this.log(`deck: agy /usage 응답을 해석하지 못했습니다 — 앞부분: ${run.stdout.replace(/\s+/g, ' ').slice(0, 600)}`);
-    }
-    if (this.last?.buckets.length) this.publish({ ...this.last, status: 'stale', loggedIn: true, error: why });
-    else this.publish({ status: 'down', fetchedAt: null, loggedIn: true, buckets: [], error: why });
   }
 
-  private runUsage(): Promise<{ ok: true; stdout: string } | { ok: false; error: string }> {
+  private runUsage(account: GeminiAccount): Promise<{ ok: true; stdout: string } | { ok: false; error: string }> {
+    if (account === 'g2') {
+      const ensured = ensureGeminiSeatHome('g2', this.realHome);
+      if (!ensured.ok) return Promise.resolve({ ok: false, error: ensured.error });
+    }
+    const home = geminiSeatHome(account, this.realHome);
     return new Promise((resolve) => {
       let child: ReturnType<SpawnFn>;
       try {
-        child = this.spawnFn(this.opts.bin, [...GEMINI_USAGE_ARGS], { cwd: os.tmpdir(), env: geminiEnv(this.baseEnv) });
+        child = this.spawnFn(this.opts.bin, [...GEMINI_USAGE_ARGS], { cwd: os.tmpdir(), env: geminiEnv(this.baseEnv, { home }) });
       } catch (err) {
         resolve({ ok: false, error: `agy 실행 실패 — ${err instanceof Error ? err.message : String(err)}` });
         return;
@@ -239,7 +253,7 @@ export class GeminiUsagePoller {
       child.stderr?.on('data', (d: Buffer | string) => { errTail = (errTail + d.toString()).slice(-2000); });
       child.once('exit', (code: number | null) => {
         if (timedOut) { done({ ok: false, error: 'agy /usage 응답 없음 (시간 초과)' }); return; }
-        if (/authentication required|Authentication required|Please sign in/i.test(errTail + out)) { done({ ok: false, error: 'Gemini 로그인 필요 — 터미널에서 agy 실행 후 Google 로그인' }); return; }
+        if (/authentication required|Authentication required|Please sign in/i.test(errTail + out)) { done({ ok: false, error: GEMINI_LOGIN_HINT }); return; }
         if (code === 0 || out.trim()) { done({ ok: true, stdout: out }); return; }
         const line = errTail.trim().split('\n').filter(Boolean).pop() ?? '';
         done({ ok: false, error: `agy /usage 실패 (exit ${code ?? '?'})${line ? ` — ${line.slice(0, 200)}` : ''}` });

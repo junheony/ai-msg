@@ -142,6 +142,15 @@ describe('buildEngineLimits', () => {
     expect(d).toMatchObject({ kind: 'route', engine: 'gemini', model: 'gemini-flash' });
   });
 
+  it('g2 buckets are that seat\'s own remaining, and a g2-only reading keeps the observation time', () => {
+    const l = buildEngineLimits(input({
+      geminiSeats: { g2: gemini(30_000, [{ name: 'Argon · 주간', usedPct: 40 }]) },
+    }, { gemini: { installed: true, loggedIn: { g1: false, g2: true }, cooldownUntilMs: {} } }));
+    expect(l.gemini.seats[1]!.remainingPct).toEqual({ pro: 60, flash: null });
+    expect(l.gemini.observedAtMs).toBe(NOW - 30_000);
+    expect(l.gemini.seats[0]!.remainingPct).toEqual({ pro: null, flash: null });
+  });
+
   it('review #6: G1 쿨다운(0%) + G2 로그인(숫자 없음, 쿨다운 아님) → unknown, not blocked', () => {
     const l = buildEngineLimits(input({ gemini: gemini(60_000, [{ name: 'Argon · 주간', usedPct: 10 }]) }, {
       gemini: { installed: true, loggedIn: { g1: true, g2: true }, cooldownUntilMs: { g1: NOW + 1000 } },

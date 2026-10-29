@@ -12,18 +12,28 @@ curl -fsSL https://antigravity.google/cli/install.sh | bash   # → ~/.local/bin
 
 deck 은 `DECK_GEMINI_BIN` → `PATH` 의 `agy` → `~/.local/bin/agy` 순으로 찾는다(`gemini` 는 더 찾지 않는다). 없으면 Gemini 선택지 자체가 숨겨진다.
 
-## 로그인 (사용자가 직접 — deck 은 로그인하지 않는다)
+## 로그인 (사용량 창의 재로그인 — 자리마다 하나)
 
-```sh
-unset GEMINI_API_KEY GOOGLE_API_KEY   # 키가 있으면 키를 쓴다 (deck 은 자식 env 에서 지운다)
-agy                                   # 인자 없이 → 브라우저에서 Google 로그인 → 종료
-```
+agy 1.4.x 에는 `login` 하위 명령이 없다. 환영 화면에서 Google OAuth 를 고르면 주소가 나오고, 브라우저가 준 코드를 붙여 넣는다. MSG 의 재로그인 창은 그 명령만 실행한다(셸이 아니다). 헤드리스 리눅스에서는 창이 Enter 로 Google 로그인을 고르고, 주소는 한 줄로 나온다.
 
-- 자격은 **OS 키체인**(macOS Keychain)에 저장된다 — 파일이 없다. 설정·상태는 `~/.gemini/antigravity-cli/`.
-- 첫 로그인 때 `~/.gemini/antigravity-cli/settings.json` 에 `trustedWorkspaces: [<HOME>]` 가 생긴다(실측). **신뢰 폴더 밖에서는 accept-edits 여도 파일 쓰기가 거부된다**(아래 4).
-- 계정 전환: `agy` 안에서 `/logout` 후 다시 로그인.
-- **Mac 한 대에 Google 계정 하나.** deck 의 `g1`/`g2` 두 칸 중 실제로는 `g1` 만 쓰이고 `G2` 자리는 항상 "로그인 안 됨"(세션 레코드 호환 때문에 id 만 남겨 둠).
-- 로그인 판정: `agy models` 프로브(종료 코드 0 = 로그인). **로그인 상태에서 종료 0 실측 확인.** "Fetching available models..." 는 stderr, 목록은 stdout(`models.txt`).
+자격은 자리의 HOME 아래 파일로 둔다. 로그인 창과 턴·사용량 프로브 모두 `DBUS_SESSION_BUS_ADDRESS` 를 넘기지 않는다. 로그인 창만 SSH 세션으로 보이게 해서 agy 가 브라우저를 열지 않고 파일에 쓴다. 턴에는 SSH 변수를 넣지 않는다.
+
+| 자리 | HOME | 상태 |
+|---|---|---|
+| g1 (화면의 Gemini) | 실제 홈 | `~/.gemini/antigravity-cli` |
+| g2 (화면의 Gemini 2) | `~/.agy-g2` (0700, 심링크 아님) | `~/.agy-g2/.gemini/antigravity-cli` |
+
+g2 폴더는 서버가 만든다. `.gitconfig`, `.config/git`, `.ssh` 만 실제 홈에서 심볼릭 링크로 두고, `.gemini` 는 링크하지 않는다.
+
+### 주인 절차
+
+1. **Gemini (g1).** 사용량 줄에서 Gemini → `재로그인`. 창은 실제 홈의 `agy` 를 연다. Enter 가 Google OAuth 를 고른다(창이 메뉴를 보면 Enter 를 한 번 보낸다). 한 줄 주소를 다른 기기에서 열고 로그인한다. 브라우저가 보여 준 코드를 붙여 넣고 보내기. 창을 닫기 전에 agy 가 끝난 것을 확인한다. 상태는 `~/.gemini` 에 남는다.
+2. **Gemini 2 (g2).** 같은 방법으로 Gemini 2 → `재로그인`. 창 라벨은 `HOME=~/.agy-g2 agy`. **다른 Google 계정**으로 1번과 같이 한다. 사용량과 세션은 그 홈의 것이다.
+3. 키링에 이미 로그인이 있는 리눅스라면, 파일 저장으로 옮기려면 각 자리를 한 번 다시 로그인한다. macOS 키체인은 D-Bus 를 쓰지 않으므로 그 변수를 빼는 것은 동작에 영향이 없다.
+
+- 첫 로그인 때 `~/.gemini/antigravity-cli/settings.json`(g2 는 `~/.agy-g2` 아래)에 `trustedWorkspaces: [<그 자리의 HOME>]` 가 생긴다(1.4.2 실측). **신뢰 폴더 밖에서는 accept-edits 여도 파일 쓰기가 거부된다**(아래 4).
+- 계정 전환: 그 자리의 `agy` 안에서 `/logout` 후 다시 재로그인.
+- 로그인 판정: 자리마다 `agy models`(종료 코드 0 = 로그인). 프로브도 그 HOME 을 쓰고 D-Bus 는 빼다. **로그인 상태에서 종료 0 은 1.4.2 에서 확인.** "Fetching available models..." 는 stderr, 목록은 stdout(`models.txt`).
 
 ## 동작 (현재 코드 기준)
 
@@ -33,7 +43,7 @@ agy                                   # 인자 없이 → 브라우저에서 Goo
 | 스트림 | 한 줄 = `{"event":"<이름>",…,"<이름>":{…}}`. 실제 필드는 아래 "실측 1". |
 | 이어하기 | `--conversation <id>` — 실측 동작 확인(같은 id 로 `init`, `step_index` 가 이어짐, 이전 턴 기억함). |
 | 권한 | 읽기 전용 → `--mode` 없음(헤드리스 기본 거부가 쓰기·셸을 막는다), 파일 편집 허용 → `--mode accept-edits --sandbox`. 거부는 턴 알림(`Gemini가 거부함: 파일 쓰기` 등)으로 보인다. `--dangerously-skip-permissions` 는 절대 쓰지 않는다. 실제 효과는 "실측 4". |
-| 인증 | 키체인 로그인만. API 키/Vertex/ADC/베이스 URL 변수와 gemini-cli 잔재는 자식 env 에서 제거. |
+| 인증 | 자리의 HOME 에 둔 파일 로그인(D-Bus 세션 주소를 빼서 키링과 섞지 않음). API 키/Vertex/ADC/베이스 URL 변수와 gemini-cli 잔재는 자식 env 에서 제거. g1 과 g2 는 서로 다른 HOME. |
 | 미로그인 | stderr `authentication required. Run 'agy' to log in` + result `error: "authentication failed or timed out"`(1.3.5 실측). print 모드는 브라우저 로그인을 60초 기다리며 멈춘다 → 턴·`/usage` 모두 로그인 프로브가 참일 때만. |
 | 한도 | 오류 문구에 quota / rate limit / RESOURCE_EXHAUSTED / 429 가 있으면 그 계정을 메모리에서 쿨다운. (한도 초과 실물은 아직 못 봄.) |
 | 잔여 한도 카드 | `agy -p=/usage --output-format json` — 서버 시작 때, 5분마다, Gemini 턴이 끝난 4초 뒤. 실제 응답은 "실측 2". |
@@ -141,7 +151,7 @@ agy                                   # 인자 없이 → 브라우저에서 Goo
 - **미로그인 문구**는 1.3.5 실측 그대로 — 1.4.2 에서 다시 보진 않았다(로그아웃 금지).
 - **`--input-format stream-json`**: `--help` 상 "stdin NDJSON 한 줄당 한 턴, `--output-format stream-json` 필요"로 존재 확인. 메시지 줄 형식은 미확인 → 프롬프트는 여전히 argv(`ps` 에 보임).
 - **기록 없음**: Gemini 세션을 다시 열면 이전 메시지가 보이지 않는다. 이어하기 자체는 된다(실측). 대화는 `~/.gemini/antigravity-cli/conversations/` 에 남는다.
-- **계정 하나**: 키체인 로그인이 하나뿐이라 g1/g2 분산·쿨다운 우회는 사실상 없다.
+- **두 Google 계정**: g1 은 실제 홈, g2 는 `~/.agy-g2`. 같은 키링 항목을 같이 쓰지 않도록 자식에서 D-Bus 세션 주소를 뺀다. 한 자리의 한도 쿨다운은 그 자리에만 적용된다.
 - **승인 경로 없음**: 헤드리스는 승인을 물을 수 없다. 셸을 허용하려면 사용자가 `settings.json` 의 `permissions.allow` 에 규칙을 넣어야 한다(deck 은 이 파일을 건드리지 않는다).
 
 ## 코드

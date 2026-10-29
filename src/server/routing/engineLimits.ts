@@ -69,9 +69,12 @@ export function buildEngineLimits(i: EngineLimitsInput): EngineLimits {
   const gptDown = !gpt || gpt.status === 'down';
   const gem = i.usage.gemini;
   const gemDown = !gem || gem.status === 'down';
-  const rem = gemDown ? { pro: null, flash: null } : remainingByGroup(gem.buckets);
+  const g1rem = gemDown ? { pro: null, flash: null } : remainingByGroup(gem.buckets);
+  const g2u = i.usage.geminiSeats?.g2;
+  const g2down = !g2u || g2u.status === 'down';
+  const g2rem = !i.gemini.loggedIn.g2 || !g2u || g2u.status === 'down' ? { pro: null, flash: null } : remainingByGroup(g2u.buckets);
+  const observed = [gemDown ? null : ms(gem?.fetchedAt), g2down ? null : ms(g2u?.fetchedAt)].filter((t): t is number => t !== null);
   const cooling = (a: GeminiAccount) => (i.gemini.cooldownUntilMs[a] ?? 0) > i.nowMs;
-  // The snapshot is one agy report (no per-seat numbers): G1 carries it, G2 is known only to be logged in.
   const seat = (a: GeminiAccount, enabled: boolean, pct: Record<GeminiGroup, number | null>): GeminiSeatLimits =>
     ({ seat: a, enabled, remainingPct: cooling(a) ? { pro: 0, flash: 0 } : pct });
   return {
@@ -86,8 +89,8 @@ export function buildEngineLimits(i: EngineLimitsInput): EngineLimits {
     gemini: {
       installed: i.gemini.installed,
       loggedIn: i.gemini.loggedIn.g1 || i.gemini.loggedIn.g2,
-      observedAtMs: gemDown ? null : ms(gem.fetchedAt),
-      seats: [seat('g1', true, rem), seat('g2', i.gemini.loggedIn.g2, { pro: null, flash: null })],
+      observedAtMs: observed.length ? Math.max(...observed) : null,
+      seats: [seat('g1', true, g1rem), seat('g2', i.gemini.loggedIn.g2, g2rem)],
     },
     grok: { installed: i.grok.installed, cooldownUntilMs: i.grok.cooldownUntilMs, lastError: i.grok.lastError, ...grokPeriodUsage(i.usage, i.nowMs) },
   };

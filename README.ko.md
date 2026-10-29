@@ -172,7 +172,7 @@ CLAUDE_CONFIG_DIR=~/.claude-c claude     # 셋째 계정 -> ~/.claude-c  (계정
 | 엔진 | 실행 방식 | 참고 |
 |---|---|---|
 | Codex | `codex exec --json` 을 자식 프로세스로 | codex-cli 0.159 이상 필요. 승인 카드가 없다. `approval_policy=never` 와 샌드박스로 돈다. 샌드박스 기본값은 Claude 기본 권한과 상관없이 네트워크를 허용한 작업 폴더 쓰기이고, 읽기 전용을 고를 수 있다. 이미 있는 세션도 샌드박스 칩에서 바꿀 수 있고 다음 턴부터 적용된다. `danger-full-access` 는 쓰지 않는다. |
-| Gemini | `gemini -o stream-json` 을 자식 프로세스로 | 직접 골랐을 때만 쓰이고 자동으로는 선택되지 않는다. 계정 두 개까지(`g1`, `g2`), 계정마다 `GEMINI_CLI_HOME` 을 `<configDir>/gemini/<id>` 로 따로 둔다. 다시 연 세션에는 이전 메시지가 보이지 않는다. |
+| Gemini | `agy`(Antigravity CLI)를 자식 프로세스로 | 직접 골랐을 때만 쓰이고 자동으로는 선택되지 않는다. 자리 두 개: `g1` 은 `~/.gemini`, `g2` 는 `~/.agy-g2`. 다시 연 세션에는 이전 메시지가 보이지 않는다. |
 
 바이너리가 없으면 그 엔진은 화면에서 숨겨진다. AI-MSG 는 대신 로그인하지 않는다. Codex 는 `codex login` 으로, Gemini 의 로그인 절차와 한계는 [docs/gemini-spike.md](docs/gemini-spike.md) 를 본다.
 
@@ -253,7 +253,7 @@ AI-MSG 는 내 컴퓨터에서 명령을 실행할 수 있다. 여기에 접속�
 - **Claude 설정이 그대로 적용된다.** 턴은 사용자·프로젝트·로컬 Claude Code 설정(허용 규칙과 훅 포함)을 CLI 와 똑같이 읽는다.
 - **감사 로그.** 모든 권한 결정이 `~/.config/deck/audit.log` 에 JSON 한 줄씩 쌓인다: 시각, 세션, 도구 이름, 결정, 누가 결정했는지, 도구 입력의 SHA-256(입력 자체는 남기지 않는다). 5 MiB 가 되면 `audit.log.1` 로 넘어간다.
 - **자격 증명.** AI-MSG 는 CLI 의 자격 증명을 읽거나 저장하거나 전달하지 않는다. 프로필 디렉터리를 골라 공식 CLI 를 띄울 뿐이고, Gemini 는 자격 파일이 있는지만 확인한다. Claude 턴을 띄우기 전에 자식 환경에서 `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_AUTH_TOKEN` 과 베이스 URL 변수를 지워서, 턴이 조용히 다른 계정으로 과금되지 않게 한다.
-- **로그인 재인증 창.** 화면 안 로그인 창은 서버가 고른 명령만 실행한다(`claude auth login`, 다른 Claude 프로필이면 `CLAUDE_CONFIG_DIR` 만 더한 같은 명령, `codex login`, `grok login`). 클라이언트가 보내는 것은 자리 id 이고 명령 문자열이 아니다. 입력은 한 줄(인증 코드) 또는 Enter 다. Gemini(`agy`)는 이 창에 없다.
+- **로그인 재인증 창.** 화면 안 로그인 창은 서버가 고른 명령만 실행한다(`claude auth login`, 다른 Claude 프로필이면 `CLAUDE_CONFIG_DIR` 만 더한 같은 명령, `codex login`, `grok login --device-auth`, Gemini 자리는 그 홈의 `agy`). 클라이언트가 보내는 것은 자리 id 이고 명령 문자열이 아니다. 입력은 한 줄(인증 코드) 또는 Enter 다.
 - **파일 접근.** 새 세션은 홈 디렉터리 안(또는 루프백 전용 서버에서 `DECK_EXTRA_CWD_ROOTS` 로 지정한 경로)에서만 시작할 수 있다. 파일 미리보기 API 는 설정 디렉터리, 홈 바로 아래의 점(.) 디렉터리, 흔한 비밀 파일(`.env`, 개인 키, 자격 파일)을 거부한다.
 
 취약점은 [SECURITY.md](SECURITY.md) 대로 제보한다.

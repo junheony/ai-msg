@@ -1128,7 +1128,7 @@ describe('TurnRunner: Gemini sessions (explicit only)', () => {
     await c.deps.store.set({ engine: 'gemini', account: 'g2', sessionId: GSID, cwd: '/w2', lastTurnAtMs: 1, justCompacted: false, defaultModel: 'gemini-pro', sandbox: 'read-only', createdAtMs: 1 });
     await new TurnRunner(c.deps).run({ turnId: 't2', cwd: '/w2', sessionId: GSID, text: 'x' }, c.sink);
     expect(g.calls).toHaveLength(0);
-    expect(c.msgs.at(-1)).toMatchObject({ ok: false, errorText: 'Gemini G2 로그인 필요' });
+    expect(c.msgs.at(-1)).toMatchObject({ ok: false, errorText: 'Gemini G2 로그인 필요 — 사용량에서 재로그인' });
   });
 
   it('a quota failure cools that account down: the next new Gemini session opens on the other one', async () => {

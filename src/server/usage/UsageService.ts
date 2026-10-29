@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { type Account, type AccountNames, type GrokAccount, type UsageSeat } from '../../shared/accounts';
+import { type Account, type AccountNames, type GeminiAccount, type GrokAccount, type UsageSeat } from '../../shared/accounts';
 import { emptyAccountUsage, emptySnapshot, parseIsoUtc, usageOf, type AccountUsage, type GeminiUsage, type GptCredits, type GrokBotUsage, type GrokUsage, type UsageMode, type UsageSnapshot, type UsageWindow } from '../../shared/usage-types';
 import { STALE_MAX_MS } from '../routing/AccountRouter';
 
@@ -339,9 +339,14 @@ export class UsageService {
     for (const cb of this.listeners) cb(this.snap);
   }
 
-  /** GeminiUsagePoller: a fresh `/usage` reading (or a login/parse failure) for the g1 Gemini card (the only seat it polls today). */
-  applyGemini(u: GeminiUsage): void {
-    this.publish({ ...this.snap, generatedAt: this.now().toISOString(), gemini: u, geminiSeats: { ...this.snap.geminiSeats, g1: u } });
+  /** GeminiUsagePoller: a fresh `/usage` reading (or a login/parse failure) for one Gemini seat. g1 also fills the legacy `gemini` field. */
+  applyGemini(account: GeminiAccount, u: GeminiUsage): void {
+    this.publish({
+      ...this.snap,
+      generatedAt: this.now().toISOString(),
+      ...(account === 'g1' ? { gemini: u } : {}),
+      geminiSeats: { ...this.snap.geminiSeats, [account]: u },
+    });
   }
 
   /** GrokUsageTracker: a Grok turn just ended on `account` (usage header design §4/§7-4). */

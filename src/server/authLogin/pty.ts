@@ -7,8 +7,8 @@ import type { AuthPty } from './hub';
  * URL and read a pasted code. No extra package. The command is the allowlisted argv from `scriptInvocation`; stdin
  * of this process is that program's keyboard, not a shell.
  */
-export function openAuthPty(spec: { bin: string; args: readonly string[]; env: NodeJS.ProcessEnv }): AuthPty {
-  const inv = scriptInvocation(process.platform, spec.bin, spec.args);
+export function openAuthPty(spec: { bin: string; args: readonly string[]; env: NodeJS.ProcessEnv; cols?: number }): AuthPty {
+  const inv = scriptInvocation(process.platform, spec.bin, spec.args, spec.cols ? { cols: spec.cols } : undefined);
   if ('error' in inv) throw new Error(inv.error);
   let child: ReturnType<typeof spawn>;
   try {

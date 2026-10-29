@@ -47,7 +47,7 @@ beforeAll(async () => {
   await index.refresh();
   const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
   const authLogin = new AuthLoginHub({
-    accounts, home: '/h', bins: { claude: '/usr/bin/claude', codex: null, grok: null }, baseEnv: { PATH: '/bin', HOME: '/h' },
+    accounts, home: '/h', bins: { claude: '/usr/bin/claude', codex: null, grok: null, gemini: null }, baseEnv: { PATH: '/bin', HOME: '/h' },
     spawn: () => { pty = new FakePty(); return pty; },
   });
   server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: dir, usage, index, authLogin }));

@@ -204,14 +204,25 @@ export function defaultAccountsConfig(profileNames: readonly string[], note: (li
 export const LEGACY_ACCOUNTS: AccountNames = buildRegistry(defaultAccountsConfig(['.claude', '.claude-b', '.claude-c']), { homeDir: '/' });
 
 /**
- * Gemini seats (never chosen by 자동). Kept as two ids so stored session records stay valid, but agy keeps one Google
- * login in the OS keychain → in practice only g1 is used; g2 always reads as logged out.
+ * Gemini seats (never chosen by 자동). Two Google logins: g1 uses the real home (`~/.gemini`), g2 a persistent
+ * `~/.agy-g2` so the two agy processes do not share a keyring entry. See `geminiSeatHome`.
  */
 export type GeminiAccount = 'g1' | 'g2';
 export const GEMINI_ACCOUNTS: readonly GeminiAccount[] = ['g1', 'g2'];
 
 export function isGeminiAccount(x: unknown): x is GeminiAccount {
   return x === 'g1' || x === 'g2';
+}
+
+/** g1 is the real home; g2 is a persistent directory under it (`~/.agy-g2`), not a per-turn shadow. */
+export function geminiSeatHome(account: GeminiAccount, realHome: string): string {
+  const home = realHome.endsWith('/') ? realHome.slice(0, -1) : realHome;
+  return account === 'g1' ? home : `${home}/.agy-g2`;
+}
+
+/** agy's conversation db for one seat: `<seat home>/.gemini/antigravity-cli`. */
+export function geminiStateDir(account: GeminiAccount, realHome: string): string {
+  return `${geminiSeatHome(account, realHome)}/.gemini/antigravity-cli`;
 }
 
 /**
@@ -253,11 +264,14 @@ const GEMINI_VARS = [
 ] as const;
 
 /**
- * Environment for one agy run: the base env minus every Anthropic/OpenAI/Google token and routing variable, so agy
- * uses its own keychain Google login (HOME is kept: agy's state lives in `~/.gemini/antigravity-cli/`). deck never reads it.
+ * Environment for one agy run: the base env minus every Anthropic/OpenAI/Google token and routing variable.
+ * `DBUS_SESSION_BUS_ADDRESS` is dropped so Linux uses agy's file credential store instead of a shared keyring.
+ * `opts.home` is that seat's HOME (g1 the real home, g2 `~/.agy-g2`). deck never reads the credential file.
  */
-export function geminiEnv(base: NodeJS.ProcessEnv): Record<string, string | undefined> {
+export function geminiEnv(base: NodeJS.ProcessEnv, opts?: { home?: string }): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = { ...base };
   for (const v of [...TOKEN_VARS, ...ROUTING_VARS, ...SUPERVISOR_VARS, ...OPENAI_VARS, ...GEMINI_VARS]) delete env[v];
+  delete env.DBUS_SESSION_BUS_ADDRESS;
+  if (opts?.home) env.HOME = opts.home;
   return env;
 }

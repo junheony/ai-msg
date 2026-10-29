@@ -67,7 +67,7 @@ import { recordAudit } from './audit';
 import { Commander } from './commander/Commander';
 import { judge } from './commander/Judge';
 import { isOtherEngineState } from './turn/SessionState';
-import { GEMINI_ACCOUNTS, type GeminiAccount } from '../shared/accounts';
+import { GEMINI_ACCOUNTS, geminiStateDir, type GeminiAccount } from '../shared/accounts';
 import type { PermMode } from '../shared/permission';
 import type { GrokStatus, ServerMessage } from '../shared/protocol';
 
@@ -167,7 +167,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     // Conversations made outside deck (imports design): Grok CLI / agy only when deck can continue them; Grok Bot read-only (macOS).
     await fs.rm(cfg.importTmpDir, { recursive: true, force: true }).catch(() => undefined);
     const grokImports = cfg.grokBin ? new GrokSessionIndex(cfg.grokHome) : null;
-    const geminiImports = cfg.geminiBin ? new GeminiConversationIndex([{ account: 'g1', dir: cfg.geminiStateDir }], cfg.importTmpDir) : null;
+    const geminiImports = cfg.geminiBin ? new GeminiConversationIndex(GEMINI_ACCOUNTS.map((account) => ({ account, dir: geminiStateDir(account, cfg.home) })), cfg.importTmpDir) : null;
     const grokBotImports = new GrokBotIndex(cfg.grokBotDir, cfg.home);
     grokBotImports.onUsage = (u) => usage.applyGrokBot(u);
     const index = new SessionIndex({ grokImports, geminiImports, grokBotImports, holders, roots: cfg.projectsRoots, pinnedFile: cfg.pinnedFile, recentFile: cfg.recentFoldersFile, desktopRoot: cfg.desktopSessionsRoot, codexRoot: cfg.codexSessionsRoot, codexArchivedRoot: cfg.codexArchivedRoot, meta, home: accounts.home });
@@ -208,11 +208,11 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     // D11: Codex is optional; without the binary the UI hides the GPT option and 'auto' means Claude.
     const codex = cfg.codexBin ? new CodexEngine(cfg.codexBin) : null;
     // Gemini (agy): explicit engine only; logged in = an `agy models` probe exited 0 (cached 5 min, checked in the background).
-    const geminiLogin = cfg.geminiBin ? new GeminiLogin(cfg.geminiBin) : null;
+    const geminiLogin = cfg.geminiBin ? new GeminiLogin(cfg.geminiBin, { realHome: cfg.home }) : null;
     void geminiLogin?.refresh();
-    const gemini = cfg.geminiBin && geminiLogin ? { engine: new GeminiEngine(cfg.geminiBin), loggedIn: (a: GeminiAccount) => geminiLogin.get(a) } : null;
-    // Gemini quota for the usage card: `agy -p=/usage` at start, every 5 min, and after each Gemini turn — only while logged in.
-    const geminiUsage = cfg.geminiBin && geminiLogin ? new GeminiUsagePoller({ bin: cfg.geminiBin, usage, login: geminiLogin }) : null;
+    const gemini = cfg.geminiBin && geminiLogin ? { engine: new GeminiEngine(cfg.geminiBin, { realHome: cfg.home }), loggedIn: (a: GeminiAccount) => geminiLogin.get(a) } : null;
+    // Gemini quota for each seat: `agy -p=/usage` with that seat's HOME, at start, every 5 min, and after each Gemini turn — only while that seat is logged in.
+    const geminiUsage = cfg.geminiBin && geminiLogin ? new GeminiUsagePoller({ bin: cfg.geminiBin, usage, login: geminiLogin, realHome: cfg.home }) : null;
     geminiUsage?.start();
     cleanup.push(() => geminiUsage?.stop());
     const geminiStatus = () => {
@@ -350,7 +350,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     const setup = new SetupService({ cfg, accounts, store: setupStore, supervised: serverUpdate.supervised, addresses: [...addresses.map((a) => `http://${a.includes(':') ? `[${a}]` : a}:${port}`), ...(dnsName ? [`https://${dnsName}/`] : [])] });
     const authLogin = new AuthLoginHub({
       accounts, home: cfg.home,
-      bins: { claude: cfg.claudeBin.ok ? cfg.claudeBin.bin : null, codex: cfg.codexBin, grok: cfg.grokBin },
+      bins: { claude: cfg.claudeBin.ok ? cfg.claudeBin.bin : null, codex: cfg.codexBin, grok: cfg.grokBin, gemini: cfg.geminiBin },
       spawn: openAuthPty, baseEnv: process.env,
     });
     const realHandler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, memory, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate, setup, authLogin });

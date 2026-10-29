@@ -40,13 +40,15 @@ export function loginCommandFor(engine: EngineId, profileDir?: string): string {
     case 'claude': return profileDir ? `CLAUDE_CONFIG_DIR=${profileDir} claude auth login` : 'claude auth login';
     case 'codex': return 'codex login';
     case 'gemini': return 'agy';
-    case 'grok': return 'grok login';
+    case 'grok': return 'grok login --device-auth';
   }
 }
 
-/** One sentence after the login command (Gemini's has no subcommand). */
+/** One sentence after the login command. Headless hosts finish Grok and agy from the usage-strip re-login window. */
 export function loginHint(engine: EngineId, command: string): string {
-  return engine === 'gemini' ? `터미널에서 ${command} 를 인자 없이 실행 → 브라우저에서 Google 로그인` : `터미널에서 ${command}`;
+  if (engine === 'gemini') return `사용량의 재로그인 (${command}) — Enter 로 Google 로그인, 주소를 열고 코드를 붙여 넣기`;
+  if (engine === 'grok') return `사용량의 재로그인 (${command}) — 다른 기기에서 주소와 코드를 입력`;
+  return `터미널에서 ${command}`;
 }
 
 export function missingBinNote(engine: EngineId): string {

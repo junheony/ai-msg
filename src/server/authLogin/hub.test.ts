@@ -26,7 +26,7 @@ class FakePty implements AuthPty {
 function hub(spawn: (pty: FakePty) => void = () => {}) {
   let pty: FakePty | null = null;
   const h = new AuthLoginHub({
-    accounts, home: '/h', bins: { claude: '/usr/bin/claude', codex: '/usr/bin/codex', grok: null },
+    accounts, home: '/h', bins: { claude: '/usr/bin/claude', codex: '/usr/bin/codex', grok: null, gemini: null },
     baseEnv: { PATH: '/bin', HOME: '/h', DECK_TOKEN: 'nope' },
     spawn: (spec) => {
       pty = new FakePty();
@@ -79,7 +79,7 @@ describe('AuthLoginHub', () => {
 
   it('a spawn failure is a 400 and does not hold the window', () => {
     const h = new AuthLoginHub({
-      accounts, home: '/h', bins: { claude: '/usr/bin/claude', codex: null, grok: null }, baseEnv: { PATH: '/bin', HOME: '/h' },
+      accounts, home: '/h', bins: { claude: '/usr/bin/claude', codex: null, grok: null, gemini: null }, baseEnv: { PATH: '/bin', HOME: '/h' },
       spawn: () => { throw new Error('이 호스트에 script 명령이 없어 로그인 창을 열 수 없습니다'); },
     });
     expect(h.start('a')).toEqual({ ok: false, status: 400, error: '이 호스트에 script 명령이 없어 로그인 창을 열 수 없습니다' });

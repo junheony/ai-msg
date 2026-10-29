@@ -19,7 +19,19 @@ const status = (over: Partial<SetupStatus> = {}): SetupStatus => ({
 });
 
 describe('reauthSeats', () => {
-  it('lists logged-out Claude profiles and Codex; skips Gemini, a missing grok binary and a retired profile', () => {
+  it('lists logged-out Claude profiles and Codex; skips a missing grok binary, a retired profile and Gemini without a per-seat probe', () => {
     expect(reauthSeats(status())).toEqual(['b', 'gpt']);
+  });
+
+  it('offers re-login for a logged-out Grok binary and each logged-out agy seat', () => {
+    const engines = status().engines.map((e) => e.engine === 'grok' ? { ...e, bin: '/bin/grok', login: 'no' as const } : e);
+    const seats = reauthSeats(status({
+      engines,
+      geminiSeats: [
+        { id: 'g1', label: 'G1', dir: '~/.gemini/antigravity-cli', login: 'no', loginCommand: 'agy' },
+        { id: 'g2', label: 'G2', dir: '~/.agy-g2/.gemini/antigravity-cli', login: 'yes', loginCommand: 'HOME=~/.agy-g2 agy' },
+      ],
+    }));
+    expect(seats).toEqual(['b', 'gpt', 'x1', 'g1']);
   });
 });

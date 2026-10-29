@@ -3,8 +3,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 /**
- * A per-turn "shadow" HOME for an engine child (Grok design §14.1-1, §14.9-1; Gemini's second seat will reuse it with
- * its own link list). The real HOME would hand the child `~/.claude/settings*.json` (allow rules, defaultMode) and every
+ * A per-turn "shadow" HOME for an engine child (Grok design §14.1-1, §14.9-1). Gemini's second seat does not use this:
+ * g2 keeps a persistent `~/.agy-g2` (`ensureGeminiSeatHome`) because a shadow home is deleted and would drop `.gemini`.
+ * The real HOME would hand the child `~/.claude/settings*.json` (allow rules, defaultMode) and every
  * other tool's config; the shadow folder holds only symlinks from an allow-list, and only for entries the real HOME has.
  *
  * Layout: `<root>/<id>/`, mode 0700, made fresh for one turn and removed after the turn's process group is gone.

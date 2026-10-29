@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { ensureGeminiSeatHome } from '../engine/geminiHome';
 import { authChildEnv, authInputLine, authTarget, plainTerminal, type AuthAccounts, type AuthBins, type AuthTarget } from './spec';
 
 /** A pty whose stdin is the login program. `write` is bytes, not a command. */
@@ -9,7 +10,7 @@ export type AuthPty = {
   onExit(cb: (code: number | null) => void): void;
 };
 
-export type AuthSpawn = (spec: { bin: string; args: readonly string[]; env: NodeJS.ProcessEnv }) => AuthPty;
+export type AuthSpawn = (spec: { bin: string; args: readonly string[]; env: NodeJS.ProcessEnv; cols?: number }) => AuthPty;
 
 export type AuthEvent =
   | { type: 'out'; text: string }
@@ -51,13 +52,17 @@ export class AuthLoginHub {
     if (this.live && !this.live.closed) return { ok: false, status: 409, error: '이미 로그인 창이 열려 있습니다 — 닫은 뒤 다시 시도하세요' };
     const target = authTarget(seat, this.deps.accounts, this.deps.bins, this.deps.home);
     if ('error' in target) return { ok: false, status: 400, error: target.error };
+    if (target.seat === 'g1' || target.seat === 'g2') {
+      const ensured = ensureGeminiSeatHome(target.seat, this.deps.home);
+      if (!ensured.ok) return { ok: false, status: 400, error: ensured.error };
+    }
     return this.open(target);
   }
 
   private open(target: AuthTarget): { ok: true; id: string; label: string; seat: string } | { ok: false; status: 400; error: string } {
     let pty: AuthPty;
     try {
-      pty = this.deps.spawn({ bin: target.bin, args: target.args, env: authChildEnv(this.deps.baseEnv, target.extraEnv) });
+      pty = this.deps.spawn({ bin: target.bin, args: target.args, env: authChildEnv(this.deps.baseEnv, target.extraEnv), ...(target.cols ? { cols: target.cols } : {}) });
     } catch (err) {
       const message = err instanceof Error ? err.message : '로그인 창을 열지 못했습니다';
       return { ok: false, status: 400, error: message };

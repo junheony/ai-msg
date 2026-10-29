@@ -3,15 +3,15 @@
 // only the fields named below are read, and raw output is never logged or returned.
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { codexEnv, geminiEnv } from '../../shared/accounts';
-import type { ClaudeProfileProbe, EngineId, EngineProbe, LoginState } from '../../shared/setup-types';
+import { GEMINI_ACCOUNTS, GEMINI_LABEL, codexEnv, geminiEnv, geminiSeatHome, geminiStateDir, type GeminiAccount } from '../../shared/accounts';
+import type { ClaudeProfileProbe, EngineId, EngineProbe, GeminiSeatProbe, LoginState } from '../../shared/setup-types';
 import type { DeckConfig } from '../config';
 import { MIN_CLAUDE_VERSION } from '../engine/claudeCli/version';
 import { grokEnv } from '../engine/grokEnv';
 import { stripSupervisorEnv } from '../supervisorEnv';
 import { PROBE_TEXTS, loginCommandFor, missingBinNote } from './texts';
 
-export type ProbeResult = { code: number | null; stdout: string; timedOut: boolean; spawnError?: 'ENOENT' | 'EACCES' | 'OTHER' };
+export type ProbeResult = { code: number | null; stdout: string; stderr?: string; timedOut: boolean; spawnError?: 'ENOENT' | 'EACCES' | 'OTHER' };
 export type ProbeExec = (bin: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs: number) => Promise<ProbeResult>;
 
 const OUTPUT_CAP = 64 * 1024;
@@ -26,7 +26,7 @@ const spawnErrorKind = (e: unknown): 'ENOENT' | 'EACCES' | 'OTHER' => {
 };
 
 /**
- * No shell, own process group, stdin closed. stdout kept up to 64 KB (the rest is read and dropped), stderr dropped.
+ * No shell, own process group, stdin closed. stdout and stderr kept up to 64 KB (the rest is read and dropped).
  * On timeout: SIGTERM to the group, SIGKILL 2 s later. The result comes once the child has closed; if a grandchild that
  * left the group still holds the pipes, they are closed by force shortly after the child exited (or was SIGKILLed), so a
  * result always comes.
@@ -42,6 +42,7 @@ export const defaultExec: ProbeExec = (bin, args, env, timeoutMs) => new Promise
     return;
   }
   let stdout = '';
+  let stderr = '';
   let timedOut = false;
   let hardKill: NodeJS.Timeout | undefined;
   let forceClose: NodeJS.Timeout | undefined;
@@ -54,11 +55,12 @@ export const defaultExec: ProbeExec = (bin, args, env, timeoutMs) => new Promise
     clearTimeout(forceClose);
     child.stdout!.destroy();
     child.stderr!.destroy();
-    done({ code, stdout, timedOut });
+    done({ code, stdout, stderr, timedOut });
   };
   child.stdout!.setEncoding('utf8');
   child.stdout!.on('data', (c: string) => { if (stdout.length < OUTPUT_CAP) stdout += c.slice(0, OUTPUT_CAP - stdout.length); });
-  child.stderr!.resume();
+  child.stderr!.setEncoding('utf8');
+  child.stderr!.on('data', (c: string) => { if (stderr.length < OUTPUT_CAP) stderr += c.slice(0, OUTPUT_CAP - stderr.length); });
   const timer = setTimeout(() => {
     timedOut = true;
     killGroup('SIGTERM');
@@ -101,11 +103,15 @@ export function parseCodexLogin(code: number | null, stdout: string): LoginState
   return stdout.includes('Not logged in') ? 'no' : 'unknown';
 }
 
-/** `grok models`: the first non-empty line (the exit code is always 0). */
+/**
+ * `grok models` (exit code is always 0). A catalog means the token refreshed even when the first line still says
+ * "not authenticated". Otherwise only the first non-empty line is read.
+ */
 export function parseGrokModels(stdout: string): LoginState {
+  if (/Available models:/i.test(stdout) || /^\s*Default model:/m.test(stdout)) return 'yes';
   const first = stdout.split('\n').map((l) => l.trim()).find((l) => l) ?? '';
   if (/^You are logged in/.test(first)) return 'yes';
-  return /not authenticated/i.test(first) ? 'no' : 'unknown';
+  return /not authenticated|not logged in/i.test(first) ? 'no' : 'unknown';
 }
 
 /** A run that said nothing usable about login: why (never reported as logged out). */
@@ -130,7 +136,7 @@ export async function probeEngines(o: {
   env: NodeJS.ProcessEnv;
   exec?: ProbeExec;
   timeoutMs?: number;
-}): Promise<{ engines: EngineProbe[]; claudeProfiles: ClaudeProfileProbe[] }> {
+}): Promise<{ engines: EngineProbe[]; claudeProfiles: ClaudeProfileProbe[]; geminiSeats: GeminiSeatProbe[] }> {
   const exec = o.exec ?? defaultExec;
   const timeoutMs = o.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const run = (bin: string, args: string[], env: Record<string, string | undefined>) => exec(bin, args, stripSupervisorEnv(env), timeoutMs);
@@ -146,6 +152,33 @@ export async function probeEngines(o: {
     return { engine, bin, version: firstLine(v), login: why ? 'unknown' : parse(s), loginCommand: loginCommandFor(engine), ...(why ? { note: why } : {}) };
   };
 
+  const geminiSeat = (id: GeminiAccount, login: LoginState): GeminiSeatProbe => {
+    const seatHome = geminiSeatHome(id, cfg.home);
+    const shown = tilde(seatHome, cfg.home);
+    return {
+      id, label: GEMINI_LABEL[id], dir: tilde(geminiStateDir(id, cfg.home), cfg.home), login,
+      loginCommand: id === 'g1' ? 'agy' : `HOME=${shown} agy`,
+    };
+  };
+
+  const probeGemini = async (): Promise<{ engine: EngineProbe; seats: GeminiSeatProbe[] }> => {
+    if (!cfg.geminiBin) return { engine: missing('gemini'), seats: GEMINI_ACCOUNTS.map((id) => geminiSeat(id, 'unknown')) };
+    const versionP = run(cfg.geminiBin, ['--version'], geminiEnv(o.env, { home: cfg.home }));
+    const seatPs = GEMINI_ACCOUNTS.map(async (id) => {
+      const r = await run(cfg.geminiBin!, ['models'], geminiEnv(o.env, { home: geminiSeatHome(id, cfg.home) }));
+      const why = failure(r, timeoutMs);
+      return { id, login: (why ? 'unknown' : r.code === 0 ? 'yes' : 'no') as LoginState, why };
+    });
+    const [v, seats] = await Promise.all([versionP, Promise.all(seatPs)]);
+    const logins = seats.map((s) => s.login);
+    const login: LoginState = logins.some((l) => l === 'yes') ? 'yes' : logins.every((l) => l === 'no') ? 'no' : 'unknown';
+    const why = seats.find((s) => s.why)?.why ?? null;
+    return {
+      engine: { engine: 'gemini', bin: cfg.geminiBin, version: firstLine(v), login, loginCommand: loginCommandFor('gemini'), ...(login !== 'yes' && why ? { note: why } : {}) },
+      seats: seats.map((s) => geminiSeat(s.id, s.login)),
+    };
+  };
+
   const probeProfile = async (p: ProbeProfile): Promise<ClaudeProfileProbe> => {
     const custom = p.env.CLAUDE_CONFIG_DIR !== undefined;
     const base = { id: p.id, label: p.label, dir: tilde(p.dir, cfg.home), home: p.home, active: p.active, loginCommand: loginCommandFor('claude', custom ? tilde(p.dir, cfg.home) : undefined) };
@@ -154,11 +187,11 @@ export async function probeEngines(o: {
     return { ...base, login: failure(r, timeoutMs) ? 'unknown' : parseClaudeAuth(r.stdout) };
   };
 
-  const [claudeProfiles, codex, gemini, grok] = await Promise.all([
+  const [claudeProfiles, codex, geminiProbe, grok] = await Promise.all([
     Promise.all(o.profiles.map(probeProfile)),
     probeOther('codex', cfg.codexBin, codexEnv(o.env), ['login', 'status'], (r) => parseCodexLogin(r.code, r.stdout)),
-    probeOther('gemini', cfg.geminiBin, geminiEnv(o.env), ['models'], (r) => (r.code === 0 ? 'yes' : 'no')),
-    probeOther('grok', cfg.grokBin, grokEnv(o.env, cfg.grokHome), ['models'], (r) => parseGrokModels(r.stdout)),
+    probeGemini(),
+    probeOther('grok', cfg.grokBin, grokEnv(o.env, cfg.grokHome), ['models'], (r) => parseGrokModels(`${r.stdout}\n${r.stderr ?? ''}`)),
   ]);
 
   let claude: EngineProbe;
@@ -172,5 +205,5 @@ export async function probeEngines(o: {
   } else {
     claude = missing('claude');
   }
-  return { engines: [claude, codex, gemini, grok], claudeProfiles };
+  return { engines: [claude, codex, geminiProbe.engine, grok], claudeProfiles, geminiSeats: geminiProbe.seats };
 }

@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AccountRegistry } from '../../shared/accounts';
-import type { ClaudeProfileProbe, EngineProbe, SetupStatus } from '../../shared/setup-types';
+import type { ClaudeProfileProbe, EngineProbe, GeminiSeatProbe, SetupStatus } from '../../shared/setup-types';
 import { AccountsFileError, loadAccountRegistry } from '../accounts';
 import type { DeckConfig } from '../config';
 import { probeEngines, type ProbeExec, type ProbeProfile } from './detect';
@@ -12,7 +12,7 @@ import type { SetupStore } from './SetupStore';
 
 const DEFAULT_TTL_MS = 30_000;
 
-type Probe = { engines: EngineProbe[]; claudeProfiles: ClaudeProfileProbe[]; checkedAt: string };
+type Probe = { engines: EngineProbe[]; claudeProfiles: ClaudeProfileProbe[]; geminiSeats: GeminiSeatProbe[]; checkedAt: string };
 
 export class SetupService {
   private cache: { at: number; value: Promise<Probe> } | null = null;
@@ -80,7 +80,7 @@ export class SetupService {
     const fileIds = new Set(reg.all());
     const runIds = new Set(this.o.accounts.all());
     const restartNeeded = file && (fileIds.size !== runIds.size || [...fileIds].some((id) => !runIds.has(id)));
-    return { engines: probe.engines, claudeProfiles: probe.claudeProfiles, addresses: this.o.addresses, needed: this.o.store.needed(), supervised, restartNeeded, accountsFile: file, checkedAt: probe.checkedAt };
+    return { engines: probe.engines, claudeProfiles: probe.claudeProfiles, geminiSeats: probe.geminiSeats, addresses: this.o.addresses, needed: this.o.store.needed(), supervised, restartNeeded, accountsFile: file, checkedAt: probe.checkedAt };
   }
 
   async addProfile(id: string, label?: string): Promise<{ profile: ClaudeProfileProbe; restartNeeded: true }> {

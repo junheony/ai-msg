@@ -59,7 +59,7 @@ export async function handleAuthLogin(
   }
   if (action === 'input' && req.method === 'POST') {
     let body: { text?: unknown; enter?: unknown } = {};
-    try { body = JSON.parse(await readBody(req, 2048)) as typeof body; } catch { json(res, 400, { error: '잘못된 요청입니다' }); return true; }
+    try { body = JSON.parse(await readBody(req, 8192)) as typeof body; } catch { json(res, 400, { error: '잘못된 요청입니다' }); return true; }
     const line = authInputLine(body);
     if ('error' in line) { json(res, 400, { error: line.error }); return true; }
     const wrote = hub.write(id, line.line);

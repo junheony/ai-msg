@@ -29,6 +29,7 @@ import { Highlights } from './components/Highlights';
 import { ActivityButton, type ActivityAlert } from './components/ActivityButton';
 import type { WorkRow } from './components/ActivitySheet';
 import { isGeminiAccount, isGrokAccount } from '../shared/accounts';
+import { seatLabel } from './accounts';
 import { isClaudeModel, type ClaudeModel } from '../shared/models';
 import { claimReload, hasDraftText, hasOpenModal, isNewBuild, shouldAutoReload } from './autoReload';
 import { paneColumns, paneSize, resizePair } from './paneResize';
@@ -1293,7 +1294,7 @@ export function App() {
     ?? (cwd ? cwd.split('/').filter(Boolean).pop() : undefined)
     ?? sessionId.slice(0, 8);
   const preview = previewKey && state.routePreview && state.routePreview.sessionId === previewKey.sessionId ? state.routePreview : null;
-  const authTitle = authSeat === 'gpt' ? 'GPT' : authSeat === 'x1' ? 'Grok' : (state.accounts.find((a) => a.id === authSeat)?.label ?? authSeat?.toUpperCase() ?? '');
+  const authTitle = authSeat ? seatLabel(state.accounts, authSeat) : '';
   /** 활동 점: a new 승인 대기 elsewhere (8 s toast with 열기) or 재시작됨; the toast's role="status" reads it out (once). */
   const onActivityAlert = (a: ActivityAlert) => {
     setToasts((t) => [...t, { id: ++toastSeq.current, text: a.text, kind: 'info', ms: 8_000, ...(a.open ? { action: { label: '열기', run: a.open } } : {}) }]);
