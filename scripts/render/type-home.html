@@ -1,0 +1,58 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>type scale — home</title>
+<link rel="stylesheet" href="../../src/ui/styles.css">
+<style>
+  html, body { height: 100%; margin: 0; background: var(--bg); }
+  .app { position: fixed; inset: 0; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <span class="sidebar-brand"><svg class="deck-mark sidebar-brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="6.3" fill="#E27A50"></rect><path d="M7 7.9 11.3 12.1 7 16.3M13.8 16.3h3.8" fill="none" stroke="#EDE3D5" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"></path></svg>MSG</span>
+  </header>
+  <div class="panes" data-count="1">
+    <section class="pane">
+      <div class="chat">
+        <div class="newchat">
+          <div class="newchat-inner">
+            <h1 class="newchat-greeting"><span class="spark" aria-hidden="true">✶</span>좋은 오후예요</h1>
+            <form class="newchat-box">
+              <div class="composer">
+                <textarea rows="2" placeholder="메시지를 입력하세요"></textarea>
+                <div class="composer-row">
+                  <button type="button" class="attach" aria-label="첨부">+</button>
+                  <button type="button" class="send" style="margin-left:auto" aria-label="보내기">↑</button>
+                </div>
+              </div>
+            </form>
+            <div class="newchat-recent">
+              <h2>최근 대화</h2>
+              <div class="newchat-cards">
+                <button type="button" class="newchat-card">
+                  <span class="newchat-card-avatar" style="--av:var(--avatar-6)"><span class="avatar-mono">글</span></span>
+                  <span class="newchat-card-body">
+                    <span class="newchat-card-title">글자 크기 정리</span>
+                    <span class="newchat-card-meta">deck · 12분 전</span>
+                  </span>
+                </button>
+                <button type="button" class="newchat-card">
+                  <span class="newchat-card-avatar" style="--av:var(--avatar-3)"><span class="avatar-mono" data-len="2">세션</span></span>
+                  <span class="newchat-card-body">
+                    <span class="newchat-card-title">세션 아이콘</span>
+                    <span class="newchat-card-meta">notes · 1시간 전</span>
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+</body>
+</html>
