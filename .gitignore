@@ -4,6 +4,9 @@ dist/
 coverage/
 *.tsbuildinfo
 
+# local demo config from scripts/seed-demo.mjs
+.demo/
+
 # local environment and logs
 .env*
 !.env.example

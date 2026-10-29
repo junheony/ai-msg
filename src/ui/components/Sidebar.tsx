@@ -699,7 +699,8 @@ export function rowTag(s: SessionEntry): string | null {
 }
 
 /** A preview as one line (the row truncates it with an ellipsis). */
-const oneLine = (t: string | undefined) => (t ? t.replace(/\s+/g, ' ').trim() : '');
+/** One line for the row. Fences and inline code drop out so a CSS reply does not become the preview. */
+const oneLine = (t: string | undefined) => (t ? t.replace(/```[\s\S]*?```/g, ' ').replace(/`[^`\n]*`/g, ' ').replace(/\s+/g, ' ').trim() : '');
 
 /** Line 2's engine glyph (non-Claude only): 12px, single colour (the line's muted grey), decorative — the tooltip names it. */
 function MetaEngine({ engine }: { engine: EngineKind }) {
