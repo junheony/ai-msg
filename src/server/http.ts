@@ -72,6 +72,8 @@ export type HttpDeps = {
   setup?: SetupDeps;
   /** In-app login window (allowlisted `claude auth login` and the same for Codex / Grok). Absent = no /api/auth-login. */
   authLogin?: AuthLoginHub;
+  /** package.json version for GET /api/health and GET /api/version. Absent answers "0.0.0". */
+  version?: string;
 };
 
 export type SetupDeps = {
@@ -415,6 +417,11 @@ export function createRequestHandler(deps: HttpDeps) {
       if (url.pathname === '/api/logout' && req.method === 'POST') { json(res, 200, { ok: true }, { 'set-cookie': logoutCookieHeader(secure) }); return; }
       if (url.pathname === PREVIEW_FRAME_PATH && req.method === 'GET') { servePreviewFrame(res); return; }
       if (url.pathname.startsWith('/api/')) {
+        // Liveness for a local supervisor (systemd, a human with curl). No cookie, and nothing but ok + version.
+        if ((url.pathname === '/api/health' || url.pathname === '/api/version') && req.method === 'GET') {
+          json(res, 200, { ok: true, version: deps.version ?? '0.0.0' });
+          return;
+        }
         if (!authed) { json(res, 401, { error: '로그인이 필요합니다' }); return; }
         if (url.pathname === '/api/me') { json(res, 200, { ok: true }); return; }
         if (url.pathname === '/api/build' && req.method === 'GET') { json(res, 200, { build: deps.build?.() ?? null }); return; }

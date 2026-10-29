@@ -49,9 +49,9 @@ The name: "AI-MSG" plays on the Korean word "머시기" ("whatsit") and on messa
 ```bash
 git clone https://github.com/junheony/ai-msg.git
 cd ai-msg
-npm install        # includes the Claude Code native binary (optional dependency of the SDK)
+npm install        # this repo only (web-push, ws, zod). Install the CLIs yourself and log in.
 npm run build      # UI -> dist/ui
-npm start          # http://127.0.0.1:9320
+npm start          # http://127.0.0.1:9320  (dev: runs TypeScript via tsx)
 ```
 
 On start the server prints the addresses it listens on and where the login token is:
@@ -98,6 +98,64 @@ The service reads environment variables from `~/.config/deck/env` (`KEY=value` l
 When server code (`src/server`, `src/shared`) changed since the server started, the top bar shows *서버 업데이트 대기 · 파일 N개*; *지금 재시작* runs the same graceful drain as `npm run restart`. It is offered only when the relaunch loop or the LaunchAgent will start the server again (`DECK_SUPERVISED=1`, set by `scripts/relaunch.sh`, and the loop still running as the server's parent — checked on every request); a server started by hand, or one left running after `relaunch.sh stop`, refuses it. Detection compares file modification times, so a file whose timestamp changed without a content change (e.g. after `git checkout` or `git stash`) counts too.
 
 If the repo lives under `~/Documents` (or Desktop/Downloads), give **Full Disk Access** to the node binary the installer prints (System Settings → Privacy & Security). The LaunchAgent starts that node (`scripts/launchd/boot.mjs`), and macOS checks folder access against the job's own program — so node's grant covers the shell scripts and the server it starts.
+
+`scripts/install-launchd.sh` (`com.deck.server`, runs the TypeScript source) and `ai-msg service install` (`local.ai-msg.server`, runs `dist/server/bin.js`) will not both install. Use one. On Linux use `ai-msg service install` only.
+
+### Troubleshooting
+
+| What you see | What to do |
+|---|---|
+| `MSG 는 Node 24 이상이 필요합니다` | Install Node 24 (`node -v`) and run the command with that binary. |
+| `systemctl --user` has no session, or `service install` refuses | Log in as that user, or `loginctl enable-linger "$USER"`, then install again. |
+| Port 9320 already taken | Another MSG is running. `systemctl --user status ai-msg.service` on Linux, or `npm run restart`. A second copy needs both `--port` and its own `DECK_CONFIG_DIR`. |
+| Login page, and the token file is missing | Start the server once. It creates `~/.config/deck/token` (mode 0600) and does not print the token. |
+| `curl -fsS http://127.0.0.1:9320/api/health` fails | The process is down or not bound there. The body is `{"ok":true,"version":"…"}` only — no paths and no token. `GET /api/version` is the same. |
+| Linux journal | `journalctl --user -u ai-msg.service -n 100 --no-pager` |
+| macOS LaunchAgent log | `~/.config/deck/ai-msg.log` (the legacy agent). `npm run restart` is refused while a turn is still running; `--force` cuts it. |
+| Sidebar missing pins after a move | The new host has an empty `~/.config/deck`. Import the bundle (below). Transcripts live in the CLI homes, not in that folder. |
+| `com.deck.server` and `ai-msg service install` both wanted | Pick one. The package installer refuses while the legacy agent is present. |
+
+### Upgrade
+
+Stop in the checkout you already run, then:
+
+```bash
+git pull
+npm install
+npm run build && npm run build:server
+```
+
+Linux (systemd user service):
+
+```bash
+node dist/server/bin.js service install --yes   # rewrites the unit's node and bin paths, then restarts
+systemctl --user status ai-msg.service
+curl -fsS http://127.0.0.1:9320/api/health
+```
+
+macOS with `scripts/install-launchd.sh`: run that script again from the checkout (it updates the agent), or `npm run restart` when you only changed server code and the agent is already loaded. macOS with `ai-msg service install`: run `service install --yes` again, the same as Linux. Do not install the other agent beside it.
+
+The top bar's *서버 업데이트 대기* compares file modification times. A timestamp-only change still counts.
+
+### Move the config directory
+
+Pins, titles, archive flags, account pins, permission mode, settings and `memory.md` live in the config directory. Conversation transcripts stay in the CLI homes (`~/.claude`, `~/.codex`, `~/.grok`, `~/.gemini`).
+
+On the old host:
+
+```bash
+node dist/server/bin.js config export --out ~/deck-config.json
+```
+
+The command prints file names only. It does not print or log the login token, push keys, or `service.env`, and those files are not in the bundle. Copy `deck-config.json` however you copy other private files. To keep old chats, copy the CLI homes separately.
+
+On the new host, install and build as in the quick start, then stop MSG if it is running and import before the first start (or any time the server is stopped):
+
+```bash
+node dist/server/bin.js config import ~/deck-config.json
+```
+
+If a file is already there, the command stops and lists the names. Run it again with `--yes` to replace those files. It never writes `token`. The new host creates its own token on first start; log in with that file (`ai-msg login-url` on a terminal, or open the file yourself).
 
 ## Multiple Claude accounts
 
@@ -262,7 +320,7 @@ Do not expose the port to the public internet. There is no multi-user support an
 
 AI-MSG can run commands on your machine. Treat access to it like shell access.
 
-- **Who can connect.** Processes on the machine and devices on your tailnet. Every `/api` request except login, and the WebSocket, requires the session cookie.
+- **Who can connect.** Processes on the machine and devices on your tailnet. Every `/api` request except login, `GET /api/health` and `GET /api/version`, and the WebSocket, requires the session cookie. Health and version answer `{"ok":true,"version":"…"}` only.
 - **Token.** 64 hex characters in `~/.config/deck/token` (`0600`). The browser holds only a SHA-256-derived cookie (`HttpOnly`, `SameSite=Strict`, `Secure` over HTTPS).
 - **Cross-site requests.** State-changing HTTP requests and the WebSocket upgrade must carry an `Origin` equal to the server's own origin. The `Host` allowlist guards against DNS rebinding. Responses carry a restrictive Content-Security-Policy; images in model output are rendered as links, not loaded.
 - **Permission modes.** Per Claude session: ask every time, auto-accept edits, plan, or auto-approve everything. New sessions default to **ask every time**: each tool call that needs a decision shows an approval card. Deny rules in your Claude settings apply in every mode.
@@ -277,7 +335,7 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
 ## Files
 
-Under `~/.config/deck` (or `DECK_CONFIG_DIR`):
+Under `~/.config/deck` (or `DECK_CONFIG_DIR`). `ai-msg config export` copies the portable rows (pins, titles, settings, memory) to a file you take to another host; it does not copy `token` or the push keys. See [Move the config directory](#move-the-config-directory).
 
 | File | Content |
 |---|---|

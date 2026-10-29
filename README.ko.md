@@ -46,9 +46,9 @@ AI-MSG 는 자기 컴퓨터에서 실행한다. 공식 Claude Code CLI(헤드리
 ```bash
 git clone https://github.com/junheony/ai-msg.git
 cd ai-msg
-npm install        # Claude Code 네이티브 바이너리 포함(SDK 의 optional dependency)
+npm install        # 이 저장소만 설치한다(web-push, ws, zod). CLI 는 따로 설치하고 로그인한다.
 npm run build      # UI -> dist/ui
-npm start          # http://127.0.0.1:9320
+npm start          # http://127.0.0.1:9320  (개발: tsx 로 TypeScript 를 실행)
 ```
 
 서버가 뜨면 듣는 주소와 로그인 토큰 위치를 출력한다.
@@ -95,6 +95,64 @@ npm run restart                         # 재시작: 돌던 턴이 끝난 뒤 �
 서버가 뜬 뒤 서버 코드(`src/server`, `src/shared`)가 바뀌면 상단에 *서버 업데이트 대기 · 파일 N개* 가 뜨고, *지금 재시작* 은 `npm run restart` 와 같은 drain 으로 재시작한다. relaunch 루프나 LaunchAgent 가 서버를 다시 켜 줄 때만(`scripts/relaunch.sh` 가 넣는 `DECK_SUPERVISED=1`, 그리고 그 루프가 지금도 서버의 부모로 살아 있을 때 — 요청마다 확인) 보이고, 손으로 띄운 서버나 `relaunch.sh stop` 뒤 남은 서버는 거절한다. 파일 수정 시각으로 판단하므로 내용은 그대로인데 시각만 바뀐 파일(`git checkout`·`git stash` 뒤 등)도 바뀐 것으로 센다.
 
 저장소가 `~/Documents`(또는 데스크탑·다운로드) 아래에 있으면 설치 스크립트가 알려 주는 node 에 **전체 디스크 접근 권한**을 준다(시스템 설정 → 개인정보 보호 및 보안). LaunchAgent 는 그 node 로 시작하고(`scripts/launchd/boot.mjs`), macOS 는 폴더 접근을 작업의 첫 프로그램 기준으로 판단하므로 node 의 권한이 그 아래 셸 스크립트와 서버까지 덮는다.
+
+`scripts/install-launchd.sh`(`com.deck.server`, 소스를 실행)와 `ai-msg service install`(`local.ai-msg.server`, `dist/server/bin.js`)은 함께 설치되지 않는다. 하나만 쓴다. Linux 는 `ai-msg service install` 만 쓴다.
+
+### 문제 해결
+
+| 보이는 것 | 할 일 |
+|---|---|
+| `MSG 는 Node 24 이상이 필요합니다` | Node 24 를 설치하고(`node -v`) 그 바이너리로 실행한다. |
+| `systemctl --user` 세션이 없거나 `service install` 이 거절함 | 그 사용자로 로그인하거나 `loginctl enable-linger "$USER"` 뒤에 다시 설치한다. |
+| 포트 9320 이 이미 쓰임 | 다른 MSG 가 떠 있다. Linux 는 `systemctl --user status ai-msg.service`, 또는 `npm run restart`. 두 개째는 `--port` 와 다른 `DECK_CONFIG_DIR` 가 둘 다 필요하다. |
+| 로그인 화면인데 토큰 파일이 없음 | 서버를 한 번 실행한다. `~/.config/deck/token`(권한 0600)을 만들고 토큰은 출력하지 않는다. |
+| `curl -fsS http://127.0.0.1:9320/api/health` 실패 | 프로세스가 없거나 그 주소에 붙어 있지 않다. 본문은 `{"ok":true,"version":"…"}` 뿐이다. 경로와 토큰은 없다. `GET /api/version` 도 같다. |
+| Linux 로그 | `journalctl --user -u ai-msg.service -n 100 --no-pager` |
+| macOS LaunchAgent 로그 | `~/.config/deck/ai-msg.log`(레거시 에이전트). 턴이 돌면 `npm run restart` 는 거절된다. `--force` 는 그 턴을 끊는다. |
+| 옮긴 뒤 사이드바 고정이 없음 | 새 호스트의 `~/.config/deck` 이 비어 있다. 아래 묶음을 가져온다. 대화 원본은 그 폴더가 아니라 CLI 홈에 있다. |
+| `com.deck.server` 와 `ai-msg service install` 을 같이 쓰고 싶음 | 하나만 고른다. 레거시 에이전트가 있으면 패키지 설치가 거절된다. |
+
+### 업그레이드
+
+이미 돌리던 체크아웃에서:
+
+```bash
+git pull
+npm install
+npm run build && npm run build:server
+```
+
+Linux(systemd 사용자 서비스):
+
+```bash
+node dist/server/bin.js service install --yes   # 유닛의 node·bin 경로를 다시 쓰고 재시작
+systemctl --user status ai-msg.service
+curl -fsS http://127.0.0.1:9320/api/health
+```
+
+macOS 에서 `scripts/install-launchd.sh` 를 쓰면 그 스크립트를 체크아웃에서 다시 실행한다(에이전트를 갱신한다). 서버 코드만 바뀌었고 에이전트가 이미 올라가 있으면 `npm run restart` 로도 된다. macOS 에서 `ai-msg service install` 을 쓰면 Linux 와 같이 `service install --yes` 를 다시 실행한다. 다른 에이전트를 옆에 설치하지 않는다.
+
+상단의 *서버 업데이트 대기* 는 파일 수정 시각을 비교한다. 내용이 같아도 시각이 바뀌면 갱신으로 센다.
+
+### `~/.config/deck` 을 다른 컴퓨터로 옮기기
+
+고정, 제목, 보관, 계정 핀, 권한 모드, 설정, `memory.md` 는 설정 폴더에 있다. 대화 원본은 CLI 홈(`~/.claude`, `~/.codex`, `~/.grok`, `~/.gemini`)에 있다.
+
+이전 호스트에서:
+
+```bash
+node dist/server/bin.js config export --out ~/deck-config.json
+```
+
+명령은 파일 이름만 출력한다. 로그인 토큰, 푸시 키, `service.env` 는 출력하지 않고 묶음에도 넣지 않는다. `deck-config.json` 은 다른 개인 파일과 같은 방법으로 복사한다. 예전 대화를 남기려면 CLI 홈도 따로 복사한다.
+
+새 호스트에서는 빠른 시작대로 설치·빌드한 뒤, MSG 가 떠 있으면 멈추고 첫 실행 전에(또는 서버가 멈춰 있을 때) 가져온다.
+
+```bash
+node dist/server/bin.js config import ~/deck-config.json
+```
+
+파일이 이미 있으면 명령을 멈추고 이름만 보여 준다. `--yes` 로 다시 실행하면 그 파일을 바꾼다. `token` 은 쓰지 않는다. 새 호스트는 처음 실행할 때 자기 토큰을 만든다. 그 파일로 로그인한다(터미널의 `ai-msg login-url`, 또는 파일을 직접 연다).
 
 ## Claude 계정 여러 개 쓰기
 
@@ -245,7 +303,7 @@ Claude 사용량 카드의 출처는 둘이고 `DECK_USAGE_SOURCE` 로 고른다
 
 AI-MSG 는 내 컴퓨터에서 명령을 실행할 수 있다. 여기에 접속할 수 있다는 것은 셸에 접속할 수 있다는 것과 같다고 본다.
 
-- **누가 접속할 수 있나.** 이 컴퓨터의 프로세스와 내 tailnet 의 기기. 로그인을 뺀 모든 `/api` 요청과 WebSocket 은 세션 쿠키가 있어야 한다.
+- **누가 접속할 수 있나.** 이 컴퓨터의 프로세스와 내 tailnet 의 기기. 로그인과 `GET /api/health`, `GET /api/version` 을 뺀 모든 `/api` 요청과 WebSocket 은 세션 쿠키가 있어야 한다. health 와 version 은 `{"ok":true,"version":"…"}` 만 답한다.
 - **토큰.** `~/.config/deck/token`(`0600`)의 16진수 64자. 브라우저는 SHA-256 으로 파생한 쿠키만 갖는다(`HttpOnly`, `SameSite=Strict`, HTTPS 에서는 `Secure`).
 - **교차 사이트 요청.** 상태를 바꾸는 HTTP 요청과 WebSocket 업그레이드는 `Origin` 이 서버 자신의 origin 과 같아야 한다. `Host` 허용 목록으로 DNS 리바인딩을 막는다. 응답에는 제한적인 Content-Security-Policy 가 붙고, 모델 출력의 이미지는 불러오지 않고 링크로 그린다.
 - **권한 모드.** Claude 세션마다 고른다: 매번 묻기, 편집 자동 승인, 계획 모드, 모두 자동 승인. 새 세션의 기본값은 **매번 묻기**다 — 결정이 필요한 도구 호출마다 승인 카드가 뜬다. Claude 설정의 거부 규칙은 어느 모드에서나 적용된다.

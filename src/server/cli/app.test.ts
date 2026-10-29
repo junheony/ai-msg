@@ -115,6 +115,7 @@ describe('runCli', () => {
     const h = fakeIo(env);
     expect(await runCli(['--help'], h)).toBe(0);
     expect(h.outText()).toMatch(/login-url/);
+    expect(h.outText()).toMatch(/config export/);
     const b = fakeIo(env);
     expect(await runCli(['bogus'], b)).toBe(2);
     expect(b.errText()).not.toBe('');
@@ -153,6 +154,30 @@ describe('runCli', () => {
     expect(await runCli(['doctor', '--json'], j, { probeExec })).toBe(0);
     const report = JSON.parse(j.outText()) as { engines: { engine: string; login: string }[]; claudeProfiles: unknown[] };
     expect(report.engines.map((x) => `${x.engine}:${x.login}`)).toEqual(['claude:unknown', 'codex:no', 'gemini:unknown', 'grok:unknown']);
+  });
+
+  it('config export through the CLI names files and does not print the token or memory', async () => {
+    fs.mkdirSync(env.DECK_CONFIG_DIR!);
+    const token = 'cd'.repeat(32);
+    fs.writeFileSync(path.join(env.DECK_CONFIG_DIR!, 'token'), `${token}\n`, { mode: 0o600 });
+    fs.writeFileSync(path.join(env.DECK_CONFIG_DIR!, 'memory.md'), `keep ${token} private`, { mode: 0o600 });
+    fs.writeFileSync(path.join(env.DECK_CONFIG_DIR!, 'pins.json'), '{"pins":["s9"]}\n', { mode: 0o600 });
+    const outFile = path.join(root, 'moved.json');
+    const io = fakeIo(env);
+    expect(await runCli(['config', 'export', '--out', outFile], io)).toBe(0);
+    const said = `${io.outText()}\n${io.errText()}`;
+    expect(said).not.toContain(token);
+    expect(said).toContain('pins.json');
+    expect(said).toContain('memory.md');
+    const archive = JSON.parse(fs.readFileSync(outFile, 'utf8')) as { files: Record<string, string> };
+    expect(archive.files['memory.md']).toContain(token);
+    expect(archive.files.token).toBeUndefined();
+    const fresh = path.join(root, 'fresh');
+    const back = fakeIo({ ...env, DECK_CONFIG_DIR: fresh });
+    expect(await runCli(['config', 'import', outFile], back)).toBe(0);
+    expect(`${back.outText()}\n${back.errText()}`).not.toContain(token);
+    expect(fs.readFileSync(path.join(fresh, 'pins.json'), 'utf8')).toContain('s9');
+    expect(fs.existsSync(path.join(fresh, 'token'))).toBe(false);
   });
 
   it('loginUrl encodes the token', () => expect(loginUrl(9320, 'a+b')).toBe('http://127.0.0.1:9320/#token=a%2Bb'));

@@ -225,6 +225,7 @@ svg.spark { transform-box: fill-box; transform-origin: center; }
 .session-menu button[aria-disabled="true"]:hover { background: transparent; }
 .sidebar-search { display: flex; align-items: center; gap: 6px; height: 32px; margin: 0 0 6px; padding: 0 9px; border-radius: var(--r-sm); background: var(--hover); color: var(--faint); font-size: var(--fs-sm); flex-shrink: 0; }
 .sidebar-search input { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; font-size: var(--fs-sm); }
+.sidebar-search:focus-within { box-shadow: var(--focus); }
 .sidebar-search input::placeholder { color: var(--faint); }
 .sidebar ul { list-style: none; margin: 0; padding: 0; }
 .project { margin-top: 8px; }

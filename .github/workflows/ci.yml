@@ -16,8 +16,7 @@ jobs:
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # Both hosts run the suite. macOS gates the build; Linux (the documented host path) stays non-blocking until that job has a green history.
-    continue-on-error: ${{ matrix.os == 'ubuntu-latest' }}
+    # Linux and macOS both gate. Linux is a first-class host (docs/linux-host.md).
     strategy:
       fail-fast: false
       matrix:

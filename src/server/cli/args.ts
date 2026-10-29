@@ -4,6 +4,8 @@ export type CliCommand =
   | { kind: 'start'; port?: number }
   | { kind: 'doctor'; json: boolean }
   | { kind: 'service'; action: ServiceAction; dryRun: boolean; yes: boolean; node?: string; port?: number; drainMaxMin?: number }
+  | { kind: 'config'; action: 'export'; out?: string }
+  | { kind: 'config'; action: 'import'; file: string; yes: boolean }
   | { kind: 'login-url' }
   | { kind: 'version' }
   | { kind: 'help' }
@@ -15,7 +17,7 @@ const SERVICE_ACTIONS: readonly ServiceAction[] = ['install', 'uninstall', 'stat
 function splitFlags(args: string[]): { flags: Array<[string, string | undefined]>; positional: string[]; error?: string } {
   const flags: Array<[string, string | undefined]> = [];
   const positional: string[] = [];
-  const takesValue = new Set(['--port', '--node', '--drain-max-min']);
+  const takesValue = new Set(['--port', '--node', '--drain-max-min', '--out']);
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (!a.startsWith('-')) { positional.push(a); continue; }
@@ -69,6 +71,25 @@ export function parseCli(argv: string[]): CliCommand {
   if (cmd === 'login-url') {
     if (positional.length || flags.length) return { kind: 'error', message: 'login-url 은 인자를 받지 않습니다' };
     return { kind: 'login-url' };
+  }
+  if (cmd === 'config') {
+    const action = positional[0];
+    if (action === 'export') {
+      if (positional.length > 1) return { kind: 'error', message: `알 수 없는 인자: ${positional.slice(1).join(' ')}` };
+      const bad = unknown(['--out']);
+      if (bad) return { kind: 'error', message: `config export 에 없는 옵션: ${bad[0]}` };
+      const out = flags.find(([f]) => f === '--out');
+      if (out && !out[1]) return { kind: 'error', message: '--out 에 경로가 필요합니다' };
+      return { kind: 'config', action: 'export', ...(out?.[1] ? { out: out[1] } : {}) };
+    }
+    if (action === 'import') {
+      const file = positional[1];
+      if (!file || positional.length > 2) return { kind: 'error', message: 'config import <파일> [--yes]' };
+      const bad = unknown(['--yes', '-y']);
+      if (bad) return { kind: 'error', message: `config import 에 없는 옵션: ${bad[0]}` };
+      return { kind: 'config', action: 'import', file, yes: flags.some(([f]) => f === '--yes' || f === '-y') };
+    }
+    return { kind: 'error', message: 'config 다음에 export 또는 import 를 쓰세요' };
   }
   if (cmd === 'service') {
     const action = positional[0] as ServiceAction | undefined;
