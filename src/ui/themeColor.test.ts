@@ -15,8 +15,8 @@ describe('status-bar colour (PWA top inset)', () => {
   afterEach(() => { document.head.innerHTML = ''; document.documentElement.removeAttribute('data-theme'); });
 
   it('index.html ships one theme-color per scheme, each the top bar colour (--sidebar) of that theme', () => {
-    expect(html).toMatch(/<meta name="theme-color" content="#121211" media="\(prefers-color-scheme: dark\)"/);
-    expect(html).toMatch(/<meta name="theme-color" content="#f1efea" media="\(prefers-color-scheme: light\)"/);
+    expect(html).toMatch(/<meta name="theme-color" content="#101018" media="\(prefers-color-scheme: dark\)"/);
+    expect(html).toMatch(/<meta name="theme-color" content="#e8e8f0" media="\(prefers-color-scheme: light\)"/);
     expect(sidebarToken(/:root\s*\{([^}]*)\}/)).toBe(THEME_COLOR.dark);
     expect(sidebarToken(/:root\[data-theme="light"\]\s*\{([^}]*)\}/)).toBe(THEME_COLOR.light);
   });
