@@ -63,7 +63,7 @@ describe('existingInstall', () => {
     expect(existingInstall(path.join(dir, 'nope'))).toBe(false);
   });
 
-  it.each(['token', 'settings.json', 'vapid.json', 'session-state.json', 'activity.json', 'pins.json', 'projects.json', 'push-subscriptions.json', 'accounts.json'])('%s counts', (name) => {
+  it.each(['token', 'settings.json', 'vapid.json', 'session-state.json', 'session-icons.json', 'activity.json', 'pins.json', 'projects.json', 'push-subscriptions.json', 'accounts.json'])('%s counts', (name) => {
     fs.writeFileSync(path.join(dir, name), '[]');
     expect(existingInstall(dir)).toBe(true);
   });

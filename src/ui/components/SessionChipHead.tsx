@@ -4,6 +4,30 @@ import type { EngineKind } from '../../shared/models';
 import { EngineMark } from './EngineMark';
 import { FolderChip } from './FileMenu';
 import { MenuList } from './SessionMenu';
+import { AvatarFace, avatarIndex, monogram, useSessionAvatar, useSessionIconStore } from './SessionIcon';
+import { SessionIconButton } from './SessionIconPicker';
+
+/** The same face the sidebar row shows: chosen icon, else the title's leading emoji, else its letters. */
+function HeadAvatar({ sessionKey, cwd, title }: { sessionKey: string; cwd?: string; title: string }) {
+  const shared = useSessionAvatar(sessionKey);
+  const { icons } = useSessionIconStore();
+  const folder = cwd ? (cwd.split('/').filter(Boolean).pop() ?? cwd) : '';
+  const color = shared?.color ?? avatarIndex(folder);
+  return (
+    <span className="head-avatar" data-avatar={color} style={{ '--av': `var(--avatar-${color})` } as CSSProperties} aria-hidden="true">
+      <AvatarFace mono={shared?.mono ?? monogram(title, folder)} icon={shared ? shared.icon : icons[sessionKey] ?? null} title={title} />
+    </span>
+  );
+}
+
+/** Clicking the avatar opens the picker (a sibling of the chip, so it never toggles the menu). Absent until the sidebar publishes a setter. */
+function HeadAvatarPick({ sessionKey }: { sessionKey: string }) {
+  const shared = useSessionAvatar(sessionKey);
+  const { icons, setIcon } = useSessionIconStore();
+  if (!setIcon) return null;
+  const id = shared?.iconId ?? sessionKey;
+  return <SessionIconButton className="head-avatar-pick" current={shared ? shared.icon : icons[sessionKey] ?? null} onPick={(icon) => setIcon(id, icon)} />;
+}
 
 /** Where a pane's ⋯ item sits in the session chip's menu (세션 → 보기 → 공유 → 창 → 총사령탑 → 위험); `viewEnd` = 보기's last rows. */
 export type HeadGroup = 'session' | 'view' | 'viewEnd' | 'window' | 'commander';
@@ -132,7 +156,7 @@ export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, p
   }
   const hasMenu = built.length > 0;
   const items = built.map((g, i) => <Fragment key={i}>{i > 0 && <div className="menu-sep" role="separator" />}{g}</Fragment>);
-  const label = <><span className="head-chip-title">{engine && <EngineMark engine={engine} />}{title}</span>{hasMenu && <span className="caret" aria-hidden="true">▾</span>}</>;
+  const label = <>{sessionKey && <HeadAvatar sessionKey={sessionKey} {...(cwd ? { cwd } : {})} title={title} />}<span className="head-chip-title">{engine && <EngineMark engine={engine} />}{title}</span>{hasMenu && <span className="caret" aria-hidden="true">▾</span>}</>;
 
   useLayoutEffect(() => {
     if (!open || phone) { setPlace(null); return; }
@@ -154,7 +178,7 @@ export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, p
 
   const head = (
     <div className={`pane-head${topbar ? ' in-topbar' : ''}${idle ? ' idle' : ''}`} data-pane-head={paneId}>
-      <div className="pane-head-main">
+      <div className={`pane-head-main${sessionKey ? ' with-avatar' : ''}`}>
         <span ref={wrapRef} className="head-chip-wrap" data-menu-up={place?.up ? '' : undefined} style={place ? { '--head-menu-max': `${place.max}px` } as CSSProperties : undefined}>
           {renaming !== null ? (
             <input className="head-chip-input" aria-label="채팅 이름" value={renaming} autoFocus maxLength={200}
@@ -179,6 +203,7 @@ export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, p
           ) : (
             <span className="head-chip static" data-testid="session-chip-head" title={title}>{label}</span>
           )}
+          {renaming === null && sessionKey && <HeadAvatarPick sessionKey={sessionKey} />}
           {toast && <span className="share-toast" role="status">{toast}</span>}
           {open && hasMenu && !phone && <MenuList className="session-menu head-menu" label="채팅 메뉴" onClose={() => setOpen(false)}>{items}</MenuList>}
           {open && hasMenu && phone && createPortal(

@@ -10,7 +10,7 @@ type SetupFile = { state: 'pending'; createdAt: string } | { state: 'done'; done
  * any of them, and a fresh install writes setup.json (pending) on that same first start, so a restart before the wizard
  * reads pending from the file and never comes back here.
  */
-const INSTALL_FILES = ['token', 'settings.json', 'vapid.json', 'session-meta.json', 'session-state.json', 'activity.json', 'pins.json', 'projects.json', 'push-subscriptions.json', 'accounts.json'];
+const INSTALL_FILES = ['token', 'settings.json', 'vapid.json', 'session-meta.json', 'session-icons.json', 'session-state.json', 'activity.json', 'pins.json', 'projects.json', 'push-subscriptions.json', 'accounts.json'];
 
 /**
  * An install that was in use before setup.json existed: one of its data files is there and not empty. `startServer`

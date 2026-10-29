@@ -44,6 +44,7 @@ import { PinStore } from './sessions/PinStore';
 import { MemoryStore } from './memory/MemoryStore';
 import { pruneRootsOf, startBackupPruning } from './sessions/backupPrune';
 import { SessionMetaStore } from './sessions/SessionMetaStore';
+import { SessionIconStore } from './sessions/SessionIconStore';
 import { AcceptedRefs } from './sessions/AcceptedRefs';
 import { TranscriptSearch } from './sessions/search';
 import { pruneTranscriptSnapshots, setTranscriptCacheDir } from './sessions/transcript';
@@ -161,6 +162,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     const usage = new UsageService({ mode: cfg.usageMode, observedFile: cfg.claudeUsageFile, deckUrl: cfg.deckUrl, accounts, usageSourceFile: cfg.usageSourceFile, strict: cfg.usageStrict, deckConfigured: cfg.deckUrlConfigured, log: (line) => console.error(line) });
     // Session rename / 보관 live in deck's own config (never in the Claude jsonl); loaded before the first scan.
     const meta = new SessionMetaStore(path.join(cfg.configDir, 'session-meta.json'));
+    const sessionIcons = new SessionIconStore(path.join(cfg.configDir, 'session-icons.json'));
     await meta.load();
     // Sessions another `claude` process (Claude Desktop, a terminal) holds open: read-only `ps`, never deck's own CLI children.
     const holders = new ProcessHolders();
@@ -178,7 +180,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     const tasks = new TaskRegistry(path.join(cfg.configDir, 'tasks.json'));
     const pushSubs = new SubscriptionStore(cfg.pushSubscriptionsFile);
     // Codex rollouts (~1000 files) are read after listening; the sidebar is told when they are in.
-    await Promise.all([holders.refresh().then(() => index.refresh({ codexInBackground: true })), store.load(), pins.load(), settings.load(), pushSubs.load(), tasks.load(), memory.load()]);
+    await Promise.all([holders.refresh().then(() => index.refresh({ codexInBackground: true })), store.load(), pins.load(), sessionIcons.load(), settings.load(), pushSubs.load(), tasks.load(), memory.load()]);
     const commands = new SlashCommandCache();
     const search = new TranscriptSearch({ sessions: () => index.projects(store.codexEntries(), { all: true }).flatMap((p) => p.sessions) });
     // /api/file never previews deck's own config (token, VAPID key, push subscriptions), even with the cwd at ~.
@@ -358,8 +360,8 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
       // A finished device login should show subscription usage without waiting out the auth backoff or restarting.
       onExit: (seat, code) => { if (seat === 'x1' && code === 0) grokBilling?.nudge(); },
     });
-    const realHandler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, memory, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate, setup, authLogin });
-    const ws = attachWebSocket(servers, { holders, grokHome: cfg.grokBin ? cfg.grokHome : null, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json'), tasks, pushTask: (p) => { void push.sendAll(p); }, setup: { needed: () => setupStore.needed() } });
+    const realHandler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, sessionIcons, memory, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate, setup, authLogin });
+    const ws = attachWebSocket(servers, { holders, grokHome: cfg.grokBin ? cfg.grokHome : null, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, sessionIcons, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json'), tasks, pushTask: (p) => { void push.sendAll(p); }, setup: { needed: () => setupStore.needed() } });
     cleanup.push(() => ws.close());
     notifyIndex = () => ws.broadcastIndex();
     submitRetry = (r) => ws.submitRetry(r);

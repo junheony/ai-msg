@@ -72,6 +72,14 @@ describe('reducer', () => {
     s = play([{ type: 'index', projects: [], pins: ['b'] }], s);
     expect(s.pins).toEqual(['b']);
     expect(reducer(s, { type: 'set_pins', pins: ['c'] }).pins).toEqual(['c']);
+    expect(initialState.sessionIcons).toEqual({});
+    s = play([{ type: 'hello', usage, projects: [], sessionIcons: { a: '🎯' }, running: [], codex: { available: false } }], s);
+    expect(s.sessionIcons).toEqual({ a: '🎯' });
+    s = play([{ type: 'index', projects: [] }], s);
+    expect(s.sessionIcons).toEqual({ a: '🎯' });
+    s = play([{ type: 'index', projects: [], sessionIcons: { a: 'glyph:leaf' } }], s);
+    expect(s.sessionIcons).toEqual({ a: 'glyph:leaf' });
+    expect(reducer(s, { type: 'set_session_icons', sessionIcons: {} }).sessionIcons).toEqual({});
     expect(reducer(s, { type: 'show_error', message: '고정 실패' }).error).toBe('고정 실패');
   });
 

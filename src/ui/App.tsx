@@ -15,7 +15,7 @@ import { SetupWizard } from './components/SetupWizard';
 import { readHashToken } from './loginHash';
 import { Toasts, type ToastItem } from './components/Toasts';
 import { SplitIcon } from './components/icons';
-import { postPin, postPinOrder } from './pins';
+import { postPin, postPinOrder, postSessionIcon } from './pins';
 import { findHitElement } from './scrollToHit';
 import { postSessionMeta, restoreSession, searchTranscripts, trashSession, type SearchHit } from './sessionApi';
 import { Pane, sendFromPane, TOGGLE_SIDE_EVENT, useQueueRunner } from './components/Pane';
@@ -586,6 +586,10 @@ export function App() {
   const closePalette = useCallback(() => setPaletteOpen(false), []);
   const closeHelp = useCallback(() => setHelpOpen(false), []);
   const cancelDelete = useCallback(() => setConfirmDelete(null), []);
+  // Stable: the sidebar publishes it into the avatar store, and a new function each render would notify every avatar.
+  const setSessionIcon = useCallback((sessionId: string, icon: string | null) => {
+    postSessionIcon(sessionId, icon).then((sessionIcons) => dispatch({ type: 'set_session_icons', sessionIcons }), (err: unknown) => dispatch({ type: 'show_error', message: err instanceof Error ? err.message : '아이콘 바꾸기 실패' }));
+  }, []);
 
   useEffect(() => {
     if (!scrollTo) return;
@@ -1407,6 +1411,8 @@ export function App() {
             onNew={(cwd, name) => openIn(active.id, null, cwd, `${name} · 새 세션`)}
             onRefresh={() => send({ type: 'refresh_index' })}
             pins={state.pins}
+            sessionIcons={state.sessionIcons}
+            {...(has('sessionIcons') ? { onSetSessionIcon: setSessionIcon } : {})}
             pinShortcut={openPinned}
             desktop={state.desktop}
             onTogglePin={togglePin}
