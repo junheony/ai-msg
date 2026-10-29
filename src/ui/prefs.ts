@@ -67,7 +67,7 @@ export function applyPrefs(prefs: Prefs, root: HTMLElement = document.documentEl
 }
 
 /** The top bar's colour (--sidebar) per theme: the browser chrome / status bar matches the bar under it. */
-export const THEME_COLOR = { dark: '#121211', light: '#f1efea' } as const;
+export const THEME_COLOR = { dark: '#101018', light: '#e8e8f0' } as const;
 
 /**
  * index.html carries one theme-color meta per colour scheme. A forced theme points both at its colour (the browser

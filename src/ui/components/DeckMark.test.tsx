@@ -7,7 +7,7 @@ import { Login } from './Login';
 afterEach(cleanup);
 
 describe('DeckMark', () => {
-  it('is the app icon chip as SVG — a rounded terracotta square with the cream >_ — and no text', () => {
+  it('is the app icon chip as SVG — a purple rounded square with the white speech-bubble cube — and no text', () => {
     const { container } = render(<DeckMark className="spark" />);
     const svg = container.querySelector('svg.deck-mark.spark');
     expect(svg).not.toBeNull();
@@ -15,8 +15,10 @@ describe('DeckMark', () => {
     const rect = svg!.querySelector('rect');
     expect(rect?.getAttribute('rx')).toBe('6.3');
     expect(rect?.getAttribute('fill')).toMatch(/^url\(#/);
-    expect(svg!.querySelector('linearGradient')).not.toBeNull();
-    expect(svg!.querySelector('path')?.getAttribute('stroke')).toBe('#EDE3D5');
+    const stops = [...svg!.querySelectorAll('stop')].map((s) => s.getAttribute('stop-color'));
+    expect(stops).toEqual(['#6366f1', '#4338ca']);
+    const fills = [...svg!.querySelectorAll('path')].map((p) => p.getAttribute('fill'));
+    expect(fills).toEqual(['#ffffff', '#e0e7ff', '#a5b4fc']);
     expect(container.textContent).toBe('');
   });
 
