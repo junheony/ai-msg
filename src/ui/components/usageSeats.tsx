@@ -491,13 +491,16 @@ export function chipState({ seats, current, next, stale: snapshotStale, now, lab
   const estimated = !!main?.row.w?.estimated || d.status === 'kept';
   const resetAt = main?.row.w?.resetsAt ? parseIsoUtc(main.row.w.resetsAt) : NaN;
   const ago = stale && !!main && resetAt > now ? agoText(d.fetchedAt ?? null, now) : '';
-  const left = main ? main.rem : null;
+  const loggedOut = d.engine === 'grok' && d.status === 'down';
+  const left = loggedOut ? null : (main ? main.rem : null);
   let kind: ChipKind;
   let text: string;
   let compactText: string;
   let spoken: string;
   if (d.status === 'cooldown') {
     kind = 'cooldown'; text = '쿨다운'; compactText = '쿨다운'; spoken = '쿨다운 중';
+  } else if (loggedOut) {
+    kind = 'unknown'; text = '로그인 필요'; compactText = '로그인'; spoken = '로그인 필요';
   } else if (resetPassed) {
     kind = 'stale'; text = '리셋됨'; compactText = text; spoken = RESET_PASSED_SAID;
   } else if (main && main.rem === 0) {

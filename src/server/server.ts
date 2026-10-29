@@ -235,7 +235,10 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     // read at the end of each turn and, while idle, by the poller (same deps — shadow HOME, env, grok inspect — as a turn).
     const grokUsage = grokBin ? new GrokUsageTracker({ file: path.join(cfg.configDir, 'grok-usage.json'), usage, log: (line) => console.error(line) }) : null;
     const grokBilling = grokDeps && grokUsage
-      ? new GrokBillingPoller({ probe: (signal) => probeGrokBilling(grokDeps, undefined, signal), tracker: grokUsage, busy: () => grokLock.size > 0, log: (line) => console.error(line) })
+      ? new GrokBillingPoller({
+        probe: (signal) => probeGrokBilling(grokDeps, undefined, signal), tracker: grokUsage, busy: () => grokLock.size > 0,
+        authFile: path.join(cfg.grokHome, 'auth.json'), log: (line) => console.error(line),
+      })
       : null;
     grokBilling?.start();
     cleanup.push(() => void grokBilling?.stop());
@@ -352,6 +355,8 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
       accounts, home: cfg.home,
       bins: { claude: cfg.claudeBin.ok ? cfg.claudeBin.bin : null, codex: cfg.codexBin, grok: cfg.grokBin, gemini: cfg.geminiBin },
       spawn: openAuthPty, baseEnv: process.env,
+      // A finished device login should show subscription usage without waiting out the auth backoff or restarting.
+      onExit: (seat, code) => { if (seat === 'x1' && code === 0) grokBilling?.nudge(); },
     });
     const realHandler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, memory, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate, setup, authLogin });
     const ws = attachWebSocket(servers, { holders, grokHome: cfg.grokBin ? cfg.grokHome : null, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json'), tasks, pushTask: (p) => { void push.sendAll(p); }, setup: { needed: () => setupStore.needed() } });

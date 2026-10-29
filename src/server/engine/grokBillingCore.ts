@@ -54,8 +54,8 @@ export function parseGrokBilling(result: unknown, fetchedAtMs: number): GrokBill
 }
 
 /**
- * The idle poller's answer. `no_bin` / `auth` / `unsupported` stop it; `blocked` (engine locked, the fail-closed checks
- * refused) and `error` are tried again on a later tick.
+ * The idle poller's answer. `no_bin` / `unsupported` stop it for this process. `auth` (logged out), `blocked` (engine
+ * locked, the fail-closed checks refused) and `error` are tried again on a later tick.
  */
 export type GrokBillingProbe =
   | { kind: 'ok'; billing: GrokBilling }

@@ -24,7 +24,7 @@ import { UsageStrip } from './components/UsageStrip';
 import { UsageSheet } from './components/UsageSheet';
 import { AuthTerminal } from './components/AuthTerminal';
 import { getSetup } from './setupApi';
-import { reauthSeats } from './reauth';
+import { reauthSeats, reauthWithUsage } from './reauth';
 import { Highlights } from './components/Highlights';
 import { ActivityButton, type ActivityAlert } from './components/ActivityButton';
 import type { WorkRow } from './components/ActivitySheet';
@@ -1307,6 +1307,7 @@ export function App() {
     if (pane) { dispatch({ type: 'focus_pane', paneId: pane.id }); requestFocus(pane.id); }
   };
 
+  const loginSeats = reauthWithUsage(reauth, state.usage);
   return (
     <AccountsContext value={accounts}>
     <div className="app">
@@ -1317,7 +1318,7 @@ export function App() {
         {/* The session chip of the one pane (desktop) / the shown pane (phone) renders here (Pane → Chat, a portal). */}
         <div className="topbar-head" ref={setHeadSlot} />
         {/* Every seat's usage, collapsed to the tightest remaining amount. The list of seats opens under the pill. */}
-        <UsageStrip usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} phone={phone} rowSlot={stripRow} open={usageOpen !== null} onToggle={() => setUsageOpen((v) => (v ? null : 'limits'))} reauth={reauth} onReauth={has('authLogin') ? setAuthSeat : undefined} />
+        <UsageStrip usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} phone={phone} rowSlot={stripRow} open={usageOpen !== null} onToggle={() => setUsageOpen((v) => (v ? null : 'limits'))} reauth={loginSeats} onReauth={has('authLogin') ? setAuthSeat : undefined} />
         <div className="topbar-end">
           {!phone && <button type="button" className="icon-btn split" onClick={addPane} aria-label="새 분할" title={`새 분할 (${mod}⇧O) — 세션 칩을 끌어 순서를 바꾸거나 카드로 떼어낼 수 있어요`}><SplitIcon /></button>}
           <ActivityButton
@@ -1346,7 +1347,7 @@ export function App() {
           <button type="button" className="text-btn" onClick={retryNow}>다시 시도</button>
         </div>
       )}
-      {usageOpen && <UsageSheet usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} initialHistory={usageOpen === 'history'} onClose={() => setUsageOpen(null)} reauth={reauth} onReauth={has('authLogin') ? (seat) => { setUsageOpen(null); setAuthSeat(seat); } : undefined} />}
+      {usageOpen && <UsageSheet usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} initialHistory={usageOpen === 'history'} onClose={() => setUsageOpen(null)} reauth={loginSeats} onReauth={has('authLogin') ? (seat) => { setUsageOpen(null); setAuthSeat(seat); } : undefined} />}
       {authSeat && <AuthTerminal seat={authSeat} title={authTitle} onClose={() => setAuthSeat(null)} onLoggedIn={() => setAuthEpoch((n) => n + 1)} />}
       {highlightsOpen && <Highlights onClose={() => setHighlightsOpen(false)} live={{ waiting: [...state.pending.map((c) => ({ sessionId: c.sessionId, kind: 'permission' as const })), ...state.questions.map((c) => ({ sessionId: c.sessionId, kind: 'question' as const }))], activity: state.activity }} engineOf={(id) => paletteSessions.find((x) => x.sessionId === id)?.engine} onOpenSession={(sessionId, cwd, title) => { setHighlightsOpen(false); if (!openById.current(sessionId)) openIn(active.id, sessionId, cwd, title); }} />}
       {settingsOpen && <SettingsView build={buildId} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} sameVendorRotation={state.sameVendorRotation} onSameVendorRotation={(sameVendorRotation) => send({ type: 'set_settings', sameVendorRotation })} commanderEnabled={state.commanderEnabled} onCommanderEnabled={(commanderEnabled) => send({ type: 'set_settings', commanderEnabled })} autoRoute={state.autoRoute} onAutoRoute={(patch) => send({ type: 'set_settings', ...patch })} claudeAccounts={state.accounts.filter((a) => !a.retired).length} grokLocked={state.grok?.locked ?? null} onGrokUnlock={() => send({ type: 'grok_unlock' })} taskCap={has('tasks') ? (state.taskCap ?? null) : null} onTaskCap={(taskSoftCap) => send({ type: 'set_settings', taskSoftCap })} onSetup={has('setup') ? () => { setSettingsOpen(false); setSetupOpen(true); } : undefined} onClose={() => setSettingsOpen(false)} />}

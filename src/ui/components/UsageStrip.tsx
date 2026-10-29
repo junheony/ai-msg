@@ -97,7 +97,7 @@ export function stripSegs({ seats, current, next, stale, now, label }: {
     const reset = cooldown ? until : spent ? st.reset : st.left !== null ? (st.stale ? st.ago || '오래됨' : st.reset) : '';
     const said = cooldown ? `쿨다운${until ? ` ${spokenCountdown(until)} 뒤 해제` : ''}`
       : st.resetPassed ? RESET_PASSED_SAID
-      : spent ? '소진' : st.left !== null ? `${st.left}퍼센트 남음` : st.text === '가능' ? '사용 가능' : '알 수 없음';
+      : spent ? '소진' : st.left !== null ? `${st.left}퍼센트 남음` : st.text === '가능' ? '사용 가능' : st.text === '?' ? '알 수 없음' : st.text;
     const resetSaid = (spent || st.left !== null) && st.reset ? `, ${spokenCountdown(st.reset)} 뒤 초기화` : '';
     const old = st.stale && !st.resetPassed && st.left !== null;
     const note = old ? staleNote(st.ago, d.polled) : '';

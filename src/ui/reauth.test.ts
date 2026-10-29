@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SetupStatus } from '../shared/setup-types';
-import { reauthSeats } from './reauth';
+import type { UsageSnapshot } from '../shared/usage-types';
+import { reauthSeats, reauthWithUsage } from './reauth';
 
 const status = (over: Partial<SetupStatus> = {}): SetupStatus => ({
   engines: [
@@ -33,5 +34,14 @@ describe('reauthSeats', () => {
       ],
     }));
     expect(seats).toEqual(['b', 'gpt', 'x1', 'g1']);
+  });
+});
+
+describe('reauthWithUsage', () => {
+  it('adds x1 when the billing poller marked Grok logged out, and does not duplicate a setup hit', () => {
+    const usage = { grokSeats: { x1: { status: 'down', lastTurnAt: null, lastError: 'auth', cooldownUntil: null, today: { inputTokens: 0, outputTokens: 0, turns: 0, day: '' } } } } as UsageSnapshot;
+    expect(reauthWithUsage(['b'], usage)).toEqual(['b', 'x1']);
+    expect(reauthWithUsage(['x1'], usage)).toEqual(['x1']);
+    expect(reauthWithUsage(['b'], { grokSeats: { x1: { status: 'unknown', lastTurnAt: null, lastError: null, cooldownUntil: null, today: { inputTokens: 0, outputTokens: 0, turns: 0, day: '' } } } } as UsageSnapshot)).toEqual(['b']);
   });
 });

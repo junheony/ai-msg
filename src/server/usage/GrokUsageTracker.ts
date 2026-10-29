@@ -9,7 +9,10 @@ type StoredAccount = {
   lastError: 'auth' | 'limit' | 'busy' | null;
   /** The only source (TurnRunner.grokCooldownUntil) — this tracker reads it, never computes its own cooldown. */
   cooldownUntilMs: number | null;
-  /** Set on an auth error, cleared only by a successful turn (persists through other failures in between — design §7-5). */
+  /**
+   * Set on an auth error (a turn, or the idle poller). Cleared by a successful turn or a successful billing read.
+   * A later non-auth turn failure leaves it set (design §7-5).
+   */
   down: boolean;
   today: { inputTokens: number; outputTokens: number; turns: number; day: string };
   /** The last `_x.ai/billing` read (end of a turn, or the idle poller); absent in files from before it existed. */
@@ -155,12 +158,31 @@ export class GrokUsageTracker {
     this.usage?.applyGrok(account, this.snapshotOf(account, nowMs));
   }
 
-  /** The idle poller read the subscription's usage (no turn): kept, written, pushed. Turn fields are left as they are. */
+  /**
+   * The idle poller read the subscription's usage (no turn): kept, written, pushed. A successful read means this seat
+   * is logged in, so a poller- or turn-caused `down` is cleared and an auth `lastError` goes with it. A cooldown and
+   * any other lastError stay. Turn counters are left as they are.
+   */
   noteBilling(account: GrokAccount, billing: GrokBilling): void {
     const cur = this.data.get(account);
-    this.data.set(account, cur
+    const base: StoredAccount = cur
       ? { ...cur, billing }
-      : { lastTurnAtMs: null, lastError: null, cooldownUntilMs: null, down: false, today: { inputTokens: 0, outputTokens: 0, turns: 0, day: this.dayOf(this.now()) }, billing });
+      : { lastTurnAtMs: null, lastError: null, cooldownUntilMs: null, down: false, today: { inputTokens: 0, outputTokens: 0, turns: 0, day: this.dayOf(this.now()) }, billing };
+    this.data.set(account, { ...base, down: false, lastError: base.lastError === 'auth' ? null : base.lastError });
+    this.write();
+    this.usage?.applyGrok(account, this.snapshotOf(account));
+  }
+
+  /**
+   * The idle poller found Grok logged out (no turn). The card becomes 로그인 필요. Today's tally and any billing
+   * already stored stay; nothing here reads `~/.grok`.
+   */
+  noteAuth(account: GrokAccount): void {
+    const cur = this.data.get(account);
+    const next: StoredAccount = cur
+      ? { ...cur, lastError: 'auth', down: true }
+      : { lastTurnAtMs: null, lastError: 'auth', cooldownUntilMs: null, down: true, today: { inputTokens: 0, outputTokens: 0, turns: 0, day: this.dayOf(this.now()) }, billing: null };
+    this.data.set(account, next);
     this.write();
     this.usage?.applyGrok(account, this.snapshotOf(account));
   }
