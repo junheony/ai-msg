@@ -269,3 +269,36 @@ describe('headless (`claude -p`) sessions', () => {
     expect(listed(idx)).toEqual([ID1, ID2, ID3]);
   });
 });
+
+describe('automated imports the owner kept', () => {
+  const entry = (id: string, over: Partial<SessionEntry>): SessionEntry => ({
+    sessionId: id, account: 'gpt', engine: 'codex', cwd: '/w', projectDir: '/w', file: '/w/f', title: id, lastModified: 1, sizeBytes: 1, imported: true, ...over,
+  });
+
+  it('drops codexExec and autoRun once deck has a title, a continue-link, or is running the session; an untouched run keeps the flag', () => {
+    const list = [
+      entry('exec', { codexExec: true, title: '# 43차 리뷰 요청' }),
+      entry('grok', { account: 'x1', engine: 'grok', autoRun: true, title: 'headless' }),
+      entry('linked', { codexExec: true, title: 'lane' }),
+      entry('busy', { codexExec: true, title: 'running' }),
+      entry('untouched', { account: 'x1', engine: 'grok', autoRun: true, title: '# Critique request' }),
+    ];
+    const titles = new Map<string, string>([['exec', '내가 붙인 이름']]);
+    const next = new Map<string, string>([['linked', 'next-1']]);
+    const idx = new SessionIndex({
+      roots: rootsOf({ a: '/none/a', b: '/none/b', c: '/none/c' }),
+      pinnedFile: '/none/pins.json',
+      meta: { title: (id) => titles.get(id) ?? null, isArchived: () => false, next: (id) => next.get(id) ?? null },
+      grokImports: { refresh: async () => {}, list: () => list, lookup: (id) => list.find((e) => e.sessionId === id) ?? null, activeAgeMs: async () => null },
+    });
+    idx.setKnown((id) => id === 'busy');
+    const found = (id: string) => idx.projects().flatMap((p) => p.sessions).find((s) => s.sessionId === id);
+    expect(found('exec')).toMatchObject({ title: '내가 붙인 이름' });
+    expect(found('exec')).not.toHaveProperty('codexExec');
+    expect(found('grok')).toMatchObject({ autoRun: true });
+    expect(found('linked')?.codexExec).toBeUndefined();
+    expect(found('linked')?.nextSession).toBe('next-1');
+    expect(found('busy')?.codexExec).toBeUndefined();
+    expect(found('untouched')).toMatchObject({ autoRun: true, title: '# Critique request' });
+  });
+});

@@ -2079,15 +2079,15 @@ button.hl-row-main:hover { background: var(--hover); }
 .sidebar-search-row { display: flex; align-items: center; gap: var(--s1); margin: 0 0 6px; flex-shrink: 0; }
 .sidebar-search-row .sidebar-search { flex: 1; margin: 0; }
 .sidebar-search-row .icon-btn { font-size: calc(11.5px * var(--font-scale, 1)); color: var(--muted); }
-/* 보관됨 N: one quiet row at the end of the list, folded until pressed. */
-.archived-group { margin-top: var(--s3); padding-top: var(--s2); border-top: 1px solid var(--line); }
-.archived-row { display: flex; align-items: center; gap: 6px; width: 100%; height: 32px; padding: 0 var(--s2) 0 var(--s1); border-radius: var(--r-sm); text-align: left; color: var(--muted); font-size: calc(var(--fs-label) * var(--font-scale, 1)); font-weight: 500; }
-.archived-row:hover { background: var(--hover); }
-.archived-row .chev { color: var(--faint); transition: transform var(--t-fast) ease; flex-shrink: 0; }
-.archived-count { margin-left: auto; color: var(--faint); font-size: calc(var(--fs-meta) * var(--font-scale, 1)); font-variant-numeric: tabular-nums; }
+/* 보관됨 N / 자동 실행 N: one quiet row at the end of the list, folded until pressed. */
+.archived-group, .autorun-group { margin-top: var(--s3); padding-top: var(--s2); border-top: 1px solid var(--line); }
+.archived-row, .autorun-row { display: flex; align-items: center; gap: 6px; width: 100%; height: 32px; padding: 0 var(--s2) 0 var(--s1); border-radius: var(--r-sm); text-align: left; color: var(--muted); font-size: calc(var(--fs-label) * var(--font-scale, 1)); font-weight: 500; }
+.archived-row:hover, .autorun-row:hover { background: var(--hover); }
+.archived-row .chev, .autorun-row .chev { color: var(--faint); transition: transform var(--t-fast) ease; flex-shrink: 0; }
+.archived-count, .autorun-count { margin-left: auto; color: var(--faint); font-size: calc(var(--fs-meta) * var(--font-scale, 1)); font-variant-numeric: tabular-nums; }
 @media (max-width: 720px) {
   .sidebar li.session-item { min-height: 64px; }
-  .archived-row { min-height: var(--phone-tap); }
+  .archived-row, .autorun-row { min-height: var(--phone-tap); }
   .sidebar-search-row .icon-btn { min-width: var(--phone-tap); min-height: var(--phone-tap); }
 }
 /* A narrow split column gets the phone's tighter spacing too. */
