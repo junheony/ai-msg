@@ -15,6 +15,7 @@ import { PortInUseError, packageVersion, startServer } from '../server';
 import { probeEngines, type ProbeExec } from '../setup/detect';
 import { TEXTS } from '../setup/texts';
 import { parseCli } from './args';
+import { exportConfig, importConfig } from './configTransfer';
 import { formatDoctor } from './doctor';
 import { serviceAction, type RunResult, type ServiceDeps } from './service/index';
 import { FATAL_EXIT_CODE, FATAL_LAUNCHD_DELAY_SEC } from './service/record';
@@ -112,6 +113,11 @@ export async function runCli(argv: string[], io: CliIo = defaultIo(), deps: { st
       return 0;
     }
     case 'service': return serviceAction(cmd, { ...serviceDeps(io, home), ...deps.service });
+    case 'config': {
+      const configDir = resolveConfigDir(io.env, home);
+      const transfer = { configDir, out: io.out, err: io.err, isLocked: () => readInstanceLock(configDir) !== null, cwd: process.cwd() };
+      return cmd.action === 'export' ? exportConfig(transfer, cmd.out ? { outFile: cmd.out } : {}) : importConfig(transfer, { file: cmd.file, yes: cmd.yes });
+    }
     case 'login-url': {
       const configDir = resolveConfigDir(io.env, home);
       const running = readInstanceLock(configDir);

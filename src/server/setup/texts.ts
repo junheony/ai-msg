@@ -22,6 +22,8 @@ export const TEXTS = {
     '  start [--port N]     서버 시작 (기본 명령)',
     '  login-url            실행 중인 서버의 로그인 주소 출력',
     '  doctor [--json]      설치·로그인 상태 점검',
+    '  config export [--out 파일]   설정 묶음 만들기 (토큰·푸시 키·service.env 는 넣지 않음)',
+    '  config import <파일> [--yes]  그 묶음을 이 호스트의 설정 폴더에 넣기',
     '  service <install|uninstall|status|restart> [--dry-run] [--yes] [--node 경로] [--port N] [--drain-max-min 1~28]',
     '                       상주 서비스 관리',
     '  --version            버전',

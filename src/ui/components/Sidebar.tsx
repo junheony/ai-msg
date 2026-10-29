@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import type { EngineKind } from '../../shared/models';
 import type { SessionActivity } from '../../shared/protocol';
 import type { DesktopSession, ProjectEntry, SessionEntry } from '../../shared/session-types';
@@ -55,6 +55,21 @@ const NO_DESKTOP: DesktopSession[] = [];
 const NO_ICONS: Record<string, string> = {};
 
 const baseName = (cwd: string) => cwd.replace(/\/+$/, '').split('/').pop() || cwd;
+
+/** Arrow keys walk the session rows (the main list). Alt/⌘ stay with pin reorder and the app shortcuts. */
+function onSessionArrows(e: ReactKeyboardEvent<HTMLElement>): void {
+  if (e.altKey || e.metaKey || e.ctrlKey || e.shiftKey || e.nativeEvent.isComposing) return;
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') return;
+  const t = e.target;
+  if (!(t instanceof Element) || t.closest('input, textarea, select, [role="menu"], [role="listbox"]')) return;
+  const rows = [...e.currentTarget.querySelectorAll<HTMLButtonElement>('button.row-open')];
+  const i = rows.findIndex((b) => b === t || b.contains(t));
+  if (i < 0 || rows.length === 0) return;
+  const next = e.key === 'Home' ? 0 : e.key === 'End' ? rows.length - 1 : e.key === 'ArrowDown' ? Math.min(rows.length - 1, i + 1) : Math.max(0, i - 1);
+  if (next === i) return;
+  e.preventDefault();
+  rows[next]!.focus();
+}
 
 export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], sessionIcons = NO_ICONS, onSetSessionIcon, pinShortcut, onTogglePin, onReorderPins, desktop = NO_DESKTOP, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], waiting = [], onOpenSettings, onDelete, onSetCwd, onDuplicate, onNewChat, footMenu, avatar, avatarTitle, onOpenSplit, splitBlocked, openPanes, onOpenPalette }: {
   /** 설정 (avatar menu at the bottom left; ⌘, also opens it — 새 세션 기본 권한 lives there). Used when footMenu is absent. */
@@ -539,7 +554,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     </button>
   );
   return (
-    <aside className="sidebar" {...press}
+    <aside className="sidebar" {...press} onKeyDown={onSessionArrows}
       onPointerDown={(e) => {
         // Which row a long press would reveal (a press elsewhere hides the one shown: the document listener above).
         const li = e.target instanceof Element ? e.target.closest<HTMLElement>('li[data-row]') : null;

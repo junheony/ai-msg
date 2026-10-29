@@ -75,3 +75,20 @@ node 경로가 바뀌면 반드시 다시 install 합니다. 유닛의 `ExecStar
 - `KillMode=mixed`: 첫 SIGTERM 은 서버만 받아 진행 중인 턴을 마무리하고, 남은 프로세스는 종료 뒤 정리됩니다. 중지 대기는 drain 상한 + 2분입니다.
 - `Restart=always`, 단 설정 오류로 즉시 죽는 종료 코드 78 은 재시작하지 않습니다 (같은 오류를 반복하지 않음).
 - `EnvironmentFile` 에 `-` 가 없습니다. `service.env` 가 없으면 시작이 실패로 보입니다.
+
+## 다른 호스트로 옮기기
+
+고정·제목·보관·계정 핀·권한·`memory.md` 는 `~/.config/deck` 에만 있습니다. 대화 원본은 CLI 홈입니다.
+
+```bash
+node dist/server/bin.js config export --out ~/deck-config.json
+```
+
+출력은 파일 이름뿐입니다. `token`, `vapid.json`, `push-subscriptions.json`, `service.env`, `env` 는 넣지 않고 내용도 찍지 않습니다. 새 호스트에서 서버를 멈춘 뒤:
+
+```bash
+node dist/server/bin.js config import ~/deck-config.json          # 같은 이름의 파일이 있으면 이름만 알리고 멈춤
+node dist/server/bin.js config import ~/deck-config.json --yes    # 그 파일을 바꿈
+```
+
+새 호스트의 `token` 은 그대로 둡니다. 처음 실행이 토큰을 만듭니다. 살아 있는지 확인은 `curl -fsS http://127.0.0.1:9320/api/health` 입니다. 본문은 `ok` 와 `version` 뿐입니다.

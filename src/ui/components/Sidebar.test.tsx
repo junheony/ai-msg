@@ -42,6 +42,25 @@ describe('Sidebar pins (F2)', () => {
     { cwd: '/w/two', name: 'two', pinned: false, sessions: [s('s3', '/w/two', 'third')] },
   ];
 
+  it('ArrowUp/ArrowDown/Home/End move between session rows; a search field and Alt+Arrow do not', () => {
+    render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
+    const open = (title: string) => screen.getByText(title).closest('button.row-open') as HTMLButtonElement;
+    open('first').focus();
+    fireEvent.keyDown(open('first'), { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(open('second'));
+    fireEvent.keyDown(open('second'), { key: 'ArrowDown', altKey: true });
+    expect(document.activeElement).toBe(open('second'));
+    fireEvent.keyDown(open('second'), { key: 'End' });
+    expect(document.activeElement).toBe(open('third'));
+    fireEvent.keyDown(open('third'), { key: 'Home' });
+    expect(document.activeElement).toBe(open('first'));
+    openSearch();
+    const input = screen.getByLabelText('세션 검색');
+    input.focus();
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(input);
+  });
+
   it('shows a 고정됨 group at the top in pin order across projects, skipping unknown ids', () => {
     render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} pins={['s3', 'gone', 's1']} onTogglePin={noop} />);
     const group = screen.getByTestId('pinned-group');

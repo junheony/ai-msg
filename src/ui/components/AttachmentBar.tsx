@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type
 import type { UploadedAttachment } from '../state';
 import { usePopoverPlacement } from './usePopoverPlacement';
 import { lineCount } from '../upload';
-import { ImageEditor } from './ImageEditor';
+import { ImageEditor } from '../lazyViews';
 import { attachmentUrl } from './Lightbox';
 
 function kb(n: number): string {
