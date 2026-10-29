@@ -37,6 +37,8 @@ export type AuthLoginDeps = {
   bins: AuthBins;
   spawn: AuthSpawn;
   baseEnv: NodeJS.ProcessEnv;
+  /** The login process ended on its own (not cancel, not the 10-minute close). `code` is the process exit code. */
+  onExit?: (seat: string, code: number | null) => void;
 };
 
 /**
@@ -130,5 +132,6 @@ export class AuthLoginHub {
     this.emit(session, { type: 'exit', code });
     session.listeners.clear();
     if (this.live === session) this.live = null;
+    if (!kill) this.deps.onExit?.(session.seat, code);
   }
 }

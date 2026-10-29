@@ -154,6 +154,14 @@ describe('UsageStrip', () => {
     reveal();
     expect(seg('x1').querySelector('.usage-seg-num')!.textContent).toBe('?');
     cleanup();
+    const onReauth = vi.fn();
+    render(<UsageStrip usage={snap({ grokSeats: { x1: { status: 'down', lastTurnAt: null, lastError: 'auth', cooldownUntil: null, today } } })} current="a" grok={grok} reauth={['x1']} onReauth={onReauth} now={NOW} onToggle={() => {}} />);
+    expect(el().getAttribute('aria-label')).toContain('Grok 로그인 필요');
+    reveal();
+    expect(seg('x1').querySelector('.usage-seg-num')!.textContent).toBe('로그인 필요');
+    fireEvent.click(screen.getByTestId('reauth-x1').querySelector('button')!);
+    expect(onReauth).toHaveBeenCalledWith('x1');
+    cleanup();
     strip(snap({ accounts: { a: acct(97, 10, { status: 'stale' }), b: acct(30, 5, { status: 'stale' }) } }), 'a');
     // 3 % left is the tightest number, so the pill names A before the list opens.
     expect(summary().textContent).toBe('A3%');

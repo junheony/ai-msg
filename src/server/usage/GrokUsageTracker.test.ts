@@ -195,6 +195,44 @@ describe('GrokUsageTracker billing (`_x.ai/billing` readings)', () => {
     expect(t.snapshotOf('x1', DAY1).billing).toEqual(B);
   });
 
+  it('noteAuth with no turn is login-needed, keeps any billing, and survives a reload', () => {
+    const applied: string[] = [];
+    const t = new GrokUsageTracker({ file, now: () => DAY1, usage: { applyGrok: (_a, u) => applied.push(u.status) } });
+    t.noteBilling('x1', B);
+    t.noteAuth('x1');
+    const s = t.snapshotOf('x1', DAY1);
+    expect(s.status).toBe('down');
+    expect(s.lastError).toBe('auth');
+    expect(s.lastTurnAt).toBeNull();
+    expect(s.today.turns).toBe(0);
+    expect(s.billing).toEqual(B);
+    expect(applied).toEqual(['unknown', 'down']);
+    expect(new GrokUsageTracker({ file, now: () => DAY1 }).snapshotOf('x1', DAY1).status).toBe('down');
+  });
+
+  it('noteBilling after noteAuth clears login-needed and keeps the reading', () => {
+    const t = new GrokUsageTracker({ file, now: () => DAY1 });
+    t.noteAuth('x1');
+    t.noteBilling('x1', B);
+    const s = t.snapshotOf('x1', DAY1);
+    expect(s.status).toBe('unknown');
+    expect(s.lastError).toBeNull();
+    expect(s.billing).toEqual(B);
+    expect(s.lastTurnAt).toBeNull();
+  });
+
+  it('noteBilling clears down left by a turn auth error and keeps a later limit cooldown', () => {
+    const t = new GrokUsageTracker({ file, now: () => DAY1 });
+    t.noteTurn('x1', { ok: false, errorKind: 'authentication_failed', usage: { inputTokens: 0, outputTokens: 0 }, cooldownUntilMs: null });
+    t.noteTurn('x1', { ok: false, errorKind: 'rate_limit', usage: { inputTokens: 0, outputTokens: 0 }, cooldownUntilMs: DAY1 + 60_000 });
+    expect(t.snapshotOf('x1', DAY1).status).toBe('down');
+    t.noteBilling('x1', B);
+    const s = t.snapshotOf('x1', DAY1);
+    expect(s.status).toBe('cooldown');
+    expect(s.lastError).toBe('limit');
+    expect(s.billing).toEqual(B);
+  });
+
   it('noteBilling (the idle poller) stores a reading with no turn: today stays 0, applyGrok is called', () => {
     const applied: string[] = [];
     const t = new GrokUsageTracker({ file, now: () => DAY1, usage: { applyGrok: (a) => applied.push(a) } });

@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { GrokBilling } from '../../shared/usage-types';
 import type { GrokBillingProbe } from '../engine/grokBilling';
@@ -10,12 +13,13 @@ const billing = (fetchedMs: number, endMs = T0 + 7 * 86_400_000): GrokBilling =>
   usedPct: 1, windowStart: iso(endMs - 7 * 86_400_000), windowEnd: iso(endMs), tier: 'SuperGrok Heavy', fetchedAt: iso(fetchedMs),
 });
 
-function setup(answers: Array<GrokBillingProbe | (() => GrokBillingProbe)>, o: { busy?: () => boolean; stored?: GrokBilling | null } = {}) {
+function setup(answers: Array<GrokBillingProbe | (() => GrokBillingProbe)>, o: { busy?: () => boolean; stored?: GrokBilling | null; authMtime?: () => number | null; authFile?: string } = {}) {
   let now = T0;
   let stored: GrokBilling | null = o.stored ?? null;
   const probes: number[] = [];
   const logs: string[] = [];
   const notes: GrokBilling[] = [];
+  const auths: string[] = [];
   const poller = new GrokBillingPoller({
     probe: async (_signal: AbortSignal) => {
       probes.push(now);
@@ -24,14 +28,17 @@ function setup(answers: Array<GrokBillingProbe | (() => GrokBillingProbe)>, o: {
     },
     tracker: {
       noteBilling: (account, b) => { expect(account).toBe('x1'); stored = b; notes.push(b); },
+      noteAuth: (account) => { expect(account).toBe('x1'); auths.push(account); },
       billingOf: () => stored,
     },
     busy: o.busy ?? (() => false),
+    ...(o.authMtime ? { authMtime: o.authMtime } : {}),
+    ...(o.authFile ? { authFile: o.authFile } : {}),
     now: () => now,
     log: (l) => logs.push(l),
   });
   return {
-    poller, probes, logs, notes,
+    poller, probes, logs, notes, auths,
     at: (ms: number) => { now = ms; },
     setStored: (b: GrokBilling | null) => { stored = b; },
   };
@@ -85,7 +92,7 @@ describe('GrokBillingPoller', () => {
     expect(s.probes).toHaveLength(1);
   });
 
-  it.each(['no_bin', 'auth', 'unsupported'] as const)('%s stops it quietly with one log line', async (kind) => {
+  it.each(['no_bin', 'unsupported'] as const)('%s stops it quietly with one log line', async (kind) => {
     const s = setup([{ kind, message: 'why' }]);
     await s.poller.tick();
     expect(s.poller.running).toBe(false);
@@ -94,6 +101,82 @@ describe('GrokBillingPoller', () => {
     await s.poller.tick();
     expect(s.probes).toHaveLength(1);
     expect(s.notes).toHaveLength(0);
+    expect(s.auths).toHaveLength(0);
+    s.poller.nudge();
+    await s.poller.tick();
+    expect(s.probes).toHaveLength(1);
+    expect(s.poller.running).toBe(false);
+  });
+
+  it('auth records login-needed and backs off instead of stopping; the same line is logged once', async () => {
+    const s = setup([{ kind: 'auth', message: 'Grok 로그인 필요' }]);
+    await s.poller.tick();
+    expect(s.poller.running).toBe(true);
+    expect(s.auths).toEqual(['x1']);
+    expect(s.notes).toHaveLength(0);
+    expect(s.logs).toEqual(['deck: Grok 구독 사용량 조회 실패 — Grok 로그인 필요']);
+    s.at(T0 + GROK_BILLING_INTERVAL_MS);
+    await s.poller.tick();
+    expect(s.probes).toHaveLength(1);
+    s.at(T0 + GROK_BILLING_BACKOFF_MS);
+    await s.poller.tick();
+    expect(s.probes).toHaveLength(2);
+    expect(s.auths).toEqual(['x1', 'x1']);
+    expect(s.logs).toHaveLength(1);
+  });
+
+  it('nudge reads again during the auth backoff, and a later ok stores billing', async () => {
+    const s = setup([
+      { kind: 'auth', message: 'Grok 로그인 필요' },
+      () => ({ kind: 'ok', billing: billing(T0 + 5 * MIN) }),
+    ]);
+    await s.poller.tick();
+    s.at(T0 + 5 * MIN);
+    s.poller.nudge();
+    await s.poller.tick();
+    expect(s.probes).toEqual([T0, T0 + 5 * MIN]);
+    expect(s.notes).toHaveLength(1);
+    expect(s.poller.running).toBe(true);
+  });
+
+  it('a newer auth-file mtime reads again during the auth backoff; the file contents are never logged', async () => {
+    let mtime: number | null = null;
+    const s = setup([
+      { kind: 'auth', message: 'Grok 로그인 필요' },
+      () => ({ kind: 'ok', billing: billing(T0 + 2 * MIN) }),
+    ], { authMtime: () => mtime });
+    await s.poller.tick();
+    s.at(T0 + 2 * MIN);
+    await s.poller.tick();
+    expect(s.probes).toHaveLength(1);
+    mtime = T0 + 2 * MIN;
+    await s.poller.tick();
+    expect(s.probes).toEqual([T0, T0 + 2 * MIN]);
+    expect(s.notes).toHaveLength(1);
+  });
+
+  it('auth.json is stated by mtime only', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-auth-mtime-'));
+    const file = path.join(dir, 'auth.json');
+    const secret = 'super-secret-token-value';
+    try {
+      fs.writeFileSync(file, secret);
+      const past = (T0 - 60_000) / 1000;
+      fs.utimesSync(file, past, past);
+      const s = setup([{ kind: 'auth', message: 'Grok 로그인 필요' }], { authFile: file });
+      await s.poller.tick();
+      expect(s.probes).toEqual([T0]);
+      expect(s.logs.join('')).not.toContain(secret);
+      s.at(T0 + 2 * MIN);
+      await s.poller.tick();
+      expect(s.probes).toHaveLength(1);
+      fs.writeFileSync(file, `${secret}-2`);
+      await s.poller.tick();
+      expect(s.probes).toEqual([T0, T0 + 2 * MIN]);
+      expect(s.logs.join('')).not.toContain(secret);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('other failures keep it going with backoff (1h, 2h, 4h), the same message logged once; a throwing probe counts as one', async () => {

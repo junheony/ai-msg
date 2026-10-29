@@ -408,6 +408,17 @@ describe('usage seats · Grok (cooldown expiry, midnight, subscription)', () => 
     expect(screen.getByTestId('x1-main').textContent).toBe('아직 사용 없음');
     expect(screen.getByTestId('account-x1').querySelector('.usage-bar')).toBeNull();
   });
+
+  it('logged out (status down) says 로그인 필요, including over an older subscription reading', () => {
+    const { unmount } = sheet(grokUsage({ status: 'down', lastTurnAt: null, lastError: 'auth', today: { inputTokens: 0, outputTokens: 0, turns: 0, day: today } }), null, bin);
+    expect(screen.getByTestId('x1-main').textContent).toBe('로그인 필요');
+    expect(screen.getByTestId('x1-status').textContent).toBe('로그인 필요');
+    expect(screen.queryByText('아직 사용 없음')).toBeNull();
+    unmount();
+    sheet(grokUsage({ status: 'down', lastError: 'auth', billing: billing(40) }), null, bin);
+    expect(screen.getByTestId('x1-main').textContent).toBe('로그인 필요');
+    expect(screen.getByTestId('x1-status').textContent).toBe('로그인 필요');
+  });
 });
 
 describe('styles.css', () => {

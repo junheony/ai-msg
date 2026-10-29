@@ -86,6 +86,30 @@ describe('AuthLoginHub', () => {
     expect(h.start('a').ok).toBe(false);
   });
 
+  it('a login that exits on its own notifies onExit; cancel and the timeout do not', () => {
+    const exits: Array<[string, number | null]> = [];
+    let pty: FakePty | null = null;
+    const h = new AuthLoginHub({
+      accounts, home: '/h', bins: { claude: null, codex: null, grok: '/h/.grok/bin/grok', gemini: null },
+      baseEnv: { PATH: '/bin', HOME: '/h' },
+      spawn: () => { pty = new FakePty(); return pty; },
+      onExit: (seat, code) => exits.push([seat, code]),
+    });
+    const started = h.start('x1');
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    pty!.done(0);
+    expect(exits).toEqual([['x1', 0]]);
+    const failed = h.start('x1');
+    if (!failed.ok) throw new Error('start');
+    pty!.done(1);
+    expect(exits).toEqual([['x1', 0], ['x1', 1]]);
+    const cancelled = h.start('x1');
+    if (!cancelled.ok) throw new Error('start');
+    expect(h.cancel(cancelled.id)).toBe(true);
+    expect(exits).toEqual([['x1', 0], ['x1', 1]]);
+  });
+
   it('the window closes itself after 10 minutes', () => {
     vi.useFakeTimers();
     const { h, pty } = hub();

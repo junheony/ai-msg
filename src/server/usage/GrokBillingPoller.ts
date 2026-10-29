@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import type { GrokAccount } from '../../shared/accounts';
 import { parseIsoUtc, type GrokBilling } from '../../shared/usage-types';
 import type { GrokBillingProbe } from '../engine/grokBilling';
@@ -10,16 +11,26 @@ export const GROK_BILLING_TICK_MS = 60_000;
 export const GROK_BILLING_BACKOFF_MS = 60 * 60_000;
 export const GROK_BILLING_BACKOFF_MAX_MS = 6 * 60 * 60_000;
 
-const STOP_KINDS = new Set<GrokBillingProbe['kind']>(['no_bin', 'auth', 'unsupported']);
+/** A missing binary or a grok build without `_x.ai/billing` will not start working until this process restarts. */
+const STOP_KINDS = new Set<GrokBillingProbe['kind']>(['no_bin', 'unsupported']);
+
+export type GrokBillingTracker = {
+  noteBilling(account: GrokAccount, b: GrokBilling): void;
+  billingOf(account: GrokAccount): GrokBilling | null;
+  /** The probe found Grok logged out. Optional so a tracker that only stores readings still type-checks. */
+  noteAuth?(account: GrokAccount): void;
+};
 
 /**
  * Keeps the Grok card's subscription usage fresh while deck runs no Grok turn: one read right after start, then
  * whenever the last read (a turn's or its own) is GROK_BILLING_INTERVAL_MS old, or the billing period's end has passed
- * since it. Skipped while a Grok turn holds or waits for the Grok lock (`busy`). No binary, no login, or a grok
- * without `_x.ai/billing` stops it for this server process (one log line). Other failures back off (review item 2):
- * the first retry is an hour later, doubling up to GROK_BILLING_BACKOFF_MAX_MS; a fresh reading from any source (this
- * poller's own read, or a turn's end-of-turn read landing in the tracker) resets the streak and the normal 15-minute
- * cadence.
+ * since it. Skipped while a Grok turn holds or waits for the Grok lock (`busy`). No binary, or a grok without
+ * `_x.ai/billing`, stops it for this server process (one log line). A missing login does not: it marks the seat
+ * logged out and backs off like any other failure (review item 2) — the first retry is an hour later, doubling up to
+ * GROK_BILLING_BACKOFF_MAX_MS — so a device login can be picked up without a restart. `nudge()` (the login window
+ * exited 0) or a newer `~/.grok/auth.json` mtime reads again on the next tick. The auth file's contents are never
+ * read. A fresh reading from any source (this poller's own read, or a turn's end-of-turn read landing in the tracker)
+ * resets the streak and the normal 15-minute cadence.
  */
 export class GrokBillingPoller {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -29,6 +40,12 @@ export class GrokBillingPoller {
   private lastAttemptMs = Number.NEGATIVE_INFINITY;
   private lastLogged = '';
   private consecutiveFailures = 0;
+  /** Set by `nudge()` or a newer auth file so the next read ignores backoff. Cleared when a read actually starts. */
+  private forceDue = false;
+  /** mtime last observed for the auth file; null until one is seen. Contents are never read. */
+  private seenAuthMtime: number | null = null;
+  /** True once a tick looked and the auth file was absent, so a file that appears later counts as a login. */
+  private sawAuthMissing = false;
   /** The newest `fetchedAt` this poller has seen from the tracker (its own reads, or a turn's). */
   private lastKnownFetchedMs = Number.NEGATIVE_INFINITY;
   private readonly account: GrokAccount;
@@ -39,9 +56,13 @@ export class GrokBillingPoller {
 
   constructor(private readonly opts: {
     probe: (signal: AbortSignal) => Promise<GrokBillingProbe>;
-    tracker: { noteBilling(account: GrokAccount, b: GrokBilling): void; billingOf(account: GrokAccount): GrokBilling | null };
+    tracker: GrokBillingTracker;
     /** True while a Grok turn runs (or waits to): the poll is skipped, a later tick tries again. */
     busy: () => boolean;
+    /** `~/.grok/auth.json`. Only its mtime is stated, so a login outside this process is noticed. */
+    authFile?: string;
+    /** Test double for `authFile`'s mtime (ms), or null when the file is absent. */
+    authMtime?: () => number | null;
     account?: GrokAccount;
     now?: () => number;
     intervalMs?: number;
@@ -75,6 +96,42 @@ export class GrokBillingPoller {
     return !this.stopped;
   }
 
+  /**
+   * Read on the next tick even if backoff has not elapsed. A poller stopped for good (no binary, no billing method,
+   * or shutdown) stays stopped. Safe to call when a Grok turn is busy: the flag is kept until a tick can run.
+   */
+  nudge(): void {
+    if (this.stopped) return;
+    this.forceDue = true;
+    void this.tick();
+  }
+
+  /** Auth-file mtime in ms, or null when there is no file. Never reads the file. */
+  private authMtimeMs(): number | null {
+    if (this.opts.authMtime) return this.opts.authMtime();
+    const file = this.opts.authFile;
+    if (!file) return null;
+    try {
+      return fs.statSync(file).mtimeMs;
+    } catch {
+      return null;
+    }
+  }
+
+  /** True when the auth file appeared or was rewritten after the last probe. */
+  private authRewritten(): boolean {
+    const mtime = this.authMtimeMs();
+    if (mtime === null) {
+      this.sawAuthMissing = true;
+      return false;
+    }
+    const prev = this.seenAuthMtime;
+    const appeared = prev === null && this.sawAuthMissing;
+    this.seenAuthMtime = mtime;
+    if (!(mtime > this.lastAttemptMs)) return false;
+    return appeared || (prev !== null && mtime > prev);
+  }
+
   /** The current retry delay after `consecutiveFailures` failures in a row; 0 while there is no streak. */
   private backoffMs(): number {
     if (this.consecutiveFailures <= 0) return 0;
@@ -90,6 +147,8 @@ export class GrokBillingPoller {
       this.lastKnownFetchedMs = fetched;
       this.consecutiveFailures = 0;
     }
+    if (this.authRewritten()) this.forceDue = true;
+    if (this.forceDue) return true;
     const last = Math.max(this.lastAttemptMs, Number.isNaN(fetched) ? Number.NEGATIVE_INFINITY : fetched);
     const interval = this.consecutiveFailures > 0 ? this.backoffMs() : this.intervalMs;
     if (nowMs - last >= interval) return true;
@@ -104,6 +163,7 @@ export class GrokBillingPoller {
     if (this.inFlight) return this.inFlight;
     const nowMs = this.now();
     if (!this.due(nowMs) || this.opts.busy()) return Promise.resolve();
+    this.forceDue = false;
     this.lastAttemptMs = nowMs;
     const ctl = new AbortController();
     this.abortCtl = ctl;
@@ -131,6 +191,8 @@ export class GrokBillingPoller {
       this.log(`deck: Grok 구독 사용량 조회를 멈춤 — ${r.message}`);
       return;
     }
+    // Logged out is retryable: the card learns it, and a later login (nudge, or a newer auth file) reads again.
+    if (r.kind === 'auth') this.opts.tracker.noteAuth?.(this.account);
     this.consecutiveFailures += 1;
     // The same failure in a row is said once.
     const line = `deck: Grok 구독 사용량 조회 실패 — ${r.message}`;
