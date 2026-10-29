@@ -14,7 +14,9 @@ import { isMacPlatform, isPinMod, isSafariBrowser, pinKeyLabel } from '../shortc
 import { hasOpenModal } from '../autoReload';
 import { useLongPress } from './FileMenu';
 import { DeckMark } from './DeckMark';
-import { SessionGlyph, assignSessionIcons, sessionIconBase, type IconRow } from './SessionIcon';
+import { AvatarFace, assignMonograms, avatarIndex, monogram, publishSessionAvatars, type MonoRow, type SessionAvatar } from './SessionIcon';
+import { SessionIconButton } from './SessionIconPicker';
+import { isAutomatedSession } from '../sessionFilters';
 
 /** 대화 내용 검색 starts at this many characters (the server's minimum), after a short pause in typing. */
 export const SEARCH_MIN_CHARS = 2;
@@ -22,16 +24,14 @@ const SEARCH_DEBOUNCE_MS = 300;
 /** 최근 view: newest sessions across all projects, split by day. Automated runs do not take these slots. */
 const MAX_RECENT = 150;
 /** Codex `exec` and Grok headless runs: folded under 자동 실행 unless the owner pinned them (a deck title or continue-link already dropped the flag). */
-export function isAutomatedSession(s: { codexExec?: boolean; autoRun?: boolean }): boolean {
-  return s.codexExec === true || s.autoRun === true;
-}
+export { isAutomatedSession } from '../sessionFilters';
 /** How often the rows' "N분 전" (their tooltip, the 갈래 menu line, search hits) is recomputed. */
 export const META_TICK_MS = 60_000;
 
 /** Touch: holding a row this long shows its ⋯ button (design §7.2: 350ms). */
 export const ROW_PRESS_MS = 350;
 /** Project avatar palette size (`--avatar-1` … `--avatar-8` in styles.css). */
-export const AVATAR_COLORS = 8;
+export { AVATAR_COLORS, avatarIndex } from './SessionIcon';
 /** The head's + menu: 지금 프로젝트 plus this many other recently used folders. */
 export const RECENT_FOLDERS = 3;
 /** Injected by vite.config.ts (package.json version); absent under vitest. */
@@ -49,19 +49,14 @@ function ago(ms: number, now = Date.now()): string {
   return `${Math.floor(d / 86_400_000)}일 전`;
 }
 
-/** A project's avatar colour, 1 … AVATAR_COLORS: an FNV-1a hash of its slug, so a project keeps its colour everywhere. */
-export function avatarIndex(slug: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < slug.length; i++) { h ^= slug.charCodeAt(i); h = Math.imul(h, 0x01000193); }
-  return ((h >>> 0) % AVATAR_COLORS) + 1;
-}
-
 /** A stable default: a fresh [] per render would read as a new list (and hide a revealed row) every time. */
 const NO_DESKTOP: DesktopSession[] = [];
+/** A fresh {} per render would republish the session-head avatars every time. */
+const NO_ICONS: Record<string, string> = {};
 
 const baseName = (cwd: string) => cwd.replace(/\/+$/, '').split('/').pop() || cwd;
 
-export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], pinShortcut, onTogglePin, onReorderPins, desktop = NO_DESKTOP, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], waiting = [], onOpenSettings, onDelete, onSetCwd, onDuplicate, onNewChat, footMenu, avatar, avatarTitle, onOpenSplit, splitBlocked, openPanes, onOpenPalette }: {
+export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, onOpenFolder, fetchFn, pins = [], sessionIcons = NO_ICONS, onSetSessionIcon, pinShortcut, onTogglePin, onReorderPins, desktop = NO_DESKTOP, onRename, onArchive, onOpenHit, searchFn, activity = [], unread = [], waiting = [], onOpenSettings, onDelete, onSetCwd, onDuplicate, onNewChat, footMenu, avatar, avatarTitle, onOpenSplit, splitBlocked, openPanes, onOpenPalette }: {
   /** 설정 (avatar menu at the bottom left; ⌘, also opens it — 새 세션 기본 권한 lives there). Used when footMenu is absent. */
   onOpenSettings?: () => void;
   /** The avatar menu's items (설정 / 사용량 / 테마 / 단축키…); absent = just 설정. */
@@ -79,6 +74,10 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   fetchFn?: typeof fetch;
   /** F2: pinned session ids in display order (top first), shown as 고정됨 above the projects. */
   pins?: string[];
+  /** 직접 고른 세션 아이콘 (session id → emoji or `glyph:<name>`): the avatar shows it instead of the title's first letter. */
+  sessionIcons?: Record<string, string>;
+  /** Tapping an avatar opens its icon picker; the choice lands here (null = back to the first letter). Absent = no picker. */
+  onSetSessionIcon?: (sessionId: string, icon: string | null) => void;
   /**
    * ⌘1 … ⌘9: the sidebar puts its opener here — (index) opens the nth 고정됨 row as shown (same list, same onOpen as a
    * click) and says whether there was one. With it, those rows show their number while ⌘/Ctrl is held.
@@ -281,14 +280,22 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     if (open) return <span className="row-status open open-mark" role="img" aria-label={open.label} title={open.label}>{open.at === 'float' ? '◱' : open.at}</span>;
     return null;
   };
+  // Filled in after the lists below are built. A closure here must not close over a later `const` (TS: used before declaration).
+  let monos = new Map<string, string>();
+  let iconKey = (id: string): string => id;
   /**
-   * The row's avatar (§3.2): project colour + the session's glyph (SessionIcon: one per session, so a project's rows tell
-   * apart). Nothing on its edge — status, engine and open marks live at the row's end and on the second line.
+   * The row's avatar (§3.2): project colour + the title's first letter (two when another listed row of the project would
+   * show the same one: assignMonograms), or the icon the user chose. Nothing on its edge — status, engine and open marks
+   * live at the row's end and on the second line.
    */
-  const avatarOf = (slug: string, sessionId: string) => (
-    <span className="row-avatar" data-avatar={avatarIndex(slug)} style={{ '--av': `var(--avatar-${avatarIndex(slug)})` } as CSSProperties}>
-      <SessionGlyph index={icons.get(sessionId) ?? sessionIconBase(sessionId)} />
+  const avatarOf = (slug: string, sessionId: string, title: string) => (
+    <span className="row-avatar" data-avatar={avatarIndex(slug)} style={{ '--av': `var(--avatar-${avatarIndex(slug)})` } as CSSProperties} aria-hidden="true">
+      <AvatarFace mono={monos.get(sessionId) ?? monogram(title, slug)} icon={sessionIcons[iconKey(sessionId)] ?? null} title={title} />
     </span>
+  );
+  /** 직접 고르기: a button over the avatar (beside the row's open button, so a tap there never opens the session). */
+  const avatarPick = (sessionId: string) => onSetSessionIcon && (
+    <SessionIconButton className="row-avatar-pick" current={sessionIcons[iconKey(sessionId)] ?? null} onPick={(icon) => onSetSessionIcon(iconKey(sessionId), icon)} />
   );
   /**
    * Line 2: the last reply's preview when there is one, else the project folder. Only a non-Claude engine gets a mark (a
@@ -334,7 +341,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     // A 갈래 row shows its newest version (`target`): title and preview both come from it.
     const preview = oneLine(target.preview);
     const meta = metaLine({ engine, tag: rowTag(s), text: preview || slug, ...(s.imported ? { title: importTitle(s) } : {}) });
-    const avatarEl = avatarOf(slug, s.sessionId);
+    const avatarEl = avatarOf(slug, s.sessionId, target.title);
     // The row's tooltip keeps what the row stopped showing: folder, engine, run kind, 갈래, the time.
     const facts = [slug, engine !== 'claude' ? ENGINE_NAME[engine] ?? engine : null, s.codexExec || s.autoRun ? '자동 실행' : null, ...grokBotTags(s).filter((t) => !t.startsWith('안 읽음')), s.codexArchived ? 'Codex 보관' : null, s.cwdMissing ? '폴더 없음' : null, members.length > 1 ? `갈래 ${members.length}` : null, ago(target.lastModified, now)];
     // Screen readers get the same facts in the button (the li title is mouse-only), less what the row already says:
@@ -375,6 +382,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
             </>
           ),
         })}
+        {!edit && avatarPick(s.sessionId)}
         {/* ⋯: shown on hover or keyboard focus (a mouse), after a long press (touch), or while the menu is open */}
         {more && moreButton(key, group, '이름 바꾸기 · 보관 · 삭제')}
         {keyHint && !edit && <kbd className="pin-key" aria-hidden="true">{keyHint}</kbd>}
@@ -411,7 +419,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
           onOpen: () => open(d.sessionId, d.cwd, d.title),
           children: (
             <>
-              {avatarOf(d.project, d.sessionId)}
+              {avatarOf(d.project, d.sessionId, d.title)}
               <span className="row-text">
                 <span className="session-title">{d.title}</span>
                 {metaLine({ engine: 'claude', text: d.project })}
@@ -421,6 +429,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
             </>
           ),
         })}
+        {avatarPick(d.sessionId)}
         {more && moreButton(key, onTogglePin ? group : '', [onOpenSplit && '분할 보기로 열기', onTogglePin && '고정'].filter(Boolean).join(' · '))}
         {keyHint && <kbd className="pin-key" aria-hidden="true">{keyHint}</kbd>}
         {menu === key && more && (
@@ -442,7 +451,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
   // deck sessions and Desktop-only sessions in one date-split list, minus what 고정됨 already shows.
   type RecentItem = { kind: 'session'; g: BranchGroup<SessionEntry>; lastModified: number } | { kind: 'desktop'; d: DesktopSession; lastModified: number };
   const itemMatch = (t: RecentItem) => (t.kind === 'session' ? match(t.g.entry) : dMatch(t.d));
-  // Before the 세션 검색 filter: the session glyphs step past neighbours here, so a search never changes a row's glyph.
+  // Before the 세션 검색 filter: avatar letters are assigned over this whole list, so a search never changes a row's letters.
   // A Desktop session whose folder deck already lists shows there; the Desktop rows only carry the rest.
   const recentAll: RecentItem[] = [
     ...groupBranches([...byId.values()].filter((s) => inView(s) && !isAutomatedSession(s)), links).filter((g) => !pinSet.has(g.entry.sessionId)).map((g): RecentItem => ({ kind: 'session', g, lastModified: g.entry.lastModified })),
@@ -480,18 +489,38 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     return { count: groups.length + ds.length, list: listAll.filter(itemMatch), all: listAll };
     // match / dMatch read only `q`.
   }, [projects, desktop, q, archivedOpen, !!onArchive]); // eslint-disable-line react-hooks/exhaustive-deps
-  // Session glyphs: the pins as a whole, then the rows below in the order shown — both before the search filter.
-  const iconRow = (id: string, cwd: string): IconRow => ({ id, project: projectName.get(id) ?? baseName(cwd) });
-  const listRow = (t: RecentItem): IconRow => (t.kind === 'session' ? iconRow(t.g.entry.sessionId, t.g.entry.cwd) : { id: t.d.sessionId, project: t.d.project });
-  const icons = assignSessionIcons(
-    pins.flatMap((id): IconRow[] => {
-      const s = byId.get(id);
-      if (s) return inView(s) ? [iconRow(id, s.cwd)] : [];
-      const d = desktopById.get(id);
-      return d && inView(d) ? [{ id, project: d.project }] : [];
-    }),
-    [...recentAll.slice(0, MAX_RECENT), ...auto.all, ...archived.all].map(listRow),
-  );
+  // A 갈래 tree's chosen icon is stored under its entry (the root): every row and head of the tree reads and sets that one.
+  const treeOf = new Map<string, BranchGroup<SessionEntry>>();
+  for (const g of groupBranches([...byId.values()], links)) for (const m of g.members) treeOf.set(m, g);
+  iconKey = (id: string) => treeOf.get(id)?.entry.sessionId ?? id;
+  // Avatar letters over the pins and the rows below together (order never matters), before the search filter. Automated
+  // and archived rows are included so the 자동 실행 section and those heads share the same letters. A 갈래 row carries
+  // its members, so the head of any version shows (and changes) the row's avatar. A pin uses that session's own title.
+  type AvatarRow = MonoRow & { members?: string[] };
+  const monoRow = (id: string, s: SessionEntry): AvatarRow => ({ id, project: projectName.get(id) ?? baseName(s.cwd), title: s.title });
+  const listRow = (t: RecentItem): AvatarRow => (t.kind === 'session'
+    ? { ...monoRow(t.g.entry.sessionId, byId.get(t.g.openId) ?? t.g.entry), members: t.g.members }
+    : { id: t.d.sessionId, project: t.d.project, title: t.d.title });
+  const pinRows = pins.flatMap((id): AvatarRow[] => {
+    const s = byId.get(id);
+    if (s) return inView(s) ? [monoRow(id, s)] : [];
+    const d = desktopById.get(id);
+    return d && inView(d) ? [{ id, project: d.project, title: d.title }] : [];
+  });
+  const restRows = [...recentAll.slice(0, MAX_RECENT), ...auto.all, ...archived.all].map(listRow);
+  monos = assignMonograms(pinRows, restRows);
+  // The session head shows the same avatar as the row. publishSessionAvatars no-ops when nothing changed.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- republish each render; the publisher no-ops when nothing changed
+  useEffect(() => {
+    const next = new Map<string, SessionAvatar>();
+    for (const r of [...pinRows, ...restRows]) {
+      const key = iconKey(r.id);
+      const a: SessionAvatar = { color: avatarIndex(r.project), mono: monos.get(r.id) ?? monogram(r.title, r.project), icon: sessionIcons[key] ?? null, iconId: key };
+      if (!next.has(r.id)) next.set(r.id, a);
+      for (const m of r.members ?? treeOf.get(r.id)?.members ?? []) if (!next.has(m)) next.set(m, a);
+    }
+    publishSessionAvatars(next, sessionIcons, onSetSessionIcon ?? null);
+  });
   // A full-text hit in an archived session shows once 보관됨 is open (as its row does).
   const hitsShown = (found && found.q === fullQ ? found.hits : []).filter((h) => { const s = byId.get(h.sessionId); return !s || !s.archived || archivedOpen; });
   const searching = fullOn && found?.q !== fullQ;

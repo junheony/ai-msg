@@ -13,6 +13,8 @@ import { FileReadError, type FileLister } from './files';
 import type { PushNotifier } from './push/PushNotifier';
 import { isPushEndpoint, parseSubscription, type SubscriptionStore } from './push/SubscriptionStore';
 import { MAX_PINS, isPinnableId, type PinStore } from './sessions/PinStore';
+import { SessionIconsFullError, type SessionIconStore } from './sessions/SessionIconStore';
+import { isSessionIconChoice } from '../shared/sessionIcons';
 import { MemoryTooLarge, type MemoryStore } from './memory/MemoryStore';
 import { MEMORY_MAX_BYTES } from '../shared/memory';
 import { isTrashId } from './sessions/SessionTrash';
@@ -42,6 +44,8 @@ export type HttpDeps = {
   onIndexChanged?: () => void;
   /** F2: pinned sessions; absent = no /api/pins. */
   pins?: PinStore;
+  /** 직접 고른 세션 아이콘; absent = no /api/session-icon. */
+  sessionIcons?: SessionIconStore;
   /** deck 메모 (Settings → 일반); absent = no /api/memory. */
   memory?: MemoryStore;
   /** Session rename / 보관 (session-meta.json); absent = no /api/session-meta. */
@@ -477,7 +481,7 @@ export function createRequestHandler(deps: HttpDeps) {
           const handled = await handleAuthLogin(req, res, url, authLogin, readBody, json);
           if (handled) return;
         }
-        if (url.pathname === '/api/bootstrap') { json(res, 200, { usage: deps.usage.snapshot(), projects: deps.index.projects(deps.extraSessions?.() ?? []), pins: deps.pins?.list() ?? [], desktop: deps.index.desktop() }); return; }
+        if (url.pathname === '/api/bootstrap') { json(res, 200, { usage: deps.usage.snapshot(), projects: deps.index.projects(deps.extraSessions?.() ?? []), pins: deps.pins?.list() ?? [], sessionIcons: deps.sessionIcons?.list() ?? {}, desktop: deps.index.desktop() }); return; }
         if (url.pathname === '/api/memory' && (req.method === 'GET' || req.method === 'PUT')) {
           if (!deps.memory) { json(res, 404, { error: 'not found' }); return; }
           if (req.method === 'GET') { json(res, 200, { text: deps.memory.get(), max: MEMORY_MAX_BYTES }); return; }
@@ -501,6 +505,23 @@ export function createRequestHandler(deps: HttpDeps) {
           const pins = await deps.pins.set(body.sessionId, body.pinned);
           deps.onIndexChanged?.();
           json(res, 200, { pins });
+          return;
+        }
+        if (url.pathname === '/api/session-icon' && req.method === 'POST') {
+          if (!deps.sessionIcons) { json(res, 404, { error: 'not found' }); return; }
+          let body: { sessionId?: unknown; icon?: unknown } = {};
+          try { body = JSON.parse(await readBody(req)) as typeof body; } catch { /* invalid below */ }
+          if (!body || !isPinnableId(body.sessionId) || !(body.icon === null || isSessionIconChoice(body.icon))) { json(res, 400, { error: '잘못된 세션 아이콘 요청입니다' }); return; }
+          const before = deps.sessionIcons.list();
+          let icons: Record<string, string>;
+          try {
+            icons = await deps.sessionIcons.set(body.sessionId, body.icon);
+          } catch (err) {
+            if (err instanceof SessionIconsFullError) { json(res, 409, { error: `세션 아이콘은 ${err.max}개까지 저장됩니다 — 다른 세션의 아이콘을 먼저 기본으로 되돌려 주세요` }); return; }
+            throw err;
+          }
+          if (icons !== before) deps.onIndexChanged?.();
+          json(res, 200, { sessionIcons: icons });
           return;
         }
         if (url.pathname === '/api/pins/order' && req.method === 'POST') {
@@ -556,6 +577,8 @@ export function createRequestHandler(deps: HttpDeps) {
           if (!body || (restore ? !isTrashId(body.trashId) : !isPinnableId(body.sessionId))) { json(res, 400, { error: '잘못된 삭제 요청입니다' }); return; }
           const r = restore ? await deps.trash.restoreSession(body.trashId as string) : await deps.trash.trashSession(body.sessionId as string);
           if (!r.ok) { json(res, 409, { error: r.error }); return; }
+          // A trashed session's chosen icon goes with it (a restore comes back with the title emoji or first letter).
+          if (!restore) await deps.sessionIcons?.set(body.sessionId as string, null).catch(() => {});
           await deps.index.refresh();
           deps.onIndexChanged?.();
           json(res, 200, r);

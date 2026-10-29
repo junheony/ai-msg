@@ -39,6 +39,24 @@ describe('NewChat', () => {
     expect(onOpenSession).toHaveBeenCalledWith('s5', '/w', 't-s5');
   });
 
+  it('최근 대화 leaves out Codex exec and Grok autoRun; a pinned automated session stays in 고정됨', () => {
+    const sessions = [
+      sess('live', 50),
+      sess('exec', 90, { codexExec: true }),
+      sess('auto', 80, { autoRun: true }),
+      sess('pin', 70, { codexExec: true, title: '🚀 고정' }),
+      sess('glyph', 40, { title: 'leaf chat' }),
+    ];
+    render(<NewChat projects={[{ cwd: '/w', name: 'w', pinned: true, sessions }] as unknown as ProjectEntry[]} pins={['pin']} sessionIcons={{ glyph: 'glyph:leaf' }} onStart={vi.fn()} onOpenSession={vi.fn()} now={1000} />);
+    expect(titles('고정된 대화')).toEqual(['🚀 고정']);
+    expect(titles('최근 대화')).toEqual(['t-live', 'leaf chat']);
+    const pinned = screen.getByRole('region', { name: '고정된 대화' });
+    expect(pinned.querySelector('[data-testid="avatar-emoji"]')?.textContent).toBe('🚀');
+    const recent = screen.getByRole('region', { name: '최근 대화' });
+    expect(recent.querySelector('[data-icon="leaf"]')).toBeTruthy();
+    expect(screen.getByText('t-live').closest('button')!.querySelector('[data-testid="avatar-mono"]')?.textContent).toBe('T');
+  });
+
   it('no pins: no 고정됨 section', () => {
     render(<NewChat projects={many(3)} pins={[]} onStart={vi.fn()} onOpenSession={vi.fn()} now={1000} />);
     expect(screen.queryByRole('region', { name: '고정된 대화' })).toBeNull();

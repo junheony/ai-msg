@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { postPin, postPinOrder } from './pins';
+import { postPin, postPinOrder, postSessionIcon } from './pins';
 
 describe('postPin (F2)', () => {
   it('POSTs the toggle and returns the server pins', async () => {
@@ -30,5 +30,22 @@ describe('postPinOrder', () => {
     await expect(postPinOrder(['a'], opaque as unknown as typeof fetch)).rejects.toThrow('고정 순서 변경 실패 (500)');
     const down = vi.fn(async () => { throw new TypeError('Failed to fetch'); });
     await expect(postPinOrder(['a'], down as unknown as typeof fetch)).rejects.toThrow('고정 순서 변경 실패: 네트워크 오류');
+  });
+});
+
+describe('postSessionIcon', () => {
+  it('POSTs the choice and returns the whole map', async () => {
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify({ sessionIcons: { s1: '🎯' } }), { status: 200 }));
+    expect(await postSessionIcon('s1', '🎯', fetchFn as unknown as typeof fetch)).toEqual({ s1: '🎯' });
+    expect(fetchFn).toHaveBeenCalledWith('/api/session-icon', expect.objectContaining({ method: 'POST', body: JSON.stringify({ sessionId: 's1', icon: '🎯' }) }));
+  });
+
+  it('throws the server error, a status fallback, or a Korean network error', async () => {
+    const bad = vi.fn(async () => new Response(JSON.stringify({ error: '세션 아이콘은 2000개까지 저장됩니다' }), { status: 409 }));
+    await expect(postSessionIcon('s1', '🐛', bad as unknown as typeof fetch)).rejects.toThrow('세션 아이콘은 2000개까지 저장됩니다');
+    const opaque = vi.fn(async () => new Response('nope', { status: 500 }));
+    await expect(postSessionIcon('s1', null, opaque as unknown as typeof fetch)).rejects.toThrow('아이콘 바꾸기 실패 (500)');
+    const down = vi.fn(async () => { throw new TypeError('Failed to fetch'); });
+    await expect(postSessionIcon('s1', null, down as unknown as typeof fetch)).rejects.toThrow('아이콘 바꾸기 실패: 네트워크 오류');
   });
 });

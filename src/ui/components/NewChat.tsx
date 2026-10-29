@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { DEFAULT_SANDBOX, type CodexSandbox, type Effort, type EngineChoice, type ModelChoice } from '../../shared/models';
 import type { PermMode } from '../../shared/permission';
 import type { GeminiStatus, GrokStatus } from '../../shared/protocol';
@@ -12,6 +12,8 @@ import { ClaudeMark, EngineMark, engineOf } from './EngineMark';
 import { has } from '../features';
 import { modelChoices, touchEnterIsNewline } from './Chat';
 import { PinIcon } from './icons';
+import { AvatarFace, avatarIndex, monogram } from './SessionIcon';
+import { isAutomatedSession } from '../sessionFilters';
 import { useAutoGrow } from '../useAutoGrow';
 import { clearDraft, loadDraft, saveDraft } from '../drafts';
 import { isMacPlatform } from '../shortcuts';
@@ -41,12 +43,14 @@ export type NewChatOptions = { engine: EngineChoice; sandbox: CodexSandbox };
  * above the auto-growing text; [+] · mic · ↑ in its bottom row), the pinned sessions (pin order) and the latest others as compact cards. Everything is reachable here, so the phone does not need
  * the drawer to start or resume. Attachments upload as soon as they are picked and ride the first message.
  */
-export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit, onOpenSession, now, uploadFn, models, model = 'auto', effort = null, onModel, onEffort, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, gemini = null, grok = null, onEngine, onSandbox, defaultPerm = null }: {
+export function NewChat({ projects, pins = [], sessionIcons = {}, defaultCwd, onStart, onStartSplit, onOpenSession, now, uploadFn, models, model = 'auto', effort = null, onModel, onEffort, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, gemini = null, grok = null, onEngine, onSandbox, defaultPerm = null }: {
   projects: ProjectEntry[];
   /** The server's default permission mode for a new session (the chip's read-only tail; null = unknown, no tail). */
   defaultPerm?: PermMode | null;
   /** Pinned session ids in pin order (AppState.pins): shown above 최근 대화 and left out of it. */
   pins?: string[];
+  /** 직접 고른 세션 아이콘 (session id → icon). The home cards use the same face as the sidebar. */
+  sessionIcons?: Record<string, string>;
   /** Preselected project (the pane's last one); falls back to the first listed. */
   defaultCwd?: string | null;
   /** Opens a new session in `cwd`; non-empty `text` is sent as its first message, with `attachments`. */
@@ -97,7 +101,7 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit
     .filter((r, i, all) => all.findIndex((x) => x.s.sessionId === r.s.sessionId) === i);
   const pinnedCards = [...new Set(pins)].flatMap((id) => live.find((r) => r.s.sessionId === id) ?? []);
   const pinSet = new Set(pins);
-  const recent = live.filter((r) => !pinSet.has(r.s.sessionId)).slice(0, RECENT_CARDS);
+  const recent = live.filter((r) => !pinSet.has(r.s.sessionId) && !isAutomatedSession(r.s)).slice(0, RECENT_CARDS);
   const t = now ?? Date.now();
 
   // Auto-grow: the card follows the text up to the CSS max-height, then the textarea scrolls.
@@ -146,12 +150,20 @@ export function NewChat({ projects, pins = [], defaultCwd, onStart, onStartSplit
   const replace = (old: UploadedAttachment, f: File) =>
     replaceAttachment(old, f, uploadOne, () => unsent.current, (a) => setAttachments((all) => all.map((x) => (x.id === old.id ? a : x))));
   const option = (p: ProjectEntry) => <option key={p.cwd} value={p.cwd}>{p.name}</option>;
-  const card = ({ s, name }: (typeof live)[number], open: NonNullable<typeof onOpenSession>, pin: boolean) => (
-    <button type="button" key={s.sessionId} className="newchat-card" title={`${s.title}\n${s.cwd}`} onClick={() => open(s.sessionId, s.cwd, s.title)}>
-      <span className="newchat-card-title">{pin && <span className="newchat-card-pin"><PinIcon filled /></span>}<EngineMark engine={engineOf(s)} decorative />{s.title}</span>
-      <span className="newchat-card-meta">{name} · {ago(s.lastModified, t)}</span>
-    </button>
-  );
+  const card = ({ s, name }: (typeof live)[number], open: NonNullable<typeof onOpenSession>, pin: boolean) => {
+    const color = avatarIndex(name);
+    return (
+      <button type="button" key={s.sessionId} className="newchat-card" title={`${s.title}\n${s.cwd}`} onClick={() => open(s.sessionId, s.cwd, s.title)}>
+        <span className="newchat-card-avatar" data-avatar={color} style={{ '--av': `var(--avatar-${color})` } as CSSProperties} aria-hidden="true">
+          <AvatarFace mono={monogram(s.title, name)} icon={sessionIcons[s.sessionId] ?? null} title={s.title} />
+        </span>
+        <span className="newchat-card-body">
+          <span className="newchat-card-title">{pin && <span className="newchat-card-pin"><PinIcon filled /></span>}<EngineMark engine={engineOf(s)} decorative />{s.title}</span>
+          <span className="newchat-card-meta">{name} · {ago(s.lastModified, t)}</span>
+        </span>
+      </button>
+    );
+  };
   const sendLabel = hasDraft ? '보내기 — 새 대화로 시작 (Enter)' : '빈 새 대화 열기';
 
   return (

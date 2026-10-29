@@ -1,9 +1,10 @@
-import type { ReactNode } from 'react';
+import { useSyncExternalStore, type ReactNode } from 'react';
+import { GLYPH_PREFIX } from '../../shared/sessionIcons';
 
 /**
- * Session glyphs for the sidebar avatar: single-weight line icons on a 24px grid (currentColor stroke), chosen per
- * session so a dozen rows of one project — one colour — still tell apart. Silhouettes are kept apart on purpose (no two
- * near-identical drops / triangles): at 20px the outline is all that reads.
+ * Line glyphs a session's avatar can wear (직접 고르기, `glyph:<name>`): single-weight line icons on a 24px grid
+ * (currentColor stroke). Silhouettes are kept apart on purpose (no two near-identical drops / triangles): at 20px the
+ * outline is all that reads. The names are the server's allow-list (shared/sessionIcons SESSION_GLYPH_NAMES).
  */
 export const SESSION_ICONS: { name: string; body: ReactNode }[] = [
   { name: 'leaf', body: <><path d="M5 19C5 11 10 5 19 5c0 9-6 14-14 14z" /><path d="M5 19l8-8" /></> },
@@ -36,64 +37,154 @@ export const SESSION_ICONS: { name: string; body: ReactNode }[] = [
   { name: 'plane', body: <><path d="M22 2L2 10l8 3 3 8z" /><path d="M22 2L10 13" /></> },
 ];
 
-/** FNV-1a of the session id: the glyph a session starts from, the same on every device and every render. */
-export function sessionIconBase(sessionId: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < sessionId.length; i++) { h ^= sessionId.charCodeAt(i); h = Math.imul(h, 0x01000193); }
-  // A final mix: ids sharing a prefix (uuids rarely, test ids often) still spread over the set.
-  h ^= h >>> 15; h = Math.imul(h, 0x2c1b3c6d); h ^= h >>> 12;
-  return (h >>> 0) % SESSION_ICONS.length;
+/** A bracketed tag up front ("[WIP] ", "(초안) ", "【公告】"): skipped, unless nothing usable is left after it. */
+const BRACKET_PREFIX = /^\s*(?:\[[^\]]*\]|\([^)]*\)|【[^】]*】|<[^>]*>|「[^」]*」|『[^』]*』|〔[^〕]*〕)\s*/u;
+const USABLE = /^[\p{L}\p{N}]/u;
+
+const segmenter = typeof Intl !== 'undefined' && 'Segmenter' in Intl ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
+
+/** Whole graphemes (an emoji with its joiners and modifiers is one), so a skipped emoji never leaves half of itself. */
+function graphemes(s: string): string[] {
+  return segmenter ? Array.from(segmenter.segment(s), (x) => x.segment) : Array.from(s);
 }
 
-export type IconRow = { id: string; project: string };
-
-/**
- * The glyph of every listed session (index into SESSION_ICONS). Stability first, then telling apart:
- * - every session starts from its id hash, so most keep one glyph for good;
- * - `pinned` (a stable set, the ⌘1 … ⌘9 rows): no two of one project share a glyph — clashes step to the next free one,
- *   settled in id order, so only a pin change can move one (and only along that clash);
- * - `rest`, in the order shown: steps past the glyphs its project's pinned rows hold, and past the row right above when
- *   that row is the same project with the same glyph. Nothing else in the list moves it: a new session or a re-sort
- *   only matters to a row whose neighbour clashes.
- * Different projects may share a glyph: the colour already tells them apart. Past SESSION_ICONS.length pinned rows of one
- * project the glyphs come round again.
- */
-export function assignSessionIcons(pinned: IconRow[], rest: IconRow[]): Map<string, number> {
-  const n = SESSION_ICONS.length;
-  const out = new Map<string, number>();
-  const held = new Map<string, Set<number>>();
-  for (const r of [...pinned].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
-    if (out.has(r.id)) continue;
-    let used = held.get(r.project);
-    if (!used) held.set(r.project, (used = new Set()));
-    if (used.size >= n) used.clear();
-    let i = sessionIconBase(r.id);
-    while (used.has(i)) i = (i + 1) % n;
-    used.add(i);
-    out.set(r.id, i);
-  }
-  let prev: { project: string; icon: number } | null = null;
-  for (const r of rest) {
-    let i = out.get(r.id);
-    if (i === undefined) {
-      const used = held.get(r.project);
-      const avoid = (k: number) => (!!used && used.size < n && used.has(k)) || (prev?.project === r.project && prev.icon === k);
-      i = sessionIconBase(r.id);
-      for (let step = 0; step < n && avoid(i); step++) i = (i + 1) % n;
-      out.set(r.id, i);
-    }
-    prev = { project: r.project, icon: i };
+/** The first `n` letters / digits of `s` (each one code point: a grapheme's base), skipping emoji, punctuation and space. */
+function usable(s: string, n: number): string[] {
+  const out: string[] = [];
+  for (const g of graphemes(s)) {
+    if (!USABLE.test(g)) continue;
+    out.push(Array.from(g)[0]!);
+    if (out.length >= n) break;
   }
   return out;
 }
 
-/** The glyph itself: decorative (the row's text names the session and project). */
-export function SessionGlyph({ index }: { index: number }) {
-  const icon = SESSION_ICONS[index % SESSION_ICONS.length]!;
+/** Case change only when it stays one character ('ß' → 'SS' does not). */
+const recase = (c: string, up: boolean) => { const r = up ? c.toUpperCase() : c.toLowerCase(); return Array.from(r).length === 1 ? r : c; };
+
+/**
+ * The avatar's letters for a session: the title's first usable character (a Hangul syllable, a letter — Latin upper-cased —
+ * or a digit), or with `len` 2 its first two ("백테", "Fx"). Leading emoji, punctuation and bracket tags are skipped; a title
+ * with nothing usable falls back to the project name, then "·".
+ */
+export function monogram(title: string, project = '', len: 1 | 2 = 1): string {
+  const pick = (s: string) => {
+    const t = s.normalize('NFC');
+    let rest = t;
+    for (let m = BRACKET_PREFIX.exec(rest); m && m[0].length; m = BRACKET_PREFIX.exec(rest)) rest = rest.slice(m[0].length);
+    const got = usable(rest, len);
+    return got.length ? got : usable(t, len);
+  };
+  let chars = pick(title);
+  if (!chars.length) chars = pick(project);
+  if (!chars.length) return '·';
+  return chars.map((c, i) => recase(c, i === 0)).join('');
+}
+
+export type MonoRow = { id: string; project: string; title: string };
+
+/**
+ * The avatar letters of every listed session: one letter, or two (the title's first two usable characters) when any other listed row of the same project — pinned or not — would
+ * show the same letter. Only the set of rows matters, never their order: a re-sort or a new session changes only the
+ * rows whose letter it shares.
+ * Different projects may share a letter: the colour tells them apart.
+ */
+export function assignMonograms(pinned: MonoRow[], rest: MonoRow[]): Map<string, string> {
+  const rows = new Map<string, MonoRow>();
+  for (const r of [...pinned, ...rest]) if (!rows.has(r.id)) rows.set(r.id, r);
+  const keyOf = (r: MonoRow) => `${r.project}\u0000${monogram(r.title, r.project)}`;
+  const count = new Map<string, number>();
+  for (const r of rows.values()) count.set(keyOf(r), (count.get(keyOf(r)) ?? 0) + 1);
+  const out = new Map<string, string>();
+  for (const r of rows.values()) out.set(r.id, monogram(r.title, r.project, (count.get(keyOf(r)) ?? 0) > 1 ? 2 : 1));
+  return out;
+}
+
+/** A line glyph by name (SESSION_ICONS); decorative. Null for a name the set does not have. */
+export function SessionGlyph({ name }: { name: string }) {
+  const icon = SESSION_ICONS.find((x) => x.name === name);
+  if (!icon) return null;
   return (
     <svg className="row-avatar-icon" data-icon={icon.name} viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor"
       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       {icon.body}
     </svg>
   );
+}
+
+/** The emoji a title opens with ("🚀 launch" → "🚀", a flag or a joined emoji whole), else null. */
+export function leadingEmoji(title: string): string | null {
+  const first = graphemes(title.trimStart())[0];
+  if (!first) return null;
+  // Text-default symbols (© ® ™ ‼) only count with VS16, a joiner or as a flag.
+  const pictograph = /^\p{Extended_Pictographic}/u.test(first) && (/^\p{Emoji_Presentation}/u.test(first) || /[\uFE0F\u200D]/.test(first));
+  return pictograph || /^\p{Regional_Indicator}{2}/u.test(first) ? first : null;
+}
+
+/**
+ * What sits on the avatar's colour: the icon the user chose (an emoji, or `glyph:<name>`), else the emoji the title opens
+ * with, else the letters. Decorative — the row's title names the session.
+ */
+export function AvatarFace({ mono, icon, title }: { mono: string; icon?: string | null; title?: string }) {
+  if (!icon && title) { const e = leadingEmoji(title); if (e) icon = e; }
+  const glyph = icon?.startsWith(GLYPH_PREFIX) ? icon.slice(GLYPH_PREFIX.length) : null;
+  if (glyph && SESSION_ICONS.some((x) => x.name === glyph)) return <SessionGlyph name={glyph} />;
+  if (icon && glyph === null) return <span className="avatar-emoji" data-testid="avatar-emoji" aria-hidden="true">{icon}</span>;
+  return <span className="avatar-mono" data-testid="avatar-mono" data-len={Array.from(mono).length > 1 ? 2 : 1} aria-hidden="true">{mono}</span>;
+}
+
+/** Project avatar palette size (`--avatar-1` … `--avatar-8` in styles.css). */
+export const AVATAR_COLORS = 8;
+
+/** A project's avatar colour, 1 … AVATAR_COLORS: an FNV-1a hash of its slug, so a project keeps its colour everywhere. */
+export function avatarIndex(slug: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < slug.length; i++) { h ^= slug.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return ((h >>> 0) % AVATAR_COLORS) + 1;
+}
+
+/**
+ * A session's avatar as the sidebar draws it: project colour (1 … AVATAR_COLORS), its letters, the icon the user chose
+ * (null = the letters show) and the id that icon is stored under (a 갈래 tree's row: its root, for every member).
+ */
+export type SessionAvatar = { color: number; mono: string; icon: string | null; iconId: string };
+
+type AvatarStore = {
+  avatars: Map<string, SessionAvatar>;
+  /** Every chosen icon (session id → icon), for a head whose session the sidebar has not listed. */
+  icons: Record<string, string>;
+  /** Changes a session's icon (null = back to the letters); absent = no picker. */
+  setIcon: ((sessionId: string, icon: string | null) => void) | null;
+};
+
+// The sidebar's last assignment, shared so the session head shows the very avatar its row shows (a clash in the list
+// can give a row two letters — the head cannot recompute that on its own).
+let store: AvatarStore = { avatars: new Map(), icons: {}, setIcon: null };
+const avatarSubs = new Set<() => void>();
+// One stable subscribe for every head: a fresh closure per render would make React re-subscribe on each render.
+const subscribeAvatars = (f: () => void) => { avatarSubs.add(f); return () => { avatarSubs.delete(f); }; };
+
+const sameAvatar = (a: SessionAvatar, b: SessionAvatar | undefined) => !!b && b.color === a.color && b.mono === a.mono && b.icon === a.icon && b.iconId === a.iconId;
+
+/** Called by the sidebar after it assigns its avatars; a no-op when nothing changed (no re-render of the heads). */
+export function publishSessionAvatars(next: Map<string, SessionAvatar>, icons: Record<string, string> = store.icons, setIcon: AvatarStore['setIcon'] = store.setIcon): void {
+  const same = next.size === store.avatars.size && [...next].every(([id, a]) => sameAvatar(a, store.avatars.get(id)));
+  if (same && icons === store.icons && setIcon === store.setIcon) return;
+  store = { avatars: same ? store.avatars : next, icons, setIcon };
+  for (const f of avatarSubs) f();
+}
+
+/** The avatar the sidebar gave `sessionId`, or null when the sidebar has not listed it (the caller falls back). */
+export function useSessionAvatar(sessionId: string | null | undefined): SessionAvatar | null {
+  return useSyncExternalStore(
+    subscribeAvatars,
+    () => (sessionId ? store.avatars.get(sessionId) ?? null : null),
+  );
+}
+
+/** The chosen icons and the setter the sidebar published (the head's fallback and its picker). */
+export function useSessionIconStore(): Pick<AvatarStore, 'icons' | 'setIcon'> {
+  const icons = useSyncExternalStore(subscribeAvatars, () => store.icons);
+  const setIcon = useSyncExternalStore(subscribeAvatars, () => store.setIcon);
+  return { icons, setIcon };
 }

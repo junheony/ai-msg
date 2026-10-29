@@ -2,8 +2,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { HeadItem, SessionChipHead } from './SessionChipHead';
+import { publishSessionAvatars } from './SessionIcon';
 
-afterEach(() => { cleanup(); vi.useRealTimers(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); publishSessionAvatars(new Map(), {}, null); });
 
 const head = (over: { sessionKey?: string; onRename?: (t: string | null) => void; phone?: boolean; run?: () => void } = {}) => (
   <SessionChipHead title="세션 1" sessionKey={over.sessionKey ?? 's1'} phone={over.phone} {...(over.onRename ? { onRename: over.onRename } : {})}
@@ -97,6 +98,24 @@ describe('SessionChipHead · 폰 시트', () => {
     expect(screen.getByRole('dialog', { name: '세션 메뉴' })).toBeTruthy();
     fireEvent.pointerDown(document.querySelector('.head-menu-scrim')!);
     expect(screen.queryByRole('dialog', { name: '세션 메뉴' })).toBeNull();
+  });
+
+  it('the chip wears the sidebar avatar; without one, the title’s first letter, and no picker until a setter is published', () => {
+    render(head());
+    const chip = screen.getByTestId('session-chip-head');
+    expect(chip.querySelector('.avatar-mono')!.textContent).toBe('세');
+    expect(document.querySelector('.head-avatar-pick')).toBeNull();
+    cleanup();
+    const setIcon = vi.fn();
+    publishSessionAvatars(new Map([['s1', { color: 3, mono: 'Al', icon: 'glyph:anchor', iconId: 'root' }]]), { root: 'glyph:anchor' }, setIcon);
+    render(head());
+    const again = screen.getByTestId('session-chip-head');
+    expect(again.querySelector('.row-avatar-icon')!.getAttribute('data-icon')).toBe('anchor');
+    const pick = document.querySelector('.head-avatar-pick')!;
+    expect(pick.closest('.head-chip')).toBeNull();
+    fireEvent.click(pick);
+    fireEvent.click(screen.getByRole('button', { name: '기본으로 (제목 이모지 또는 첫 글자)' }));
+    expect(setIcon).toHaveBeenCalledWith('root', null);
   });
 
   it('desktop keeps a role="menu" dropdown under the chip, Tab closes it', () => {

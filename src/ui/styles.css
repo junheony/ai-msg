@@ -1643,8 +1643,11 @@ button.hl-row-main:hover { background: var(--hover); }
 .newchat-recent h2 { margin: 0 0 6px; font-size: calc(12.5px * var(--font-scale, 1)); font-weight: 500; }
 .newchat-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
 @container newchat (min-width: 560px) { .newchat-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.newchat-card { display: flex; flex-direction: column; align-items: stretch; gap: 1px; min-width: 0; padding: 7px 11px; border-radius: 9px; text-align: left; background: var(--bg-raised); box-shadow: inset 0 0 0 1px var(--line); }
+.newchat-card { display: flex; flex-direction: row; align-items: center; gap: 10px; min-width: 0; padding: 7px 11px; border-radius: 9px; text-align: left; background: var(--bg-raised); box-shadow: inset 0 0 0 1px var(--line); }
 .newchat-card:hover { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.newchat-card-avatar { --av-size: 28px; flex-shrink: 0; display: grid; place-items: center; width: var(--av-size); height: var(--av-size); border-radius: var(--r-full); background: var(--av, var(--avatar-8)); color: var(--avatar-glyph); line-height: 1; }
+.newchat-card-avatar .row-avatar-icon { width: 64%; height: 64%; }
+.newchat-card-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .newchat-card-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg); font-size: calc(13.5px * var(--font-scale, 1)); }
 .newchat-card-pin { display: inline-flex; vertical-align: -1px; margin-right: 4px; color: var(--accent); }
 .newchat-card-pin svg { width: 11px; height: 11px; }
@@ -2017,10 +2020,29 @@ button.hl-row-main:hover { background: var(--hover); }
 .sidebar li.session-item:has(.row-more-btn[aria-expanded="true"]) .session-meta { color: var(--muted); }
 @media (hover: hover) { .sidebar li.session-item:hover .session-meta { color: var(--muted); } }
 .session-rename { min-width: 0; height: 24px; padding: 0 6px; border-radius: var(--r-xs); border: 1px solid var(--accent); background: var(--bg); color: var(--fg); font: inherit; font-size: calc(var(--fs-body) * var(--font-scale, 1)); outline: none; }
-/* Avatar: 40px circle, the project's palette colour behind the session's line glyph (SessionIcon, --avatar-glyph;
-   decorative — the title and tooltip name the session and project). */
-.row-avatar { flex-shrink: 0; display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--r-full); background: var(--av, var(--avatar-8)); color: var(--avatar-glyph); line-height: 1; }
-.row-avatar-icon { display: block; width: 28px; height: 28px; }
+/* Avatar: 28px circle (32 on a phone), the project's palette colour behind the title's first letter (two when another
+   listed row of the project would show the same one) or the icon the user chose (SessionIcon, --avatar-glyph;
+   decorative — the title and tooltip name the session and project).
+   --av-size drives the letters: one ≈ 50% of the circle, two ≈ 38%, an emoji ≈ 55%. */
+.row-avatar { --av-size: 28px; flex-shrink: 0; display: grid; place-items: center; width: var(--av-size); height: var(--av-size); border-radius: var(--r-full); background: var(--av, var(--avatar-8)); color: var(--avatar-glyph); line-height: 1; }
+.row-avatar-icon { display: block; width: 64%; height: 64%; }
+.avatar-mono { display: block; font-size: calc(var(--av-size) * .5); font-weight: 650; line-height: 1; letter-spacing: -.02em; text-align: center; white-space: nowrap; user-select: none; }
+.avatar-mono[data-len="2"] { font-size: calc(var(--av-size) * .38); letter-spacing: -.04em; }
+.avatar-emoji { display: block; font-size: calc(var(--av-size) * .55); line-height: 1; user-select: none; }
+/* 직접 고르기: a transparent button over the avatar (beside the row's open button, never inside it). */
+.avatar-pick { position: absolute; z-index: 1; padding: 0; border: 0; border-radius: var(--r-full); background: transparent; cursor: pointer; }
+.avatar-pick:hover { box-shadow: 0 0 0 2px var(--line-strong); }
+.avatar-pick:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus); }
+.row-avatar-pick { left: 10px; top: 50%; width: 28px; height: 28px; transform: translateY(-50%); }
+.icon-picker { position: fixed; z-index: 1000; width: min(296px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow-y: auto; padding: var(--s2); border-radius: var(--r-md); background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); color: var(--fg); }
+.icon-picker-head { padding: var(--s1) var(--s1) 2px; color: var(--muted); font-size: var(--fs-meta); font-weight: 500; }
+.icon-picker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 2px; }
+.icon-picker-item { display: grid; place-items: center; height: 44px; border-radius: var(--r-sm); font-size: calc(var(--fs-title) * 1.25); line-height: 1; color: var(--fg); }
+.icon-picker-item .row-avatar-icon { width: 24px; height: 24px; }
+.icon-picker-item:hover, .icon-picker-reset:hover { background: var(--hover); }
+.icon-picker-item[aria-pressed="true"], .icon-picker-reset[aria-pressed="true"] { background: var(--selected); }
+.icon-picker-item:focus-visible, .icon-picker-reset:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus); }
+.icon-picker-reset { display: block; width: 100%; margin-top: var(--s2); padding: var(--s2); border-radius: var(--r-sm); text-align: left; color: var(--fg); font: inherit; font-size: var(--fs-label); }
 /* The row's end mark: a 16px slot, so the dot / ring / number line up down the list. */
 .row-status { flex-shrink: 0; position: relative; display: grid; place-items: center; width: 16px; height: 16px; margin-left: 2px; }
 .row-status::before { content: ""; box-sizing: border-box; border-radius: var(--r-full); }
@@ -2087,6 +2109,10 @@ button.hl-row-main:hover { background: var(--hover); }
 .archived-count, .autorun-count { margin-left: auto; color: var(--faint); font-size: calc(var(--fs-meta) * var(--font-scale, 1)); font-variant-numeric: tabular-nums; }
 @media (max-width: 720px) {
   .sidebar li.session-item { min-height: 64px; }
+  .row-avatar { --av-size: 32px; }
+  .row-avatar-pick { width: 32px; height: 32px; }
+  /* The look stays 32px; the tap area grows to the phone target around the avatar button. */
+  .avatar-pick::before { content: ''; position: absolute; top: 50%; left: 50%; width: var(--phone-tap); height: var(--phone-tap); transform: translate(-50%, -50%); border-radius: var(--r-full); }
   .archived-row, .autorun-row { min-height: var(--phone-tap); }
   .sidebar-search-row .icon-btn { min-width: var(--phone-tap); min-height: var(--phone-tap); }
 }
@@ -2390,10 +2416,15 @@ html[data-concise='on'] .note.concise-note { font-size: calc(12.5px * var(--font
   .pane-head.idle { opacity: 0; transition: opacity var(--t-fast) var(--ease); }
   .pane:hover > .pane-head.idle, .pane-head.idle:focus-within { opacity: 1; }
 }
-.pane-head-main { display: flex; flex-direction: column; align-items: flex-start; flex: 0 1 auto; min-width: 0; }
-.pane-head.in-topbar .pane-head-main { align-items: center; }
+.pane-head-main { --head-av: 24px; --head-pad: 4px; display: flex; flex-direction: column; align-items: flex-start; flex: 0 1 auto; min-width: 0; }
+.pane-head.in-topbar .pane-head-main { --head-av: 28px; align-items: center; }
 .head-chip-wrap { position: relative; display: inline-flex; align-items: center; min-width: 0; max-width: 100%; }
 .head-chip { display: inline-flex; align-items: center; gap: var(--s1); min-width: 0; max-width: 100%; height: 32px; padding: 0 var(--s2) 0 var(--s3); border-radius: var(--r-full); font-size: var(--fs-label); line-height: var(--lh-label); font-weight: 600; color: var(--muted); background: transparent; box-shadow: inset 0 0 0 1px var(--line); transition: background-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease), color var(--t-fast) var(--ease); }
+.with-avatar .head-chip { padding-left: var(--head-pad); }
+.head-avatar { --av-size: var(--head-av); flex: none; display: grid; place-items: center; width: var(--head-av); height: var(--head-av); border-radius: var(--r-full); background: var(--av, var(--avatar-8)); color: var(--avatar-glyph); line-height: 1; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg-strong) 12%, transparent); }
+.head-avatar .row-avatar-icon { width: 64%; height: 64%; }
+.pane:not(.active) > .pane-head:not(.in-topbar) .head-avatar, .pane:not(.active) .chat > .pane-head:not(.in-topbar) .head-avatar { opacity: .7; }
+.head-avatar-pick { left: var(--head-pad); top: 50%; width: var(--head-av); height: var(--head-av); transform: translateY(-50%); }
 .head-chip.static { padding-right: var(--s3); }
 .pane.active .head-chip, .pane-head.in-topbar .head-chip { color: var(--fg-strong); }
 button.head-chip:hover, button.head-chip[aria-expanded="true"] { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
