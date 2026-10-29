@@ -1,6 +1,6 @@
 /* deck service worker: offline shell for the built assets + Web Push notifications.
  * Never caches /api/* or /ws — only same-origin GETs of the app shell, hashed assets, icons, manifest. */
-const CACHE = 'deck-shell-v2'; // v2: new app icon under the same /icons/ names
+const CACHE = 'deck-shell-v3'; // v3: the purple MSG app icon under the same /icons/ names
 const MAX_ASSETS = 80;
 
 /* Shown only when the server is unreachable AND no shell is cached yet (first open, or after the cache was cleared):
