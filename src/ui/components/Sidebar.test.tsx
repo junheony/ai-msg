@@ -698,6 +698,10 @@ describe('Sidebar rows: list rows (avatar, title + time, meta, ⋯ on demand)', 
     render(<Sidebar projects={[{ cwd: '/w/one', name: 'one', pinned: false, sessions: [withPreview, s('p2', '/w/one', 'plain')] }]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
     expect(screen.getByText('chat').closest('li')!.querySelector('.meta-text')?.textContent).toBe('Tests pass, ready to merge');
     expect(screen.getByText('plain').closest('li')!.querySelector('.meta-text')?.textContent).toBe('one');
+    const fenced = { ...s('p3', '/w/one', 'fenced'), preview: '본문입니다.\n```css\n.a { color: red }\n```' };
+    cleanup();
+    render(<Sidebar projects={[{ cwd: '/w/one', name: 'one', pinned: false, sessions: [fenced] }]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} />);
+    expect(screen.getByText('fenced').closest('li')!.querySelector('.meta-text')?.textContent).toBe('본문입니다.');
   });
 
   it('screen readers get what the tooltip says: folder (when a preview hides it), engine, 자동 실행, time — in the button', () => {

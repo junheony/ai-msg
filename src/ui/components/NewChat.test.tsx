@@ -57,6 +57,16 @@ describe('NewChat', () => {
     expect(screen.getByText('t-live').closest('button')!.querySelector('[data-testid="avatar-mono"]')?.textContent).toBe('T');
   });
 
+  it('a reply preview sits under the title, with fenced code left out', () => {
+    const previewed = sess('prev', 200, { title: '미리보기', preview: '한 줄 요약\n```css\n.a{}\n```' });
+    render(<NewChat projects={[{ cwd: '/w', name: 'w', pinned: true, sessions: [previewed] }] as unknown as ProjectEntry[]} onStart={vi.fn()} onOpenSession={vi.fn()} now={1000} />);
+    const card = screen.getByText('미리보기').closest('button')!;
+    expect(card.querySelector('.newchat-card-title')?.textContent).toBe('미리보기');
+    expect(card.querySelector('.newchat-card-preview')?.textContent).toBe('한 줄 요약');
+    fireEvent.click(screen.getByRole('button', { name: '코드 리뷰' }));
+    expect(screen.getByLabelText('첫 메시지')).toHaveProperty('value', '이 변경을 짧게 리뷰해 줘. 위험과 빠진 테스트만 말해 줘.');
+  });
+
   it('no pins: no 고정됨 section', () => {
     render(<NewChat projects={many(3)} pins={[]} onStart={vi.fn()} onOpenSession={vi.fn()} now={1000} />);
     expect(screen.queryByRole('region', { name: '고정된 대화' })).toBeNull();

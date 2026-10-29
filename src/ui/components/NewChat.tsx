@@ -21,6 +21,20 @@ import { usePrefs } from '../usePrefs';
 
 const RECENT_CARDS = 10;
 
+/** One-line card preview: fences and inline code drop out so a reply that is mostly CSS does not fill the row. */
+function cardPreview(raw: string | undefined): string {
+  if (!raw) return '';
+  const t = raw.replace(/```[\s\S]*?```/g, ' ').replace(/`[^`\n]*`/g, ' ').replace(/\s+/g, ' ').trim();
+  return t.length > 96 ? `${t.slice(0, 95)}…` : t;
+}
+
+/** Fills the composer. The first message still starts the session the same way. */
+const QUICK_STARTS = [
+  { label: '코드 리뷰', text: '이 변경을 짧게 리뷰해 줘. 위험과 빠진 테스트만 말해 줘.' },
+  { label: '버그 찾기', text: '막힌 지점을 찾고, 고치기 전에 원인부터 말해 줘.' },
+  { label: '짧게 정리', text: '지금까지를 세 줄로 정리해 줘.' },
+] as const;
+
 export function greeting(hour: number): string {
   if (hour >= 5 && hour < 11) return '좋은 아침이에요';
   if (hour >= 11 && hour < 17) return '좋은 오후예요';
@@ -152,6 +166,7 @@ export function NewChat({ projects, pins = [], sessionIcons = {}, defaultCwd, on
   const option = (p: ProjectEntry) => <option key={p.cwd} value={p.cwd}>{p.name}</option>;
   const card = ({ s, name }: (typeof live)[number], open: NonNullable<typeof onOpenSession>, pin: boolean) => {
     const color = avatarIndex(name);
+    const preview = cardPreview(s.preview);
     return (
       <button type="button" key={s.sessionId} className="newchat-card" title={`${s.title}\n${s.cwd}`} onClick={() => open(s.sessionId, s.cwd, s.title)}>
         <span className="newchat-card-avatar" data-avatar={color} style={{ '--av': `var(--avatar-${color})` } as CSSProperties} aria-hidden="true">
@@ -159,6 +174,7 @@ export function NewChat({ projects, pins = [], sessionIcons = {}, defaultCwd, on
         </span>
         <span className="newchat-card-body">
           <span className="newchat-card-title">{pin && <span className="newchat-card-pin"><PinIcon filled /></span>}<EngineMark engine={engineOf(s)} decorative />{s.title}</span>
+          {preview && <span className="newchat-card-preview">{preview}</span>}
           <span className="newchat-card-meta">{name} · {ago(s.lastModified, t)}</span>
         </span>
       </button>
@@ -212,6 +228,13 @@ export function NewChat({ projects, pins = [], sessionIcons = {}, defaultCwd, on
                 onKeyDown={(e) => startKey(e, !e.shiftKey && !e.altKey && !touchEnterIsNewline())} />
             </Composer>
           </form>
+        )}
+        {projects.length > 0 && (
+          <div className="newchat-quick" role="group" aria-label="빠른 시작">
+            {QUICK_STARTS.map((q) => (
+              <button type="button" key={q.label} className="newchat-quick-btn" onClick={() => { edit(q.text); taRef.current?.focus(); }}>{q.label}</button>
+            ))}
+          </div>
         )}
         {pinnedCards.length > 0 && onOpenSession && (
           <section className="newchat-recent newchat-pinned" aria-label="고정된 대화">
