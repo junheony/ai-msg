@@ -7,7 +7,7 @@ import { PERM_MODES, PERM_MODE_LABEL, permModeHint, permModesFor, type PermMode 
 import { contextLabel, type ContextInfo } from '../context';
 import { has } from '../features';
 import { AccountChipName, AccountMenu, useAccountWords } from './AccountPicker';
-import { ContextRing, HandoffButton, contextLevel } from './ContextGauge';
+import { ContextRing, ContextSheet, HandoffButton, contextLevel } from './ContextGauge';
 import { Sheet, SheetHead } from './Dialogs';
 import { ModelMenu, modelLabel } from './ModelPicker';
 import { menuStep } from './SessionMenu';
@@ -100,6 +100,7 @@ export type SessionChipProps = {
  */
 export function SessionChip(p: SessionChipProps) {
   const [open, setOpen] = useState(false);
+  const [ctxOpen, setCtxOpen] = useState(false);
   // Shift+Tab (or any mode change after the first render): a 150ms flash and a polite announcement.
   const [flash, setFlash] = useState(false);
   const [said, setSaid] = useState('');
@@ -126,7 +127,8 @@ export function SessionChip(p: SessionChipProps) {
   const permShown: PermMode = perm?.supported ? perm.mode : 'default';
   const m = modelLabel(p.model, p.effort);
   const modelText = m.effort ? `${m.name} ${m.effort}` : m.name;
-  const ctx = p.ctx ? { ...contextLevel(p.ctx), label: contextLabel(p.ctx) } : null;
+  const measured = p.ctx ? p.ctx.measured !== false : false;
+  const ctx = p.ctx && measured ? { ...contextLevel(p.ctx), label: contextLabel(p.ctx) } : null;
   const acct = useAccountWords(p.account?.pin ?? null, p.account?.current ?? null);
 
   // The third part: GPT/Gemini name their sandbox (no approvals there), the others their permission mode.
@@ -150,6 +152,14 @@ export function SessionChip(p: SessionChipProps) {
 
   return (
     <span className="session-chip-wrap">
+      {p.ctx && measured && ctx && (
+        <button type="button" className="ctx-sheet-btn" data-testid="context-sheet-btn" aria-label={`컨텍스트 ${ctx.pct}%`} title={ctx.label} onClick={() => setCtxOpen(true)}>
+          <ContextRing info={p.ctx} />
+        </button>
+      )}
+      {p.ctx && !measured && (
+        <button type="button" className="ctx-sheet-btn" data-testid="context-sheet-btn" aria-label="마지막 응답 토큰" onClick={() => setCtxOpen(true)}>토큰</button>
+      )}
       <button
         type="button"
         className={`session-chip${flash ? ' flash' : ''}${perm?.supported && perm.mode === 'bypassPermissions' ? ' bypass' : ''}`}
@@ -161,13 +171,13 @@ export function SessionChip(p: SessionChipProps) {
         disabled={p.disabled}
         onClick={() => setOpen(true)}
       >
-        {ctx && p.ctx && <ContextRing info={p.ctx} />}
         <span className="sc-label">
           {parts.map((x, i) => <span key={i} className="sc-seg">{i > 0 && <span className="sc-dot" aria-hidden="true">·</span>}{x}</span>)}
         </span>
         <span className="sc-caret" aria-hidden="true">⌄</span>
       </button>
       {ctx && ctx.pct >= 80 && <span className={`ctx-out ${ctx.level}`} data-testid="context-out" title={ctx.label}>{ctx.pct}%</span>}
+      {ctxOpen && p.ctx && <ContextSheet info={p.ctx} onClose={() => setCtxOpen(false)} />}
       <span className="sr-only" aria-live="polite" data-testid="session-chip-said">{said}</span>
       {open && (
         <Sheet className="session-sheet" label="세션 설정" onClose={() => setOpen(false)}>

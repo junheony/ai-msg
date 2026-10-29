@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { WARM_MS, type ContextInfo } from '../context';
-import { ContextHint, ContextRing, contextLevel } from './ContextGauge';
+import { ContextHint, ContextRing, ContextSheet, contextLevel } from './ContextGauge';
 
 const info = (cacheReadTokens: number, over: Partial<ContextInfo> = {}): ContextInfo =>
   ({ usage: { inputTokens: 2_000, cacheReadTokens, cacheCreationTokens: 10_000 }, window: 1_000_000, at: Date.now(), model: 'opus', account: 'b', ...over });
@@ -30,6 +30,34 @@ describe('ContextHint', () => {
     expect(render(<ContextHint info={info(400_000)} />).getByTestId('context-hint').textContent).toContain('새 세션으로 넘기면');
     cleanup();
     expect(render(<ContextHint info={info(50_000, { at: Date.now() - WARM_MS - 60_000 })} />).getByTestId('context-hint').textContent).toBe('캐시 만료 · 이번 턴은 전체 다시 읽기');
+  });
+});
+
+describe('ContextSheet', () => {
+  afterEach(cleanup);
+  const base = info(300_000);
+
+  it('shows used/limit, known categories, and the last response; hides what was not reported', () => {
+    const view = render(<ContextSheet info={{ ...base, categories: [{ id: 'system_prompt', tokens: 12_000 }, { id: 'messages', tokens: 4000 }], last: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 300_000, cacheCreationTokens: 10 } }} onClose={() => {}} />);
+    expect(view.getByTestId('context-used').textContent).toContain('사용');
+    expect(view.getByTestId('context-used').textContent).toContain('한도');
+    expect(view.getByTestId('context-categories').textContent).toContain('시스템 프롬프트');
+    expect(view.getByTestId('context-categories').textContent).toContain('메시지');
+    expect(view.getByTestId('context-categories').textContent).not.toContain('MCP');
+    expect(view.getByTestId('context-last').textContent).toContain('출력');
+    cleanup();
+    const bare = render(<ContextSheet info={base} onClose={() => {}} />);
+    expect(bare.getByTestId('context-used')).toBeTruthy();
+    expect(bare.queryByTestId('context-categories')).toBeNull();
+    expect(bare.queryByTestId('context-last')).toBeNull();
+  });
+
+  it('an unmeasured turn hides the fill and the categories and keeps the last response', () => {
+    const view = render(<ContextSheet info={{ ...base, measured: false, last: { inputTokens: 8, outputTokens: 3, cacheReadTokens: 0, cacheCreationTokens: 0 } }} onClose={() => {}} />);
+    expect(view.queryByTestId('context-used')).toBeNull();
+    expect(view.queryByTestId('context-categories')).toBeNull();
+    expect(view.getByTestId('context-last').textContent).toContain('입력');
+    expect(view.getByTestId('context-last').textContent).toContain('캐시 쓰기');
   });
 });
 

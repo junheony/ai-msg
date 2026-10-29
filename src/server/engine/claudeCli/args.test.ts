@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
-  claudeArgs, buildSettings, buildMcpConfig, relayCommand, shellQuote, claudeEnv, validResume,
+  claudeArgs, buildSettings, buildMcpConfig, relayCommand, shellQuote, claudeEnv, userModsAllowed, validResume,
   PERMISSION_TOOL, EDIT_TOOL_MATCHER, COMMANDER_TOOL_MATCHER, HOOK_TIMEOUT_S,
 } from './args';
 
@@ -174,6 +174,22 @@ describe('claudeEnv', () => {
     const e = claudeEnv({ CLAUDE_CODE_ENTRYPOINT: 'sdk-ts', CLAUDE_AGENT_SDK_VERSION: '1' }, 1);
     expect(e.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
     expect(e.CLAUDE_AGENT_SDK_VERSION).toBeUndefined();
+  });
+});
+
+describe('buildSettings — user mods', () => {
+  it('disables user hooks and mods by default and keeps the MSG PreToolUse hook', () => {
+    const s = buildSettings({ relay }) as { disableAllHooks?: boolean; hooks: { PreToolUse: { hooks: { command: string }[] }[] } };
+    expect(s.disableAllHooks).toBe(true);
+    expect(s.hooks.PreToolUse[0]!.hooks[0]!.command).toContain('hookRelay');
+    expect(userModsAllowed({})).toBe(false);
+    expect(userModsAllowed({ DECK_ALLOW_USER_MODS: 'true' })).toBe(false);
+    expect(userModsAllowed({ DECK_ALLOW_USER_MODS: '1' })).toBe(true);
+  });
+  it('the opt-in omits disableAllHooks and still registers MSG hooks', () => {
+    const s = buildSettings({ relay, allowUserMods: true }) as { disableAllHooks?: boolean; hooks: unknown };
+    expect(s.disableAllHooks).toBeUndefined();
+    expect(s.hooks).toBeTruthy();
   });
 });
 

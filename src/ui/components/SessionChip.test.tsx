@@ -117,19 +117,25 @@ describe('SessionChip', () => {
     expect(chip.classList.contains('flash')).toBe(false);
   });
 
-  it('the context ring sits in the chip; the number shows outside only at ≥80%; the sheet carries the line and the handoff', () => {
+  it('the context ring is a sibling of the chip; the number shows outside only at ≥80%; the sheet carries the line and the handoff', () => {
     const onHandoff = vi.fn();
     const { rerender } = render(<SessionChip {...base({ ctx: info(300_000), onHandoff })} />);
-    expect(within(screen.getByTestId('session-chip')).getByTestId('context-ring')).toBeTruthy();
+    const chip = screen.getByTestId('session-chip');
+    expect(within(chip).queryByTestId('context-ring')).toBeNull();
+    expect(within(screen.getByTestId('context-sheet-btn')).getByTestId('context-ring')).toBeTruthy();
     expect(screen.queryByTestId('context-out')).toBeNull();
-    expect(screen.getByTestId('session-chip').getAttribute('aria-label')).toContain('컨텍스트 31%');
+    expect(chip.getAttribute('aria-label')).toContain('컨텍스트 31%');
+    fireEvent.click(screen.getByTestId('context-sheet-btn'));
+    expect(screen.getByTestId('context-sheet')).toBeTruthy();
+    expect(screen.queryByTestId('context-line')).toBeNull();
+    fireEvent.click(screen.getByText('닫기'));
     rerender(<SessionChip {...base({ ctx: info(820_000), onHandoff })} />);
     expect(screen.getByTestId('context-out').textContent).toBe('83%');
     fireEvent.click(screen.getByTestId('session-chip'));
     expect(screen.getByTestId('context-line')).toBeTruthy();
     fireEvent.click(screen.getByTestId('handoff-btn'));
     expect(onHandoff).toHaveBeenCalled();
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('dialog', { name: '세션 설정' })).toBeNull();
   });
 
   it('GPT: the chip names the sandbox; the sheet keeps the permission picker disabled', () => {

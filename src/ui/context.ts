@@ -1,5 +1,6 @@
 import type { Seat } from '../shared/accounts';
-import type { ContextUsage, TurnUsage } from '../shared/turn-types';
+import { isClaudeModel } from '../shared/models';
+import type { ContextCategory, ContextUsage, LastCallUsage, TurnUsage } from '../shared/turn-types';
 
 /**
  * Context gauge and cost hints. The context is the prompt of the session's latest main-model API call
@@ -13,7 +14,63 @@ export type ContextInfo = {
   /** Deck id (opus) or wire id (claude-opus-5-5); null = unknown. */
   model: string | null;
   account: Seat | null;
+  /** Claude category rows, when the CLI sent them. Absent = the breakdown is unknown, not empty. */
+  categories?: ContextCategory[];
+  /** Last response tokens (Claude's last call, or the turn usage for other engines). */
+  last?: LastCallUsage;
+  /**
+   * false: there is no measured context fill (Codex / Gemini / Grok, or Claude without a prompt usage).
+   * The ring stays hidden. Absent means measured, which is what a restored transcript is.
+   */
+  measured?: boolean;
 };
+
+function turnHasTokens(u: TurnUsage): boolean {
+  return u.inputTokens + u.outputTokens + u.cacheReadTokens + u.cacheCreationTokens > 0;
+}
+
+/** A turn_result badge → the gauge. Null when the turn reported no context and no tokens. `window` is the model's window when the CLI did not send one. */
+export function contextInfoFromTurn(input: { model: string; account: Seat; usage: TurnUsage; at: number; window: number }): ContextInfo | null {
+  const u = input.usage;
+  const turnLast = turnHasTokens(u)
+    ? { inputTokens: u.inputTokens, outputTokens: u.outputTokens, cacheReadTokens: u.cacheReadTokens, cacheCreationTokens: u.cacheCreationTokens }
+    : null;
+  if (u.context) {
+    return {
+      usage: u.context,
+      window: input.window,
+      at: input.at,
+      model: input.model,
+      account: input.account,
+      measured: true,
+      ...(u.contextCategories?.length ? { categories: u.contextCategories } : {}),
+      ...(u.lastCall ? { last: u.lastCall } : {}),
+    };
+  }
+  if (u.lastCall) {
+    return {
+      usage: { inputTokens: u.lastCall.inputTokens, cacheReadTokens: u.lastCall.cacheReadTokens, cacheCreationTokens: u.lastCall.cacheCreationTokens },
+      window: input.window,
+      at: input.at,
+      model: input.model,
+      account: input.account,
+      measured: false,
+      last: u.lastCall,
+      ...(u.contextCategories?.length ? { categories: u.contextCategories } : {}),
+    };
+  }
+  // Claude's turn usage is a running total, not a context fill. Other engines can show it as the last response.
+  if (!turnLast || isClaudeModel(input.model) || input.model.startsWith('claude-')) return null;
+  return {
+    usage: { inputTokens: turnLast.inputTokens, cacheReadTokens: turnLast.cacheReadTokens, cacheCreationTokens: turnLast.cacheCreationTokens },
+    window: input.window,
+    at: input.at,
+    model: input.model,
+    account: input.account,
+    measured: false,
+    last: turnLast,
+  };
+}
 
 /** Mirrors routing/AccountRouter WARM_MS: past this the 1h prompt cache has likely expired. */
 export const WARM_MS = 55 * 60_000;

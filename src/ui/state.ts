@@ -7,7 +7,7 @@ import type { DesktopSession, ProjectEntry, TranscriptMessage } from '../shared/
 import type { UsageSnapshot } from '../shared/usage-types';
 import { HANDOFF_PROMPT, codexHandoffExcerpt, codexHandoffMessage, grokBotHandoffMessage, handoffFirstMessage, handoffTitle } from '../shared/handoff';
 import type { PermMode } from '../shared/permission';
-import { coldWriteNote, latestContext, type ContextInfo } from './context';
+import { coldWriteNote, contextInfoFromTurn, latestContext, type ContextInfo } from './context';
 import { familyOf } from '../shared/token-usage';
 import { LEGACY_ACCOUNT_LIST, accountListOf, activePin, sameAccountList, seatLabel } from './accounts';
 import { has } from './features';
@@ -927,7 +927,7 @@ function paneOnServer(pane: PaneState, msg: ServerMessage, claim: boolean, accou
       if (!belongs(pane, msg)) return myTurns === pane.myTurns ? pane : { ...pane, myTurns };
       const b = msg.badge;
       const prev = latestContext(pane.items);
-      const ctx: ContextInfo | null = b?.usage.context ? { usage: b.usage.context, window: b.usage.contextWindow ?? contextWindowOf(b.model), at: Date.now(), model: b.model, account: b.account } : null;
+      const ctx: ContextInfo | null = b ? contextInfoFromTurn({ model: b.model, account: b.account, usage: b.usage, at: Date.now(), window: b.usage.contextWindow ?? contextWindowOf(b.model) }) : null;
       const cacheNote = b ? coldWriteNote(b.usage, prev, { account: b.account, model: b.model, reason: b.reason, startedAt: pane.runStartedAt ?? Date.now() }) : null;
       const next = updateTurn(pane, msg.turnId, ({ errorCode: _was, ...it }) => ({ ...it, ...(!msg.ok && (msg.errorCode === 'thread_locked' || msg.errorCode === 'fast_refused') ? { errorCode: msg.errorCode } : {}), streaming: false, badge: msg.badge ?? it.badge, text: it.text || msg.text, error: msg.ok ? null : (msg.errorText ?? '실패'), ...((msg.model ?? msg.badge?.model) ? { model: msg.model ?? msg.badge?.model } : {}), ...(ctx ? { ctx } : {}), ...(cacheNote ? { cacheNote } : {}) }));
       // Only a turn this pane started may re-point the pane's session (id / account).

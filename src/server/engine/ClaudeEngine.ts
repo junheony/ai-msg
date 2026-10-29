@@ -4,13 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AccountRegistry } from '../../shared/accounts';
 import type { Attachment } from '../attachments/AttachmentStore';
-import { ZERO_USAGE, contextUsageOf, type ContextUsage } from '../../shared/turn-types';
-import type { Engine, EngineEvent, LiveInput, TurnRequest } from './Engine';
-import { buildMcpConfig, buildSettings, claudeArgs, claudeEnv, validResume, type CliPermissionMode } from './claudeCli/args';
+import { ZERO_USAGE, contextUsageOf, lastCallUsageOf, type ContextCategory, type ContextUsage, type LastCallUsage } from '../../shared/turn-types';
+import type { Engine, EngineEvent, EngineResult, LiveInput, TurnRequest } from './Engine';
+import { buildMcpConfig, buildSettings, claudeArgs, claudeEnv, userModsAllowed, validResume, type CliPermissionMode } from './claudeCli/args';
 import { MCP_TOOL_TIMEOUT_MS, PermissionBridge } from './claudeCli/bridge';
 import { forkCandidates, writeForkSource } from './claudeCli/fork';
 import { hookHandler } from './claudeCli/hooks';
-import type { CliUserMessage, Rec } from './claudeCli/messages';
+import { contextUsageRequest, parseContextControl, parseContextPayload } from './claudeCli/contextUsage';
+import type { CliMessage, CliUserMessage, Rec } from './claudeCli/messages';
 import { deckWrites, type OwnedEntries } from './claudeCli/ownedEntries';
 import { SessionGrants, permissionHandler, type ModeGate } from './claudeCli/permissions';
 import { ClaudeProcess, exitFailureText } from './claudeCli/process';
@@ -38,6 +39,11 @@ export const BG_GRACE_MS = 60_000;
  * ~2 s after the result, or not at all); the process is let go as soon as one arrives.
  */
 export const SUGGEST_WAIT_MS = 5_000;
+/**
+ * After a terminal result, how long to wait for the CLI's `get_context_usage` answer before the badge goes out
+ * without category rows. Deltas have already streamed; only the final result waits.
+ */
+export const CONTEXT_USAGE_WAIT_MS = 450;
 /**
  * An abort of a turn that is already over (waiting for its suggestion, or closing): stdin is closed first so the CLI
  * flushes its transcript and exits by itself; one still alive after this long is SIGTERMed.
@@ -70,6 +76,13 @@ export type ClaudeEngineOptions = {
   suggestWaitMs?: number;
   /** Default OVER_ABORT_GRACE_MS. */
   overAbortGraceMs?: number;
+  /**
+   * After a terminal result, ask the CLI for `get_context_usage` (summary) and attach category rows to that result.
+   * Off in tests: an extra stdin control frame would change every turn's input log. The server turns it on.
+   */
+  contextBreakdown?: boolean;
+  /** Default CONTEXT_USAGE_WAIT_MS. */
+  contextUsageWaitMs?: number;
 };
 
 export class ClaudeEngine implements Engine {
@@ -138,6 +151,7 @@ export class ClaudeEngine implements Engine {
     let capTimer: NodeJS.Timeout | null = null;
     let graceTimer: NodeJS.Timeout | null = null;
     let suggestTimer: NodeJS.Timeout | null = null;
+    let ctxTimer: NodeJS.Timeout | null = null;
     let overKill: NodeJS.Timeout | null = null;
     const onAbort = () => {
       aborted = true;
@@ -153,7 +167,7 @@ export class ClaudeEngine implements Engine {
       const relay = { node: this.o.node ?? process.execPath, script: this.o.scripts?.hookRelay ?? HOOK_RELAY, socketPath: reg.socketPath, token: reg.token };
       const settingsPath = path.join(procDir, 'settings.json');
       const mcpConfigPath = path.join(procDir, 'mcp.json');
-      await fs.writeFile(settingsPath, JSON.stringify(buildSettings({ ...(req.allowRules?.length ? { allowRules: req.allowRules } : {}), ...(req.noTools ? { noTools: true } : {}), ...(req.systemNote ? { systemNote: req.systemNote } : {}), ...(req.commanderHop ? { commander: true } : {}), ...(req.fast ? { fast: true } : {}), relay })), { mode: 0o600 });
+      await fs.writeFile(settingsPath, JSON.stringify(buildSettings({ ...(req.allowRules?.length ? { allowRules: req.allowRules } : {}), ...(req.noTools ? { noTools: true } : {}), ...(req.systemNote ? { systemNote: req.systemNote } : {}), ...(req.commanderHop ? { commander: true } : {}), ...(req.fast ? { fast: true } : {}), ...(userModsAllowed(this.o.baseEnv ?? process.env) ? { allowUserMods: true } : {}), relay })), { mode: 0o600 });
       await fs.writeFile(mcpConfigPath, JSON.stringify(buildMcpConfig({ node: relay.node, script: this.o.scripts?.permissionMcp ?? PERMISSION_MCP, socketPath: reg.socketPath, token: reg.token })), { mode: 0o600 });
 
       let resume = req.resumeSessionId ?? undefined;
@@ -179,6 +193,8 @@ export class ClaudeEngine implements Engine {
       let sawResult = false;
       let lastOk = false;
       let lastCtx: ContextUsage | null = null;
+      let lastCall: LastCallUsage | null = null;
+      let earlyCategories: ContextCategory[] | null = null;
       const bg = new BackgroundTracker();
       const meter = new ProgressMeter();
       let shownTasks: string[] = [];
@@ -255,7 +271,64 @@ export class ClaudeEngine implements Engine {
       if (req.signal.aborted) onAbort();
       if (this.o.steer === false || req.noTools) delete live.steer;
       req.onLive?.(live);
-      for await (const m of p.messages()) { // changed
+      const withBreakdown = (ev: EngineResult, categories: ContextCategory[] | null, assistantLast: LastCallUsage | null, api: LastCallUsage | null): EngineResult => {
+        const cats = categories?.length ? categories : [];
+        const last = assistantLast ?? api;
+        return { ...ev, usage: { ...ev.usage, ...(cats.length ? { contextCategories: cats } : {}), ...(last ? { lastCall: last } : {}) } };
+      };
+      /** Set when a terminal result is held for get_context_usage. afterResult runs only once it is released. */
+      let held: { ev: EngineResult; requestId: string; assistantLast: LastCallUsage | null } | null = null;
+      const parked: CliMessage[] = [];
+      const clearCtxTimer = () => { if (ctxTimer) { clearTimeout(ctxTimer); ctxTimer = null; } };
+      const isWake = (m: CliMessage) => m.type === 'unknown' && (m as Rec).subtype === 'deck_wake';
+      /** What to do once a result has been yielded. 'break' ends the read; 'continue' keeps stdin open. */
+      const afterResult = (): 'break' | 'continue' => {
+        if (aborted) return 'break';
+        if (unanswered.length === 0 && bg.tasks().length === 0) {
+          if (!suggest || !lastOk || suggestWait) return 'break';
+          suggestWait = true;
+          over = true;
+          clearGrace();
+          suggestTimer = setTimeout(() => p.stop(), this.o.suggestWaitMs ?? SUGGEST_WAIT_MS);
+          suggestTimer.unref?.();
+          return 'continue';
+        }
+        idle = unanswered.length === 0;
+        const capMs = this.o.bgMaxMs ?? BG_MAX_MS;
+        if (!capTimer && capMs <= MAX_TIMER_MS) { capTimer = setTimeout(() => finish('cap'), capMs); capTimer.unref?.(); }
+        armGrace();
+        return 'continue';
+      };
+      const src = p.messages()[Symbol.asyncIterator]();
+      const queue: CliMessage[] = [];
+      const pull = async (): Promise<CliMessage | null> => {
+        if (queue.length) return queue.shift()!;
+        const n = await src.next();
+        return n.done ? null : n.value;
+      };
+      messageLoop: while (true) {
+        const m = await pull();
+        if (!m) {
+          if (held) {
+            clearCtxTimer();
+            const h = held;
+            held = null;
+            yield withBreakdown(h.ev, null, h.assistantLast, null);
+            afterResult();
+          }
+          break;
+        }
+        if (held) {
+          const parsed = parseContextControl(m, held.requestId);
+          if (!parsed && !isWake(m)) { parked.push(m); continue; }
+          clearCtxTimer();
+          const h = held;
+          held = null;
+          yield withBreakdown(h.ev, parsed?.categories ?? null, h.assistantLast, parsed?.api ?? null);
+          if (parked.length) { queue.unshift(...parked); parked.length = 0; }
+          if (afterResult() === 'break') break;
+          continue;
+        }
         if (ended) break; // changed: what arrives after cap/grace is the dying child's
         if (m.type === 'prompt_suggestion') {
           const text = typeof m.suggestion === 'string' ? m.suggestion.trim() : '';
@@ -284,7 +357,13 @@ export class ClaudeEngine implements Engine {
         if (idle && isActivity(m)) { idle = false; clearGrace(); yield { kind: 'continue', cause: 'background' }; }
         const prog = meter.apply(m);
         if (prog) yield { kind: 'progress', ...prog };
-        if (m.type === 'assistant' && m.parent_tool_use_id === null) lastCtx = contextUsageOf(m.message.usage) ?? lastCtx;
+        if (m.type === 'assistant' && m.parent_tool_use_id === null) {
+          lastCtx = contextUsageOf(m.message.usage) ?? lastCtx;
+          const call = lastCallUsageOf(m.message.usage);
+          if (call) lastCall = call;
+          const cats = parseContextPayload((m as Rec).context_usage);
+          if (cats?.length) earlyCategories = cats;
+        }
         if (m.type === 'assistant' && typeof m.error === 'string') errorKind = m.error;
         if (this.o.onCommands) noteCommands(m, req.cwd, this.o.onCommands);
         if (m.type === 'user' && m.isReplay === true && typeof m.uuid === 'string') {
@@ -319,27 +398,29 @@ export class ClaudeEngine implements Engine {
           echoed = [];
           const fastWhy = fastRefusal(ev);
           if (fastWhy) yield fastWhy;
-          yield { ...ev, ...(lastCtx ? { usage: { ...ev.usage, context: lastCtx } } : {}), errorKind: ev.errorKind ?? errorKind, stderr: ev.ok ? null : p.stderrTail || null }; // changed: stderr from the child
+          const resultEv: EngineResult = { ...ev, ...(lastCtx ? { usage: { ...ev.usage, context: lastCtx } } : {}), errorKind: ev.errorKind ?? errorKind, stderr: ev.ok ? null : p.stderrTail || null }; // changed: stderr from the child
+          const assistantLast = lastCall;
+          const catsNow = earlyCategories;
           errorKind = null;
           lastCtx = null;
+          lastCall = null;
+          earlyCategories = null;
           meter.reset();
+          const terminal = unanswered.length === 0 && bg.tasks().length === 0;
+          if (this.o.contextBreakdown && terminal && !aborted && !catsNow?.length) {
+            const requestId = randomUUID();
+            held = { ev: resultEv, requestId, assistantLast };
+            p.write(contextUsageRequest(requestId));
+            clearCtxTimer();
+            ctxTimer = setTimeout(() => p.kick(), this.o.contextUsageWaitMs ?? CONTEXT_USAGE_WAIT_MS);
+            ctxTimer.unref?.();
+          } else {
+            yield withBreakdown(resultEv, catsNow, assistantLast, null);
+          }
         }
         if (!gotResult) continue;
-        if (aborted) break; // changed
-        if (unanswered.length === 0 && bg.tasks().length === 0) {
-          // The turn is done; only a successful one gets a suggestion, so only then is stdin held open a moment for it.
-          if (!suggest || !lastOk || suggestWait) break;
-          suggestWait = true;
-          over = true;
-          clearGrace();
-          suggestTimer = setTimeout(() => p.stop(), this.o.suggestWaitMs ?? SUGGEST_WAIT_MS);
-          suggestTimer.unref?.();
-          continue;
-        }
-        idle = unanswered.length === 0;
-        const capMs = this.o.bgMaxMs ?? BG_MAX_MS;
-        if (!capTimer && capMs <= MAX_TIMER_MS) { capTimer = setTimeout(() => finish('cap'), capMs); capTimer.unref?.(); }
-        armGrace();
+        if (held) continue;
+        if (afterResult() === 'break') break messageLoop;
       }
       // changed: the SDK threw on a dead process; the child's exit is read instead.
       over = sawResult;
@@ -355,6 +436,7 @@ export class ClaudeEngine implements Engine {
     } finally {
       if (capTimer) clearTimeout(capTimer);
       if (graceTimer) clearTimeout(graceTimer);
+      if (ctxTimer) clearTimeout(ctxTimer);
       if (suggestTimer) clearTimeout(suggestTimer);
       if (overKill) clearTimeout(overKill);
       req.signal.removeEventListener('abort', onAbort);

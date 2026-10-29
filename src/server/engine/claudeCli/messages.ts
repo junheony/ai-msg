@@ -29,8 +29,15 @@ export interface CliOtherMessage {
 export interface CliPromptSuggestion { type: 'prompt_suggestion'; suggestion?: unknown; uuid?: string; session_id?: string; [k: string]: unknown }
 export type CliMessage = CliSystemMessage | CliStreamEvent | CliAssistantMessage | CliUserMessage | CliResultMessage | CliRateLimitEvent | CliPromptSuggestion | CliOtherMessage;
 
-/** The one control frame deck writes: `initialize` before the first prompt (its control_response is read and ignored). */
-export interface CliControlRequest { type: 'control_request'; request_id: string; request: { subtype: 'initialize'; promptSuggestions?: boolean } }
+/**
+ * Control frames deck writes: `initialize` before the first prompt, and (when the turn asks) `get_context_usage`
+ * after a terminal result. `detail: 'summary'` answers from the last response plus local estimates.
+ */
+export interface CliControlRequest {
+  type: 'control_request';
+  request_id: string;
+  request: { subtype: 'initialize'; promptSuggestions?: boolean } | { subtype: 'get_context_usage'; detail?: 'summary' | 'full' };
+}
 
 /** One stdout line → a frame, or null for blank/non-JSON/non-object lines (never throws). */
 export function parseLine(line: string): CliMessage | null {

@@ -49,7 +49,9 @@ describe('ClaudeEngine over the claude CLI', () => {
     expect(s.env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
     expect(s.env.CLAUDE_CONFIG_DIR).toBeTruthy();
     expect(s.env.MCP_TOOL_TIMEOUT).toBe(String(12 * 60 * 60_000));
-    expect((s.files.settings as { hooks: Record<string, unknown> }).hooks.PreToolUse).toBeTruthy();
+    expect((s.files.settings as { hooks: Record<string, unknown>; disableAllHooks?: boolean }).hooks.PreToolUse).toBeTruthy();
+    expect((s.files.settings as { disableAllHooks?: boolean }).disableAllHooks).toBe(true);
+    expect(f.inputs.some((m) => (m as { request?: { subtype?: string } }).request?.subtype === 'get_context_usage')).toBe(false);
     expect(evs.find((e) => e.kind === 'result')).toMatchObject({ ok: true, sessionId: 's1' });
   });
 
@@ -273,5 +275,71 @@ describe('ClaudeEngine — ⚡ 빠르게 (fast mode)', () => {
     expect((n as { message: string }).message).toContain('usage credits exhausted');
     expect((n as { message: string }).message).toContain('표준 속도로 돕니다');
     expect((n as { message: string }).message).not.toContain('다시 시도');
+  });
+
+  it('context breakdown waits for get_context_usage and keeps only rows the CLI named', async () => {
+    const { f, engine } = await setup({ contextBreakdown: true, contextUsageWaitMs: 500 }, {
+      onStdin: (msg, push) => {
+        const m = msg as { type?: string; request_id?: string; request?: { subtype?: string } };
+        if (m.type !== 'control_request' || m.request?.subtype !== 'get_context_usage') return;
+        push({
+          type: 'control_response',
+          response: {
+            subtype: 'success',
+            request_id: m.request_id,
+            response: {
+              categories: [
+                { id: 'system_prompt', tokens: 1000, kind: 'used' },
+                { id: 'free_space', tokens: 50, kind: 'free' },
+                { name: 'Messages', tokens: 80, kind: 'used' },
+              ],
+              apiUsage: { input_tokens: 1, output_tokens: 9, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+            },
+          },
+        });
+      },
+    });
+    f.push(
+      cli.init('s1'),
+      { type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'hi' }], usage: { input_tokens: 8, output_tokens: 2, cache_read_input_tokens: 100, cache_creation_input_tokens: 5 } }, session_id: 's1' },
+      cli.result('a', 's1'),
+    );
+    const evs = await drain(engine.runTurn(req()));
+    expect(evs.find((e) => e.kind === 'result')).toMatchObject({
+      ok: true,
+      usage: {
+        context: { inputTokens: 8, cacheReadTokens: 100, cacheCreationTokens: 5 },
+        lastCall: { inputTokens: 8, outputTokens: 2, cacheReadTokens: 100, cacheCreationTokens: 5 },
+        contextCategories: [{ id: 'system_prompt', tokens: 1000 }, { id: 'messages', tokens: 80 }],
+      },
+    });
+  });
+
+  it('a context_usage already on the assistant message is used and no second request is written', async () => {
+    const { f, engine } = await setup({ contextBreakdown: true, contextUsageWaitMs: 50 });
+    f.push(
+      cli.init('s1'),
+      { type: 'assistant', parent_tool_use_id: null, context_usage: { categories: [{ id: 'skills', tokens: 12, kind: 'used' }] }, message: { content: [], usage: { input_tokens: 4, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } }, session_id: 's1' },
+      cli.result('a', 's1'),
+    );
+    const evs = await drain(engine.runTurn(req()));
+    expect(evs.find((e) => e.kind === 'result')).toMatchObject({ usage: { contextCategories: [{ id: 'skills', tokens: 12 }] } });
+    expect(f.inputs.some((m) => (m as { request?: { subtype?: string } }).request?.subtype === 'get_context_usage')).toBe(false);
+  });
+
+  it('gives up on the breakdown when the CLI never answers, and still yields the result', async () => {
+    const { f, engine } = await setup({ contextBreakdown: true, contextUsageWaitMs: 40 });
+    f.push(cli.init('s1'), cli.result('a', 's1'));
+    const evs = await drain(engine.runTurn(req()));
+    expect(evs.find((e) => e.kind === 'result')).toMatchObject({ ok: true, text: 'a' });
+    expect((evs.find((e) => e.kind === 'result') as { usage: { contextCategories?: unknown } }).usage.contextCategories).toBeUndefined();
+  });
+
+  it('DECK_ALLOW_USER_MODS=1 leaves user hooks and mods enabled', async () => {
+    const { f, engine } = await setup({ baseEnv: { PATH: '/bin', DECK_ALLOW_USER_MODS: '1' } });
+    f.push(cli.init('s1'), cli.result('a', 's1'));
+    await drain(engine.runTurn(req()));
+    expect((f.spawns[0]!.files.settings as { disableAllHooks?: boolean }).disableAllHooks).toBeUndefined();
+    expect((f.spawns[0]!.files.settings as { hooks: { PreToolUse: unknown } }).hooks.PreToolUse).toBeTruthy();
   });
 });

@@ -105,6 +105,18 @@ export interface SettingsInput {
   allowRules?: string[]; noTools?: boolean; systemNote?: string; commander?: boolean; relay: RelaySpec;
   /** ⚡ 빠르게: `fastMode: true` rides the same per-process settings file (one `--settings`), for this session only. */
   fast?: boolean;
+  /**
+   * Opt in to the user's own hooks and mods (`DECK_ALLOW_USER_MODS=1`).
+   * Default off: the flag settings file sets `disableAllHooks`, which stops user, project, local, and plugin hooks
+   * (and user-installed mods) from auto-approving a tool call before MSG's permission card. MSG's own PreToolUse
+   * hooks live in this same file, so they keep running. Managed hooks cannot be turned off from here.
+   */
+  allowUserMods?: boolean;
+}
+
+/** True only for the explicit opt-in. Any other value, including unset, keeps user hooks and mods off. */
+export function userModsAllowed(env: NodeJS.ProcessEnv): boolean {
+  return env.DECK_ALLOW_USER_MODS === '1';
 }
 
 /**
@@ -121,6 +133,9 @@ export function buildSettings(s: SettingsInput): Record<string, unknown> {
   };
   if (s.systemNote) hooks.UserPromptSubmit = [{ hooks: [hook('open')] }];
   const out: Record<string, unknown> = { hooks };
+  // Flag settings sit above user/project/local. disableAllHooks here stops those hooks and user-installed mods;
+  // hooks registered in this same object (MSG's PreToolUse relay) are not part of that set. See SECURITY.md.
+  if (!s.allowUserMods) out.disableAllHooks = true;
   const allow = commander ? (s.allowRules ?? []).filter((r) => !COMMANDER_GATED_RULE.test(r)) : s.allowRules ?? [];
   if (allow.length) out.permissions = { allow: [...allow] };
   if (s.fast) out.fastMode = true;

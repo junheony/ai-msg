@@ -18,7 +18,12 @@ export type FakeCtl = { push(...ms: unknown[]): void; raw(text: string): void; e
  * `end()` before a child exists is queued for the next one. Each spawn snapshots its `--settings` / `--mcp-config`
  * files (the engine deletes them when the turn ends; tests inspect them afterwards).
  */
-export function fakeClaudeCli(opts: { exitOnStdinClose?: boolean; onSignal?: (sig: NodeJS.Signals, ctl: FakeCtl) => void } = {}) {
+export function fakeClaudeCli(opts: {
+  exitOnStdinClose?: boolean;
+  onSignal?: (sig: NodeJS.Signals, ctl: FakeCtl) => void;
+  /** Called with each parsed stdin line. `push` writes frames to this child's stdout. */
+  onStdin?: (msg: Rec, push: (...ms: unknown[]) => void) => void;
+} = {}) {
   const spawns: FakeSpawn[] = [];
   const inputs: CliUserMessage[] = [];
   const state = { inputClosed: false, calls: 0, signals: [] as NodeJS.Signals[] };
@@ -49,7 +54,12 @@ export function fakeClaudeCli(opts: { exitOnStdinClose?: boolean; onSignal?: (si
         setImmediate(() => ee.emit('exit', code, signal));
       },
     };
-    readline.createInterface({ input: stdin }).on('line', (l) => { if (l.trim()) inputs.push(JSON.parse(l) as CliUserMessage); });
+    readline.createInterface({ input: stdin }).on('line', (l) => {
+      if (!l.trim()) return;
+      const msg = JSON.parse(l) as CliUserMessage;
+      inputs.push(msg);
+      opts.onStdin?.(msg as unknown as Rec, (...ms) => ctl.push(...ms));
+    });
     stdin.on('finish', () => {
       state.inputClosed = true;
       if (opts.exitOnStdinClose !== false) setImmediate(() => ctl.exit(0));
