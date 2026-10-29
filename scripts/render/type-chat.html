@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>type scale — chat</title>
+<link rel="stylesheet" href="../../src/ui/styles.css">
+<style>
+  html, body { height: 100%; margin: 0; background: var(--bg); }
+  .app { position: fixed; inset: 0; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <span class="sidebar-brand"><svg class="deck-mark sidebar-brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="6.3" fill="#E27A50"></rect><path d="M7 7.9 11.3 12.1 7 16.3M13.8 16.3h3.8" fill="none" stroke="#EDE3D5" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"></path></svg>MSG</span>
+    <span class="head-chip static"><span class="head-avatar" style="--av:var(--avatar-1)"><span class="avatar-mono">글</span></span>글자 크기 정리</span>
+  </header>
+  <div class="panes" data-count="1">
+    <section class="pane">
+      <div class="chat">
+        <div class="chat-body">
+          <div class="msg user"><pre>제목은 본문보다 작고, 같은 화면의 글자는 한 스케일을 따릅니다.</pre></div>
+          <div class="msg assistant">
+            <div class="markdown">
+              <h1>글자 크기</h1>
+              <p>메시지 본문, 사용자 말풍선, 입력창은 같은 본문 크기입니다. 도구 묶음도 본문을 따릅니다.</p>
+              <h2>제목 단계</h2>
+              <p>h2와 h3는 한 단계입니다. 사이드바 세션 제목은 본문보다 한 단계 작습니다.</p>
+              <h3>코드와 배지</h3>
+              <p>인라인 코드 <code>var(--fs-base)</code>와 태그 <span class="tag">NEW</span>는 더 작은 단계입니다.</p>
+            </div>
+            <details class="tool-group">
+              <summary><span class="tool-caret">›</span><span class="tool-label">Read <code>styles.css</code></span><span class="tool-state">done</span></summary>
+            </details>
+            <div class="role-badge"><span class="chip">Claude</span><span>방금</span></div>
+          </div>
+        </div>
+        <div class="composer-wrap">
+          <div class="composer">
+            <textarea rows="2" placeholder="메시지"></textarea>
+            <div class="composer-row">
+              <button type="button" class="attach" aria-label="첨부">+</button>
+              <span class="chip">styles.css</span>
+              <button type="button" class="send" style="margin-left:auto" aria-label="보내기">↑</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+</body>
+</html>

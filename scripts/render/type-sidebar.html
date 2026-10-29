@@ -1,0 +1,67 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>type scale — sidebar</title>
+<link rel="stylesheet" href="../../src/ui/styles.css">
+<style>
+  html, body { height: 100%; margin: 0; background: #808080; }
+  .frame { height: 100%; width: 268px; }
+  .sidebar { height: 100%; box-sizing: border-box; }
+</style>
+</head>
+<body>
+<div class="frame">
+<aside class="sidebar">
+  <div class="sidebar-head">
+    <span class="sidebar-brand"><svg class="deck-mark sidebar-brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="6.3" fill="#E27A50"></rect><path d="M7 7.9 11.3 12.1 7 16.3M13.8 16.3h3.8" fill="none" stroke="#EDE3D5" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"></path></svg>MSG</span>
+    <span class="grow"></span>
+    <button type="button" class="icon-btn" aria-label="새 세션">+</button>
+  </div>
+  <section class="project">
+    <div class="project-head"><span class="project-name">오늘</span></div>
+    <ul>
+      <li class="session-item active" title="글자 크기 정리">
+        <button type="button" class="row-open" aria-current="page">
+          <span class="row-avatar" style="--av:var(--avatar-1)"><span class="avatar-mono">글</span></span>
+          <span class="row-text">
+            <span class="session-title">글자 크기 정리</span>
+            <span class="session-meta"><span class="meta-text">본문보다 작은 제목으로 계층을 맞춥니다.</span></span>
+          </span>
+          <span class="row-status running" role="img" aria-label="응답 중"></span>
+        </button>
+      </li>
+      <li class="session-item" title="세션 아이콘">
+        <button type="button" class="row-open">
+          <span class="row-avatar" style="--av:var(--avatar-6)"><span class="avatar-mono" data-len="2">세션</span></span>
+          <span class="row-text">
+            <span class="session-title">세션 아이콘</span>
+            <span class="session-meta"><span class="meta-text">원 안의 글자는 지름에 맞춰 둡니다.</span></span>
+          </span>
+          <span class="row-status unread" role="img" aria-label="안 읽음"></span>
+        </button>
+      </li>
+      <li class="session-item" title="MSG 브랜딩">
+        <button type="button" class="row-open">
+          <span class="row-avatar" style="--av:var(--avatar-3)"><span class="avatar-emoji">✦</span></span>
+          <span class="row-text">
+            <span class="session-title">MSG 브랜딩</span>
+            <span class="session-meta"><span class="meta-text">로고와 세션 마크는 그대로입니다.</span></span>
+          </span>
+        </button>
+      </li>
+      <li class="session-item" title="배포 점검">
+        <button type="button" class="row-open">
+          <span class="row-avatar" style="--av:var(--avatar-4)"><span class="avatar-mono">배</span></span>
+          <span class="row-text">
+            <span class="session-title">배포 점검</span>
+            <span class="session-meta"><span class="meta-text">Build passed. 3 warnings remain.</span></span>
+          </span>
+        </button>
+      </li>
+    </ul>
+  </section>
+</aside>
+</div>
+</body>
+</html>
