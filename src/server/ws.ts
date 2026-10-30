@@ -280,6 +280,8 @@ export type WsHandle = {
   drain(): void;
   /** Turns still running, including processes held open for background work. */
   activeTurns(): number;
+  /** The turns streaming now (what `hello.running` lists): MSG mini reads it. */
+  running(): RunningTurn[];
   /** Ends every running turn (drain deadline). */
   abortAll(): void;
   /**
@@ -1708,6 +1710,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     isConciseTurn: (turnId: string) => conciseTurns.has(turnId),
     /** Processes still up (running a prompt, or closing after `drain` ended them): the restart waits for these. */
     activeTurns: () => turns.size,
+    running,
     abortAll() {
       // Marked as the server's: those turns end with SHUTDOWN_ABORTED, which the UI shows (a user's stop it hides).
       for (const t of turns.values()) t.ac.abort(SHUTDOWN_ABORT);
