@@ -34,6 +34,8 @@ import { handleAuthLogin } from './authLogin/http';
 import type { AuthLoginHub } from './authLogin/hub';
 import type { HubStatusService } from './hub/status';
 import { HUB_PROXY_PREFIX, HUB_PROXY_TARGETS, proxyHubRequest, type ProxyTarget } from './hub/proxy';
+import type { MiniStatusService } from './mini/status';
+import { bearerOf, type WidgetTokenStore } from './mini/widgetToken';
 
 /** Deviation (added per review I5): devOrigins/extraHosts feed the Origin+Host checks below. */
 export type HttpDeps = {
@@ -76,6 +78,11 @@ export type HttpDeps = {
   authLogin?: AuthLoginHub;
   /** MSG Hub: `GET /api/hub/status` (the overview) and the `/hub/p/<id>/` embed proxy. Absent = 404 for both. */
   hub?: { status: HubStatusService; proxyTargets?: Record<string, ProxyTarget> };
+  /**
+   * MSG mini: `GET /api/mini/status` (the /mini page and the lock-screen widget) and the read-only widget token the
+   * settings sheet copies / rotates. Absent = 404 for all three.
+   */
+  mini?: { status: MiniStatusService; widgetToken: WidgetTokenStore };
   /** package.json version for GET /api/health and GET /api/version. Absent answers "0.0.0". */
   version?: string;
 };
@@ -289,6 +296,8 @@ async function serveStatic(uiDir: string, urlPath: string, method: string, res: 
     json(res, 400, { error: 'bad path' });
     return;
   }
+  // MSG mini: `/mini` is its own small page (src/ui/mini.html), not the React shell.
+  if (decoded === '/mini' || decoded === '/mini/') decoded = '/mini.html';
   const normalized = path.normalize(decoded).replace(/^(\.\.[/\\])+/, '');
   const requested = path.resolve(root, '.' + normalized);
   if (!requested.startsWith(root + path.sep) && requested !== root) { json(res, 404, { error: 'not found' }); return; }
@@ -326,7 +335,7 @@ async function serveStatic(uiDir: string, urlPath: string, method: string, res: 
     }
     const rel = path.relative(root, file);
     // PWA: the service worker and manifest are revalidated every time so a new build takes over promptly.
-    const cache = rel === 'index.html' ? 'no-store' : rel === 'sw.js' || rel === 'manifest.webmanifest' ? 'no-cache' : 'public, max-age=3600';
+    const cache = rel === 'index.html' || rel === 'mini.html' ? 'no-store' : rel === 'sw.js' || rel.endsWith('.webmanifest') ? 'no-cache' : 'public, max-age=3600';
     res.writeHead(200, {
       'content-type': MIME[path.extname(file)] ?? 'application/octet-stream',
       'content-length': String(fst.size),
@@ -426,8 +435,27 @@ export function createRequestHandler(deps: HttpDeps) {
           json(res, 200, { ok: true, version: deps.version ?? '0.0.0' });
           return;
         }
+        // MSG mini: the one route a widget token opens — GET only, as `Authorization: Bearer`; the session cookie works too.
+        // Every other route below still asks for the cookie: a bearer is looked at here and nowhere else.
+        if (deps.mini && url.pathname === '/api/mini/status') {
+          if (req.method !== 'GET') { json(res, 405, { error: 'method not allowed' }); return; }
+          if (!authed && !(await deps.mini.widgetToken.matches(bearerOf(req.headers.authorization)))) { json(res, 401, { error: '로그인이 필요합니다' }); return; }
+          json(res, 200, await deps.mini.status.status());
+          return;
+        }
         if (!authed) { json(res, 401, { error: '로그인이 필요합니다' }); return; }
         if (url.pathname === '/api/me') { json(res, 200, { ok: true }); return; }
+        // 위젯 토큰 (settings → 계정): read for the copy button, rotate = a new random token (the only write of the mini feature).
+        if (deps.mini && url.pathname === '/api/mini/widget-token') {
+          if (req.method !== 'GET') { json(res, 405, { error: 'method not allowed' }); return; }
+          json(res, 200, { token: await deps.mini.widgetToken.current() });
+          return;
+        }
+        if (deps.mini && url.pathname === '/api/mini/widget-token/rotate') {
+          if (req.method !== 'POST') { json(res, 405, { error: 'method not allowed' }); return; }
+          json(res, 200, { token: await deps.mini.widgetToken.rotate() });
+          return;
+        }
         if (url.pathname === '/api/build' && req.method === 'GET') { json(res, 200, { build: deps.build?.() ?? null }); return; }
         // Device-side layout numbers (shellFit.ts) for a problem that only shows on a real device: one log line, nothing stored.
         if (url.pathname === '/api/diag' && req.method === 'POST') {

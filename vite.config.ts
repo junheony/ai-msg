@@ -1,5 +1,6 @@
 import react from '@vitejs/plugin-react';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 
 const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string };
@@ -15,6 +16,11 @@ export default defineConfig({
     assetsInlineLimit: (file) => (/\.(woff2?|ttf)$/.test(file) ? false : undefined),
     // React and the other deps (mostly react-markdown + remark-gfm) as separate chunks, each under the 500 kB warning.
     rolldownOptions: {
+      // Two pages: the React shell (index.html) and the small plain-TS status page served at /mini (mini.html).
+      input: {
+        main: fileURLToPath(new URL('./src/ui/index.html', import.meta.url)),
+        mini: fileURLToPath(new URL('./src/ui/mini.html', import.meta.url)),
+      },
       output: {
         codeSplitting: {
           groups: [

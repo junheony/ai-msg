@@ -20,7 +20,7 @@ self.addEventListener('activate', (event) => {
 });
 
 function isShellAsset(url) {
-  return url.pathname.startsWith('/assets/') || url.pathname.startsWith('/icons/') || url.pathname === '/manifest.webmanifest';
+  return url.pathname.startsWith('/assets/') || url.pathname.startsWith('/icons/') || url.pathname === '/manifest.webmanifest' || url.pathname === '/mini.webmanifest';
 }
 
 async function trim(cache) {
@@ -36,17 +36,19 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/api/') || url.pathname === '/ws' || url.pathname === '/sw.js') return;
 
   if (req.mode === 'navigate') {
-    // Network first; offline → the last shell we saw (index.html is the same document for every path).
+    // Network first; offline → the last shell we saw (index.html is the same document for every path,
+    // except /mini, the small status page, which is kept under its own key).
+    const shellKey = url.pathname === '/mini' || url.pathname === '/mini/' ? '/mini' : '/';
     event.respondWith((async () => {
       try {
         const res = await fetch(req);
         if (res.ok && (res.headers.get('content-type') || '').includes('text/html')) {
           const cache = await caches.open(CACHE);
-          await cache.put('/', res.clone());
+          await cache.put(shellKey, res.clone());
         }
         return res;
       } catch {
-        const cached = await caches.match('/');
+        const cached = await caches.match(shellKey);
         return cached || new Response(OFFLINE_HTML, { status: 503, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       }
     })());
