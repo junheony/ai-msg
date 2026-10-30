@@ -7,7 +7,7 @@ import { ConfirmDialog, ShortcutHelp } from './components/Dialogs';
 import { FastConsentSheet } from './components/FastConsentSheet';
 import { isFast, requestFast, setFast, useFast } from './fastMode';
 import { SessionCwdDialog } from './components/SessionCwdDialog';
-import { AuthTerminal, CommandPalette, Highlights, LayoutsDialog, SettingsView, SetupWizard, UsageSheet } from './lazyViews';
+import { AuthTerminal, CommandPalette, Highlights, HubView, LayoutsDialog, SettingsView, SetupWizard, UsageSheet } from './lazyViews';
 import { deleteLayout, layoutPanes, listLayouts, saveLayout, type SavedLayout } from './layouts';
 import { Login } from './components/Login';
 import { readHashToken } from './loginHash';
@@ -34,6 +34,9 @@ import { dockedPanes, initialState, openPanes, reducer, sessionsToClose, type Ac
 import { arrangeFloats, clampFloat, dockSlot, EDGE_PX, FLOAT_MIN_H, FLOAT_MIN_W, floatRectAt, onRail, reorderSlot, SCROLL_STEP, slotX, snapFloat, shownBox, COLLAPSED_H, useTabReorder, type FloatRect } from './paneDrag';
 import { isMacPlatform, isTypingTarget, matchPaneShortcut, matchPinShortcut, matchShortcut, type ShortcutId } from './shortcuts';
 import { useIsPhone } from './useIsPhone';
+import { HubSummary, ModeSwitcher } from './hub/ModeSwitcher';
+import { modeAt, readHubMode, writeHubMode, type HubModeKey } from './hub/modes';
+import { useHubStatus } from './hub/useHubStatus';
 import { useTouchTooltip } from './useTouchTooltip';
 import { FIND_EVENT } from './components/FindBar';
 
@@ -173,6 +176,15 @@ export function App() {
   /** 고정됨 reorder requests: only the newest one's answer is applied. */
   const pinOrderSeq = useRef(0);
   const phone = useIsPhone();
+  // MSG Hub: which mode the shell shows. 'msg' is the terminal (this app as before); the others overlay the body and
+  // poll /api/hub/status while showing. The last mode is kept per browser.
+  const [hubMode, setHubModeState] = useState<HubModeKey>(readHubMode);
+  const hubModeRef = useRef(hubMode);
+  hubModeRef.current = hubMode;
+  const hubMenuOpen = useRef(false);
+  const setHubMode = useCallback((m: HubModeKey) => { setHubModeState(m); writeHubMode(m); }, []);
+  const hubFeed = useHubStatus(hubMode !== 'msg');
+  const hubShown = hubMode !== 'msg';
   const [headSlot, setHeadSlot] = useState<HTMLDivElement | null>(null);
   const [stripRow, setStripRow] = useState<HTMLDivElement | null>(null);
   const [drawer, setDrawer] = useState(() => saved?.drawer ?? false);
@@ -541,7 +553,17 @@ export function App() {
       // repeats are taken too (not reopened), or the browser would switch tabs on them.
       const pin = matchPinShortcut(e, MAC);
       if (pin !== null) {
-        if (hasOpenModal() || !openPinned.current(pin, true)) return;
+        if (hasOpenModal()) return;
+        // MSG Hub: while the mode menu is open, or outside the terminal, ⌘n is the nth mode. In the terminal the key
+        // keeps its pinned-row meaning (and the browser's when that row does not exist).
+        if (hubMenuOpen.current || hubModeRef.current !== 'msg') {
+          const m = modeAt(pin + 1);
+          if (!m) return;
+          e.preventDefault();
+          if (!e.repeat) setHubMode(m);
+          return;
+        }
+        if (!openPinned.current(pin, true)) return;
         e.preventDefault();
         if (!e.repeat) afterIme(() => openPinned.current(pin));
         return;
@@ -1315,6 +1337,8 @@ export function App() {
         {/* Tablet / unfolded (721–1100px, CSS only shows it there): a visible way to fold the sidebar away without ⌘\. */}
         {!phone && <button type="button" className="icon-btn sidebar-toggle" aria-label={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} title={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} aria-pressed={!sidebarHidden} onClick={toggleSidebar} onMouseEnter={peekable && !peek ? armPeek : undefined} onMouseLeave={peekable ? () => { unlatchPeek(); leavePeek(); } : undefined}>☰</button>}
         {/* The session chip of the one pane (desktop) / the shown pane (phone) renders here (Pane → Chat, a portal). */}
+        <ModeSwitcher mode={hubMode} onChange={setHubMode} mac={MAC} phone={phone} onOpenChange={(o) => { hubMenuOpen.current = o; }} />
+        {!phone && hubShown && <HubSummary status={hubFeed.status} fetchedAt={hubFeed.fetchedAt} error={hubFeed.error} />}
         <div className="topbar-head" ref={setHeadSlot} />
         {/* Every seat's usage, collapsed to the tightest remaining amount. The list of seats opens under the pill. */}
         <UsageStrip usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} phone={phone} rowSlot={stripRow} open={usageOpen !== null} onToggle={() => setUsageOpen((v) => (v ? null : 'limits'))} reauth={loginSeats} onReauth={has('authLogin') ? setAuthSeat : undefined} />
@@ -1386,6 +1410,7 @@ export function App() {
         <div
           ref={sidebarWrap}
           className={`sidebar-wrap ${phone ? 'drawer' : ''} ${drawer ? 'open' : ''} ${tucked ? 'hidden' : ''} ${peek ? 'peek' : ''}`}
+          {...(hubShown ? { inert: true } : {})}
           onMouseEnter={peek ? clearPeekTimer : undefined}
           onMouseLeave={peekable ? () => { unlatchPeek(); if (peek) leavePeek(); } : undefined}
         >
@@ -1455,7 +1480,7 @@ export function App() {
             onNewChat={() => newChat()}
           />
         </div>
-        <div ref={panesRef} className="panes" data-count={phone || maxed ? 1 : docked.length} {...(maxed ? { 'data-maxed': maxed } : {})} style={{ '--cols': phone || maxed ? 1 : docked.length, ...(!phone && !maxed && docked.length > 1 ? { gridTemplateColumns: paneColumns(docked.map((p) => paneSize(p.size))) } : {}) } as CSSProperties}>
+        <div ref={panesRef} className="panes" {...(hubShown ? { inert: true } : {})} data-count={phone || maxed ? 1 : docked.length} {...(maxed ? { 'data-maxed': maxed } : {})} style={{ '--cols': phone || maxed ? 1 : docked.length, ...(!phone && !maxed && docked.length > 1 ? { gridTemplateColumns: paneColumns(docked.map((p) => paneSize(p.size))) } : {}) } as CSSProperties}>
           {phone && state.panes.length > 1 && (
             // 36px strip, 44px presses: "1 · 제목…" (the title cut by CSS), + at the end; press-and-drag reorders.
             <div className="pane-switch" data-testid="split-tabs" role="group" aria-label="분할" {...tabs.stripProps}>
@@ -1480,7 +1505,7 @@ export function App() {
           ))}
         </div>
         {!phone && floats.length > 0 && (
-          <div className="floats">
+          <div className="floats" {...(hubShown ? { inert: true } : {})}>
             {floats.map((p) => (
               <div key={p.id} className={`float-card${p.id === state.activePaneId ? ' on' : ''}${p.floatCollapsed ? ' collapsed' : ''}`} data-float={p.id} style={{ left: p.float!.x, top: p.float!.y, width: p.float!.w, height: p.floatCollapsed ? COLLAPSED_H : p.float!.h }}
                 onDoubleClick={(e) => { if (onCardHead(e.target)) { if (p.floatCollapsed) toggleCollapseCard(p.id); else toggleMaxCard(p.id); } }}>
@@ -1493,6 +1518,12 @@ export function App() {
                   onPointerDown={(e) => startFloatResize(e, p.id)} onKeyDown={(e) => resizeKey(e, p.id)} />}
               </div>
             ))}
+          </div>
+        )}
+        {hubShown && (
+          // Over the terminal, which stays mounted (its panes, drafts and scroll positions survive a switch) but inert.
+          <div className="hub-overlay" data-testid="hub-overlay">
+            <HubView mode={hubMode} onChangeMode={setHubMode} phone={phone} feed={hubFeed} />
           </div>
         )}
       </div>
