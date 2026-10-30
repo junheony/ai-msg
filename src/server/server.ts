@@ -29,6 +29,7 @@ import { sweepShadowHomes } from './engine/shadowHome';
 import { grokEnv } from './engine/grokEnv';
 import { execFile } from 'node:child_process';
 import { createRequestHandler, type ServerUpdateDeps } from './http';
+import { createHubStatus, liveHubDeps } from './hub/status';
 import { AuthLoginHub } from './authLogin/hub';
 import { openAuthPty } from './authLogin/pty';
 import { ServerUpdateWatch, startSupervisor, supervisionCheck } from './serverUpdate';
@@ -360,7 +361,9 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
       // A finished device login should show subscription usage without waiting out the auth backoff or restarting.
       onExit: (seat, code) => { if (seat === 'x1' && code === 0) grokBilling?.nudge(); },
     });
-    const realHandler = createRequestHandler({ token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), version: packageVersion(), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, sessionIcons, memory, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate, setup, authLogin });
+    // MSG Hub: localhost-only, GET-only status reads; the WS handle below is bound by the time a request arrives.
+    const hub = { status: createHubStatus(liveHubDeps({ home: cfg.home, host: os.hostname(), self: () => ({ uptimeMs: Date.now() - startedAt, sessions: index.sessions().length, activeTurns: ws.activeTurns() }) })) };
+    const realHandler = createRequestHandler({ hub, token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), version: packageVersion(), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, sessionIcons, memory, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate, setup, authLogin });
     const ws = attachWebSocket(servers, { holders, grokHome: cfg.grokBin ? cfg.grokHome : null, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, sessionIcons, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json'), tasks, pushTask: (p) => { void push.sendAll(p); }, setup: { needed: () => setupStore.needed() } });
     cleanup.push(() => ws.close());
     notifyIndex = () => ws.broadcastIndex();

@@ -13,3 +13,4 @@ export const LayoutsDialog = lazyNamed(() => import('./components/LayoutsDialog'
 export const SidePanel = lazyNamed(() => import('./components/SidePanel').then((m) => m.SidePanel));
 export const CommanderSheet = lazyNamed(() => import('./components/CommanderSheet').then((m) => m.CommanderSheet));
 export const ImageEditor = lazyNamed(() => import('./components/ImageEditor').then((m) => m.ImageEditor));
+export const HubView = lazyNamed(() => import('./hub/HubView').then((m) => m.HubView));

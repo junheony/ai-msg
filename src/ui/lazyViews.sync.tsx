@@ -10,3 +10,4 @@ export { LayoutsDialog } from './components/LayoutsDialog';
 export { SidePanel } from './components/SidePanel';
 export { CommanderSheet } from './components/CommanderSheet';
 export { ImageEditor } from './components/ImageEditor';
+export { HubView } from './hub/HubView';
