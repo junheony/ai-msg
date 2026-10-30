@@ -32,11 +32,12 @@ import { hydrate, loadQueues, loadSent, loadUi, saveQueues, saveSent, saveUi, sn
 import { findSession } from './push';
 import { dockedPanes, initialState, openPanes, reducer, sessionsToClose, type Action, type AppState, type UploadedAttachment } from './state';
 import { arrangeFloats, clampFloat, dockSlot, EDGE_PX, FLOAT_MIN_H, FLOAT_MIN_W, floatRectAt, onRail, reorderSlot, SCROLL_STEP, slotX, snapFloat, shownBox, COLLAPSED_H, useTabReorder, type FloatRect } from './paneDrag';
-import { isMacPlatform, isTypingTarget, matchPaneShortcut, matchPinShortcut, matchShortcut, type ShortcutId } from './shortcuts';
+import { isMacPlatform, isPinMod, isTypingTarget, matchPaneShortcut, matchPinShortcut, matchShortcut, type ShortcutId } from './shortcuts';
 import { useIsPhone } from './useIsPhone';
 import { HubSummary, ModeSwitcher } from './hub/ModeSwitcher';
 import { modeAt, readHubMode, writeHubMode, type HubModeKey } from './hub/modes';
-import { useHubStatus } from './hub/useHubStatus';
+import { useHubStatus, type HubPush } from './hub/useHubStatus';
+import { HubRail } from './hub/HubRail';
 import { useTouchTooltip } from './useTouchTooltip';
 import { FIND_EVENT } from './components/FindBar';
 
@@ -176,15 +177,18 @@ export function App() {
   /** 고정됨 reorder requests: only the newest one's answer is applied. */
   const pinOrderSeq = useRef(0);
   const phone = useIsPhone();
-  // MSG Hub: which mode the shell shows. 'msg' is the terminal (this app as before); the others overlay the body and
-  // poll /api/hub/status while showing. The last mode is kept per browser.
+  // MSG Hub: which mode the shell shows. 'msg' is the terminal (this app as before); the others overlay the body. The
+  // rail is always there, so a 'hub' server pushes `hub_status` on this socket (the rail's dots are live in the terminal
+  // too); an older server is polled only while a hub mode shows. The last mode is kept per browser.
   const [hubMode, setHubModeState] = useState<HubModeKey>(readHubMode);
   const hubModeRef = useRef(hubMode);
   hubModeRef.current = hubMode;
   const hubMenuOpen = useRef(false);
   const setHubMode = useCallback((m: HubModeKey) => { setHubModeState(m); writeHubMode(m); }, []);
-  const hubFeed = useHubStatus(hubMode !== 'msg');
+  const [hubPush, setHubPush] = useState<HubPush | null>(null);
+  const hubPushOn = has('hub');
   const hubShown = hubMode !== 'msg';
+  const hubFeed = useHubStatus(hubShown || hubPushOn, hubPush, hubPushOn);
   const [headSlot, setHeadSlot] = useState<HTMLDivElement | null>(null);
   const [stripRow, setStripRow] = useState<HTMLDivElement | null>(null);
   const [drawer, setDrawer] = useState(() => saved?.drawer ?? false);
@@ -417,6 +421,9 @@ export function App() {
     catchup.current = tracker;
     sock.current = createSocket((msg) => {
       if (msg.type === 'hello') setFeatures(msg.features);
+      // MSG Hub: the rail asks for status pushes on every (re)connect; the pushes stay out of the reducer and the catch-up tracker.
+      if (msg.type === 'hello' && has('hub')) sock.current?.send({ type: 'hub_watch', on: true });
+      if (msg.type === 'hub_status') { setHubPush({ status: msg.status, at: Date.now() }); return; }
       if (msg.type === 'hello' && has('setup') && msg.setup?.needed && !setupAsked.current) { setupAsked.current = true; setSetupOpen(true); }
       // 총사령탑 켜기·끄기 changed what the server does (before the dispatch, so the render that follows sees it).
       if (msg.type === 'settings' && msg.features) setFeatures(msg.features);
@@ -551,6 +558,13 @@ export function App() {
       };
       // ⌘1 … ⌘9 (⌃1 … ⌃9 too on a Mac — Safari keeps ⌘-digits for its menus): the nth 고정됨 row, also from the composer. The key is only taken when that row exists; a held key's
       // repeats are taken too (not reopened), or the browser would switch tabs on them.
+      // MSG Hub: ⌘0 (Ctrl+0) is the tenth mode, only where the hub takes the digits (see below).
+      if (e.code === 'Digit0' && isPinMod(e, MAC) && (hubMenuOpen.current || hubModeRef.current !== 'msg')) {
+        if (hasOpenModal()) return;
+        e.preventDefault();
+        if (!e.repeat) setHubMode(modeAt(0)!);
+        return;
+      }
       const pin = matchPinShortcut(e, MAC);
       if (pin !== null) {
         if (hasOpenModal()) return;
@@ -1338,7 +1352,7 @@ export function App() {
         {!phone && <button type="button" className="icon-btn sidebar-toggle" aria-label={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} title={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} aria-pressed={!sidebarHidden} onClick={toggleSidebar} onMouseEnter={peekable && !peek ? armPeek : undefined} onMouseLeave={peekable ? () => { unlatchPeek(); leavePeek(); } : undefined}>☰</button>}
         {/* The session chip of the one pane (desktop) / the shown pane (phone) renders here (Pane → Chat, a portal). */}
         <ModeSwitcher mode={hubMode} onChange={setHubMode} mac={MAC} phone={phone} onOpenChange={(o) => { hubMenuOpen.current = o; }} />
-        {!phone && hubShown && <HubSummary status={hubFeed.status} fetchedAt={hubFeed.fetchedAt} error={hubFeed.error} />}
+        {!phone && hubShown && <HubSummary status={hubFeed.status} fetchedAt={hubFeed.fetchedAt} error={hubFeed.error} pushOn={hubPushOn} />}
         <div className="topbar-head" ref={setHeadSlot} />
         {/* Every seat's usage, collapsed to the tightest remaining amount. The list of seats opens under the pill. */}
         <UsageStrip usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} phone={phone} rowSlot={stripRow} open={usageOpen !== null} onToggle={() => setUsageOpen((v) => (v ? null : 'limits'))} reauth={loginSeats} onReauth={has('authLogin') ? setAuthSeat : undefined} />
@@ -1403,7 +1417,10 @@ export function App() {
       )}
       {newBuild && <button type="button" className="update-pill" onClick={() => location.reload()}>새 버전이 있어요 · 새로고침</button>}
       <Toasts toasts={toasts} onDismiss={dismissToast} aboveComposer />
-      <div ref={bodyRef} className="body">
+      <div className="body">
+        {/* MSG Hub: the one fixed rail, in every mode (the terminal included). On a phone it is the bottom tab bar. */}
+        <HubRail mode={hubMode} status={hubFeed.status} onChange={setHubMode} mac={MAC} />
+        <div ref={bodyRef} className="shell-main">
         <div ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" data-testid="cards-live" />
         {phone && drawer && <div className="drawer-backdrop" onClick={() => setDrawer(false)} />}
         {peekable && <div className="sidebar-hotzone" data-testid="sidebar-hotzone" aria-hidden="true" onMouseEnter={peek ? undefined : armPeek} onMouseLeave={() => { unlatchPeek(); if (!peek) clearPeekTimer(); }} />}
@@ -1523,9 +1540,10 @@ export function App() {
         {hubShown && (
           // Over the terminal, which stays mounted (its panes, drafts and scroll positions survive a switch) but inert.
           <div className="hub-overlay" data-testid="hub-overlay">
-            <HubView mode={hubMode} onChangeMode={setHubMode} phone={phone} feed={hubFeed} />
+            <HubView mode={hubMode} onChangeMode={setHubMode} feed={hubFeed} pushOn={hubPushOn} />
           </div>
         )}
+        </div>
       </div>
     </div>
     </AccountsContext>

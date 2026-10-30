@@ -1,97 +1,87 @@
-import type { HubAlert, HubMode, HubStatus } from '../../shared/hub-types';
-import { ChevronRightIcon, ExternalIcon, HubIcon, ReloadIcon } from './HubIcons';
-import { modeDef, STATE_LABEL, type HubModeKey } from './modes';
+import type { HubMode, HubState, HubStatus } from '../../shared/hub-types';
+import { ChevronRightIcon, HubIcon, ReloadIcon } from './HubIcons';
+import { Attention, decisionOf, headlineOf, kpisOf, Lead, StatePill } from './HubPage';
+import { modeDef, STATE_LABEL, stateClass, type HubModeKey } from './modes';
 import { relTime } from './time';
 
-const stateClass = (s: HubMode['state']) => (s === 'down' ? 'bad' : s);
+const RANK: Record<HubState, number> = { down: 0, warn: 1, unknown: 2, idle: 3, ok: 4 };
+const worstOf = (modes: HubMode[]): HubState => modes.reduce<HubState>((w, m) => (RANK[m.state] < RANK[w] ? m.state : w), 'ok');
 
-export function StatePill({ state }: { state: HubMode['state'] }) {
-  return <span className={`hub-st ${stateClass(state)}`}><i />{STATE_LABEL[state]}</span>;
-}
-
-function firstAlert(m: HubMode): HubAlert | null {
-  return m.alerts.find((a) => a.level === 'bad') ?? m.alerts.find((a) => a.level === 'warn') ?? m.alerts[0] ?? null;
-}
-
-/** One status card: state, last activity, up to four metrics, the worst alert, and a way in. */
+/** One card: name · state · the mode's headline · two KPIs · its worst alert (or its next decision) · a way in. */
 export function HubCard({ mode, now, onOpenMode }: { mode: HubMode; now: number; onOpenMode: (m: HubModeKey) => void }) {
   const def = modeDef(mode.id);
-  const metrics = Object.entries(mode.metrics).slice(0, 4);
-  const alert = firstAlert(mode);
-  const embed = mode.links.find((l) => l.embed);
-  const ext = mode.links.find((l) => !l.embed);
-  const ok = mode.sources.filter((s) => s.ok).length;
+  const alert = mode.alerts.find((a) => a.level === 'bad') ?? mode.alerts.find((a) => a.level === 'warn') ?? null;
+  const kpis = kpisOf(mode).slice(0, 2);
   return (
-    <article className={`hub-card ${stateClass(mode.state)}`} data-mode={mode.id} aria-label={mode.name}>
-      <div className="hub-card-top">
-        <span className="hub-card-icon"><HubIcon name={def.icon} /></span>
-        <h3 className="hub-card-name">{mode.name}</h3>
+    <article className={`card ${stateClass(mode.state)}`} data-mode={mode.id} aria-label={mode.name}>
+      <div className="top">
+        <span className="ico"><HubIcon name={def.icon} /></span>
+        <h3>{mode.name}</h3>
+        {mode.tag && <span className="hub-tag">{mode.tag}</span>}
         <StatePill state={mode.state} />
       </div>
-      <div className="hub-card-sub">
+      <p className="hl">{headlineOf(mode)}</p>
+      {kpis.length > 0 && (
+        <div className="ck">
+          {kpis.map((k, i) => <div key={i}><span className="l">{k.label}</span><span className={`v ${k.status ?? ''}`}>{k.value}{k.unit ? <span className="u">{k.unit}</span> : null}</span></div>)}
+        </div>
+      )}
+      <div className={`al ${alert ? alert.level : 'next'}`} title={alert ? alert.text : decisionOf(mode)}>{alert ? alert.text : `다음 · ${decisionOf(mode)}`}</div>
+      <div className="ft">
         <span>마지막 활동 {relTime(mode.lastActivity, now)}</span>
-        {mode.tag && <span className="hub-tag">{mode.tag}</span>}
-      </div>
-      <dl className="hub-mets">
-        {metrics.length === 0 && <div className="hub-met empty">지표 없음</div>}
-        {metrics.map(([k, v]) => <div className="hub-met" key={k}><dt>{k}</dt><dd>{v === null ? '—' : typeof v === 'boolean' ? (v ? '예' : '아니오') : String(v)}</dd></div>)}
-      </dl>
-      <div className={`hub-alert ${alert ? alert.level : 'none'}`}>{alert ? alert.text : '최근 알림 없음'}</div>
-      <div className="hub-card-foot">
-        <span className="hub-card-src">소스 {ok}/{mode.sources.length}{mode.sources.some((s) => !s.ok) ? ` · ${mode.sources.find((s) => !s.ok)?.error ?? '오류'}` : ''}</span>
-        {embed || mode.id !== 'msg' ? (
-          <button type="button" className="hub-open" onClick={() => onOpenMode(mode.id)}>열기 <ChevronRightIcon /></button>
-        ) : (
-          <button type="button" className="hub-open" onClick={() => onOpenMode('msg')}>터미널 <ChevronRightIcon /></button>
-        )}
-        {ext && <a className="hub-open ext" href={ext.href} target="_blank" rel="noopener noreferrer">{ext.label} <ExternalIcon /></a>}
+        <button type="button" className="open" onClick={() => onOpenMode(mode.id)} aria-label={`${mode.name} 열기`}>{mode.id === 'msg' ? '터미널' : '열기'} <ChevronRightIcon /></button>
       </div>
     </article>
   );
 }
 
-/** The 개요: eight cards, the recent alerts, the server. */
-export function HubOverview({ status, error, loading, fetchedAt, now, onOpenMode, onRefresh }: { status: HubStatus | null; error: string | null; loading: boolean; fetchedAt: number | null; now: number; onOpenMode: (m: HubModeKey) => void; onRefresh: () => void }) {
+/** The 개요: what needs attention across every mode, then one card per mode, then the server. */
+export function HubOverview({ status, error, loading, fetchedAt, now, pushOn, onOpenMode, onRefresh }: { status: HubStatus | null; error: string | null; loading: boolean; fetchedAt: number | null; now: number; pushOn: boolean; onOpenMode: (m: HubModeKey) => void; onRefresh: () => void }) {
   const modes = status?.modes ?? [];
-  const sources = modes.reduce((n, m) => n + m.sources.length, 0);
-  const alerts = modes.flatMap((m) => m.alerts.map((a) => ({ ...a, who: m.name, id: m.id }))).filter((a) => a.level !== 'info').slice(0, 8);
+  const n = { down: 0, warn: 0, ok: 0, idle: 0, unknown: 0 };
+  for (const m of modes) n[m.state]++;
+  const attention = modes.flatMap((m) => m.alerts.filter((a) => a.level !== 'info').map((a) => ({ ...a, who: m.name, onWho: () => onOpenMode(m.id) })));
+  attention.sort((a, b) => (a.level === b.level ? 0 : a.level === 'bad' ? -1 : 1));
+  const first = attention[0];
+  const sources = modes.reduce((s, m) => s + m.sources.length, 0);
+  const sourcesOk = modes.reduce((s, m) => s + m.sources.filter((x) => x.ok).length, 0);
+  const headline = `장애 ${n.down} · 주의 ${n.warn} · 정상 ${n.ok}${n.idle ? ` · 대기 ${n.idle}` : ''}${n.unknown ? ` · 미확인 ${n.unknown}` : ''}`;
+  const decision = first ? `${first.who} — ${first.text}${first.hint ? ` → ${first.hint}` : ''}` : '지금 결정할 것 없음';
   return (
     <div className="hub-page" data-testid="hub-overview">
-      <div className="hub-trow">
+      <header className="ph">
+        <span className="mode-ico"><HubIcon name="grid" size={18} /></span>
         <h1>개요</h1>
-        <span className="hub-meta">모드 {modes.length} · 소스 {sources} · 서버 {status ? 1 : 0}대</span>
-        <span className="hub-pill">자동 새로고침 15초</span>
-        <span className="hub-pill">읽기 전용 · 제어 없음</span>
-        <button type="button" className="hub-pill btn" onClick={onRefresh} disabled={loading} aria-label="지금 새로고침"><ReloadIcon /> {loading ? '불러오는 중…' : '새로고침'}</button>
-      </div>
+        <span className="meta">모드 {modes.length} · 소스 {sourcesOk}/{sources}{status ? ` · ${status.host}` : ''}</span>
+        <span className="ph-end">
+          <span className="pill">{pushOn ? '실시간 푸시' : '15초 폴링'}</span>
+          <span className="pill">읽기 전용</span>
+          <button type="button" className="pill btn" onClick={onRefresh} disabled={loading} aria-label="지금 새로고침"><ReloadIcon /> {loading ? '불러오는 중…' : '새로고침'}</button>
+        </span>
+      </header>
       {error && <div className="hub-notice" role="alert">상태를 불러오지 못했어요 · {error}{status ? ` · 마지막 성공 ${relTime(fetchedAt ? new Date(fetchedAt).toISOString() : null, now)}` : ''}</div>}
       {!status && !error && <div className="hub-notice muted">상태를 불러오는 중…</div>}
-      <div className="hub-grid">
+      {status && <Lead state={worstOf(modes)} headline={headline} decision={decision} />}
+      <div className="cards">
         {modes.map((m) => <HubCard key={m.id} mode={m} now={now} onOpenMode={onOpenMode} />)}
       </div>
       {status && (
-        <div className="hub-bottom">
-          <section className="hub-panel" aria-label="최근 알림">
-            <h2>최근 알림</h2>
-            {alerts.length === 0 ? <div className="hub-panel-empty">알림 없음</div> : (
-              <ul className="hub-alert-list">
-                {alerts.map((a, i) => (
-                  <li key={`${a.id}-${i}`}>
-                    <i className={`hub-dot ${a.level}`} />
-                    <button type="button" className="hub-who" onClick={() => onOpenMode(a.id)}>{a.who}</button>
-                    <span className="hub-txt">{a.text}</span>
-                    <span className="hub-time">{a.at ? relTime(a.at, now) : ''}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
+        <div className="grid2">
+          <section className="sec open-static" aria-label="주의 목록">
+            <div className="sh"><span className="sec-title">주의 목록</span><span className="n">장애 → 주의 순 · 모드 이름을 누르면 이동</span><span className="cnt">{attention.length}</span></div>
+            <Attention alerts={attention} now={now} who />
           </section>
-          <section className="hub-panel" aria-label="서버">
-            <h2>서버</h2>
-            <div className="hub-kv"><span>호스트</span><b>{status.host}</b></div>
-            <div className="hub-kv"><span>상태 생성</span><b>{relTime(status.generated_at, now)}</b></div>
-            <div className="hub-kv"><span>소스 응답</span><b>{modes.reduce((n, m) => n + m.sources.filter((s) => s.ok).length, 0)}/{sources}</b></div>
-            <div className="hub-kv"><span>갱신 주기</span><b>15초 · 서버 캐시 15초</b></div>
+          <section className="sec open-static" aria-label="서버">
+            <div className="sh"><span className="sec-title">서버</span></div>
+            <div className="b">
+              <div className="kv one">
+                <div><span>호스트</span><b>{status.host}</b></div>
+                <div><span>상태 생성</span><b>{relTime(status.generated_at, now)}</b></div>
+                <div><span>마지막 수신</span><b>{fetchedAt ? relTime(new Date(fetchedAt).toISOString(), now) : '—'}</b></div>
+                <div><span>갱신</span><b>{pushOn ? '푸시 · 변화 때마다 (15초 점검)' : '폴링 15초'} · 서버 캐시 15초</b></div>
+                <div><span>상태 뜻</span><b>{(Object.keys(STATE_LABEL) as HubState[]).map((s) => STATE_LABEL[s]).join(' / ')}</b></div>
+              </div>
+            </div>
           </section>
         </div>
       )}

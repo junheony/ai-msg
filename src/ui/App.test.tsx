@@ -190,8 +190,8 @@ describe('App split view (D6)', () => {
     ] }));
     // jsdom has no layout: the body reports 1200 × 800 (no ResizeObserver either, so the window resize path runs).
     const size = { w: 1200, h: 800 };
-    const cw = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('body') ? size.w : 0; });
-    const ch = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('body') ? size.h : 0; });
+    const cw = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('shell-main') ? size.w : 0; });
+    const ch = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('shell-main') ? size.h : 0; });
     try {
       await boot();
       const card = () => document.querySelector('.float-card') as HTMLElement;
@@ -253,8 +253,8 @@ describe('App split view (D6)', () => {
 
   it('the ◢ corner resizes a card from the keyboard; ⋯ 떠 있는 카드 정렬 deals two or more cards into a grid', async () => {
     const size = { w: 1200, h: 800 };
-    const cw = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('body') ? size.w : 0; });
-    const ch = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('body') ? size.h : 0; });
+    const cw = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('shell-main') ? size.w : 0; });
+    const ch = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('shell-main') ? size.h : 0; });
     try {
       await boot();
       openSession('one');
@@ -292,8 +292,8 @@ describe('App split view (D6)', () => {
   });
 
   const mockBody = (size: { w: number; h: number }) => {
-    const cw = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('body') ? size.w : 0; });
-    const ch = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('body') ? size.h : 0; });
+    const cw = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('shell-main') ? size.w : 0; });
+    const ch = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('shell-main') ? size.h : 0; });
     return () => { cw.mockRestore(); ch.mockRestore(); };
   };
   type StoredPane = { session: { sessionId: string } | null; float?: { x: number; y: number; w: number; h: number }; floatBySize?: Record<string, { x: number; y: number; w: number; h: number }> };

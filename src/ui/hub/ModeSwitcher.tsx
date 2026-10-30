@@ -1,10 +1,10 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { HubStatus } from '../../shared/hub-types';
 import { CheckMarkIcon, ChevronDownIcon, HubIcon } from './HubIcons';
-import { HUB_MODES, modeDef, type HubModeKey } from './modes';
+import { HUB_MODES, modeDef, modeDigit, type HubModeKey } from './modes';
 import { hhmmss } from './time';
 
-/** The top-left mode switcher: a button showing the current mode, a dropdown listing all nine with ⌘1–9 hints. */
+/** The top-left mode title: a button showing the current mode, a dropdown listing all ten with ⌘1–9·0 hints (the rail is the other way). */
 export function ModeSwitcher({ mode, onChange, mac, phone, onOpenChange }: { mode: HubModeKey; onChange: (m: HubModeKey) => void; mac: boolean; phone: boolean; onOpenChange?: (open: boolean) => void }) {
   const [open, setOpen] = useState(false);
   const [cursor, setCursor] = useState(0);
@@ -57,11 +57,11 @@ export function ModeSwitcher({ mode, onChange, mac, phone, onOpenChange }: { mod
               onClick={() => pick(m.id)} onMouseEnter={() => setCursor(i)}>
               <span className="hub-mi-icon"><HubIcon name={m.icon} /></span>
               <span className="hub-mi-label">{m.label}</span>
-              <kbd className="hub-kbd">{kbd(i + 1)}</kbd>
+              <kbd className="hub-kbd">{kbd(modeDigit(i))}</kbd>
               <span className="hub-mi-check"><CheckMarkIcon /></span>
             </button>
           ))}
-          <div className="hub-menu-foot">{mac ? '⌘1–9' : 'Ctrl+1–9'} 로 전환 (메뉴가 열린 동안, 터미널 밖에서) · 읽기 전용</div>
+          <div className="hub-menu-foot">{mac ? '⌘1–9·0' : 'Ctrl+1–9·0'} 로 전환 (메뉴가 열린 동안, 터미널 밖에서) · 왼쪽 레일로도 이동 · 읽기 전용</div>
         </div>
       )}
     </div>
@@ -69,7 +69,7 @@ export function ModeSwitcher({ mode, onChange, mac, phone, onOpenChange }: { mod
 }
 
 /** 정상 / 주의 / 장애 counts and the last sync time, for the header (desktop) while the hub is showing. */
-export function HubSummary({ status, fetchedAt, error }: { status: HubStatus | null; fetchedAt: number | null; error: string | null }) {
+export function HubSummary({ status, fetchedAt, error, pushOn }: { status: HubStatus | null; fetchedAt: number | null; error: string | null; pushOn?: boolean }) {
   const n = { ok: 0, warn: 0, down: 0 };
   for (const m of status?.modes ?? []) { if (m.state === 'ok') n.ok++; else if (m.state === 'warn') n.warn++; else if (m.state === 'down') n.down++; }
   return (
@@ -77,7 +77,7 @@ export function HubSummary({ status, fetchedAt, error }: { status: HubStatus | n
       <span className="hub-chip ok"><i />정상 {n.ok}</span>
       <span className="hub-chip warn"><i />주의 {n.warn}</span>
       <span className="hub-chip bad"><i />장애 {n.down}</span>
-      <span className="hub-sync">{error ? `갱신 실패 · ${error}` : fetchedAt ? `동기화 ${hhmmss(fetchedAt)}` : '불러오는 중…'}</span>
+      <span className="hub-sync">{error ? `갱신 실패 · ${error}` : fetchedAt ? `${pushOn ? '푸시' : '동기화'} ${hhmmss(fetchedAt)}` : '불러오는 중…'}</span>
     </div>
   );
 }
