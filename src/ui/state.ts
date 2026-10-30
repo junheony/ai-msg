@@ -1187,6 +1187,9 @@ function onServer(state: AppState, msg: ServerMessage): AppState {
     }
     case 'grok_status':
       return { ...state, grok: msg.grok };
+    // MSG Hub pushes are App's (never dispatched); listed so the switch stays exhaustive.
+    case 'hub_status':
+      return state;
     case 'tasks':
       return { ...state, tasks: msg.tasks, taskCap: msg.cap };
     case 'settings': {

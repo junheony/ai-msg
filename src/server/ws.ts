@@ -28,6 +28,8 @@ import { grokImportBlockReason } from './sessions/GrokImports';
 import { OWN_LAG_MS, scanForeign } from './sessions/foreignWrites';
 import { deckWrites } from './engine/claudeCli/ownedEntries';
 import { isPinnableId, type PinStore } from './sessions/PinStore';
+import type { HubStatusService } from './hub/status';
+import { createHubWatch } from './hub/watch';
 import type { SessionIconStore } from './sessions/SessionIconStore';
 import type { SessionMetaStore } from './sessions/SessionMetaStore';
 import type { SettingsStore } from './settings';
@@ -212,6 +214,8 @@ export type WsDeps = {
   tasks?: TaskRegistry;
   /** A task ended: always pushed (PushNotifier.sendAll), whatever turnNeedsAttention says. */
   pushTask?: (p: PushPayload) => void;
+  /** MSG 허브: `hub_watch` / `hub_status` and the 'hub' feature. Absent = neither (the UI polls GET /api/hub/status). */
+  hub?: HubStatusService;
 };
 
 /** What ws needs of the Commander (main.ts wires the real one). */
@@ -369,6 +373,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     else if (ws === NO_DEVICE && msg.type === 'error') console.warn(`deck: retry deferred — ${msg.message}`);
   };
   const broadcast = (msg: ServerMessage) => { for (const c of clients) send(c, msg); };
+  const hubWatch = deps.hub ? createHubWatch<WebSocket>({ status: deps.hub, send }) : null;
   /** Sockets whose UI asked for `sandbox` messages (open_session.accepts, protocol rule 3: an older UI never gets one). */
   const sandboxAware = new WeakSet<WebSocket>();
   /** Sockets whose UI asked for `turn_queued` (a follow-up waiting behind a streaming segment; an older UI shows 시작하는 중… meanwhile). */
@@ -1224,7 +1229,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
   /** The deck turn streaming in this session now (null while idle or only waiting for background work) and its prompt. */
   /** hello.features: 'commander' only while the settings turn it on; 'grok' only with a grok binary. */
   const grokStatusNow = (): GrokStatus | undefined => (typeof deps.grokStatus === 'function' ? deps.grokStatus() : deps.grokStatus);
-  const featureList = () => FEATURES.filter((f) => (f !== 'commander' || deps.commander?.enabled() === true) && (f !== 'grok' || grokStatusNow()?.bin === true) && (f !== 'tasks' || !!deps.tasks) && (f !== 'setup' || !!deps.setup) && (f !== 'sessionIcons' || !!deps.sessionIcons));
+  const featureList = () => FEATURES.filter((f) => (f !== 'commander' || deps.commander?.enabled() === true) && (f !== 'grok' || grokStatusNow()?.bin === true) && (f !== 'tasks' || !!deps.tasks) && (f !== 'setup' || !!deps.setup) && (f !== 'sessionIcons' || !!deps.sessionIcons) && (f !== 'hub' || !!deps.hub));
   const runningOf = (sid: string) => {
     const t = turns.get(busy.get(sid) ?? '');
     const current = t?.current ?? null;
@@ -1616,6 +1621,10 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
         case 'grok_unlock':
           deps.grokUnlock?.();
           break;
+        case 'hub_watch':
+          if (!hubWatch) break;
+          if (msg.on) hubWatch.watch(ws); else hubWatch.unwatch(ws);
+          break;
         case 'set_settings': {
           const store = deps.settings;
           if (!store) { send(ws, { type: 'error', turnId: null, message: '설정을 바꿀 수 없습니다' }); break; }
@@ -1679,7 +1688,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
       }
     });
 
-    ws.on('close', () => { clients.delete(ws); viewing.delete(ws); routeAsk.delete(ws); routeSent.delete(ws); historyAt.delete(ws); for (const t of turns.values()) t.watchers.delete(ws); });
+    ws.on('close', () => { clients.delete(ws); viewing.delete(ws); hubWatch?.unwatch(ws); routeAsk.delete(ws); routeSent.delete(ws); historyAt.delete(ws); for (const t of turns.values()) t.watchers.delete(ws); });
   });
 
   return {
@@ -1718,6 +1727,7 @@ export function attachWebSocket(servers: http.Server[], deps: WsDeps): WsHandle 
     close() {
       unsubscribeUsage();
       if (outsideTimer) clearInterval(outsideTimer);
+      hubWatch?.stop();
       if (activityTimer) { clearTimeout(activityTimer); activityTimer = null; }
       activityClosed = true;
       // Gone at once: a stale file must not make restart.sh refuse (or trust) a server that is no longer this one.
