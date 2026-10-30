@@ -12,6 +12,7 @@ const PATHS: Record<HubIconName, string> = {
   wrench: 'M14 6a4 4 0 0 1 5 5l-8 8-3-3 8-8M4 20l3-3',
   updown: 'M8 20V5M5 8l3-3 3 3M16 4v15M13 16l3 3 3-3',
   bars: 'M4 20h16M7 17v-5M12 17V7M17 17v-8',
+  bird: 'M21 6l-3 1a4 4 0 0 0-7 3v1C8 11 5 9 3 6c-1 4 0 8 4 10-1 1-3 1-4 1 2 2 5 3 8 3 7 0 11-6 11-11v-1l1-2',
 };
 
 export function HubIcon({ name, size = 16, className }: { name: HubIconName; size?: number; className?: string }) {

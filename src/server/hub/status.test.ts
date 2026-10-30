@@ -25,7 +25,10 @@ function deps(answers: Partial<Record<keyof typeof HUB_URLS, unknown>>, extra: P
     countEntries: async () => null,
     gitLastCommit: async () => null,
     readText: async () => null,
+    readTail: async () => null,
+    listDir: async () => null,
     fileMtime: async () => null,
+    systemdShow: async () => null,
     now: () => NOW,
     self: () => ({ uptimeMs: 90_061_000, sessions: 4, activeTurns: 1 }),
     host: 'deck-host.example.ts.net',
@@ -50,7 +53,7 @@ describe('hub status aggregator', () => {
     const s = await collectHubStatus(d);
     expect(s.host).toBe('deck-host.example.ts.net');
     expect(s.generated_at).toBe(new Date(NOW).toISOString());
-    expect(s.modes.map((m) => m.id)).toEqual(['msg', 'nexus', 'trading', 'video', 'game', 'ops', 'updown', 'quant']);
+    expect(s.modes.map((m) => m.id)).toEqual(['msg', 'nexus', 'trading', 'video', 'game', 'ops', 'updown', 'quant', 'yapping']);
     for (const m of s.modes) {
       expect(['ok', 'warn', 'down', 'idle', 'unknown']).toContain(m.state);
       expect(m).toMatchObject({ name: expect.any(String), metrics: expect.any(Object), alerts: expect.any(Array), links: expect.any(Array), sources: expect.any(Array) });
@@ -60,11 +63,12 @@ describe('hub status aggregator', () => {
     expect(by.nexus).toMatchObject({ state: 'ok', tag: 'DRY RUN', lastActivity: '2026-10-30T09:59:00.000Z', metrics: { '전략': '1/2', '거래소': 3, '열린 포지션': 2, '노출': '$1,235' } });
     expect(by.nexus!.links).toEqual([{ label: '대시보드', href: 'http://max-linuxserver.tail88e649.ts.net:3005' }]);
     expect(by.trading).toMatchObject({ state: 'ok', tag: 'PAPER', lastActivity: '2026-10-30T00:43:01.000Z', metrics: { 'DWF 바스켓': 12, '온체인 알림': 931, '승격 가능': false } });
-    expect(by.trading!.alerts).toEqual([{ level: 'warn', text: '스냅샷 오래됨' }, { level: 'bad', text: '하트비트 없음', at: null }]);
+    expect(by.trading!.alerts).toEqual([{ level: 'bad', text: '하트비트 없음', at: null }, { level: 'warn', text: '스냅샷 오래됨' }]); // worst first
     expect(by.video).toMatchObject({ state: 'ok', metrics: { '에피소드': 7, '최근 렌더': '1시간 0분 전', '파일': 'draft.mp4' } });
     expect(by.game).toMatchObject({ state: 'ok', lastActivity: '2026-10-28T01:00:00.000Z', metrics: { '마지막 커밋': '2일 9시간 전', '배포': 'Vercel', '배포 검증': '2026-09-08' }, links: [{ label: 'Vercel', href: 'https://acme-app.vercel.app' }] });
     expect(by.ops).toMatchObject({ state: 'warn', tag: 'PERSONAL', metrics: { '서비스': '1/2', '오늘 거래량': '$250,000', '오늘 비용': '$12.50', '사이클': 40, main: '$100,000 · 비용 $5.00', sub1: '정지 · $50,000', sub2: '정상 · 10s' }, links: [{ label: '열기', href: '/hub/p/ops/', embed: true }] });
-    expect(by.ops!.alerts).toEqual([{ level: 'warn', text: 'sub1 하트비트 정지 · 20분 전' }]);
+    expect(by.ops!.alerts).toEqual(expect.arrayContaining([{ level: 'warn', text: 'sub1 하트비트 정지 · 20분 전' }, { level: 'info', text: '볼트 잠김' }]));
+    expect(by.ops!.alerts[0]).toMatchObject({ level: 'warn' });
     expect(by.updown).toMatchObject({ state: 'ok', metrics: { '앱': '정상', DB: '연결됨', '스테이징': '정상' } });
     expect(by.quant).toMatchObject({ state: 'ok', lastActivity: '2026-10-30T09:40:00.000Z', metrics: { '탭': 2, '타일': 3, '주의 타일': 1, '생성': '20분 전' }, links: [{ label: '열기', href: '/hub/p/quant/', embed: true }] });
   });
@@ -87,7 +91,7 @@ describe('hub status aggregator', () => {
     const by = Object.fromEntries(s.modes.map((m) => [m.id, m]));
     expect(by.nexus).toMatchObject({ state: 'down', alerts: [{ level: 'bad', text: '응답 없음 · 시간 초과' }], sources: [{ name: 'engine /api/status', ok: false, error: '시간 초과' }] });
     expect(by.nexus!.links.length).toBe(1);
-    expect(by.ops).toMatchObject({ state: 'ok', alerts: [{ level: 'warn', text: '/api/ops 응답 없음 · 시간 초과' }] });
+    expect(by.ops).toMatchObject({ state: 'ok', alerts: expect.arrayContaining([{ level: 'warn', text: '/api/ops 응답 없음 · 시간 초과' }]) });
     expect(by.ops!.sources.map((x) => x.ok)).toEqual([true, false]);
     expect(by.updown).toMatchObject({ state: 'down', alerts: [{ level: 'bad', text: '응답 없음 · 연결 실패' }] });
     expect(by.quant).toMatchObject({ state: 'down', sources: [{ ok: false, error: 'HTTP 503' }] });
@@ -118,9 +122,9 @@ describe('hub status aggregator', () => {
   it('ops stalls when a heartbeat is older than 600 s, and degrades without per-account data', async () => {
     const stale = { ...OPS, accounts: { main: { heartbeat_age_s: 601 } } };
     let s = await collectHubStatus(deps({ opsHealth: OPS_HEALTH, ops: stale }));
-    expect(s.modes.find((m) => m.id === 'ops')).toMatchObject({ state: 'warn', metrics: { main: '정지' }, alerts: [{ text: 'main 하트비트 정지 · 10분 전' }] });
+    expect(s.modes.find((m) => m.id === 'ops')).toMatchObject({ state: 'warn', metrics: { main: '정지' }, alerts: expect.arrayContaining([{ level: 'warn', text: 'main 하트비트 정지 · 10분 전' }]) });
     s = await collectHubStatus(deps({ opsHealth: OPS_HEALTH, ops: { generated_at: OPS.generated_at } }));
-    expect(s.modes.find((m) => m.id === 'ops')).toMatchObject({ state: 'ok', alerts: [{ level: 'info', text: '계정별 상태 없음' }] });
+    expect(s.modes.find((m) => m.id === 'ops')).toMatchObject({ state: 'ok', alerts: expect.arrayContaining([{ level: 'info', text: '계정별 상태 없음' }]) });
     s = await collectHubStatus(deps({ opsHealth: new Error('ECONNREFUSED'), ops: new Error('ECONNREFUSED') }));
     expect(s.modes.find((m) => m.id === 'ops')).toMatchObject({ state: 'down' });
   });

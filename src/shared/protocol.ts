@@ -6,6 +6,7 @@ import type { DesktopSession, ProjectEntry, TranscriptMessage } from './session-
 import type { BgTaskInfo, PermissionDecision, Question, QuestionAnswers, TaskUpdate, TaskUsage, TurnPhase, TurnUsage } from './turn-types';
 import type { UsageSnapshot } from './usage-types';
 import type { TaskInfo } from './tasks';
+import type { HubStatus } from './hub-types';
 
 /** Attachment ids are the UUIDs POST /api/attachments returned (Task 6); nothing path-like is accepted. */
 export const ATTACHMENT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -154,6 +155,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('commander_stop'), sessionId: z.string().min(1).max(200), epoch: z.number().int().min(0) }),
   z.object({ type: z.literal('commander_pause'), sessionId: z.string().min(1).max(200), epoch: z.number().int().min(0) }),
   z.object({ type: z.literal('commander_resume'), sessionId: z.string().min(1).max(200), epoch: z.number().int().min(0) }),
+  /** 'hub' servers: `on: true` subscribes this socket to `hub_status` pushes (the current one at once, then on change); `on: false` stops them. */
+  z.object({ type: z.literal('hub_watch'), on: z.boolean() }),
 ]);
 
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;
@@ -242,7 +245,7 @@ export type SessionActivity = { sessionId: string; cwd: string; turnId: string; 
  *   `grok login --device-auth`, or `agy` with no arguments in that Gemini seat's HOME) and GET/POST the stream,
  *   the pasted code and cancel. The client sends a seat id, never a command.
  */
-export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate', 'commander', 'grok', 'tasks', 'setup', 'sessionIcons', 'authLogin'] as const;
+export const FEATURES = ['sessionModel', 'abortLabel', 'catchup', 'accounts', 'sessionSandbox', 'routePreview', 'highlights', 'fileRaw', 'sessionOps', 'serverUpdate', 'commander', 'grok', 'tasks', 'setup', 'sessionIcons', 'authLogin', 'hub'] as const;
 export type Feature = (typeof FEATURES)[number];
 
 /**
@@ -273,6 +276,8 @@ export type ServerMessage =
   /** F2: `pins` = pinned session ids in pin order (optional only for older test literals). */
   /** `desktop` = recent Claude Desktop sessions (optional only for older test literals). */
   | { type: 'grok_status'; grok: GrokStatus }
+  /** 'hub' servers, only to sockets that sent `hub_watch{on:true}`: the unified hub's status (the same shape as GET /api/hub/status). */
+  | { type: 'hub_status'; status: HubStatus }
   | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; /** 직접 고른 세션 아이콘 (session id → emoji or `glyph:<name>`); absent = an older server. */ sessionIcons?: Record<string, string>; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; activity?: SessionActivity[]; codex: { available: boolean }; gemini?: GeminiStatus; grok?: GrokStatus; /** See FEATURES; absent = none (an older server). Unknown names are ignored. */ features?: string[]; /** 'accounts' servers: the configured Claude accounts (retired included), in configured order. Absent (an older server) = a/b/c, a is home. */ accounts?: AccountInfo[]; /** UI build id of the serving deck (null in dev); a changed id on reconnect means a new UI is out. */ build?: string | null; /** 'setup' servers: the first-run wizard is still to be shown. */ setup?: { needed: boolean } }
   /** `features`: the server's list again when a setting changed it (총사령탑 켜기·끄기 → 'commander'); absent = unchanged. */
   | { type: 'settings'; settings: DeckSettings; features?: string[] }

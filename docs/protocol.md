@@ -30,6 +30,7 @@
 | `setup` | 첫 실행 마법사. `hello.setup: { needed }` 가 마법사를 띄울지 알린다(`<configDir>/setup.json` 이 `pending`). `GET /api/setup` → `SetupStatus`(`src/shared/setup-types.ts`, 30초 캐시), `POST /api/setup/refresh` → 다시 점검한 `SetupStatus`, `POST /api/setup/profiles {id, label?}` → `{ ok, profile, restartNeeded: true }` 또는 400·409 `{ error }`(accounts.json 에 Claude 프로필을 더하고 다음 시작부터 적용), `POST /api/setup/done` → 마법사 완료 기록. 쿠키·Origin 검사는 다른 `/api/*` 와 같다 | 마법사 자동 열기·설정의 `설치 점검` 없음 |
 | `sessionIcons` | `hello`·`index` 의 `sessionIcons` (세션 id → 고른 아이콘. 허용된 이모지 또는 `glyph:<name>`). `POST /api/session-icon {sessionId, icon}` 가 저장하거나 `icon: null` 로 지운다. 저장소가 있는 서버만 알린다. 2000개 상한에서 새 항목은 409, 휴지통에 넣으면 그 세션의 아이콘도 지운다. 쿠키·Origin 검사는 다른 `/api/*` 와 같다 | 아바타는 제목의 이모지 또는 첫 글자만, 눌러 고를 수 없음 |
 | `authLogin` | 사용량 창의 다시 로그인. `POST /api/auth-login {seat}` 가 그 자리의 로그인 명령만 연다(`claude auth login`, 다른 Claude 프로필은 `CLAUDE_CONFIG_DIR`, `codex login`, `grok login --device-auth`, Gemini g1/g2 는 그 자리 HOME 의 `agy`(인자 없음)). `GET /api/auth-login/:id/stream` 은 출력(SSE, `out`/`error`/`exit`), `POST …/input {text}` 는 코드 한 줄(또는 `{enter:true}`, 최대 4000자), `POST …/cancel` 은 종료. 쿠키·Origin 검사는 다른 `/api/*` 와 같다. 한 번에 하나 | 사용량의 `재로그인` 없음 |
+| `hub` | MSG 허브 상태 푸시. `hub_watch{on:true}` 를 보낸 소켓에만 `hub_status{status}` 를 보낸다(바로 한 번, 그 뒤 `GET /api/hub/status` 와 같은 상태가 바뀔 때마다, 15초 주기 점검). `on:false` 나 소켓 종료로 끝. 허브는 읽기 전용이라 제어 메시지는 없다 | 허브 화면이 `GET /api/hub/status` 를 30초마다 폴링 |
 
 기능을 더할 때: `FEATURES` 에 이름을 더하고, UI 는 `has()` 로 갈라 쓰고, 이 표에 한 줄 더한다. 배포된 이름은 지우지 않는다.
 

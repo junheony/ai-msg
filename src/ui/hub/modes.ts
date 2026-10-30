@@ -1,8 +1,8 @@
 import type { HubModeId, HubState } from '../../shared/hub-types';
 
-/** The switcher's entries: the 개요 plus the eight modes. `msg` is the shell itself (the existing app, untouched). */
+/** The rail's entries: the 개요 plus the nine modes. `msg` is the terminal (the existing app, untouched). */
 export type HubModeKey = 'home' | HubModeId;
-export type HubIconName = 'grid' | 'terminal' | 'nodes' | 'candles' | 'clapper' | 'gamepad' | 'wrench' | 'updown' | 'bars';
+export type HubIconName = 'grid' | 'terminal' | 'nodes' | 'candles' | 'clapper' | 'gamepad' | 'wrench' | 'updown' | 'bars' | 'bird';
 
 export interface HubModeDef { id: HubModeKey; label: string; short: string; icon: HubIconName }
 
@@ -16,6 +16,7 @@ export const HUB_MODES: readonly HubModeDef[] = [
   { id: 'ops', label: 'OPS · 펍덱', short: 'OPS', icon: 'wrench' },
   { id: 'updown', label: 'UPDOWN', short: 'UPDOWN', icon: 'updown' },
   { id: 'quant', label: 'QUANT', short: 'QUANT', icon: 'bars' },
+  { id: 'yapping', label: '야핑봇', short: '야핑봇', icon: 'bird' },
 ];
 
 export const HUB_MODE_KEY = 'deck.hubMode';
@@ -27,9 +28,13 @@ export function isHubModeKey(v: unknown): v is HubModeKey {
 export function modeDef(id: HubModeKey): HubModeDef {
   return HUB_MODES.find((m) => m.id === id) ?? HUB_MODES[1]!;
 }
-/** ⌘1 … ⌘9 → the nth switcher entry. */
-export function modeAt(n: number): HubModeKey | null {
-  return HUB_MODES[n - 1]?.id ?? null;
+/** ⌘1 … ⌘9 → the first nine entries; ⌘0 → the tenth (야핑봇). */
+export function modeAt(digit: number): HubModeKey | null {
+  return HUB_MODES[digit === 0 ? 9 : digit - 1]?.id ?? null;
+}
+/** The digit shown next to the nth entry (index 9 is ⌘0). */
+export function modeDigit(index: number): number {
+  return (index + 1) % 10;
 }
 
 /** The last mode this browser was in; the shell when none was kept (or storage is unavailable). */
@@ -44,3 +49,5 @@ export function writeHubMode(mode: HubModeKey): void {
 }
 
 export const STATE_LABEL: Record<HubState, string> = { ok: '정상', warn: '주의', down: '장애', idle: '대기', unknown: '미확인' };
+/** The CSS class behind a state (down → bad, like alert levels). */
+export const stateClass = (s: HubState): string => (s === 'down' ? 'bad' : s);
