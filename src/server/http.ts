@@ -32,6 +32,8 @@ import { ProfileError } from './setup/profiles';
 import { PROFILE_TEXTS } from './setup/texts';
 import { handleAuthLogin } from './authLogin/http';
 import type { AuthLoginHub } from './authLogin/hub';
+import type { HubStatusService } from './hub/status';
+import { HUB_PROXY_PREFIX, HUB_PROXY_TARGETS, proxyHubRequest, type ProxyTarget } from './hub/proxy';
 
 /** Deviation (added per review I5): devOrigins/extraHosts feed the Origin+Host checks below. */
 export type HttpDeps = {
@@ -72,6 +74,8 @@ export type HttpDeps = {
   setup?: SetupDeps;
   /** In-app login window (allowlisted `claude auth login` and the same for Codex / Grok). Absent = no /api/auth-login. */
   authLogin?: AuthLoginHub;
+  /** MSG Hub: `GET /api/hub/status` (the overview) and the `/hub/p/<id>/` embed proxy. Absent = 404 for both. */
+  hub?: { status: HubStatusService; proxyTargets?: Record<string, ProxyTarget> };
   /** package.json version for GET /api/health and GET /api/version. Absent answers "0.0.0". */
   version?: string;
 };
@@ -773,11 +777,27 @@ export function createRequestHandler(deps: HttpDeps) {
           }
           return;
         }
+        // MSG Hub overview: every mode's read-only state, cached 15 s server-side. Never a secret, never an error.
+        if (url.pathname === '/api/hub/status') {
+          if (req.method !== 'GET') { json(res, 405, { error: 'method not allowed' }); return; }
+          if (!deps.hub) { json(res, 404, { error: 'not found' }); return; }
+          json(res, 200, await deps.hub.status.status());
+          return;
+        }
         if (url.pathname.startsWith('/api/attachments/') && (req.method === 'GET' || req.method === 'HEAD')) {
           await serveAttachment(deps.attachments, url.pathname.slice('/api/attachments/'.length), req.method === 'HEAD', res);
           return;
         }
         json(res, 404, { error: 'not found' });
+        return;
+      }
+      // MSG Hub embed proxy (QUANT, OPS): read-only, for the logged-in page only. Method first (nothing to learn from a
+      // 405), then the cookie — this is outside /api/, which the block above does not gate.
+      if (url.pathname.startsWith(HUB_PROXY_PREFIX)) {
+        if (req.method !== 'GET' && req.method !== 'HEAD') { json(res, 405, { error: 'method not allowed' }); return; }
+        if (!authed) { json(res, 401, { error: '로그인이 필요합니다' }); return; }
+        if (!deps.hub) { json(res, 404, { error: 'not found' }); return; }
+        await proxyHubRequest(req, res, url, deps.hub.proxyTargets ?? HUB_PROXY_TARGETS);
         return;
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') { json(res, 405, { error: 'method not allowed' }); return; }
