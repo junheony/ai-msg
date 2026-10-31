@@ -120,9 +120,15 @@ describe('hub status aggregator', () => {
       const p = collectHubStatus(d);
       await vi.advanceTimersByTimeAsync(12_000);
       const s = await p;
+      // NEXUS (8 s budget, first-wait 4 s): the first answer says 불러오는 중 rather than holding the hub; once the probe has failed, 장애 with the reason.
       const nexus = s.modes.find((m) => m.id === 'nexus')!;
-      expect(nexus.state).toBe('down');
-      expect(nexus.alerts[0]!.text).toContain('시간 초과');
+      expect(nexus.state).toBe('unknown');
+      expect(nexus.sources[0]).toMatchObject({ name: 'engine /api/status', ok: false, error: '불러오는 중' });
+      const p2 = collectHubStatus(d);
+      await vi.advanceTimersByTimeAsync(12_000);
+      const again = (await p2).modes.find((m) => m.id === 'nexus')!;
+      expect(again.state).toBe('down');
+      expect(again.alerts[0]!.text).toContain('시간 초과');
       const opsSrc = s.modes.find((m) => m.id === 'ops')!.sources;
       expect(opsSrc.find((x) => x.name === '/api/ops')).toMatchObject({ ok: false, error: '시간 초과' });
       expect(opsSrc.find((x) => x.name === '프린터 상태')).toMatchObject({ ok: false, error: '불러오는 중' }); // the slow printer API is not waited for past its first-wait budget

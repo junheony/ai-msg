@@ -5,7 +5,7 @@
  * dashboard); the dashboard's act/yes/no/cmd knobs never leave this file.
  */
 import type { HubAlert, HubKpi, HubLink, HubMetricValue, HubMode, HubSection, HubSource, HubState, NexusAction, NexusBin, NexusHome, NexusListing, NexusOp, NexusScoreRow, NexusWalletRow } from '../../shared/hub-types';
-import { DEFAULT_LINKS, HUB_TIMEOUTS, HUB_URLS, SLOW_CACHE_MS, agoFrom, arr, bool, downMode, fmtClock, fmtInt, fmtKst, fmtNum, fmtUsd, isObj, kpi, latestIso, num, objs, page, probe, scrub, sec, slowCache, sortAlerts, str, toIso, type HubDeps } from './shared';
+import { DEFAULT_LINKS, HUB_TIMEOUTS, HUB_URLS, SLOW_CACHE_MS, STALE_LIMIT_MS, agoFrom, arr, bool, downMode, fmtClock, fmtInt, fmtKst, fmtNum, fmtUsd, isObj, kpi, latestIso, num, objs, page, probe, scrub, sec, slowCache, sortAlerts, str, toIso, type HubDeps, type SlowResult } from './shared';
 
 const nameOf = (v: unknown): string | null => (typeof v === 'string' ? v : isObj(v) ? str(v.name ?? v.id ?? v.exchange ?? v.chain, 40) : null);
 
@@ -154,14 +154,38 @@ export function mapNexusHome(d: Record<string, unknown>, dash: string): NexusHom
   };
 }
 
-type HomeProbe = { data: unknown; source: HubSource };
-/** One 20 s cache per deps object (the live server has one; tests get a fresh one each). */
-const homeCaches = new WeakMap<HubDeps, () => Promise<{ value: HomeProbe | null }>>();
-function homeOf(deps: HubDeps): Promise<HomeProbe> {
-  let get = homeCaches.get(deps);
-  if (!get) { get = slowCache<HomeProbe>(SLOW_CACHE_MS.nexus, () => probe(deps, 'dashboard /api/v2/home', HUB_URLS.nexusHome, HUB_TIMEOUTS.default), deps.now); homeCaches.set(deps, get); }
-  return get().then((r) => r.value ?? { data: null, source: { name: 'dashboard /api/v2/home', ok: false, ms: 0, error: '오류' } });
+type Probe = { data: unknown; source: HubSource };
+/** A probe as the collector sees it: the data (fresh, or the last good answer when the source stopped answering), its source line, and what to tell about it. */
+interface CachedProbe extends Probe { stale: boolean; pending: boolean; /** Age of a stale answer in ms (null when fresh or absent). */ staleMs: number | null }
+type ProbeCache = () => Promise<SlowResult<Probe>>;
+/**
+ * One 20 s cache per probe per deps object (the live server has one; tests get a fresh one each). A failed probe is a
+ * failure here (so the last good answer survives it, marked stale) rather than a cached "answer"; the first load of a
+ * slow source is waited for at most `firstWait`, then reported as 불러오는 중 while it goes on.
+ */
+const probeCaches = new WeakMap<HubDeps, Record<'engine' | 'home', ProbeCache>>();
+function cachedProbe(deps: HubDeps, which: 'engine' | 'home'): Promise<CachedProbe> {
+  let c = probeCaches.get(deps);
+  if (!c) {
+    const make = (name: string, url: string): ProbeCache => slowCache<Probe>(SLOW_CACHE_MS.nexus, async () => {
+      const p = await probe(deps, name, url, HUB_TIMEOUTS.nexus);
+      if (!p.source.ok) throw new Error(p.source.error ?? '오류');
+      return p;
+    }, deps.now, { waitMs: HUB_TIMEOUTS.firstWait });
+    c = { engine: make('engine /api/status', HUB_URLS.nexus), home: make('dashboard /api/v2/home', HUB_URLS.nexusHome) };
+    probeCaches.set(deps, c);
+  }
+  const name = which === 'engine' ? 'engine /api/status' : 'dashboard /api/v2/home';
+  return c[which]().then((r): CachedProbe => {
+    if (r.pending) return { data: null, source: { name, ok: false, ms: 0, error: '불러오는 중' }, stale: false, pending: true, staleMs: null };
+    if (r.value && !r.stale) return { ...r.value, stale: false, pending: false, staleMs: null };
+    const staleMs = r.value && r.at !== null ? Math.max(0, deps.now() - r.at) : null;
+    if (r.value && staleMs !== null && staleMs <= STALE_LIMIT_MS.nexus) return { data: r.value.data, source: { name, ok: false, ms: 0, error: `${r.error ?? '오류'} · 이전 값 사용` }, stale: true, pending: false, staleMs };
+    return { data: null, source: { name, ok: false, ms: 0, error: r.error ?? '오류' }, stale: false, pending: false, staleMs: null };
+  });
 }
+
+const fmtAgoMs = (ms: number | null): string => (ms === null ? '잠시' : ms < 60_000 ? `${Math.max(1, Math.round(ms / 1000))}초` : `${Math.round(ms / 60_000)}분`);
 
 /* ───────── engine (:8080 /api/status) ───────── */
 
@@ -272,18 +296,30 @@ function homeView(h: NexusHome, now: number): { alerts: HubAlert[]; rows: [strin
 export async function collectNexus(deps: HubDeps): Promise<HubMode> {
   const dash = (deps.links?.nexus ?? DEFAULT_LINKS.nexus).replace(/\/+$/, '');
   const links: HubLink[] = [{ label: '대시보드', href: dash }];
-  const [eng, home] = await Promise.all([probe(deps, 'engine /api/status', HUB_URLS.nexus, HUB_TIMEOUTS.default), homeOf(deps)]);
+  const [eng, home] = await Promise.all([cachedProbe(deps, 'engine'), cachedProbe(deps, 'home')]);
   const sources: HubSource[] = [eng.source, home.source];
   const nexus = isObj(home.data) ? mapNexusHome(home.data, dash) : undefined;
-  if (!isObj(eng.data) && !nexus) { const m = downMode('nexus', 'NEXUS', eng.source, links); m.sources = sources; m.alerts.push({ level: 'warn', text: '대시보드 응답 없음' }); return m; }
+  if (!isObj(eng.data) && !nexus) {
+    if (eng.pending || home.pending) {
+      const m = downMode('nexus', 'NEXUS', { ...eng.source, error: '불러오는 중' }, links);
+      return { ...m, state: 'unknown', sources, alerts: [{ level: 'info', text: '엔진·대시보드 첫 응답을 기다리는 중 (4초+)', hint: '다음 갱신(15초)에 반영' }], page: page('엔진 불러오는 중…', '첫 응답이 느립니다 — 다음 갱신에 반영', [], [sec.raw('원본 대시보드', dash, { note: '외부 대시보드 (새 탭)' })]) };
+    }
+    const m = downMode('nexus', 'NEXUS', eng.source, links); m.sources = sources; m.alerts.push({ level: 'warn', text: '대시보드 응답 없음' }); return m;
+  }
   const now = deps.now();
   const E = isObj(eng.data) ? engineView(eng.data, now) : null;
   const H = nexus ? homeView(nexus, now) : null;
 
-  const alerts: HubAlert[] = [...(E?.alerts ?? [{ level: 'bad', text: `엔진 응답 없음 · ${eng.source.error ?? '오류'}` }]), ...(H?.alerts ?? [{ level: 'warn', text: '대시보드 응답 없음' }])];
-  const state: HubState = !E ? 'down' : E.state === 'down' ? 'down' : alerts.length ? 'warn' : 'ok';
-  const headline = E ? `${E.headline}${nexus ? ` · 할 일 ${nexus.actions.length}` : ''}` : `엔진 응답 없음 · 할 일 ${nexus!.actions.length} · 국내갭 최고 ${nexus!.kr.best_net !== null ? sgnPct(nexus!.kr.best_net) : '—'}`;
-  const decision = !E ? '엔진 응답 없음 — 서비스 가동 여부 확인' : E.running && H && H.nBad ? `할 일 고장·알람 ${H.nBad}건 확인 — ${H.firstBad}` : E.decision;
+  const engineMissing: HubAlert = eng.pending ? { level: 'info', text: '엔진 첫 응답을 기다리는 중 (4초+)', hint: '다음 갱신(15초)에 반영' } : { level: 'bad', text: `엔진 응답 없음 · ${eng.source.error ?? '오류'}` };
+  const alerts: HubAlert[] = [
+    ...(E?.alerts ?? [engineMissing]),
+    ...(E && eng.stale ? [{ level: 'warn' as const, text: `엔진 응답 지연 · ${fmtAgoMs(eng.staleMs)} 전 값 표시`, hint: `${HUB_TIMEOUTS.nexus / 1000}초 안에 답이 없었음 (${eng.source.error ?? '오류'}) — 엔진이 바쁘면 다음 갱신에 반영` }] : []),
+    ...(H?.alerts ?? [home.pending ? { level: 'info' as const, text: '대시보드 첫 응답을 기다리는 중' } : { level: 'warn' as const, text: '대시보드 응답 없음' }]),
+    ...(H && home.stale ? [{ level: 'warn' as const, text: `대시보드 응답 지연 · ${fmtAgoMs(home.staleMs)} 전 값 표시` }] : []),
+  ];
+  const state: HubState = !E ? (eng.pending ? 'unknown' : 'down') : E.state === 'down' ? 'down' : alerts.length ? 'warn' : 'ok';
+  const headline = E ? `${E.headline}${nexus ? ` · 할 일 ${nexus.actions.length}` : ''}` : `${eng.pending ? '엔진 불러오는 중…' : '엔진 응답 없음'} · 할 일 ${nexus!.actions.length} · 국내갭 최고 ${nexus!.kr.best_net !== null ? sgnPct(nexus!.kr.best_net) : '—'}`;
+  const decision = !E ? (eng.pending ? '첫 응답이 느립니다 — 다음 갱신에 반영' : '엔진 응답 없음 — 서비스 가동 여부 확인') : E.running && H && H.nBad ? `할 일 고장·알람 ${H.nBad}건 확인 — ${H.firstBad}` : E.decision;
   // With the home shown (NexusHome), the KPI row stays short: the home's two, then the engine's four that the home does not say.
   const pick = (labels: string[]): HubKpi[] => labels.map((l) => E?.kpis.find((k) => k.label === l)).filter((k): k is HubKpi => !!k);
   const kpis: HubKpi[] = H ? [...H.kpis, ...pick(['전략 실행', '신호 / 체결', '일간 손익', '열린 포지션'])] : (E?.kpis.slice(0, 6) ?? []);

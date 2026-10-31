@@ -7,9 +7,17 @@ import type { HubAlert, HubCardItem, HubChartSeries, HubImage, HubKpi, HubLevel,
 
 export const HUB_CACHE_MS = 15_000;
 /** Per-source timeouts (ms). The ops dashboard is slow by nature. */
-export const HUB_TIMEOUTS = { default: 3_000, ops: 12_000, ssh: 8_000, psql: 8_000, py: 8_000, /** How long a first hub answer waits for a slow source before saying 불러오는 중 (the load goes on behind). */ firstWait: 4_000 } as const;
+export const HUB_TIMEOUTS = {
+  default: 3_000, ops: 12_000, ssh: 8_000, psql: 8_000, py: 8_000,
+  /** The NEXUS engine (:8080) is a busy arbitrage process: a plain GET takes 0.4–2.4 s on a quiet box and more while it scans, so 3 s read 시간 초과 on every other pass; under a loaded box a first answer has taken 5 s+. The probe runs behind the hub's answer (slowCache + firstWait), so a long budget costs the page nothing. */
+  nexus: 15_000,
+  /** How long a first hub answer waits for a slow source before saying 불러오는 중 (the load goes on behind). */
+  firstWait: 4_000,
+} as const;
 /** Slow sources keep their own answer this long (the hub cache is 15 s; ssh/psql/500 KB JSON should not run that often). */
 export const SLOW_CACHE_MS = { ops: 60_000, ssh: 120_000, psql: 60_000, nexus: 20_000, quant: 60_000, /** ver2 equity (~6k rows) and trades/events: once a minute is plenty. */ ver2: 60_000 } as const;
+/** A slow source's last good answer is still shown this long after it stopped answering (marked 이전 값 사용); older, the source counts as down. */
+export const STALE_LIMIT_MS = { nexus: 5 * 60_000 } as const;
 
 /**
  * A tiny per-key cache for slow sources: the last good value is kept `ttlMs`; on a miss the loader runs once (callers
@@ -23,6 +31,8 @@ export function slowCache<T>(ttlMs: number, load: () => Promise<T>, clock: () =>
     if (at !== null && now - at < ttlMs && error === null) return { value, at, stale: false, error: null, pending: false };
     inflight ??= load().then((v) => { value = v; at = clock(); error = null; }, (err: unknown) => { error = errorText(err); if (at === null) at = clock(); }).finally(() => { inflight = null; });
     if (opts.waitMs !== undefined && value === null) {
+      // A failed load on record and still no value: say so at once (the retry runs behind) rather than 불러오는 중 forever.
+      if (error !== null) return { value: null, at, stale: true, error, pending: false };
       let timer: ReturnType<typeof setTimeout> | null = null;
       const done = await Promise.race([inflight.then(() => true), new Promise<boolean>((r) => { timer = setTimeout(() => r(false), opts.waitMs); })]);
       if (timer !== null) clearTimeout(timer);
@@ -192,6 +202,8 @@ export const fmtDate = (iso: string | null): string => { if (!validIso(iso)) ret
 export function errorText(err: unknown): string {
   const name = err instanceof Error ? err.name : '';
   const msg = err instanceof Error ? err.message : String(err);
+  // Already one of the hub's own labels (a cached probe re-throws its source line): keep it as is.
+  if (/^(?:시간 초과|연결 실패|응답 형식 오류|오류|HTTP \d{3})$/.test(msg)) return msg;
   if (name === 'AbortError' || name === 'TimeoutError' || /timeout|timed out/i.test(msg)) return '시간 초과';
   const http = /\bHTTP (\d{3})/.exec(msg);
   if (http) return `HTTP ${http[1]}`;
