@@ -3,11 +3,15 @@
  * (~/.local/state/go_live_status.json), paper results by mode (maker_paper.json, live_desk.json), the wave paper
  * ledger (wave_paper.db via `python3 -I`, read-only sqlite URI), the pump-shadow detector table (mmp_pump_shadow.db),
  * the lane scorecard (docs/레인성적표_최신.md), the last commits (`git log`) and the four 2-minute timers
- * (`systemctl --user show`). :8830 /api/status stays as the freshness/health source. Nothing here runs or changes anything.
+ * (`systemctl --user show`). On top of that, the merged read-only view of the two trading bots (`mode.trading`): the
+ * Trading Room (:8830, snapshot fallback — tradingRoom.ts) and 트레이딩-ver2 (:8771 paper engine + :8793 ledger — cblabx.ts).
+ * Nothing here runs or changes anything.
  */
 import path from 'node:path';
-import type { HubAlert, HubKpi, HubMetricValue, HubMode, HubSection, HubSource, HubState, HubStep } from '../../shared/hub-types';
-import { DAY_MS, HUB_TIMEOUTS, HUB_URLS, UNIT_STATE_KO, agoFrom, arr, fmtAgo, fmtInt, fmtKst, fmtNum, fmtPct, fmtUsd, isObj, kpi, num, objs, page, probe, scrub, sec, showUnit, slowCache, sortAlerts, str, toIso, type HubDeps, type UnitInfo } from './shared';
+import type { HubAlert, HubKpi, HubMetricValue, HubMode, HubSection, HubSource, HubState, HubStep, TradingMerged } from '../../shared/hub-types';
+import { collectVer2, kstToIso } from './cblabx';
+import { DAY_MS, HUB_TIMEOUTS, UNIT_STATE_KO, agoFrom, arr, fmtAgo, fmtInt, fmtKst, fmtNum, fmtPct, fmtUsd, isObj, kpi, latestIso, num, objs, page, scrub, sec, showUnit, slowCache, sortAlerts, str, toIso, type HubDeps, type UnitInfo } from './shared';
+import { collectRoom } from './tradingRoom';
 
 export const TRADING_DIR = 'arbitrage-nexus';
 export const TRADING_STATE_DIR = '.local/state';
@@ -219,8 +223,8 @@ async function readJson(deps: HubDeps, file: string): Promise<Record<string, unk
 export async function collectTrading(deps: HubDeps): Promise<HubMode> {
   const stateDir = path.join(deps.home, TRADING_STATE_DIR), repo = path.join(deps.home, TRADING_DIR);
   const slow = slowFor(deps);
-  const [health, gl, maker, desk, laneMd, db, git, waveMtime, ...units] = await Promise.all([
-    probe(deps, 'trading /api/status', HUB_URLS.trading, HUB_TIMEOUTS.default),
+  const [room, ver2, gl, maker, desk, laneMd, db, git, waveMtime, ...units] = await Promise.all([
+    collectRoom(deps), collectVer2(deps),
     readJson(deps, path.join(stateDir, 'go_live_status.json')), readJson(deps, path.join(stateDir, 'maker_paper.json')), readJson(deps, path.join(stateDir, 'live_desk.json')),
     deps.readText(path.join(repo, LANE_DOC)).catch(() => null),
     slow.db(), slow.git(),
@@ -233,8 +237,10 @@ export async function collectTrading(deps: HubDeps): Promise<HubMode> {
   const checks = parseChecks(gl);
   const passed = checks.filter((c) => c.ok).length;
   const steps = goLiveSteps(gl, checks);
-  const h = isObj(health.data) ? health.data : null;
+  const health = { data: room.status, source: room.sources[0]! };
+  const h = room.status;
   const hm = h && isObj(h.metrics) ? h.metrics : {};
+  const { paper: v2, ledger } = ver2;
   const paper = desk && isObj(desk.paper) ? desk.paper : null;
   const transfer = paper && isObj(paper.by_mode) && isObj(paper.by_mode['이송']) ? paper.by_mode['이송'] : null;
   const wave = db.value?.wave ?? null, mmp = db.value?.mmp ?? null;
@@ -251,7 +257,7 @@ export async function collectTrading(deps: HubDeps): Promise<HubMode> {
   const dbErr = db.error && db.error !== '오류' ? `sqlite 조회 불가 · ${db.error}` : 'sqlite 조회 불가';
   const gitErr = git.error && git.error !== '오류' ? `git 조회 불가 · ${git.error}` : 'git 조회 불가';
   const sources: HubSource[] = [
-    health.source,
+    ...room.sources, ...ver2.sources,
     ...TRADING_TIMERS.map((t) => ({ name: t.file, ok: present[t.file] === true, ms: 0, ...(present[t.file] ? {} : { error: '파일 없음' }) })),
     { name: 'sqlite', ok: db.value !== null && !db.stale, ms: 0, ...(db.value === null ? { error: dbErr } : db.stale ? { error: '이전 값' } : {}) },
     { name: 'git log', ok: git.value !== null && !git.stale, ms: 0, ...(git.value === null ? { error: gitErr } : git.stale ? { error: '이전 값' } : {}) },
@@ -270,10 +276,21 @@ export async function collectTrading(deps: HubDeps): Promise<HubMode> {
     if (t.u.active !== 'missing' && t.u.active !== 'active') { alerts.push({ level: 'warn', text: `타이머 ${t.label} ${UNIT_STATE_KO[t.u.active]}` }); warn(); }
     if (t.svc.result && t.svc.result !== 'success') { alerts.push({ level: 'warn', text: `${t.label} 마지막 실행 ${t.svc.result}${t.svc.exitedAt ? ` · ${fmtKst(t.svc.exitedAt)}` : ''}` }); warn(); }
   }
-  if (!h) { alerts.push({ level: 'warn', text: `:8830 응답 없음 · ${health.source.error ?? '오류'}` }); warn(); }
-  else for (const a of arr(h.alerts).slice(0, 5)) {
-    if (typeof a === 'string') alerts.push({ level: 'warn', text: text(a) });
-    else if (isObj(a) && typeof a.text === 'string') alerts.push({ level: a.level === 'bad' || a.level === 'info' ? a.level : 'warn', text: text(a.text), at: toIso(a.at ?? a.ts) });
+  // ── the two bots: :8830 alerts pass through (snapshot/stale notes included); ver2 down / live / verify failures ──
+  for (const a of room.view.alerts) { alerts.push(a); if (a.level !== 'info') warn(); }
+  if (room.view.workstreams.some((w) => w.id === 'adaptive' && w.state === 'warn')) { alerts.push({ level: 'warn', text: '어댑티브 라이브 플래그 켜짐 — 페이퍼 전용 원칙 확인' }); warn(); }
+  if (!v2.ok) { alerts.push({ level: 'warn', text: `ver2 페이퍼 엔진 :8771 응답 없음 · ${v2.error ?? '오류'}`, hint: 'cblabx-paper 상태 확인 (여기서는 읽기만)' }); warn(); }
+  else {
+    if (v2.live === true) { alerts.push({ level: 'bad', text: 'ver2 페이퍼 엔진이 LIVE=true 로 응답 — 모의 전용이어야 함' }); state = 'warn'; }
+    if ((v2.errors ?? 0) > 0) alerts.push({ level: 'info', text: `ver2 페이퍼 엔진 오류 ${fmtInt(v2.errors!)}건${v2.lastError ? ` · ${v2.lastError}` : ''}` });
+    const lastPoll = kstToIso(v2.lastPollKst);
+    if (lastPoll && now - Date.parse(lastPoll) > 10 * 60_000) { alerts.push({ level: 'warn', text: `ver2 페이퍼 마지막 폴 ${agoFrom(lastPoll, now)} — 루프 멈춤 의심`, at: lastPoll }); warn(); }
+  }
+  if (!ledger.ok) { alerts.push({ level: 'warn', text: `ver2 원장 :8793 응답 없음 · ${ledger.error ?? '오류'}`, hint: 'cblabx-ledger 상태 확인 (여기서는 읽기만)' }); warn(); }
+  else {
+    if (ledger.verify && ledger.verify.ok !== true) { alerts.push({ level: 'bad', text: `ver2 원장 해시 체인 검증 실패 · ${ledger.verify.msg || '사유 미상'}` }); state = 'warn'; }
+    for (const w of ledger.verify?.warnings.slice(0, 3) ?? []) alerts.push({ level: 'info', text: `원장 검증 경고 · ${w}` });
+    if (ledger.engineReady === false) alerts.push({ level: 'info', text: 'ver2 원장: 엔진 준비 전 (engine_ready=false)' });
   }
   if (db.value === null) alerts.push({ level: 'info', text: `웨이브·펌프 DB ${db.error ?? 'sqlite 조회 불가'}` });
   if (gl) {
@@ -284,12 +301,16 @@ export async function collectTrading(deps: HubDeps): Promise<HubMode> {
     const pauses = arr(gl.pauses); if (pauses.length) { alerts.push({ level: 'warn', text: `라이브 멈춤 ${pauses.length}건` }); warn(); }
   } else alerts.push({ level: 'warn', text: 'go_live_status.json 없음 — 체크리스트 확인 불가' });
   if (lanes?.verdictAt && now - Date.parse(lanes.verdictAt) > 7 * DAY_MS) alerts.push({ level: 'info', text: `돈 판정표(수기) ${agoFrom(lanes.verdictAt, now)} — 갱신 검토`, at: lanes.verdictAt });
-  if (!h && !gl && !maker && !desk && !lanes) state = 'unknown';
+  if (room.view.via === 'none' && !v2.ok && !ledger.ok && !gl && !maker && !desk && !lanes) state = 'unknown';
 
   // ── headline / decision / KPIs ──
   const pN = paper ? num(paper.n) : null, pMed = paper ? num(paper.median) : null, pWin = paper ? num(paper.win) : null;
   const tMed = transfer ? num(transfer.median) : null, tWin = transfer ? num(transfer.win) : null;
+  const openN = v2.open.length;
+  const roomWord = room.view.via === 'live' ? `트레이딩룸 ${room.view.state ?? 'ok'}` : room.view.via === 'snapshot' ? `트레이딩룸 스냅샷${room.view.stale ? '(오래됨)' : ''}` : '트레이딩룸 응답 없음';
+  const ver2Word = v2.ok ? `ver2 페이퍼 ${v2.books.length}북 · 열린 ${openN}` : 'ver2 페이퍼 응답 없음';
   const headline = [
+    `${roomWord} · ${ver2Word}`,
     gl ? (glReady?.auto === true ? '라이브 자동' : glReady?.smoke === true ? '라이브 전환 진행' : '라이브 전환 미완') : '출격 상태 미상',
     gl ? `체크 ${passed}/${checks.length} 통과` : null,
     paper ? `페이퍼 n=${pN === null ? '—' : fmtInt(pN)} 중앙값 ${signed(pMed)}${transfer ? ` (이송 ${signed(tMed)} 승 ${tWin === null ? '—' : fmtPct(tWin, 0)})` : ''}` : null,
@@ -298,7 +319,11 @@ export async function collectTrading(deps: HubDeps): Promise<HubMode> {
   const nextCmd = gl ? text(gl.next_command, 160) : '';
   const decision = nextCmd ? nextCmd : gl ? '다음 명령 없음 — 체크리스트의 실패 항목 확인' : '출격 준비 상태 파일 없음 — go-live-status 타이머 확인';
   const lastCommit = commits[0] ?? null;
+  const verifyKpi = !ledger.ok ? kpi('ver2 원장 검증', '응답 없음', { status: 'warn', hint: ledger.error ?? '' }) : kpi('ver2 원장 검증', ledger.verify ? (ledger.verify.ok === true ? '통과' : '실패') : '—', { status: ledger.verify?.ok === true ? 'ok' : ledger.verify ? 'bad' : 'info', hint: `레코드 ${ledger.records === null ? '—' : fmtInt(ledger.records)}` });
   const kpis: HubKpi[] = [
+    room.view.kpis[0]!,
+    kpi('ver2 페이퍼 북', v2.ok ? `${v2.books.length}` : '—', { unit: v2.ok ? '개' : undefined, status: v2.ok ? (v2.live === true ? 'bad' : 'ok') : 'warn', hint: v2.ok ? `열린 ${openN} · 체결 ${fmtInt(v2.books.reduce((n, b) => n + (b.nTrades ?? 0), 0))}` : (v2.error ?? '응답 없음') }),
+    verifyKpi,
     kpi('체크 통과', gl ? `${passed}/${checks.length}` : '—', { status: !gl ? 'info' : passed === checks.length ? 'ok' : 'warn', hint: gl ? `실패 ${checks.length - passed}` : '파일 없음' }),
     kpi('페이퍼 승률 · 중앙값', paper ? `${pWin === null ? '—' : fmtPct(pWin)} · ${signed(pMed)}` : '—', { status: pMed === null ? 'info' : pMed > 0 ? 'ok' : 'warn', hint: paper ? `n=${pN === null ? '—' : fmtInt(pN)} · 보유 ${fmtInt(num(desk?.hold_min) ?? 0)}분` : '' }),
     kpi('이송 모드', transfer ? `${tWin === null ? '—' : fmtPct(tWin)} · ${signed(tMed)}` : '—', { status: tMed === null ? 'info' : tMed > 0 ? 'ok' : 'warn', hint: transfer ? `n=${fmtInt(num(transfer.n) ?? 0)}` : '' }),
@@ -356,8 +381,9 @@ export async function collectTrading(deps: HubDeps): Promise<HubMode> {
   ];
   if (caveats.length) sections.push(sec.list('메이커 페이퍼 주의', caveats.map((c) => ({ text: c, level: 'info' as const }))));
 
-  const metrics: Record<string, HubMetricValue> = { '체크': gl ? `${passed}/${checks.length}` : '—', '페이퍼 중앙값': signed(pMed), '웨이브 PnL': wave && !wave.error ? signedInt(wave.pnl) : '—', '레인': lanes ? `${lanes.alive ?? '—'}/${lanes.dead ?? '—'}/${lanes.collecting ?? '—'}` : '—' };
-  const lastActivity = [lastCommit?.at ?? null, fileAt['live_desk.json'], fileAt['maker_paper.json'], wave?.lastTs ?? null].filter((x): x is string => x !== null).sort().pop() ?? null;
+  const metrics: Record<string, HubMetricValue> = { '트레이딩룸': roomWord.replace('트레이딩룸 ', ''), 'ver2 북 · 열린': v2.ok ? `${v2.books.length} · ${openN}` : '—', '체크': gl ? `${passed}/${checks.length}` : '—', '페이퍼 중앙값': signed(pMed), '웨이브 PnL': wave && !wave.error ? signedInt(wave.pnl) : '—', '레인': lanes ? `${lanes.alive ?? '—'}/${lanes.dead ?? '—'}/${lanes.collecting ?? '—'}` : '—' };
+  const lastActivity = latestIso(lastCommit?.at ?? null, fileAt['live_desk.json'] ?? null, fileAt['maker_paper.json'] ?? null, wave?.lastTs ?? null, room.view.generatedAt, kstToIso(v2.lastPollKst), kstToIso(ledger.lastPollKst));
   const tag = (h && str(h.stage, 20)?.toUpperCase()) || (desk && (num(desk.n_live) ?? 0) > 0 ? 'LIVE' : 'PAPER');
-  return { id: 'trading', name: 'Trading Room', state, lastActivity, metrics, alerts: sortAlerts(alerts), links: [], sources, tag, page: page(headline, decision, kpis, sections) };
+  const trading: TradingMerged = { room: room.view, ver2: { paper: v2, ledger } };
+  return { id: 'trading', name: 'Trading Room', state, lastActivity, metrics, alerts: sortAlerts(alerts), links: [], sources, tag, page: page(headline, decision, kpis, sections), trading };
 }
