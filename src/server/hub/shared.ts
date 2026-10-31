@@ -9,7 +9,7 @@ export const HUB_CACHE_MS = 15_000;
 /** Per-source timeouts (ms). The ops dashboard is slow by nature. */
 export const HUB_TIMEOUTS = { default: 3_000, ops: 12_000, ssh: 8_000, psql: 8_000, py: 8_000, /** How long a first hub answer waits for a slow source before saying 불러오는 중 (the load goes on behind). */ firstWait: 4_000 } as const;
 /** Slow sources keep their own answer this long (the hub cache is 15 s; ssh/psql/500 KB JSON should not run that often). */
-export const SLOW_CACHE_MS = { ops: 60_000, ssh: 120_000, psql: 60_000, nexus: 20_000, quant: 60_000 } as const;
+export const SLOW_CACHE_MS = { ops: 60_000, ssh: 120_000, psql: 60_000, nexus: 20_000, quant: 60_000, /** ver2 equity (~6k rows) and trades/events: once a minute is plenty. */ ver2: 60_000 } as const;
 
 /**
  * A tiny per-key cache for slow sources: the last good value is kept `ttlMs`; on a miss the loader runs once (callers
@@ -47,6 +47,17 @@ export const HUB_URLS = {
   yappingReplies: 'http://127.0.0.1:8095/api/replies',
   nexus: 'http://127.0.0.1:8080/api/status',
   trading: 'http://127.0.0.1:8830/api/status',
+  tradingHealth: 'http://127.0.0.1:8830/api/health',
+  /** 트레이딩-ver2 paper engine (cblabx-paper) and its hash-chained ledger (cblabx-ledger): GET only. */
+  paperHealth: 'http://127.0.0.1:8771/api/health',
+  paperState: 'http://127.0.0.1:8771/api/paper/state',
+  paperTrades: 'http://127.0.0.1:8771/api/paper/trades',
+  paperEquity: 'http://127.0.0.1:8771/api/paper/equity',
+  paperEvents: 'http://127.0.0.1:8771/api/paper/events',
+  ledgerHealth: 'http://127.0.0.1:8793/health',
+  ledgerRecords: 'http://127.0.0.1:8793/ledger?limit=40',
+  ledgerStats: 'http://127.0.0.1:8793/ledger/stats',
+  ledgerVerify: 'http://127.0.0.1:8793/ledger/verify',
   opsHealth: 'http://127.0.0.1:8765/api/health',
   ops: 'http://127.0.0.1:8765/api/ops',
   updown: 'http://127.0.0.1:3090/api/health',

@@ -117,6 +117,8 @@ export interface HubMode {
   page?: HubPage;
   /** NEXUS only: the ported home view's data (the standalone dashboard's /api/v2/home, secrets stripped). */
   nexus?: NexusHome;
+  /** Trading Room only: the merged read-only view of the two bots (:8830 트레이딩룸, :8771/:8793 트레이딩-ver2). */
+  trading?: TradingMerged;
 }
 
 /* ───────── NEXUS home (ported from the standalone dashboard, read-only) ───────── */
@@ -152,6 +154,51 @@ export interface NexusHome {
   /** Tabs of the standalone dashboard (지금/상장/갭/지갑/더보기) → outside links. */
   tabs: { label: string; href: string }[];
 }
+
+/* ───────── Trading Room (merged, read-only) ─────────
+   Field names here never match SECRET_FIELD_RE (key/token/wallet/seed…): stripSecrets would drop them. */
+
+export type TradingRowStatus = 'ok' | 'warn' | 'bad' | 'info';
+export interface TradingRow { label: string; value: string; status?: TradingRowStatus }
+/** One Trading Room workstream. The three are shown side by side and never merged: `pnl` is per workstream (null = the bot reports none). */
+export interface TradingWorkstream { id: 'taker' | 'maker' | 'adaptive'; label: string; badge: string; state: HubState; rows: TradingRow[]; pnl: string | null; pnlNote: string; note: string }
+export interface TradingRoomView {
+  /** `live` = :8830 answered; `snapshot` = the file stood in; `none` = neither. */
+  via: 'live' | 'snapshot' | 'none';
+  error: string | null;
+  state: string | null; stage: string | null;
+  /** When the shown data was generated (status generated_at, or the snapshot's snapshot_generated_at). */
+  generatedAt: string | null;
+  /** Age of the shown data in hours (null when unknown); `stale` = a snapshot older than 24 h. */
+  ageH: number | null; stale: boolean;
+  /** :8830's own snapshot age (the bot's metric), shown even when live. */
+  botSnapshotAgeH: number | null;
+  workstreams: TradingWorkstream[];
+  alerts: HubAlert[];
+  kpis: HubKpi[];
+}
+export interface Ver2Book { id: string; label: string; strategy: string; tf: string; symbols: string[]; cashStart: number | null; equity: number | null; realized: number | null; unrealized: number | null; nTrades: number | null; wins: number | null; netPnl: number | null; avgR: number | null; maxDdPct: number | null; openN: number; lastBarKst: string | null; signalsSeen: number | null; spark: (number | null)[] }
+export interface Ver2Position { book: string; sym: string; side: string; entry: number | null; stop: number | null; tp: number | null; qty: number | null; entryKst: string | null; mark: number | null; upnl: number | null; upnlPct: number | null }
+export interface Ver2Trade { book: string; sym: string; side: string; entryKst: string | null; exitKst: string | null; entry: number | null; exit: number | null; reason: string; pnl: number | null; r: number | null }
+export interface Ver2Event { kst: string | null; kind: string; msg: string }
+export interface Ver2Paper {
+  ok: boolean; error: string | null;
+  live: boolean | null; mode: string | null; exchangeData: string | null; startedKst: string | null; firstStartKst: string | null; nowKst: string | null; uptimeS: number | null; loops: number | null; errors: number | null; lastError: string | null; lastPollKst: string | null; pollS: number | null; feePct: number | null; notionalFrac: number | null;
+  books: Ver2Book[]; open: Ver2Position[]; trades: Ver2Trade[]; events: Ver2Event[];
+  /** Equity per book on one time axis (downsampled, oldest first). */
+  equity: { x: string[]; series: HubChartSeries[] } | null;
+  rules: string | null; disclaimer: string | null;
+}
+export interface Ver2LedgerStat { book: string; signals: number | null; signalsCert: number | null; exits: number | null; exitsCert: number | null; rCertSum: number | null; latencyMedianS: number | null; progress: string | null }
+export interface Ver2LedgerRecord { seq: number | null; tsKst: string | null; kind: string; strategy: string; sym: string; side: string; reason: string; pnlPaper: number | null; rPaper: number | null; rCert: number | null; certifiable: boolean | null }
+export interface Ver2Ledger {
+  ok: boolean; error: string | null;
+  records: number | null; engineReady: boolean | null; lastPollKst: string | null; errors: number | null; lastError: string | null;
+  stats: Ver2LedgerStat[]; maxLatencyS: number | null;
+  verify: { ok: boolean | null; msg: string; n: number | null; warnings: string[] } | null;
+  recent: Ver2LedgerRecord[];
+}
+export interface TradingMerged { room: TradingRoomView; ver2: { paper: Ver2Paper; ledger: Ver2Ledger } }
 
 export interface HubStatus {
   modes: HubMode[];

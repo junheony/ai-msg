@@ -3,6 +3,7 @@ import type { HubAlert, HubKpi, HubMode, HubModeId, HubSection, HubState } from 
 import { ExternalIcon, HubIcon, ReloadIcon } from './HubIcons';
 import { Cards, Chart, Images, KvGrid, Steps } from './HubSections';
 import { NexusHome } from './NexusHome';
+import { TradingHome } from './TradingHome';
 import { modeDef, STATE_LABEL, stateClass } from './modes';
 import { relTime } from './time';
 
@@ -210,6 +211,7 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
         </section>
       )}
       {mode?.id === 'nexus' && mode.nexus && <NexusHome home={mode.nexus} now={now} />}
+      {mode?.id === 'trading' && mode.trading && <TradingHome t={mode.trading} now={now} />}
       {mode && sections.map((s, i) => <SectionView key={`${s.title}-${i}`} s={s} name={mode.name} />)}
       {mode && !mode.page && Object.keys(mode.metrics).length > 0 && <SectionView s={{ kind: 'kv', title: '지표', open: true, rows: Object.entries(mode.metrics).map(([k, v]) => [k, metricText(v)]) }} name={mode.name} />}
       {mode && !mode.page && mode.links.filter((l) => !l.embed).map((l) => <SectionView key={l.href} s={{ kind: 'raw', title: l.label, href: l.href }} name={mode.name} />)}
