@@ -29,6 +29,7 @@ import { sweepShadowHomes } from './engine/shadowHome';
 import { grokEnv } from './engine/grokEnv';
 import { execFile } from 'node:child_process';
 import { createRequestHandler, type ServerUpdateDeps } from './http';
+import { hubSelfOf } from './hub/self';
 import { createHubStatus, liveHubDeps } from './hub/status';
 import { AuthLoginHub } from './authLogin/hub';
 import { openAuthPty } from './authLogin/pty';
@@ -362,10 +363,18 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
       bins: { claude: cfg.claudeBin.ok ? cfg.claudeBin.bin : null, codex: cfg.codexBin, grok: cfg.grokBin, gemini: cfg.geminiBin },
       spawn: openAuthPty, baseEnv: process.env,
       // A finished device login should show subscription usage without waiting out the auth backoff or restarting.
-      onExit: (seat, code) => { if (seat === 'x1' && code === 0) grokBilling?.nudge(); },
+      onExit: (seat, code) => {
+        if (seat === 'x1' && code === 0) grokBilling?.nudge();
+        // agy is a TUI the owner quits after logging in; any exit is a reason to re-read that seat's quota soon.
+        if (seat === 'g1' || seat === 'g2') geminiUsage?.bump();
+      },
     });
     // MSG Hub: localhost-only, GET-only status reads; the WS handle below is bound by the time a request arrives.
-    const hub = { status: createHubStatus(liveHubDeps({ home: cfg.home, host: os.hostname(), self: () => ({ uptimeMs: Date.now() - startedAt, sessions: index.sessions().length, activeTurns: ws.activeTurns() }) })) };
+    const hub = {
+      status: createHubStatus(liveHubDeps({ home: cfg.home, host: os.hostname(), self: () => hubSelfOf({ startedAt, sessions: () => index.sessions(), running: () => ws.running(), activeTurns: () => ws.activeTurns(), usage: () => usage.snapshot(), accounts }) })),
+      // Read-only media the hub pages show (영상 renders, 게임 builds); see hub/files.ts for the allowlist.
+      fileRoots: { video: path.join(cfg.home, 'engineering-shorts'), game: path.join(cfg.home, 'games') },
+    };
     // MSG mini (/mini, the lock-screen widget): read-only; the widget token file is made on its first use, never logged.
     const miniTracker = new MiniTracker();
     const mini = {

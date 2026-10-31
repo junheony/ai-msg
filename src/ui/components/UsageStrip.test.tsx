@@ -7,7 +7,7 @@ import { UsageStrip, barRoom, pickStage, STRIP_SLACK } from './UsageStrip';
 import type { Seat } from '../../shared/accounts';
 import type { GrokStatus } from '../../shared/protocol';
 import type { AccountUsage, UsageSnapshot } from '../../shared/usage-types';
-import type { RouteNext } from './usageSeats';
+import { resetLabel, type RouteNext } from './usageSeats';
 
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 const at = (ms: number) => new Date(NOW + ms).toISOString();
@@ -55,15 +55,18 @@ describe('pickStage', () => {
 });
 
 describe('UsageStrip', () => {
-  it('the header is one pill for the tightest seat; opening it lists every seat at full: label · bar · REMAINING % · reset', () => {
+  it('the header names the best seat (most left) with a red pill for the spent one; opening it lists every seat at full: label · bar · REMAINING % · reset', () => {
     strip(snap(), 'a');
-    // Spent (0 left) is tighter than GPT's 15, so the pill names C and draws one bar. No seat row yet.
+    // B has the most left (82 %), so the chip names B and draws one bar; C (spent) is a red pill beside it. No seat row yet.
     expect(el().querySelector('.usage-seg')).toBeNull();
-    expect(summary().textContent).toBe('C소진');
+    expect(summary().textContent).toBe('B82%');
     expect(el().querySelectorAll('.usage-seg-bar')).toHaveLength(1);
-    expect((el().querySelector('.usage-seg-bar > i') as HTMLElement).style.width).toBe('0%');
-    expect(el().querySelector('.usage-strip-head')).toBeNull();
-    expect(el().className).toContain('spent');
+    expect((el().querySelector('.usage-seg-bar > i') as HTMLElement).style.width).toBe('82%');
+    expect(el().querySelector('.usage-strip-head')!.textContent).toBe('남음');
+    expect(el().className).toContain('ok');
+    expect(el().className).toContain('has-out');
+    expect([...screen.getByTestId('usage-out').querySelectorAll('.usage-out-pill')].map((p) => p.textContent)).toEqual(['C소진']);
+    expect(screen.getByTestId('out-c').className).toContain('spent');
     expect(el().title).toMatch(/^계정별 남은 사용량 — 숫자와 막대는 남은 양/);
     expect(el().getAttribute('aria-haspopup')).toBe('true');
     expect(el().getAttribute('aria-expanded')).toBe('false');
@@ -84,16 +87,43 @@ describe('UsageStrip', () => {
     expect(el().getAttribute('aria-expanded')).toBe('true');
     // The pill stays one seat; the list is the popover.
     expect(el().querySelector('.usage-seg')).toBeNull();
-    expect(summary().textContent).toBe('C소진');
+    expect(summary().textContent).toBe('B82%');
   });
 
-  it('with nothing spent, the pill is the lowest remaining % and says 남음; six seats still open as six full rows', () => {
+  it('the popover has every window of a seat as a row: 5h · 주간 · Fable for Claude, 주간 · 5h for GPT, with REMAINING % and the reset time', () => {
+    strip(snap({ accounts: { a: acct(42, 10, { fable: { usedPct: 5, resetsAt: at(5 * 86_400_000) } }), c: acct(100, 10, { fiveHour: { usedPct: 100, resetsAt: at(12 * 60_000) } }) } }), 'a');
+    reveal();
+    const rows = (seat: string) => [...screen.getByTestId(`pop-${seat}`).querySelectorAll('.usage-pop-rows .usage-row')].map((r) => r.getAttribute('data-testid'));
+    expect(rows('a')).toEqual(['pop-a-fiveHour', 'pop-a-weekly', 'pop-a-fable']);
+    expect(rows('gpt')).toEqual(['pop-gpt-weekly', 'pop-gpt-fiveHour']);
+    const five = screen.getByTestId('pop-a-fiveHour');
+    expect(five.querySelector('.usage-label')!.textContent).toBe('5h');
+    expect(five.querySelector('.usage-value')!.textContent).toBe('58% 남음');
+    expect((five.querySelector('.usage-bar > i') as HTMLElement).style.width).toBe('58%');
+    // Within a day the reset is the clock time ("리셋 14:30"); beyond it, days ("3일 후"). The full countdown is the title.
+    expect(five.querySelector('.usage-reset')!.textContent).toBe(resetLabel(at(2 * 3_600_000 + 60_000), NOW));
+    expect(five.querySelector('.usage-reset')!.textContent).toMatch(/^(리셋|내일) \d{2}:\d{2}$/);
+    expect(five.title).toContain('2시간 1분 후 리셋');
+    expect(screen.getByTestId('pop-a-weekly').querySelector('.usage-reset')!.textContent).toBe('3일 후');
+    expect(screen.getByTestId('pop-a-fable').querySelector('.usage-value')!.textContent).toBe('95% 남음');
+    expect(screen.getByTestId('pop-a-fable').querySelector('.usage-reset')!.textContent).toBe('5일 후');
+    // A spent window is the 소진 pill with its absolute reset time; GPT has no Fable row.
+    expect(screen.getByTestId('pop-c-fiveHour').querySelector('.usage-pill')!.textContent).toMatch(/^소진 · \d{1,2}\/\d{1,2} \d{2}:\d{2}$/);
+    expect(screen.queryByTestId('pop-gpt-fable')).toBeNull();
+    // The seat with the session is lifted as a block too.
+    expect(screen.getByTestId('pop-a').className).toContain('current');
+    expect(screen.getByTestId('pop-gpt').className).not.toContain('current');
+  });
+
+  it('with nothing spent, the pill is the highest remaining % and says 남음, no red pills; six seats still open as six full rows', () => {
     const healthy = snap({ accounts: { a: acct(42, 10), b: acct(18, 5), c: acct(10, 5) }, gpt: acct(20, 5) });
     strip(healthy, 'a');
-    expect(summary().textContent).toBe('A58%');
+    expect(summary().textContent).toBe('C90%');
     expect(el().querySelector('.usage-strip-head')!.textContent).toBe('남음');
-    expect((el().querySelector('.usage-seg-bar > i') as HTMLElement).style.width).toBe('58%');
+    expect((el().querySelector('.usage-seg-bar > i') as HTMLElement).style.width).toBe('90%');
     expect(el().className).toContain('ok');
+    expect(el().className).not.toContain('has-out');
+    expect(screen.queryByTestId('usage-out')).toBeNull();
     cleanup();
     const grok = { bin: true } as GrokStatus;
     const gemini = { status: 'ok' as const, fetchedAt: null, loggedIn: true, buckets: [{ name: 'Gemini · 5h', usedPct: 40, resetsAt: at(3_600_000) }] };
@@ -138,6 +168,8 @@ describe('UsageStrip', () => {
     const grok = { bin: true } as GrokStatus;
     strip(snap({ grokSeats: { x1: { status: 'cooldown', lastTurnAt: null, lastError: null, cooldownUntil: at(30 * 60_000), today } } }), 'a', { grok });
     expect(el().getAttribute('aria-label')).toContain('Grok 쿨다운 30분 뒤 해제');
+    // A cooldown blocks the seat: a red pill beside the chip (C, spent, too).
+    expect([...screen.getByTestId('usage-out').querySelectorAll('.usage-out-pill')].map((p) => p.textContent)).toEqual(['C소진', 'Grok쿨다운']);
     reveal();
     expect(seg('x1').className).toContain('cooldown');
     expect(seg('x1').textContent).toBe('Grok쿨다운· 30m');
@@ -157,15 +189,19 @@ describe('UsageStrip', () => {
     const onReauth = vi.fn();
     render(<UsageStrip usage={snap({ grokSeats: { x1: { status: 'down', lastTurnAt: null, lastError: 'auth', cooldownUntil: null, today } } })} current="a" grok={grok} reauth={['x1']} onReauth={onReauth} now={NOW} onToggle={() => {}} />);
     expect(el().getAttribute('aria-label')).toContain('Grok 로그인 필요');
+    expect(screen.getByTestId('out-x1').textContent).toBe('Grok로그인');
     reveal();
     expect(seg('x1').querySelector('.usage-seg-num')!.textContent).toBe('로그인 필요');
-    fireEvent.click(screen.getByTestId('reauth-x1').querySelector('button')!);
+    const login = screen.getByTestId('reauth-x1');
+    expect(login.textContent).toBe('로그인 필요로그인');
+    fireEvent.click(login.querySelector('button')!);
     expect(onReauth).toHaveBeenCalledWith('x1');
     cleanup();
     strip(snap({ accounts: { a: acct(97, 10, { status: 'stale' }), b: acct(30, 5, { status: 'stale' }) } }), 'a');
-    // 3 % left is the tightest number, so the pill names A before the list opens.
-    expect(summary().textContent).toBe('A3%');
-    expect(el().className).toContain('danger');
+    // 70 % left is the most, so the chip names B before the list opens (old numbers: marked stale); A at 3 % is red but not blocked, so no pill.
+    expect(summary().textContent).toBe('B70%');
+    expect(el().className).toContain('stale');
+    expect(screen.queryByTestId('usage-out')).toBeNull();
     reveal();
     // Old numbers, read time unknown: "오래됨" as before (red still red: 97 % used = 3 % left).
     expect(seg('a').className).toBe('usage-seg danger stale');
@@ -188,9 +224,9 @@ describe('UsageStrip', () => {
 
   it('colours stay by what is used: ≤20% left amber, ≤5% left red (levelClass), shown as what is left', () => {
     strip(snap({ accounts: { a: acct(79, 0), b: acct(80, 0), c: acct(94, 0) }, gpt: acct(95, 0) }), 'a');
-    expect(summary().textContent).toBe('GPT5%');
+    expect(summary().textContent).toBe('A21%');
     expect(el().querySelector('.usage-strip-head')!.textContent).toBe('남음');
-    expect(el().className).toContain('danger');
+    expect(el().className).toContain('ok');
     expect(el().querySelector('.usage-seg')).toBeNull();
     reveal();
     expect(seg('a').className).toBe('usage-seg ok');
@@ -286,12 +322,57 @@ describe('UsageStrip', () => {
     expect(container.querySelector('.usage-strip-row')).toBeNull();
     expect(el().closest('.usage-strip-wrap')).toBeTruthy();
     expect(el().querySelector('.usage-seg')).toBeNull();
-    expect(summary().textContent).toBe('C소진');
+    expect(summary().textContent).toBe('B82%');
+    // A phone's red pill is the label alone (the word is in the aria label / popover), so the bar does not clip at 390 px.
+    expect(screen.getByTestId('out-c').textContent).toBe('C');
     reveal();
     expect(seg('a').textContent).toBe('A58%2h');
     expect(seg('a').querySelector('.usage-seg-bar')).not.toBeNull();
     expect(seg('gpt').textContent).toBe('GPT15%2h');
     expect(seg('c').textContent).toBe('C소진· 12m');
+    expect(screen.getByTestId('pop-a-weekly').querySelector('.usage-value')!.textContent).toBe('90% 남음');
+  });
+
+  it('a 390 px phone never gets the full stage: pickStage steps down, and the popover is capped to the viewport (scrolls)', () => {
+    // Measured needs of a six-seat strip (label · bar · % · reset) are well over a phone's width.
+    const need = { full: 620, mid: 430, min: 330 };
+    expect(pickStage('full', 390, need)).not.toBe('full');
+    expect(pickStage('full', 390, need)).toBe('min');
+    // A phone with even less room (a long session chip beside it) drops to the row under the bar.
+    expect(pickStage('row', 320, need)).toBe('row');
+    const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    expect(css).toMatch(/\.usage-strip-pop \{[^}]*max-width: min\(340px, calc\(100vw - 16px\)\)/);
+    expect(css).toMatch(/\.usage-strip-pop \{[^}]*max-height: min\(72vh, calc\(100vh - 72px\)\);\s*overflow-y: auto/);
+    // The reset of a row is the only part that may be cut short; the label and value never are.
+    expect(css).toMatch(/\.usage-seat \.usage-reset, \.usage-pop-rows \.usage-reset \{[^}]*min-width: 0;[^}]*text-overflow: ellipsis/);
+  });
+
+  it('a Gemini seat the snapshot says is logged out: a red 로그인 pill, 로그인 필요 in the list and a 로그인 button that asks for that seat (g1 / g2), without the setup list', () => {
+    const onReauth = vi.fn();
+    const loggedOut = { status: 'down' as const, fetchedAt: null, loggedIn: false, buckets: [], error: 'Gemini 로그인 필요 — 사용량에서 재로그인' };
+    const ok = { status: 'ok' as const, fetchedAt: at(-60_000), loggedIn: true, buckets: [{ name: 'Gemini · 5h', usedPct: 40, resetsAt: at(3_600_000) }, { name: 'Gemini · 주간', usedPct: 10, resetsAt: at(4 * 86_400_000) }] };
+    render(<UsageStrip usage={snap({ geminiSeats: { g1: loggedOut, g2: ok } })} current="a" reauth={[]} onReauth={onReauth} now={NOW} onToggle={() => {}} />);
+    expect(screen.getByTestId('out-g1').textContent).toBe('Gemini로그인');
+    expect(screen.getByTestId('out-g1').className).toContain('unknown');
+    expect(el().getAttribute('aria-label')).toContain('Gemini 로그인 필요');
+    reveal();
+    expect(seg('g1').querySelector('.usage-seg-num')!.textContent).toBe('로그인 필요');
+    expect(screen.getByTestId('pop-g1').querySelector('.usage-pop-rows')).toBeNull();
+    // The logged-in seat: its agy buckets as rows, no login line.
+    expect(screen.queryByTestId('reauth-g2')).toBeNull();
+    expect(screen.getByTestId('pop-g2-b0').querySelector('.usage-label')!.textContent).toBe('Gemini · 5h');
+    expect(screen.getByTestId('pop-g2-b0').querySelector('.usage-value')!.textContent).toBe('60% 남음');
+    expect(screen.getByTestId('pop-g2-b1').querySelector('.usage-reset')!.textContent).toBe('4일 후');
+    // 로그인 asks for that seat and closes the list (the login window takes over).
+    fireEvent.click(screen.getByTestId('reauth-g1').querySelector('button')!);
+    expect(onReauth).toHaveBeenCalledWith('g1');
+    expect(screen.queryByTestId('usage-strip-pop')).toBeNull();
+    cleanup();
+    // Without the login feature (no onReauth) the pill still says it, but there is no button.
+    strip(snap({ geminiSeats: { g1: loggedOut } }), 'a');
+    expect(screen.getByTestId('out-g1').textContent).toBe('Gemini로그인');
+    reveal();
+    expect(screen.queryByTestId('reauth-g1')).toBeNull();
   });
 
   it('a narrow top bar still keeps the collapsed pill; barRoom still ignores the strip itself', () => {
@@ -326,7 +407,7 @@ describe('UsageStrip', () => {
       expect(bar.contains(el())).toBe(true);
       expect(slot.childElementCount).toBe(0);
       expect(el().querySelector('.usage-seg')).toBeNull();
-      expect(summary().textContent).toBe('C소진');
+      expect(summary().textContent).toBe('B82%');
       reveal();
       expect(bar.contains(screen.getByTestId('usage-strip-pop'))).toBe(true);
       expect(seg('a').textContent).toBe('A58%2h');
@@ -380,7 +461,7 @@ describe('UsageStrip', () => {
     expect(screen.queryByTestId('usage-strip-pop')).toBeNull();
   });
 
-  it('a logged-out seat with no remaining numbers still opens the pill for 재로그인', () => {
+  it('a logged-out seat with no remaining numbers still opens the pill for 로그인', () => {
     const onReauth = vi.fn();
     render(<UsageStrip usage={snap({ accounts: { a: acct(null, null) }, gpt: acct(null, null) })} current={null} reauth={['a']} onReauth={onReauth} now={NOW} onToggle={() => {}} />);
     fireEvent.click(screen.getByTestId('usage-strip'));
@@ -388,12 +469,17 @@ describe('UsageStrip', () => {
     expect(onReauth).toHaveBeenCalledWith('a');
   });
 
-  it('a logged-out seat in the list offers 재로그인 and nothing else does', () => {
+  it('a logged-out seat in the list offers 로그인 and nothing else does; GPT (codex login) too', () => {
     const onReauth = vi.fn();
-    render(<UsageStrip usage={snap()} current="a" reauth={['b']} onReauth={onReauth} now={NOW} onToggle={() => {}} />);
+    render(<UsageStrip usage={snap()} current="a" reauth={['b', 'gpt']} onReauth={onReauth} now={NOW} onToggle={() => {}} />);
     fireEvent.click(screen.getByTestId('usage-strip'));
     expect(screen.queryByTestId('reauth-a')).toBeNull();
+    expect(screen.getByTestId('reauth-b').querySelector('button')!.textContent).toBe('로그인');
     fireEvent.click(screen.getByTestId('reauth-b').querySelector('button')!);
     expect(onReauth).toHaveBeenCalledWith('b');
+    // The click closed the list; open it again for GPT.
+    fireEvent.click(screen.getByTestId('usage-strip'));
+    fireEvent.click(screen.getByTestId('reauth-gpt').querySelector('button')!);
+    expect(onReauth).toHaveBeenLastCalledWith('gpt');
   });
 });

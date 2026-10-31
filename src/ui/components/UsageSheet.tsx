@@ -5,7 +5,7 @@ import type { UsageSnapshot } from '../../shared/usage-types';
 import { useAccounts } from '../accounts';
 import { Sheet, SheetHead } from './Dialogs';
 import { UsageHistoryView } from './UsageView';
-import { agoText, buildSeats, LEGEND, PopRow, REFRESH_HINT, REFRESH_HINT_POLLED, seatStale, seatTitle, statusLabel, useClock, type RouteNext } from './usageSeats';
+import { agoText, buildSeats, engineCaption, LEGEND, PopRow, REFRESH_HINT, REFRESH_HINT_POLLED, seatStale, seatTitle, statusLabel, useClock, type RouteNext } from './usageSeats';
 import { ClockIcon, RefreshIcon } from './icons';
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -53,16 +53,21 @@ export function UsageSheet({ usage, current, next = null, grok = null, initialHi
             const old = seatStale(d, !!usage && !cli && !usage.deckReachable) && d.status !== 'cooldown';
             const ago = old ? agoText(d.fetchedAt ?? null, now) : '';
             const isNext = next?.account === d.seat && (d.seat !== current || !!next.asOpus);
+            // The setup probe's list, or the snapshot itself (a Gemini seat without its Google login, Grok after an auth failure).
+            const login = !!onReauth && (reauth.includes(d.seat) || !!d.loginNeeded);
+            const tag = login ? '로그인 필요' : st;
+            const caption = engineCaption(d, label(d.seat));
             return (
               <li key={d.seat} data-testid={`account-${d.seat}`} className={`usage-seat ${d.engine} ${d.status}${d.seat === current ? ' current' : ''}${d.dim ? ' dim' : ''}${old ? ' old' : ''}`} title={seatTitle(d)}>
                 <div className="usage-seat-head">
                   {d.mark}
                   <b className="usage-seat-name">{label(d.seat)}</b>
+                  {caption && <span className="usage-seat-engine" aria-label={`${caption} CLI`}>{caption}</span>}
                   {d.seat === current && <span className="usage-tag current">현재</span>}
                   {isNext && <span className="usage-tag next" data-testid={`sheet-next-${d.seat}`} title={`다음 턴은 이 계정으로 갑니다: ${next!.reason}`}>{next!.asOpus ? '다음 턴 여기 · Opus' : '다음 턴 여기'}</span>}
-                  {st && <span className={`usage-tag status ${d.status}`} data-testid={`${d.seat}-status`}>{old && <ClockIcon className="usage-icon" />}{st}</span>}
-                  {onReauth && reauth.includes(d.seat) && (
-                    <button type="button" className="text-btn usage-reauth-btn" data-testid={`reauth-${d.seat}`} onClick={() => onReauth(d.seat)}>로그인 만료 · 재로그인</button>
+                  {tag && <span className={`usage-tag status ${login ? 'login' : d.status}`} data-testid={`${d.seat}-status`}>{old && !login && <ClockIcon className="usage-icon" />}{tag}</span>}
+                  {login && (
+                    <button type="button" className="text-btn usage-reauth-btn" data-testid={`reauth-${d.seat}`} onClick={() => onReauth!(d.seat)}>로그인</button>
                   )}
                 </div>
                 {d.hint && d.reasonLine === undefined && <div className="usage-pop-row hint">{d.hint}</div>}

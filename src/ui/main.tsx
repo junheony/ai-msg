@@ -2,6 +2,7 @@
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import './styles.css';
+import './hub/hub-sections.css';
 import { applyPrefs, loadPrefs } from './prefs';
 import { pinShell, relaxViewport, watchShell } from './shellFit';
 

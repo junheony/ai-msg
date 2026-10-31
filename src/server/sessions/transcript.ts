@@ -1,3 +1,4 @@
+import { promptTitle } from './promptTitle';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
@@ -139,7 +140,7 @@ class SeenPrompts {
 function titleFrom(text: string): string | null {
   const first = text.split('\n').find((l) => l.trim().length > 0)?.trim() ?? '';
   if (!first || first.startsWith('<')) return null;
-  return first.length > 80 ? first.slice(0, 80) : first;
+  return promptTitle(text);
 }
 
 function scan(text: string): { cwd: string | null; custom: string | null; firstUser: string | null; headless: boolean } {

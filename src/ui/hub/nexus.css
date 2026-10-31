@@ -1,0 +1,119 @@
+/* NEXUS 지금 (src/ui/hub/NexusHome.tsx): the dashboard's home on the hub's tokens. Everything under .nx-; the section
+   frame (.sec .sh .b), tables (.t), the 주의 list (.att) and pills (.hub-st) are the hub's own classes. Phone (≤720):
+   one column, rows wrap, nothing clips. */
+.nx { display: flex; flex-direction: column; gap: var(--s4, 16px); min-width: 0; }
+.nx .nx-dim { color: var(--faint); font-size: var(--fs-xs); }
+.nx .nx-warn { color: var(--hub-warn); }
+.nx .pos { color: var(--hub-ok); }
+.nx .neg { color: var(--hub-bad); }
+.nx .nx-mono { font-family: var(--mono); font-size: var(--fs-2xs); }
+.nx-stop { display: inline-block; color: var(--hub-warn); font-size: var(--fs-2xs); border: 1px dashed color-mix(in srgb, var(--hub-warn) 55%, transparent); border-radius: 4px; padding: 0 5px; white-space: nowrap; }
+.nx-empty { padding: 10px 0 4px; color: var(--faint); font-size: var(--fs-sm); }
+.nx-ext { display: inline-flex; align-items: center; gap: 3px; color: var(--link); font-size: var(--fs-xs); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.nx-ext:hover { text-decoration: underline; }
+.nx-ext svg { width: 12px; height: 12px; }
+
+/* Tabs + freshness */
+.nx-top { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; min-width: 0; }
+.nx-tabs { display: flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: var(--r-full); background: var(--bg-raised); max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.nx-tab { display: inline-flex; align-items: center; gap: 3px; height: 28px; padding: 0 12px; border-radius: var(--r-full); color: var(--muted); font-size: var(--fs-sm); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.nx-tab:hover { background: var(--hover); color: var(--fg); }
+.nx-tab.on { background: var(--accent-soft); color: var(--accent); }
+.nx-tab svg { width: 11px; height: 11px; opacity: .7; }
+.nx-fresh { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; min-width: 0; }
+
+/* 시장 one-liner (no hero) */
+.nx-market { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-raised); font-size: var(--fs-sm); min-width: 0; }
+.nx-mk { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.nx-mk .k { color: var(--faint); font-size: var(--fs-xs); white-space: nowrap; }
+.nx-mk b { color: var(--fg-strong); font-weight: 700; font-variant-numeric: tabular-nums; }
+.nx-mk .s { color: var(--muted); font-size: var(--fs-2xs); }
+
+/* Section frame extras */
+.nx-sec { min-width: 0; }
+.nx-sec > .sh { flex-wrap: wrap; padding-top: 8px; padding-bottom: 8px; row-gap: 2px; }
+.nx-sec .nx-right { margin-left: auto; }
+.nx-sec .b { min-width: 0; }
+.nx-sec .nx-t td { white-space: nowrap; }
+.nx-sec .nx-t td.nx-wrap { white-space: normal; overflow-wrap: anywhere; min-width: 120px; }
+.nx-sec .nx-t td.nx-none { color: var(--faint); white-space: normal; }
+.nx-sec .nx-t td.nx-t, .nx-list .nx-t { color: var(--faint); font-variant-numeric: tabular-nums; }
+.nx-tag { margin-left: 5px; padding: 0 5px; border-radius: 4px; background: var(--hub-ok-soft); color: var(--hub-ok); font-size: var(--fs-2xs); font-weight: 700; }
+
+/* 할 일 */
+.nx-funnel { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding: 6px 10px; margin-bottom: 10px; border-radius: var(--r-sm); background: var(--pill-bg); font-size: var(--fs-xs); color: var(--muted); }
+.nx-fs { display: inline-flex; align-items: baseline; gap: 5px; }
+.nx-fs i { font-style: normal; color: var(--faint); margin-right: 2px; }
+.nx-fs b { color: var(--fg-strong); font-variant-numeric: tabular-nums; }
+.nx-cards { display: flex; flex-direction: column; gap: 8px; }
+.nx-card { border: 1px solid var(--line); border-left: 3px solid var(--line-strong); border-radius: var(--r-sm); background: var(--panel); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.nx-card.t-go { border-left-color: var(--hub-ok); }
+.nx-card.t-bad { border-left-color: var(--hub-bad); }
+.nx-card.t-warn { border-left-color: var(--hub-warn); }
+.nx-card.t-q { border-left-color: var(--hub-info); }
+.nx-ch { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; min-width: 0; }
+.nx-title { font-size: var(--fs-base); font-weight: 700; color: var(--fg-strong); min-width: 0; overflow-wrap: anywhere; }
+.nx-ch .nx-open { margin-left: auto; }
+.nx-badge { display: inline-block; padding: 2px 7px; border-radius: 4px; background: var(--pill-bg); color: var(--muted); font-size: var(--fs-2xs); font-weight: 700; white-space: nowrap; }
+.nx-badge.ok { background: var(--hub-ok-soft); color: var(--hub-ok); }
+.nx-badge.warn { background: var(--hub-warn-soft); color: var(--hub-warn); }
+.nx-badge.bad { background: var(--hub-bad-soft); color: var(--hub-bad); }
+.nx-badge.info { background: var(--hub-info-soft); color: var(--hub-info); }
+.nx-act { font-size: var(--fs-sm); color: var(--fg); line-height: 1.5; overflow-wrap: anywhere; }
+.nx-nums { display: flex; flex-wrap: wrap; gap: 4px 6px; }
+.nx-nums > span { padding: 1px 7px; border-radius: var(--r-full); border: 1px solid var(--line); font-size: var(--fs-2xs); color: var(--muted); font-variant-numeric: tabular-nums; }
+.nx-detail { font-size: var(--fs-xs); color: var(--faint); line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+.nx-fold { margin-top: 10px; padding: 8px 12px; border: 1px dashed var(--line-strong); border-radius: var(--r-sm); }
+.nx-fold > summary { cursor: pointer; font-size: var(--fs-sm); color: var(--muted); }
+.nx-fold > summary b { color: var(--fg-strong); }
+.nx-fold[open] > summary { margin-bottom: 8px; }
+.nx-near { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.nx-near li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 6px 8px; border-radius: var(--r-sm); background: var(--pill-bg); font-size: var(--fs-sm); min-width: 0; overflow-wrap: anywhere; }
+.nx-near li b { color: var(--fg-strong); }
+
+/* 오늘 12시간 */
+.nx-band { position: relative; min-width: 0; }
+.nx-band-tr { position: relative; height: 72px; border-bottom: 1px solid var(--line-strong); background: linear-gradient(to top, var(--pill-bg), transparent); overflow: hidden; }
+.nx-bin { position: absolute; bottom: 0; min-width: 1px; background: var(--accent); opacity: .75; border-radius: 2px 2px 0 0; }
+.nx-bin:hover { opacity: 1; }
+.nx-miss { position: absolute; top: 4px; width: 9px; height: 9px; margin-left: -4px; border-radius: 50%; border: 2px solid var(--hub-warn); box-sizing: border-box; z-index: 2; }
+.nx-fut { position: absolute; top: 0; bottom: 0; right: 0; background: repeating-linear-gradient(135deg, var(--pill-bg) 0 6px, transparent 6px 12px); pointer-events: none; }
+.nx-now { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px solid var(--fg-strong); z-index: 3; pointer-events: none; }
+.nx-now em { position: absolute; top: 0; left: 3px; padding: 0 4px; border-radius: 3px; background: var(--fg-strong); color: var(--bg); font-style: normal; font-size: var(--fs-2xs); font-weight: 700; white-space: nowrap; }
+.nx-band-stop { position: absolute; right: 6px; bottom: 4px; z-index: 3; }
+.nx-axis { position: relative; height: 18px; }
+.nx-axis span { position: absolute; top: 3px; transform: translateX(-50%); font-size: var(--fs-2xs); color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.nx-sub { margin-top: 10px; font-size: var(--fs-sm); color: var(--muted); }
+.nx-sub b { color: var(--fg-strong); }
+.nx-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.nx-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: var(--fs-sm); min-width: 0; overflow-wrap: anywhere; }
+.nx-list li b { color: var(--fg-strong); }
+.nx-num { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+/* 지갑 흐름 */
+.nx-coins { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding-top: 10px; font-size: var(--fs-xs); color: var(--muted); min-width: 0; }
+.nx-chip { padding: 1px 8px; border-radius: var(--r-full); background: var(--pill-bg); color: var(--fg); font-size: var(--fs-2xs); white-space: nowrap; }
+.nx-chip b { color: var(--fg-strong); }
+
+/* 운영 메모 */
+.nx-ops .t .nx-badge { margin-right: 6px; }
+.nx-ops .t .hint .nx-ext { font-size: var(--fs-2xs); }
+
+@media (max-width: 720px) {
+  .nx { gap: 10px; }
+  .nx-top { gap: 6px 10px; }
+  .nx-tab { height: 32px; padding: 0 10px; }
+  .nx-market { gap: 4px 12px; padding: 8px 10px; }
+  .nx-sec > .sh { padding-left: 12px; padding-right: 12px; }
+  .nx-sec > .sh .nx-note { white-space: normal; overflow: visible; flex-basis: 100%; order: 3; }
+  .nx-sec .b { padding-left: 12px; padding-right: 12px; }
+  .nx-card { padding: 8px 10px; }
+  .nx-ch .nx-open { margin-left: 0; }
+  .nx-band-tr { height: 56px; }
+  .nx-axis span:nth-child(even) { display: none; }
+  .nx-sec .nx-t { font-size: var(--fs-xs); }
+  /* cells stay on one line and the .twrap scrolls sideways — wrapping every cell broke words per character at 390 */
+  .nx-sec .nx-t td { padding: 4px 6px; height: auto; }
+  .nx-sec .nx-t td.nx-wrap { min-width: 150px; max-width: 60vw; }
+  .nx-sec .nx-t th { padding: 4px 6px; }
+}

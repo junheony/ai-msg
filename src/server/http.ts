@@ -34,6 +34,7 @@ import { handleAuthLogin } from './authLogin/http';
 import type { AuthLoginHub } from './authLogin/hub';
 import type { HubStatusService } from './hub/status';
 import { HUB_PROXY_PREFIX, HUB_PROXY_TARGETS, proxyHubRequest, type ProxyTarget } from './hub/proxy';
+import { HUB_FILE_PREFIX, serveHubFile, type HubFileRoots } from './hub/files';
 import type { MiniStatusService } from './mini/status';
 import { bearerOf, type WidgetTokenStore } from './mini/widgetToken';
 
@@ -77,7 +78,7 @@ export type HttpDeps = {
   /** In-app login window (allowlisted `claude auth login` and the same for Codex / Grok). Absent = no /api/auth-login. */
   authLogin?: AuthLoginHub;
   /** MSG Hub: `GET /api/hub/status` (the overview) and the `/hub/p/<id>/` embed proxy. Absent = 404 for both. */
-  hub?: { status: HubStatusService; proxyTargets?: Record<string, ProxyTarget> };
+  hub?: { status: HubStatusService; proxyTargets?: Record<string, ProxyTarget>; /** Named folders `/api/hub/file/<name>/…` may serve (read-only media, build outputs). */ fileRoots?: HubFileRoots };
   /**
    * MSG mini: `GET /api/mini/status` (the /mini page and the lock-screen widget) and the read-only widget token the
    * settings sheet copies / rotates. Absent = 404 for all three.
@@ -803,6 +804,13 @@ export function createRequestHandler(deps: HttpDeps) {
             if (err instanceof AttachmentTooLarge) { json(res, 413, { error: err.message }); return; }
             throw err;
           }
+          return;
+        }
+        // MSG Hub files: renders, thumbnails, playable builds from a few named folders (read-only, extension allowlist).
+        if (url.pathname.startsWith(HUB_FILE_PREFIX)) {
+          if (req.method !== 'GET' && req.method !== 'HEAD') { json(res, 405, { error: 'method not allowed' }); return; }
+          if (!deps.hub?.fileRoots) { json(res, 404, { error: 'not found' }); return; }
+          await serveHubFile(deps.hub.fileRoots, url.pathname, req.headers.range, req.method === 'HEAD', res);
           return;
         }
         // MSG Hub overview: every mode's read-only state, cached 15 s server-side. Never a secret, never an error.

@@ -1,3 +1,4 @@
+import { promptTitle } from './promptTitle';
 import { createReadStream, realpathSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -61,8 +62,7 @@ function titleOf(text: string): string | null {
   const t = (m ? text.slice(m.index + m[0].length) : text).trimStart();
   // Injected context (environment, AGENTS.md, plugins, images) — same rule as the transcript reader.
   if (!t || t.startsWith('<') || t.startsWith('# AGENTS.md') || (!m && t.startsWith('# Files mentioned by the user'))) return null;
-  const first = t.split('\n').find((l) => l.trim())?.trim() ?? '';
-  return first ? first.slice(0, 80) : null;
+  return promptTitle(t);
 }
 
 /**

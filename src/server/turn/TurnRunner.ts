@@ -1,3 +1,4 @@
+import { promptTitle } from '../sessions/promptTitle';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -317,8 +318,7 @@ function taskDoneOf(ev: Extract<EngineEvent, { kind: 'task_done' }>) {
 }
 
 function titleOf(text: string): string {
-  const first = text.split('\n').find((l) => l.trim().length > 0)?.trim() ?? '';
-  return first.length > 80 ? first.slice(0, 80) : first || '(제목 없음)';
+  return promptTitle(text) ?? '(제목 없음)';
 }
 
 /** §10-4: whether `cwd` (symlinks resolved) is inside HOME — Gemini edits files only in trusted folders. */

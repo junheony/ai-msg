@@ -35,7 +35,7 @@ import { arrangeFloats, clampFloat, dockSlot, EDGE_PX, FLOAT_MIN_H, FLOAT_MIN_W,
 import { isMacPlatform, isPinMod, isTypingTarget, matchPaneShortcut, matchPinShortcut, matchShortcut, type ShortcutId } from './shortcuts';
 import { useIsPhone } from './useIsPhone';
 import { HubSummary, ModeSwitcher } from './hub/ModeSwitcher';
-import { modeAt, readHubMode, writeHubMode, type HubModeKey } from './hub/modes';
+import { isHubModeKey, modeAt, modeDef, readHubMode, writeHubMode, type HubModeKey } from './hub/modes';
 import { useHubStatus, type HubPush } from './hub/useHubStatus';
 import { HubRail } from './hub/HubRail';
 import { useTouchTooltip } from './useTouchTooltip';
@@ -180,7 +180,12 @@ export function App() {
   // MSG Hub: which mode the shell shows. 'msg' is the terminal (this app as before); the others overlay the body. The
   // rail is always there, so a 'hub' server pushes `hub_status` on this socket (the rail's dots are live in the terminal
   // too); an older server is polled only while a hub mode shows. The last mode is kept per browser.
-  const [hubMode, setHubModeState] = useState<HubModeKey>(readHubMode);
+  // `/?hub=<mode>` opens that mode (a link, a screenshot run); the address loses the parameter once read.
+  const [hubMode, setHubModeState] = useState<HubModeKey>(() => {
+    const q = new URLSearchParams(window.location.search).get('hub');
+    if (isHubModeKey(q)) { writeHubMode(q); return q; }
+    return readHubMode();
+  });
   const hubModeRef = useRef(hubMode);
   hubModeRef.current = hubMode;
   const hubMenuOpen = useRef(false);
@@ -189,6 +194,13 @@ export function App() {
   const hubPushOn = has('hub');
   const hubShown = hubMode !== 'msg';
   const hubFeed = useHubStatus(hubShown || hubPushOn, hubPush, hubPushOn);
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    if (!q.has('hub')) return;
+    q.delete('hub');
+    const search = q.toString();
+    window.history.replaceState(null, '', window.location.pathname + (search ? `?${search}` : '') + window.location.hash);
+  }, []);
   const [headSlot, setHeadSlot] = useState<HTMLDivElement | null>(null);
   const [stripRow, setStripRow] = useState<HTMLDivElement | null>(null);
   const [drawer, setDrawer] = useState(() => saved?.drawer ?? false);
@@ -1353,7 +1365,10 @@ export function App() {
         {/* The session chip of the one pane (desktop) / the shown pane (phone) renders here (Pane → Chat, a portal). */}
         <ModeSwitcher mode={hubMode} onChange={setHubMode} mac={MAC} phone={phone} onOpenChange={(o) => { hubMenuOpen.current = o; }} />
         {!phone && hubShown && <HubSummary status={hubFeed.status} fetchedAt={hubFeed.fetchedAt} error={hubFeed.error} pushOn={hubPushOn} />}
-        <div className="topbar-head" ref={setHeadSlot} />
+        {/* In a hub mode the head names the mode (the session chip stays with its pane, hidden under the overlay). */}
+        {hubShown
+          ? <div className="topbar-head hub-head" data-testid="hub-head"><span className="hub-head-title">{modeDef(hubMode).label}</span></div>
+          : <div className="topbar-head" ref={setHeadSlot} />}
         {/* Every seat's usage, collapsed to the tightest remaining amount. The list of seats opens under the pill. */}
         <UsageStrip usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} phone={phone} rowSlot={stripRow} open={usageOpen !== null} onToggle={() => setUsageOpen((v) => (v ? null : 'limits'))} reauth={loginSeats} onReauth={has('authLogin') ? setAuthSeat : undefined} />
         <div className="topbar-end">
@@ -1498,7 +1513,7 @@ export function App() {
           />
         </div>
         <div ref={panesRef} className="panes" {...(hubShown ? { inert: true } : {})} data-count={phone || maxed ? 1 : docked.length} {...(maxed ? { 'data-maxed': maxed } : {})} style={{ '--cols': phone || maxed ? 1 : docked.length, ...(!phone && !maxed && docked.length > 1 ? { gridTemplateColumns: paneColumns(docked.map((p) => paneSize(p.size))) } : {}) } as CSSProperties}>
-          {phone && state.panes.length > 1 && (
+          {phone && state.panes.length > 1 && !hubShown && (
             // 36px strip, 44px presses: "1 · 제목…" (the title cut by CSS), + at the end; press-and-drag reorders.
             <div className="pane-switch" data-testid="split-tabs" role="group" aria-label="분할" {...tabs.stripProps}>
               {state.panes.map((p, i) => <button type="button" key={p.id} data-tab={p.id} className={p.id === active.id ? 'on' : ''} aria-pressed={p.id === active.id} {...(p.session ? { title: p.session.title } : {})} onClick={() => { dispatch({ type: 'focus_pane', paneId: p.id }); requestFocus(p.id); }}><span className="tab-pill">{i + 1} · {p.session?.title ?? '새 세션'}</span></button>)}
