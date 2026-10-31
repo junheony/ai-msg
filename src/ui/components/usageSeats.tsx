@@ -54,6 +54,28 @@ export function resetStamp(resetsAt: string | null): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+/**
+ * The reset as the rows show it: within a day the local clock time ("리셋 14:30", "내일 02:10" past midnight), beyond
+ * that in days ("2일 후", "1일 5시간 후"); "리셋됨" once passed; '' without a readable time. The full countdown
+ * ("2시간 5분 후 리셋") stays in the row's title.
+ */
+export function resetLabel(resetsAt: string | null | undefined, now: number): string {
+  if (!resetsAt) return '';
+  const t = parseIsoUtc(resetsAt);
+  if (Number.isNaN(t)) return '';
+  const ms = t - now;
+  if (ms <= 0) return '리셋됨';
+  const h = Math.floor(ms / 3_600_000);
+  if (h < 24) {
+    const d = new Date(t);
+    const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    return localDay(d) === localDay(new Date(now)) ? `리셋 ${hm}` : `내일 ${hm}`;
+  }
+  const days = Math.floor(h / 24);
+  const rest = h % 24;
+  return days < 2 && rest ? `${days}일 ${rest}시간 후` : `${days}일 후`;
+}
+
 /** How long ago, short: "방금", "12분 전", "3시간 전", "2일 전"; '' when unreadable. */
 export function agoText(iso: string | null, now: number): string {
   if (!iso) return '';
@@ -142,6 +164,8 @@ export type SeatData = {
   reasonLine?: string;
   /** A live cooldown's end (Grok), when known. */
   until?: string;
+  /** The seat's CLI is logged out (a Gemini seat without its Google login, Grok after an auth failure): 로그인 필요, a 로그인 button. */
+  loginNeeded?: boolean;
   /** When the seat's numbers were last read (ISO), for the strip's "3일 전" on old numbers; absent when unknown. */
   fetchedAt?: string | null;
   /** Claude, `cli` mode: those numbers came from deck's `/usage` poll, not a turn (old ones are said "확인한 값"). */
@@ -151,6 +175,15 @@ export type SeatData = {
 };
 
 const WINDOW_NAME: Record<WindowKey, string> = { fiveHour: '5h', weekly: '주간', fable: 'Fable' };
+
+/**
+ * The engine / CLI behind a seat, said once beside its name in the sheet ("A · Claude", "GPT · Codex", "Gemini · agy");
+ * '' when the name says it already (Grok). The name itself stays the short label the strip and the account menu use.
+ */
+export function engineCaption(d: Pick<SeatData, 'engine'>, label = ''): string {
+  if (d.engine === 'claude') return /claude/i.test(label) ? '' : 'Claude';
+  return d.engine === 'gpt' ? 'Codex' : d.engine === 'gemini' ? 'agy' : '';
+}
 
 /** Claude A/B/C: main = fullest of 5h/weekly (Fable excluded — "Fable 은 Fable 만 막는다"); Fable only in the secondary row/popover. */
 function claudeRows(u: AccountUsage, cli: boolean): SeatRow[] {
@@ -180,7 +213,7 @@ export function bucketLabel(name: string): string {
 
 /** Gemini 로그인 필요 / a read failure, as the card's hint; '' when the numbers are fresh. */
 export function geminiHint(g: GeminiUsage): string {
-  if (!g.loggedIn) return 'Gemini 로그인 필요 — 사용량의 재로그인으로 Google 로그인하면 사용량이 보입니다';
+  if (!g.loggedIn) return 'Gemini 로그인 필요 — 로그인 버튼으로 Google 로그인하면 사용량이 보입니다';
   if (g.status === 'ok') return '';
   return g.error ? `Gemini 사용량 ${g.status === 'stale' ? '오래된 값' : '불명'} — ${g.error}` : 'Gemini 사용량 불명';
 }
@@ -246,6 +279,7 @@ function grokSeatData(seat: Seat, snap: GrokUsage, now: number, bot?: GrokBotUsa
     return {
       seat, engine: 'grok', mark, rows: [], status: g.status,
       reasonLine: grokMainText(g, now), extraPopover,
+      ...(g.status === 'down' ? { loginNeeded: true } : {}),
       ...(g.status === 'cooldown' && g.cooldownUntil ? { until: g.cooldownUntil } : {}),
     };
   }
@@ -255,6 +289,7 @@ function grokSeatData(seat: Seat, snap: GrokUsage, now: number, bot?: GrokBotUsa
     // The subscription answered: no turn yet is not "unknown" any more.
     status: g.status === 'unknown' ? 'ok' : g.status,
     ...(blocked ? { reasonLine: grokMainText(g, now) } : {}),
+    ...(g.status === 'down' ? { loginNeeded: true } : {}),
     ...(g.status === 'cooldown' && g.cooldownUntil ? { until: g.cooldownUntil } : {}),
     observed: `확인 · ${resetStamp(g.billing.fetchedAt)}`,
     fetchedAt: g.billing.fetchedAt,
@@ -287,10 +322,11 @@ export function shownPct(w: UsageWindow | null): number | null {
  * One window row in the sheet: label · bar (or spent pill) · REMAINING % · countdown. Every seat (Claude, GPT, Gemini
  * buckets, Grok) says the share left, like the strip: the bar is as full as what is left (a battery).
  */
-export function PopRow({ seat, name, k, w, now, empty, stale, polled }: { seat: Seat; name: string; k: string; w: UsageWindow | null; now: number; empty?: string; stale?: boolean; polled?: boolean }) {
+export function PopRow({ seat, name, k, w, now, empty, stale, polled, id }: { seat: Seat; name: string; k: string; w: UsageWindow | null; now: number; empty?: string; stale?: boolean; polled?: boolean; id?: string }) {
+  const testId = id ?? `${seat}-${k}`;
   if (stale && windowPassed(w, now)) {
     return (
-      <div data-testid={`${seat}-${k}`} className="usage-row old passed" title={`${name} · ${RESET_PASSED_NOTE}`}>
+      <div data-testid={testId} className="usage-row old passed" title={`${name} · ${RESET_PASSED_NOTE}`}>
         <span className="usage-label">{name}</span>
         <span className="usage-bar" aria-hidden="true"><i style={{ width: '0%' }} /></span>
         <span className="usage-value"><RefreshIcon className="usage-icon" />리셋됨</span>
@@ -299,22 +335,23 @@ export function PopRow({ seat, name, k, w, now, empty, stale, polled }: { seat: 
   }
   const rem = shownPct(w);
   const reset = w ? countdown(w.resetsAt, now) : '';
+  const when = w ? resetLabel(w.resetsAt, now) : '';
   const title = (rem === null ? `${name} · ${empty ?? '알 수 없음'}` : rem === 0 ? `${name} · 소진${w?.resetsAt ? ` · ${resetStamp(w.resetsAt)} 리셋` : ''}` : `${name} · ${rem}% 남음${reset ? ` · ${reset}` : ''}${LEVEL_NOTE[levelClass(w)] ?? ''}`) + (w?.estimated ? ` · ${ESTIMATED}` : '') + (stale && rem !== null ? ` · ${polled ? '예전에 확인한 값' : '마지막 턴 기준 값'}, 지금은 이보다 적게 남았을 수 있음` : '');
   if (rem === 0) {
     const at = resetStamp(w?.resetsAt ?? null);
     return (
-      <div data-testid={`${seat}-${k}`} className={`usage-row spent danger${stale ? ' old' : ''}`} title={title}>
+      <div data-testid={testId} className={`usage-row spent danger${stale ? ' old' : ''}`} title={title}>
         <span className="usage-label">{name}</span>
         <span className="usage-pill">소진{at && <span className="usage-pill-at">{` · ${at}`}</span>}</span>
       </div>
     );
   }
   return (
-    <div data-testid={`${seat}-${k}`} className={`usage-row ${levelClass(w)}${w?.estimated ? ' estimated' : ''}${stale && rem !== null ? ' old' : ''}`} title={title}>
+    <div data-testid={testId} className={`usage-row ${levelClass(w)}${w?.estimated ? ' estimated' : ''}${stale && rem !== null ? ' old' : ''}`} title={title}>
       <span className="usage-label">{name}</span>
       <span className="usage-bar" aria-hidden="true"><i style={{ width: `${rem ?? 0}%` }} /></span>
       <span className="usage-value">{rem === null ? (empty ? <span className="usage-na">{empty}</span> : '—') : <>{rem}<small>% 남음</small></>}</span>
-      {reset && <span className="usage-reset">{reset}</span>}
+      {when && <span className="usage-reset" aria-label={reset}>{when}</span>}
     </div>
   );
 }
@@ -352,7 +389,8 @@ export function statusLabel(d: SeatData): string {
   if (d.dim || d.status === 'stale') return '오래됨';
   if (d.status === 'kept') return '추정(유지)';
   if (d.status === 'cooldown') return '쿨다운';
-  if (d.status === 'down') return d.engine === 'gemini' || d.engine === 'grok' ? '로그인 필요' : '불명';
+  if (d.loginNeeded) return '로그인 필요';
+  if (d.status === 'down') return '불명';
   if (d.status === 'unknown' && d.rows.length > 0) return '불명';
   return '';
 }
@@ -395,6 +433,7 @@ export function buildSeats(usage: UsageSnapshot, active: readonly { id: Account 
       return {
         seat: a, engine: 'gemini', mark: <GeminiMark className="usage-mark gemini" />, rows, status: g.status as SeatData['status'],
         hint, fetchedAt: g.fetchedAt, ...(rows.length === 0 ? { reasonLine: hint || '사용량 알 수 없음' } : {}),
+        ...(g.loggedIn ? {} : { loginNeeded: true }),
         ...(g.fetchedAt ? { observed: `확인 · ${resetStamp(g.fetchedAt)}` } : {}),
       };
     }),
@@ -491,7 +530,7 @@ export function chipState({ seats, current, next, stale: snapshotStale, now, lab
   const estimated = !!main?.row.w?.estimated || d.status === 'kept';
   const resetAt = main?.row.w?.resetsAt ? parseIsoUtc(main.row.w.resetsAt) : NaN;
   const ago = stale && !!main && resetAt > now ? agoText(d.fetchedAt ?? null, now) : '';
-  const loggedOut = d.engine === 'grok' && d.status === 'down';
+  const loggedOut = !!d.loginNeeded;
   const left = loggedOut ? null : (main ? main.rem : null);
   let kind: ChipKind;
   let text: string;

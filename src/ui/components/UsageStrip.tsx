@@ -1,9 +1,9 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { GrokStatus } from '../../shared/protocol';
 import type { Seat } from '../../shared/accounts';
 import type { UsageSnapshot } from '../../shared/usage-types';
 import { useAccounts } from '../accounts';
-import { buildSeats, chipCountdown, chipState, pickMain, RESET_PASSED_NOTE, RESET_PASSED_SAID, spokenCountdown, staleNote, useClock, type ChipKind, type RouteNext, type SeatData } from './usageSeats';
+import { buildSeats, chipCountdown, chipState, pickMain, PopRow, RESET_PASSED_NOTE, RESET_PASSED_SAID, seatStale, spokenCountdown, staleNote, useClock, type ChipKind, type RouteNext, type SeatData } from './usageSeats';
 import { ClockIcon, RefreshIcon } from './icons';
 
 /**
@@ -77,6 +77,8 @@ export type StripSeg = {
   current: boolean;
   /** The next turn goes here (and not to the current seat). */
   next: boolean;
+  /** Nothing can run here now: spent (0 % left), a live cooldown, or the CLI is logged out — a red pill beside the header chip. */
+  blocked: boolean;
 };
 
 /**
@@ -107,6 +109,7 @@ export function stripSegs({ seats, current, next, stale, now, label }: {
       bar: spent ? 0 : cooldown ? null : st.left, value, reset, dot: (spent || cooldown) && !old, spoken,
       note: st.resetPassed ? `${name} — ${RESET_PASSED_NOTE}` : old ? `${name} ${st.left}% — ${note}` : '',
       current: d.seat === current, next: !!next && next.account === d.seat && next.account !== current,
+      blocked: spent || cooldown || !!d.loginNeeded,
     };
   });
 }
@@ -121,13 +124,24 @@ const loud = (k: ChipKind) => k === 'warn' || k === 'danger' || k === 'spent' ||
 const percentValue = (v: string) => /^\d+%$/.test(v);
 
 /**
- * The seat the collapsed pill names. Any seat with a remaining % (spent counts as 0) beats a seat with no number;
- * the smallest % wins, the earlier seat on a tie. With no number at all, a cooldown beats 리셋됨 / 가능 / ?.
+ * The seat the collapsed chip names: the one with the MOST left (of its own tightest window), so the chip says where
+ * a turn can still go. A seat with a remaining % beats one with no number (가능 / ? / 로그인 필요); the larger % wins,
+ * the earlier seat on a tie. With no number anywhere, the first seat that is not blocked, else the first.
  */
-export function tightestSeg(segs: StripSeg[]): StripSeg {
-  const numbered = segs.filter((s) => s.bar !== null);
-  if (numbered.length > 0) return numbered.reduce((best, s) => (s.bar! < best.bar! ? s : best));
-  return segs.find((s) => s.kind === 'cooldown') ?? segs[0]!;
+export function bestSeg(segs: StripSeg[]): StripSeg {
+  const numbered = segs.filter((s) => s.bar !== null && !s.blocked);
+  if (numbered.length > 0) return numbered.reduce((best, s) => (s.bar! > best.bar! ? s : best));
+  return segs.find((s) => !s.blocked) ?? segs[0]!;
+}
+
+/** The seats nothing can run on (spent, cooldown, logged out), minus the one the chip already names: the red pills. */
+export function outSegs(segs: StripSeg[], best: StripSeg): StripSeg[] {
+  return segs.filter((s) => s.blocked && s.seat !== best.seat);
+}
+
+/** A red pill's word: 소진 (0 % left), 쿨다운, 로그인 (the CLI is logged out). */
+function outWord(s: StripSeg): string {
+  return s.kind === 'cooldown' ? '쿨다운' : s.bar === 0 ? '소진' : '로그인';
 }
 
 /**
@@ -162,7 +176,7 @@ function Segment({ s, stage, measure }: { s: StripSeg; stage: Exclude<StripStage
  * The same pill on a phone — the list is the popover, not a second row of every seat. `phone` and `rowSlot` stay on
  * the props so the header call site is unchanged.
  */
-export function UsageStrip({ usage, current, next = null, grok = null, open = false, onToggle, now: fixedNow, reauth = [], onReauth }: {
+export function UsageStrip({ usage, current, next = null, grok = null, phone = false, open = false, onToggle, now: fixedNow, reauth = [], onReauth }: {
   usage: UsageSnapshot | null; current: Seat | null; next?: RouteNext | null; grok?: GrokStatus | null;
   phone?: boolean;
   rowSlot?: HTMLElement | null;
@@ -177,8 +191,10 @@ export function UsageStrip({ usage, current, next = null, grok = null, open = fa
   const wrapRef = useRef<HTMLDivElement>(null);
   const [pop, setPop] = useState(false);
   const seats = usage ? buildSeats(usage, active, grok, now) : [];
-  // A logged-out seat still needs the pill: with no remaining-% yet there is otherwise nothing to press for 재로그인.
-  const shown = seats.length > 0 && (!!current || !!next || seats.some((s) => pickMain(s.rows)) || reauth.length > 0);
+  // A logged-out seat still needs the pill: with no remaining-% yet there is otherwise nothing to press for 로그인.
+  const shown = seats.length > 0 && (!!current || !!next || seats.some((s) => pickMain(s.rows) || s.loginNeeded) || reauth.length > 0);
+  /** Seats whose CLI needs a login: the setup probe's list, or the snapshot itself (Gemini without its Google login, Grok after an auth failure). */
+  const needsLogin = (d: SeatData) => !!onReauth && (reauth.includes(d.seat) || !!d.loginNeeded);
 
   useEffect(() => { if (open) setPop(false); }, [open]);
   useEffect(() => {
@@ -191,8 +207,10 @@ export function UsageStrip({ usage, current, next = null, grok = null, open = fa
   }, [pop]);
 
   if (!usage || !shown) return null;
-  const segs = stripSegs({ seats, current, next, stale: usage.usageMode !== 'cli' && !usage.deckReachable, now, label });
-  const sum = tightestSeg(segs);
+  const snapshotStale = usage.usageMode !== 'cli' && !usage.deckReachable;
+  const segs = stripSegs({ seats, current, next, stale: snapshotStale, now, label });
+  const sum = bestSeg(segs);
+  const out = outSegs(segs, sum);
   const nextSays = next && (next.account !== current || next.asOpus) ? `; 다음 턴 ${label(next.account)}${next.asOpus ? '(Opus)' : ''}` : '';
   const aria = `계정별 남은 사용량: ${segs.map((s) => `${s.current ? '지금 ' : ''}${s.spoken}`).join('; ')}${nextSays}`;
   const title = [STRIP_TITLE, ...segs.map((s) => s.note), next ? `다음 턴: ${label(next.account)}${next.asOpus ? ' · Opus' : ''} — ${next.reason}` : ''].filter(Boolean).join('\n');
@@ -201,7 +219,7 @@ export function UsageStrip({ usage, current, next = null, grok = null, open = fa
     <div ref={wrapRef} className="usage-strip-wrap" data-summary="">
       <button
         type="button"
-        className={`usage-strip ${sum.kind}${sum.stale && sum.kind !== 'stale' ? ' stale' : ''}`}
+        className={`usage-strip ${sum.kind}${sum.stale && sum.kind !== 'stale' ? ' stale' : ''}${out.length ? ' has-out' : ''}`}
         data-testid="usage-strip"
         aria-label={aria}
         aria-haspopup="true"
@@ -221,21 +239,35 @@ export function UsageStrip({ usage, current, next = null, grok = null, open = fa
             {sum.value}
           </span>
         </span>
+        {out.length > 0 && (
+          <span className="usage-out" data-testid="usage-out" aria-hidden="true">
+            {out.map((s) => <span key={s.seat} className={`usage-out-pill ${s.kind}`} data-testid={`out-${s.seat}`}>{s.label}{!phone && <small>{outWord(s)}</small>}</span>)}
+          </span>
+        )}
         <span className="usage-strip-caret" aria-hidden="true">{pop ? '▴' : '▾'}</span>
       </button>
       {pop && (
         <div id="usage-strip-pop" className="usage-strip-pop" role="group" aria-label="계정별 남은 사용량" data-testid="usage-strip-pop">
-          {segs.map((s) => (
-            <Fragment key={s.seat}>
-              <Segment s={s} stage="full" />
-              {onReauth && reauth.includes(s.seat) && (
-                <span className="usage-reauth" data-testid={`reauth-${s.seat}`}>
-                  <span>로그인 만료</span>
-                  <button type="button" className="text-btn" onClick={() => { setPop(false); onReauth(s.seat); }}>재로그인</button>
-                </span>
-              )}
-            </Fragment>
-          ))}
+          {segs.map((s) => {
+            const d = seats.find((x) => x.seat === s.seat)!;
+            const old = seatStale(d, snapshotStale) && d.status !== 'cooldown';
+            return (
+              <div key={s.seat} className={`usage-pop-seat${s.current ? ' current' : ''}`} data-testid={`pop-${s.seat}`}>
+                <Segment s={s} stage="full" />
+                {d.rows.length > 0 && (
+                  <div className="usage-pop-rows">
+                    {d.rows.map((r) => <PopRow key={r.key} id={`pop-${s.seat}-${r.key}`} seat={s.seat} name={r.name} k={r.key} w={r.w} now={now} empty={r.empty} stale={old} polled={d.polled} />)}
+                  </div>
+                )}
+                {needsLogin(d) && (
+                  <span className="usage-reauth" data-testid={`reauth-${s.seat}`}>
+                    <span>로그인 필요</span>
+                    <button type="button" className="text-btn" onClick={() => { setPop(false); onReauth!(s.seat); }}>로그인</button>
+                  </span>
+                )}
+              </div>
+            );
+          })}
           <button type="button" className="text-btn usage-strip-more" onClick={onToggle}>자세히</button>
         </div>
       )}

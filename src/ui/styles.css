@@ -563,8 +563,20 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
   background: var(--bg); box-shadow: var(--shadow-lg), inset 0 0 0 1px var(--line);
 }
 .usage-strip-more { flex: 1 0 auto; margin-left: auto; height: 28px; }
-.usage-reauth { flex: 1 0 100%; display: flex; align-items: center; gap: 8px; padding: 2px 7px 4px; color: var(--warn); font-size: var(--fs-xs); }
-.usage-reauth .text-btn { color: var(--link); font-weight: 600; min-height: 32px; }
+/* Beside the best seat: one small red pill per seat nothing can run on (소진 · 쿨다운 · 로그인). A phone shows the label alone. */
+.usage-out { display: inline-flex; align-items: center; gap: 3px; margin-left: 3px; }
+.usage-out-pill { display: inline-flex; align-items: center; gap: 3px; height: 20px; padding: 0 6px; border-radius: var(--r-full); font-size: var(--fs-xs); font-weight: 600; line-height: 1; white-space: nowrap; color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 35%, transparent); }
+.usage-out-pill small { font-size: inherit; font-weight: 500; }
+.usage-out-pill.unknown { color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 40%, transparent); }
+/* One block per seat in the popover: the seat's summary line, then its windows (5h · 주간 · Fable; Gemini buckets; Grok's period) as rows. */
+.usage-pop-seat { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+.usage-pop-seat:last-of-type { border-bottom: 0; }
+.usage-pop-rows { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 0 8px 2px; }
+.usage-pop-rows .usage-row { min-width: 0; height: auto; min-height: 20px; grid-template-columns: minmax(40px, max-content) minmax(0, 1fr) max-content minmax(0, max-content); }
+.usage-pop-rows .usage-value { font-size: var(--fs-sm); }
+.usage-reauth { flex: 1 0 100%; display: flex; align-items: center; gap: 8px; min-width: 0; padding: 2px 7px 4px; color: var(--warn); font-size: var(--fs-xs); }
+.usage-reauth > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-reauth .text-btn { flex-shrink: 0; margin-left: auto; color: var(--link); font-weight: 600; min-height: 32px; }
 .usage-reauth-btn { margin-left: auto; color: var(--link); font-weight: 600; }
 .auth-term { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
 .auth-note { margin: 0; color: var(--muted); font-size: var(--fs-xs); }
@@ -647,14 +659,19 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-seat .usage-refresh-hint { display: flex; align-items: center; gap: 5px; margin-top: 2px; font-size: var(--fs-xs); color: var(--muted); }
 .usage-seat-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 2px; }
 .usage-seat-name { font-size: var(--fs-sm); font-weight: 650; color: var(--fg-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 16ch; }
+.usage-seat-engine { font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
+.usage-tag.status.login { color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent); }
 .usage-tag { padding: 0 6px; border-radius: var(--r-full); font-size: var(--fs-xs); line-height: var(--lh-meta); font-weight: 500; white-space: nowrap; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .usage-tag.current, .usage-tag.next { color: var(--accent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
 .usage-tag.status.kept { color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent); }
 .usage-tag.status.cooldown { color: var(--danger); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 45%, transparent); }
 .usage-seat .usage-row { min-width: 0; height: auto; min-height: 22px; grid-template-columns: minmax(44px, max-content) minmax(0, 1fr) max-content minmax(0, max-content); }
 .usage-seat .usage-pop-row.hint { max-width: none; }
-/* In the sheet the reset countdown is shown (it was screen-reader only in the old popover). */
-.usage-seat .usage-reset { position: static; width: auto; height: auto; overflow: visible; clip: auto; margin-left: var(--s2); font-size: var(--fs-xs); color: var(--muted); }
+/* In the sheet and the strip's popover the reset is shown ("리셋 14:30" / "2일 후"); secondary, so it is the one part that may be cut short. */
+.usage-seat .usage-reset, .usage-pop-rows .usage-reset { position: static; width: auto; height: auto; min-width: 0; overflow: hidden; clip: auto; margin-left: var(--s2); font-size: var(--fs-xs); color: var(--muted); text-overflow: ellipsis; }
+/* The secondary value of a two-column line (Grok's today tally, the observed stamp) may be cut short; the label never is. */
+.usage-seat .usage-pop-row:not(.hint) b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+.usage-seat .usage-pop-row:not(.hint) > span { flex-shrink: 0; }
 .usage-history-toggle { align-self: flex-start; padding: 6px var(--s3); border: 0; border-radius: var(--r-full); font: inherit; font-size: var(--fs-sm); color: var(--fg); background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); cursor: pointer; }
 .usage-history-toggle:hover { background: var(--hover); }
 .usage-sheet .usage-view .uv-inner { padding: 0; }
@@ -2618,8 +2635,11 @@ body.pane-dragging .head-chip { cursor: grabbing; }
 .usage-strip-pop {
   flex-direction: column;
   align-items: stretch;
-  width: min(300px, calc(100vw - 16px));
-  max-width: min(300px, calc(100vw - 16px));
+  width: min(340px, calc(100vw - 16px));
+  max-width: min(340px, calc(100vw - 16px));
+  max-height: min(72vh, calc(100vh - 72px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 6px;
   gap: 2px;
   border-radius: var(--radius-card);
@@ -2627,6 +2647,7 @@ body.pane-dragging .head-chip { cursor: grabbing; }
   box-shadow: var(--elev-2), inset 0 0 0 1px var(--line);
 }
 .usage-strip-pop .usage-seg { width: 100%; height: 32px; padding: 0 8px; border-radius: 10px; box-sizing: border-box; }
+.usage-strip-pop .usage-pop-seat.current > .usage-seg { background: var(--panel); }
 .usage-strip-pop .usage-seg-who { max-width: 7em; overflow: hidden; text-overflow: ellipsis; }
 .usage-strip-pop .usage-seg-bar { width: 72px; }
 .usage-strip-pop .usage-seg-reset { margin-left: auto; }
@@ -2912,6 +2933,7 @@ mark.find-hit.current { background: var(--btn-primary-bg); color: var(--btn-prim
 .kpi .l { font-size: var(--fs-xs); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kpi .v { font-size: var(--fs-display); line-height: 1.15; font-weight: 700; color: var(--fg-strong); font-variant-numeric: tabular-nums; letter-spacing: -.3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kpi .v.sm { font-size: var(--fs-xl); }
+.kpi .v.xs { font-size: var(--fs-lg); }
 .kpi .v .u { font-size: var(--fs-sm); font-weight: 600; color: var(--muted); margin-left: 3px; }
 .kpi .h { font-size: var(--fs-2xs); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kpi .h.warn { color: var(--hub-warn); }
@@ -2931,7 +2953,7 @@ mark.find-hit.current { background: var(--btn-primary-bg); color: var(--btn-prim
 .sec .n { font-weight: 500; font-size: var(--fs-xs); color: var(--faint); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sec .cnt { margin-left: auto; font-size: var(--fs-2xs); color: var(--faint); font-weight: 600; font-variant-numeric: tabular-nums; }
 .sec .b { padding: 0 16px 14px; }
-.sec.raw { border-style: dashed; }
+.sec.sec-raw { border-style: dashed; }
 .sec-empty { padding: 6px 0 2px; color: var(--faint); font-size: var(--fs-xs); }
 
 /* 주의 list (page, 개요, and list sections) */

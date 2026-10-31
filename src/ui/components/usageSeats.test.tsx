@@ -2,8 +2,8 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, screen } from '@testing-library/react';
-import { agoText, bucketLabel, chipCountdown, countdown, creditsText, fullestWindow, geminiHint, grokBotLine, levelClass, observedText, resetStamp, shortCountdown, shownPct, type RouteNext } from './usageSeats';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { agoText, bucketLabel, chipCountdown, countdown, creditsText, fullestWindow, geminiHint, grokBotLine, levelClass, observedText, resetLabel, resetStamp, shortCountdown, shownPct, type RouteNext } from './usageSeats';
 import { UsageSheet } from './UsageSheet';
 import { localDay, type GrokUsage, type UsageSnapshot } from '../../shared/usage-types';
 import type { GrokStatus } from '../../shared/protocol';
@@ -32,7 +32,9 @@ describe('usage seats in the sheet', () => {
     // 13 % used = 87 % left, like the strip.
     expect(screen.getByTestId('a-fiveHour').querySelector('.usage-value')!.textContent).toBe('87% 남음');
     expect(screen.getByTestId('a-weekly').querySelector('.usage-value')!.textContent).toBe('93% 남음');
-    expect(screen.getByTestId('a-fiveHour').textContent).toContain('2시간 30분');
+    // The row shows the reset as a clock time ("리셋 15:00" / "내일 00:00"); the countdown is its title.
+    expect(screen.getByTestId('a-fiveHour').querySelector('.usage-reset')!.textContent).toBe(resetLabel(usage.accounts.a!.fiveHour!.resetsAt, NOW));
+    expect(screen.getByTestId('a-fiveHour').title).toContain('2시간 30분');
     expect(screen.getByTestId('b-fiveHour').className).toContain('warn');
     expect(screen.getByTestId('c-weekly').className).toContain('danger');
     expect(screen.getByTestId('b-fable').textContent).toContain('—');
@@ -63,7 +65,8 @@ describe('usage seats in the sheet', () => {
     expect(card.title).toBe('');
     expect(screen.getByTestId('g1-b0').textContent).toContain('4 Argon');
     expect(screen.getByTestId('g1-b0').textContent).toContain('73% 남음');
-    expect(screen.getByTestId('g1-b0').textContent).toContain('2시간 10분');
+    expect(screen.getByTestId('g1-b0').title).toContain('2시간 10분');
+    expect(screen.getByTestId('g1-b0').querySelector('.usage-reset')!.textContent).toMatch(/^(리셋|내일) \d{2}:\d{2}$/);
     expect(screen.getByTestId('g1-b1').textContent).toContain('3.8 Flash');
     expect(screen.getByTestId('g1-b1').className).toContain('danger');
     expect(screen.getByTestId('g1-observed').textContent).toContain('확인');
@@ -73,11 +76,22 @@ describe('usage seats in the sheet', () => {
     const out = { status: 'down' as const, fetchedAt: null, loggedIn: false, buckets: [], error: 'Gemini 로그인 필요 — 터미널에서 agy 실행 후 Google 로그인' };
     const { unmount } = sheet({ ...usage, gemini: out }, null);
     const card = screen.getByTestId('account-g1');
-    expect(card.title).toContain('재로그인');
+    expect(card.title).toContain('로그인 버튼');
     expect(card.className).toContain('down');
     expect(screen.getByTestId('g1-main').textContent).toContain('로그인');
     expect(screen.getByTestId('g1-status').textContent).toBe('로그인 필요');
+    expect(screen.queryByTestId('reauth-g1')).toBeNull();
     unmount();
+    // With the login feature: a 로그인 button for that seat, from the snapshot alone (the setup list may not know yet).
+    const onReauth = vi.fn();
+    const { unmount: unmount2 } = render(<UsageSheet usage={{ ...usage, geminiSeats: { g1: out, g2: { ...out, loggedIn: true, status: 'ok', buckets: [{ name: 'Gemini · 5h', usedPct: 10, resetsAt: null }] } } }} current={null} onClose={() => {}} now={NOW} reauth={[]} onReauth={onReauth} />);
+    expect(screen.getByTestId('reauth-g1').textContent).toBe('로그인');
+    expect(screen.getByTestId('g1-status').className).toContain('login');
+    expect(screen.queryByTestId('reauth-g2')).toBeNull();
+    expect(screen.getByTestId('account-g2').querySelector('.usage-seat-name')!.textContent).toBe('Gemini 2');
+    fireEvent.click(screen.getByTestId('reauth-g1'));
+    expect(onReauth).toHaveBeenCalledWith('g1');
+    unmount2();
     const stale = { status: 'stale' as const, fetchedAt: null, loggedIn: true, buckets: [{ name: 'x', usedPct: 10, resetsAt: null }], error: 'agy /usage 실패 (exit 1)' };
     sheet({ ...usage, gemini: stale }, null);
     expect(screen.getByTestId('account-g1').title).toBe('Gemini 사용량 오래된 값 — agy /usage 실패 (exit 1)');
@@ -107,9 +121,9 @@ describe('usage seats in the sheet', () => {
     vi.setSystemTime(NOW);
     const u: UsageSnapshot = { ...usage, accounts: { ...usage.accounts, a: { ...usage.accounts.a!, fiveHour: { usedPct: 13, resetsAt: new Date(NOW + 2 * 3_600_000).toISOString() } } } };
     sheet(u, null, { now: undefined });
-    expect(screen.getByTestId('a-fiveHour').textContent).toContain('2시간 후 리셋');
+    expect(screen.getByTestId('a-fiveHour').title).toContain('2시간 후 리셋');
     act(() => { vi.advanceTimersByTime(60_000); });
-    expect(screen.getByTestId('a-fiveHour').textContent).toContain('1시간 59분');
+    expect(screen.getByTestId('a-fiveHour').title).toContain('1시간 59분');
   });
 
   it('GPT: weekly remaining % when ok, — with a hint when unknown, current tag', () => {
@@ -205,6 +219,35 @@ describe('short countdowns and the fullest window', () => {
     expect(shortCountdown(at(48 * 3_600_000), NOW)).toBe('2일');
     expect(shortCountdown('not a date', NOW)).toBe('');
     expect(shortCountdown('2026-13-45T99:00:00Z', NOW)).toBe('');
+  });
+
+  it('resetLabel: a clock time within a day (내일 past midnight), days beyond, 리셋됨 once passed, nothing without a time', () => {
+    const hm = (ms: number) => { const d = new Date(NOW + ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+    const sameDay = (ms: number) => new Date(NOW + ms).getDate() === new Date(NOW).getDate();
+    expect(resetLabel(at(2 * 3_600_000 + 5 * 60_000), NOW)).toBe(`${sameDay(2 * 3_600_000) ? '리셋' : '내일'} ${hm(2 * 3_600_000 + 5 * 60_000)}`);
+    expect(resetLabel(at(23 * 3_600_000), NOW)).toBe(`${sameDay(23 * 3_600_000) ? '리셋' : '내일'} ${hm(23 * 3_600_000)}`);
+    // Some hour of the next 23 crosses local midnight: that one says 내일.
+    expect(Array.from({ length: 23 }, (_, i) => resetLabel(at((i + 1) * 3_600_000), NOW)).some((l) => l.startsWith('내일 '))).toBe(true);
+    expect(resetLabel(at(24 * 3_600_000), NOW)).toBe('1일 후');
+    expect(resetLabel(at(29.5 * 3_600_000), NOW)).toBe('1일 5시간 후');
+    expect(resetLabel(at(2.2 * 86_400_000), NOW)).toBe('2일 후');
+    expect(resetLabel(at(6 * 86_400_000 + 23 * 3_600_000), NOW)).toBe('6일 후');
+    expect(resetLabel(at(-1), NOW)).toBe('리셋됨');
+    expect(resetLabel(null, NOW)).toBe('');
+    expect(resetLabel('junk', NOW)).toBe('');
+  });
+
+  it('the sheet names seats as the strip does (A / B / C, GPT, Gemini, Gemini 2, Grok) with the engine as a caption: Claude, Codex, agy', () => {
+    const g = { status: 'ok' as const, fetchedAt: null, loggedIn: true, buckets: [{ name: 'Gemini · 5h', usedPct: 1, resetsAt: null }] };
+    sheet({ ...usage, gpt: { status: 'ok', fetchedAt: null, fiveHour: null, weekly: { usedPct: 40, resetsAt: null }, fable: null }, geminiSeats: { g1: g, g2: g }, grokSeats: { x1: { status: 'ok', lastTurnAt: null, lastError: null, cooldownUntil: null, today: { inputTokens: 0, outputTokens: 0, turns: 0, day: '' } } } }, null, { grok: { bin: true } as GrokStatus });
+    const names = [...document.querySelectorAll('.usage-seat-name')].map((n) => n.textContent);
+    expect(names).toEqual(['A', 'B', 'C', 'GPT', 'Gemini', 'Gemini 2', 'Grok']);
+    const caption = (seat: string) => screen.getByTestId(`account-${seat}`).querySelector('.usage-seat-engine')?.textContent ?? null;
+    expect(caption('a')).toBe('Claude');
+    expect(caption('gpt')).toBe('Codex');
+    expect(caption('g2')).toBe('agy');
+    expect(caption('x1')).toBeNull();
+    cleanup();
   });
 
   it('fullestWindow: highest usedPct, ties 5h > 주간 > Fable', () => {

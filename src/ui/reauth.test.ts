@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SetupStatus } from '../shared/setup-types';
 import type { UsageSnapshot } from '../shared/usage-types';
-import { reauthSeats, reauthWithUsage } from './reauth';
+import { geminiLoggedOut, reauthSeats, reauthWithUsage } from './reauth';
 
 const status = (over: Partial<SetupStatus> = {}): SetupStatus => ({
   engines: [
@@ -43,5 +43,23 @@ describe('reauthWithUsage', () => {
     expect(reauthWithUsage(['b'], usage)).toEqual(['b', 'x1']);
     expect(reauthWithUsage(['x1'], usage)).toEqual(['x1']);
     expect(reauthWithUsage(['b'], { grokSeats: { x1: { status: 'unknown', lastTurnAt: null, lastError: null, cooldownUntil: null, today: { inputTokens: 0, outputTokens: 0, turns: 0, day: '' } } } } as UsageSnapshot)).toEqual(['b']);
+  });
+
+  it('adds each Gemini seat whose usage poll found no Google login (g1 / g2 separately; an old snapshot\'s `gemini` is g1); a read failure while logged in is not a login problem', () => {
+    const out = { status: 'down' as const, fetchedAt: null, loggedIn: false, buckets: [], error: 'Gemini 로그인 필요 — 사용량에서 재로그인' };
+    const ok = { status: 'ok' as const, fetchedAt: 't', loggedIn: true, buckets: [{ name: 'Gemini · 5h', usedPct: 3, resetsAt: null }] };
+    const snap = (over: Partial<UsageSnapshot>): UsageSnapshot => ({ generatedAt: 'x', deckReachable: true, accounts: {}, ...over });
+    expect(reauthWithUsage([], snap({ geminiSeats: { g1: out, g2: ok } }))).toEqual(['g1']);
+    expect(reauthWithUsage(['gpt'], snap({ geminiSeats: { g1: ok, g2: out } }))).toEqual(['gpt', 'g2']);
+    expect(reauthWithUsage(['g1'], snap({ geminiSeats: { g1: out, g2: out } }))).toEqual(['g1', 'g2']);
+    expect(reauthWithUsage([], snap({ gemini: out }))).toEqual(['g1']);
+    expect(reauthWithUsage([], snap({ geminiSeats: { g1: ok, g2: ok } }))).toEqual([]);
+    expect(reauthWithUsage([], null)).toEqual([]);
+    // Down while logged in (agy answered, the answer did not parse): no login button for that.
+    expect(geminiLoggedOut({ status: 'down', fetchedAt: null, loggedIn: true, buckets: [], error: '사용량 응답을 해석하지 못했습니다' })).toBe(false);
+    // Down with an auth error in the reason: it is.
+    expect(geminiLoggedOut({ status: 'down', fetchedAt: null, loggedIn: true, buckets: [], error: 'Authentication required' })).toBe(true);
+    expect(geminiLoggedOut({ ...ok, status: 'stale', error: 'agy /usage 실패 (exit 1)' })).toBe(false);
+    expect(geminiLoggedOut(undefined)).toBe(false);
   });
 });

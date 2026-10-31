@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import type { HubAlert, HubKpi, HubMode, HubModeId, HubSection, HubState } from '../../shared/hub-types';
 import { ExternalIcon, HubIcon, ReloadIcon } from './HubIcons';
+import { Cards, Chart, Images, KvGrid, Steps } from './HubSections';
+import { NexusHome } from './NexusHome';
 import { modeDef, STATE_LABEL, stateClass } from './modes';
 import { relTime } from './time';
 
@@ -36,11 +38,13 @@ export function Lead({ state, headline, decision }: { state: HubState; headline:
 }
 
 export function Kpi({ k }: { k: HubKpi }) {
-  const long = k.value.length > 9;
+  // display size fits ~9 digit-width glyphs in the narrowest tile; Hangul/CJK glyphs are ~1.8 digits wide
+  const width = Array.from(k.value).reduce((n, ch) => n + (/[\u1100-\u11ff\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(ch) ? 1.8 : 1), 0) + (k.unit?.length ?? 0) * 0.7;
+  const size = width > 11 ? ' xs' : width > 8 ? ' sm' : '';
   return (
     <div className={`kpi ${k.status ?? ''}`}>
       <span className="l">{k.label}</span>
-      <span className={`v${long ? ' sm' : ''}`}>{k.value}{k.unit && <span className="u">{k.unit}</span>}</span>
+      <span className={`v${size}`}>{k.value}{k.unit && <span className="u">{k.unit}</span>}</span>
       {k.hint && <span className={`h ${k.status ?? ''}`}>{k.hint}</span>}
     </div>
   );
@@ -77,11 +81,13 @@ function cellClass(text: string, num: boolean): string {
 
 function Table({ s }: { s: Extract<HubSection, { kind: 'table' }> }) {
   const num = new Set(s.num ?? []);
+  const wrap = new Set(s.wrap ?? []);
+  const cls = (text: string, j: number) => [cellClass(text, num.has(j)), wrap.has(j) ? 'w' : ''].filter(Boolean).join(' ');
   return (
     <div className="twrap">
       <table className="t">
-        <thead><tr>{s.columns.map((c, i) => <th key={i} className={num.has(i) ? 'n' : ''}>{c}</th>)}</tr></thead>
-        <tbody>{s.rows.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j} className={cellClass(c, num.has(j))}>{c}</td>)}</tr>)}</tbody>
+        <thead><tr>{s.columns.map((c, i) => <th key={i} className={[num.has(i) ? 'n' : '', wrap.has(i) ? 'w' : ''].filter(Boolean).join(' ')}>{c}</th>)}</tr></thead>
+        <tbody>{s.rows.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j} className={cls(c, j)}>{wrap.has(j) ? <span className="wtxt">{c}</span> : c}</td>)}</tr>)}</tbody>
       </table>
       {s.rows.length === 0 && <div className="sec-empty">자료 없음</div>}
     </div>
@@ -126,15 +132,25 @@ function Raw({ s, name, open }: { s: Extract<HubSection, { kind: 'raw' }>; name:
   );
 }
 
+/** What the header counts: rows/items, or done/total for a pipeline (null when a count says nothing: text, raw, chart). */
+export function sectionCount(s: HubSection): string | null {
+  switch (s.kind) {
+    case 'table': case 'kv': case 'kvgrid': return String(s.rows.length);
+    case 'list': case 'bars': case 'cards': case 'images': return String(s.items.length);
+    case 'steps': return `${s.items.filter((x) => x.state === 'done').length}/${s.items.length}`;
+    default: return null;
+  }
+}
+
 export function SectionView({ s, name }: { s: HubSection; name: string }) {
   const [open, setOpen] = useState(!!s.open);
-  const count = s.kind === 'table' ? s.rows.length : s.kind === 'list' ? s.items.length : s.kind === 'bars' ? s.items.length : s.kind === 'kv' ? s.rows.length : null;
+  const count = sectionCount(s);
   return (
-    <details className={`sec ${s.kind}`} open={open} data-testid={`hub-sec-${s.kind}`}>
+    <details className={`sec sec-${s.kind}`} open={open} data-testid={`hub-sec-${s.kind}`}>
       <summary onClick={(e) => { e.preventDefault(); setOpen((o) => !o); }}>
         <span className="sec-title">{s.title}</span>
         {s.note && <span className="n">{s.note}</span>}
-        {count !== null && <span className="cnt">{count}</span>}
+        {count !== null && <span className={`cnt${s.kind === 'steps' ? ' frac' : ''}`}>{count}</span>}
       </summary>
       <div className="b">
         {s.kind === 'kv' && (s.rows.length === 0 ? <div className="sec-empty">자료 없음</div> : <div className="kv">{s.rows.map(([k, v], i) => <div key={i}><span>{k}</span><b>{v}</b></div>)}</div>)}
@@ -147,6 +163,11 @@ export function SectionView({ s, name }: { s: HubSection; name: string }) {
           </ul>
         ))}
         {s.kind === 'bars' && <Bars s={s} />}
+        {s.kind === 'cards' && <Cards s={s} />}
+        {s.kind === 'chart' && (open ? <Chart s={s} /> : null)}
+        {s.kind === 'steps' && <Steps s={s} />}
+        {s.kind === 'images' && (open ? <Images s={s} /> : null)}
+        {s.kind === 'kvgrid' && <KvGrid s={s} />}
         {s.kind === 'text' && <pre className="text">{s.body}</pre>}
         {s.kind === 'raw' && <Raw s={s} name={name} open={open} />}
       </div>
@@ -188,6 +209,7 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
           <Attention alerts={mode.alerts} now={now} />
         </section>
       )}
+      {mode?.id === 'nexus' && mode.nexus && <NexusHome home={mode.nexus} now={now} />}
       {mode && sections.map((s, i) => <SectionView key={`${s.title}-${i}`} s={s} name={mode.name} />)}
       {mode && !mode.page && Object.keys(mode.metrics).length > 0 && <SectionView s={{ kind: 'kv', title: '지표', open: true, rows: Object.entries(mode.metrics).map(([k, v]) => [k, metricText(v)]) }} name={mode.name} />}
       {mode && !mode.page && mode.links.filter((l) => !l.embed).map((l) => <SectionView key={l.href} s={{ kind: 'raw', title: l.label, href: l.href }} name={mode.name} />)}
