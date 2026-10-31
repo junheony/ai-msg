@@ -55,14 +55,14 @@
   --shadow-lg: 0 12px 32px rgba(0, 0, 0, .4);
   /* Type scale. Each step already includes --font-scale (글자 크기; 보통 = 1.1),
      so a bare var(--fs-*) matches the same size everywhere. Old names are aliases. */
-  --fs-2xs: calc(11px * var(--font-scale, 1));
-  --fs-xs: calc(12px * var(--font-scale, 1));
-  --fs-sm: calc(13px * var(--font-scale, 1));
-  --fs-md: calc(14px * var(--font-scale, 1)); /* sidebar session title only, so body stays larger */
-  --fs-base: calc(15px * var(--font-scale, 1));
-  --fs-lg: calc(17px * var(--font-scale, 1));
-  --fs-xl: calc(22px * var(--font-scale, 1));
-  --fs-display: calc(28px * var(--font-scale, 1));
+  --fs-2xs: calc(12px * var(--font-scale, 1));
+  --fs-xs: calc(13px * var(--font-scale, 1));
+  --fs-sm: calc(14px * var(--font-scale, 1));
+  --fs-md: calc(15px * var(--font-scale, 1)); /* sidebar session title only, so body stays larger */
+  --fs-base: calc(16px * var(--font-scale, 1));
+  --fs-lg: calc(18px * var(--font-scale, 1));
+  --fs-xl: calc(23px * var(--font-scale, 1));
+  --fs-display: calc(30px * var(--font-scale, 1));
   --fs-title: var(--fs-lg);
   --fs-body: var(--fs-base);
   --fs-label: var(--fs-sm);
@@ -2851,12 +2851,16 @@ mark.find-hit.current { background: var(--btn-primary-bg); color: var(--btn-prim
 
 :root { --hub-ok: var(--ok); --hub-warn: var(--warn); --hub-bad: var(--danger); --hub-info: var(--link); --hub-ok-soft: color-mix(in srgb, var(--ok) 14%, transparent); --hub-warn-soft: color-mix(in srgb, var(--warn) 14%, transparent); --hub-bad-soft: color-mix(in srgb, var(--danger) 14%, transparent); --hub-info-soft: color-mix(in srgb, var(--link) 12%, transparent);
   --hub-font: "Barlow Semi Condensed", var(--font);
-  --fs-hub-row: calc(19px * var(--font-scale, 1)); --fs-hub-lead: calc(23px * var(--font-scale, 1)); --fs-hub-xl: calc(26px * var(--font-scale, 1)); --fs-hub-2xl: calc(38px * var(--font-scale, 1));
+  --fs-hub-row: calc(20px * var(--font-scale, 1)); --fs-hub-lead: calc(24px * var(--font-scale, 1)); --fs-hub-xl: calc(28px * var(--font-scale, 1)); --fs-hub-2xl: calc(40px * var(--font-scale, 1));
   --glass: rgba(255, 255, 255, .045); --glass-line: rgba(255, 255, 255, .09); --glass-hi: rgba(255, 255, 255, .14); --glass-blur: 16px; --glass-shadow: 0 24px 60px -36px rgba(0, 0, 0, .8);
   --hub-glow: 22%; --hub-glow-2: 9%; --hub-grain: .045; --hub-ink-mix: 100%; --hub-head-bg: color-mix(in srgb, var(--bg) 74%, transparent);
   --mode-hue: var(--accent); --mode-ink: var(--accent); --mode-soft: var(--accent-soft); }
 :root[data-theme="light"] { --glass: rgba(255, 255, 255, .62); --glass-line: rgba(28, 28, 44, .1); --glass-hi: rgba(255, 255, 255, .95); --glass-shadow: 0 24px 60px -40px rgba(28, 28, 44, .35); --hub-glow: 16%; --hub-glow-2: 7%; --hub-grain: .03; --hub-ink-mix: 58%; --hub-head-bg: color-mix(in srgb, var(--bg) 70%, transparent); }
 @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --glass: rgba(255, 255, 255, .62); --glass-line: rgba(28, 28, 44, .1); --glass-hi: rgba(255, 255, 255, .95); --glass-shadow: 0 24px 60px -40px rgba(28, 28, 44, .35); --hub-glow: 16%; --hub-glow-2: 7%; --hub-grain: .03; --hub-ink-mix: 58%; --hub-head-bg: color-mix(in srgb, var(--bg) 70%, transparent); } }
+
+/* The hub is read from a step back (a control room, a phone on the desk): its small type sits one step above the
+   terminal's — a 13 px label here is 14, a 14 px row is 15 — and the user's 글자 크기 still multiplies on top. */
+.hub-overlay, .hub-rail, .hub-menu { --fs-2xs: calc(13px * var(--font-scale, 1)); --fs-xs: calc(14px * var(--font-scale, 1)); --fs-sm: calc(15px * var(--font-scale, 1)); --fs-base: calc(16.5px * var(--font-scale, 1)); --fs-lg: calc(19px * var(--font-scale, 1)); }
 
 /* Mode hues: place, not state. Declared on whatever carries data-mode (the main area, a rail button, a board row,
    the switcher) so descendants inherit; --mode-ink is mixed on the same element, darker in the light theme. */

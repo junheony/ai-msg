@@ -5,6 +5,9 @@ import { HubPage } from './HubPage';
 import { HubOverview } from './HubOverview';
 import { hubStatusFixture } from './__fixtures__/status';
 
+// The SR panel reads the server on mount and has its own test (sr/SrPanel.test.tsx); the page test only needs its frame.
+vi.mock('./sr/SrPanel', () => ({ SrPanel: () => <section data-testid="sr-panel" /> }));
+
 const T = Date.parse('2026-10-30T13:00:00Z');
 const STATUS = hubStatusFixture(T);
 const mode = (id: string) => STATUS.modes.find((m) => m.id === id)!;

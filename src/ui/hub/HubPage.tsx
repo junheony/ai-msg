@@ -7,6 +7,7 @@ import { TradingHome } from './TradingHome';
 import { modeDef, STATE_LABEL, stateClass } from './modes';
 import { relTime } from './time';
 import { ReplayTrainer } from './replay/ReplayTrainer';
+import { SrPanel } from './sr/SrPanel';
 
 /* ───────── atoms shared with the 개요 ───────── */
 
@@ -213,6 +214,7 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
       )}
       {mode?.id === 'nexus' && mode.nexus && <NexusHome home={mode.nexus} now={now} />}
       {mode?.id === 'trading' && mode.trading && <TradingHome t={mode.trading} now={now} />}
+      {modeKey === 'trading' && <SrPanel now={now} />}
       {mode && sections.map((s, i) => <SectionView key={`${s.title}-${i}`} s={s} name={mode.name} />)}
       {mode && !mode.page && Object.keys(mode.metrics).length > 0 && <SectionView s={{ kind: 'kv', title: '지표', open: true, rows: Object.entries(mode.metrics).map(([k, v]) => [k, metricText(v)]) }} name={mode.name} />}
       {mode && !mode.page && mode.links.filter((l) => !l.embed).map((l) => <SectionView key={l.href} s={{ kind: 'raw', title: l.label, href: l.href }} name={mode.name} />)}
