@@ -43,7 +43,7 @@ export function ModeSwitcher({ mode, onChange, mac, phone, onOpenChange }: { mod
   };
   return (
     <div ref={wrap} className="hub-switch-wrap">
-      <button ref={btn} type="button" className={`hub-switch${mode !== 'msg' ? ' hub-on' : ''}`} aria-haspopup="menu" aria-expanded={open} aria-controls={menuId} aria-label={`모드: ${current.label}`} title="모드 전환"
+      <button ref={btn} type="button" className={`hub-switch${mode !== 'msg' ? ' hub-on' : ''}`} data-mode={mode} aria-haspopup="menu" aria-expanded={open} aria-controls={menuId} aria-label={`모드: ${current.label}`} title="모드 전환"
         onClick={() => show(!open)} onKeyDown={(e) => { if (e.key === 'ArrowDown' && !open) { e.preventDefault(); show(true); } }}>
         <span className="hub-switch-icon"><HubIcon name={current.icon} /></span>
         {!phone && <span className="hub-switch-label">{current.label}</span>}
@@ -53,7 +53,7 @@ export function ModeSwitcher({ mode, onChange, mac, phone, onOpenChange }: { mod
         <div id={menuId} className="hub-menu" role="menu" aria-label="모드" onKeyDown={onMenuKey}>
           <div className="hub-menu-head">모드</div>
           {HUB_MODES.map((m, i) => (
-            <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === mode} className={`hub-mi${m.id === mode ? ' on' : ''}`} tabIndex={i === cursor ? 0 : -1}
+            <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === mode} className={`hub-mi${m.id === mode ? ' on' : ''}`} data-mode={m.id} tabIndex={i === cursor ? 0 : -1}
               onClick={() => pick(m.id)} onMouseEnter={() => setCursor(i)}>
               <span className="hub-mi-icon"><HubIcon name={m.icon} /></span>
               <span className="hub-mi-label">{m.label}</span>

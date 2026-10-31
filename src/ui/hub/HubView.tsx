@@ -14,7 +14,7 @@ export function HubView({ mode, onChangeMode, feed, pushOn }: { mode: HubModeKey
     <div className="hub-main" data-mode={mode}>
       {mode === 'home'
         ? <HubOverview status={feed.status} error={feed.error} loading={feed.loading} fetchedAt={feed.fetchedAt} now={now} pushOn={pushOn} onOpenMode={onChangeMode} onRefresh={feed.refresh} />
-        : <HubPage modeKey={mode} mode={feed.status?.modes.find((m) => m.id === mode)} now={now} error={feed.error} loading={feed.loading} onRefresh={feed.refresh} generatedAt={feed.status?.generated_at ?? null} />}
+        : <HubPage key={mode} modeKey={mode} mode={feed.status?.modes.find((m) => m.id === mode)} now={now} error={feed.error} loading={feed.loading} onRefresh={feed.refresh} generatedAt={feed.status?.generated_at ?? null} />}
     </div>
   );
 }
