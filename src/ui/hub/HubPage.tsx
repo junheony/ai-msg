@@ -5,6 +5,7 @@ import { Cards, Chart, Images, KvGrid, Steps } from './HubSections';
 import { NexusHome } from './NexusHome';
 import { modeDef, STATE_LABEL, stateClass } from './modes';
 import { relTime } from './time';
+import { ReplayTrainer } from './replay/ReplayTrainer';
 
 /* ───────── atoms shared with the 개요 ───────── */
 
@@ -213,6 +214,7 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
       {mode && sections.map((s, i) => <SectionView key={`${s.title}-${i}`} s={s} name={mode.name} />)}
       {mode && !mode.page && Object.keys(mode.metrics).length > 0 && <SectionView s={{ kind: 'kv', title: '지표', open: true, rows: Object.entries(mode.metrics).map(([k, v]) => [k, metricText(v)]) }} name={mode.name} />}
       {mode && !mode.page && mode.links.filter((l) => !l.embed).map((l) => <SectionView key={l.href} s={{ kind: 'raw', title: l.label, href: l.href }} name={mode.name} />)}
+      {modeKey === 'trading' && <ReplayTrainer />}
       {mode && (
         <footer className="foot">
           <span>소스 {mode.sources.filter((s) => s.ok).length}/{mode.sources.length}{mode.sources.length ? ` · ${mode.sources.map((s) => `${s.name} ${s.ok ? `${s.ms}ms` : '실패'}`).join(' · ')}` : ''}</span>

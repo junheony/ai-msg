@@ -35,6 +35,7 @@ import type { AuthLoginHub } from './authLogin/hub';
 import type { HubStatusService } from './hub/status';
 import { HUB_PROXY_PREFIX, HUB_PROXY_TARGETS, proxyHubRequest, type ProxyTarget } from './hub/proxy';
 import { HUB_FILE_PREFIX, serveHubFile, type HubFileRoots } from './hub/files';
+import { createMarketService, REPLAY_PREFIX, serveReplay, type MarketService } from './replay/market';
 import type { MiniStatusService } from './mini/status';
 import { bearerOf, type WidgetTokenStore } from './mini/widgetToken';
 
@@ -79,6 +80,8 @@ export type HttpDeps = {
   authLogin?: AuthLoginHub;
   /** MSG Hub: `GET /api/hub/status` (the overview) and the `/hub/p/<id>/` embed proxy. Absent = 404 for both. */
   hub?: { status: HubStatusService; proxyTargets?: Record<string, ProxyTarget>; /** Named folders `/api/hub/file/<name>/…` may serve (read-only media, build outputs). */ fileRoots?: HubFileRoots };
+  /** Trading room chart replay: `GET /api/replay/*` public market data fetched server-side (no keys). Default = live exchanges. */
+  replay?: MarketService;
   /**
    * MSG mini: `GET /api/mini/status` (the /mini page and the lock-screen widget) and the read-only widget token the
    * settings sheet copies / rotates. Absent = 404 for all three.
@@ -401,6 +404,9 @@ function servePreviewFrame(res: http.ServerResponse): void {
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'content-security-policy': PREVIEW_FRAME_CSP });
   res.end(PREVIEW_FRAME_HTML);
 }
+
+/** The live-exchange market service, made on the first `/api/replay/*` request when the caller passed none. */
+let defaultReplay: MarketService | undefined;
 
 export function createRequestHandler(deps: HttpDeps) {
   const devOrigins = deps.devOrigins ?? [];
@@ -811,6 +817,11 @@ export function createRequestHandler(deps: HttpDeps) {
           if (req.method !== 'GET' && req.method !== 'HEAD') { json(res, 405, { error: 'method not allowed' }); return; }
           if (!deps.hub?.fileRoots) { json(res, 404, { error: 'not found' }); return; }
           await serveHubFile(deps.hub.fileRoots, url.pathname, req.headers.range, req.method === 'HEAD', res);
+          return;
+        }
+        // Trading room chart replay: public klines/OI/funding, GET only, validated and cached in replay/market.ts.
+        if (url.pathname.startsWith(REPLAY_PREFIX)) {
+          await serveReplay(deps.replay ?? (defaultReplay ??= createMarketService()), url, req.method, res);
           return;
         }
         // MSG Hub overview: every mode's read-only state, cached 15 s server-side. Never a secret, never an error.
