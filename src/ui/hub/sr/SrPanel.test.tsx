@@ -100,6 +100,19 @@ describe('SrPanel', () => {
     await waitFor(() => expect(screen.getByText('SOLUSDT: 스냅샷에 구간이 없어요.')).toBeTruthy());
   });
 
+  it('switching symbols drops the old zones at once, so new candles never meet the previous symbol\'s bands', async () => {
+    let release: (() => void) | null = null;
+    const a = api({ sr: vi.fn(async (s: string | null) => { if (s === 'ETHUSDT') await new Promise<void>((r) => { release = r; }); return snap(s); }) });
+    render(<SrPanel api={a} now={NOW} />);
+    await waitFor(() => expect(screen.getByTestId('sr-table')).toBeTruthy());
+    fireEvent.change(screen.getByLabelText('심볼'), { target: { value: 'ETHUSDT' } });
+    await waitFor(() => expect(screen.getByTestId('sr-chart')).toBeTruthy());
+    expect(screen.getByTestId('sr-chart').dataset.ranges).toBe('');
+    expect(screen.queryByTestId('sr-table')).toBeNull();
+    release!();
+    await waitFor(() => expect(screen.getByTestId('sr-chart').dataset.ranges).toBe('eth'));
+  });
+
   it('without candles the table still shows, strongest first, with no distance', async () => {
     render(<SrPanel api={api({ klines: vi.fn(async () => { throw new Error('HTTP 503'); }) })} now={NOW} />);
     await waitFor(() => expect(screen.getByTestId('sr-table')).toBeTruthy());

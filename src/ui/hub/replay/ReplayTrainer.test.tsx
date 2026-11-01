@@ -7,7 +7,7 @@ import type { ReplayApi } from './api';
 import { DEFAULT_REPLAY_PREFS, HISTORY_KEY, PREFS_KEY, type ReplaySession } from './history';
 import { planAt, snapToInterval, startIndexFor, TAIL } from './scene';
 import { pnlPct } from './scoring';
-import { ReplayTrainer } from './ReplayTrainer';
+import { ReplayTrainer, resetReplayGame } from './ReplayTrainer';
 
 // The chart is a canvas library; the trainer test only needs to see what it was asked to draw.
 vi.mock('./ReplayChart', () => ({
@@ -55,7 +55,7 @@ const open = async (api: ReplayApi, extra: { random?: () => number } = {}) => {
   return r;
 };
 
-beforeEach(() => { localStorage.removeItem(HISTORY_KEY); setPrefs({ market: 'spot', interval: '15m', horizon: 3, rounds: 5, indicators: ['ema20'] }); });
+beforeEach(() => { resetReplayGame(); localStorage.removeItem(HISTORY_KEY); setPrefs({ market: 'spot', interval: '15m', horizon: 3, rounds: 5, indicators: ['ema20'] }); });
 afterEach(cleanup);
 
 describe('ReplayTrainer', () => {
@@ -150,6 +150,36 @@ describe('ReplayTrainer', () => {
     expect(visibleEnd()).toBe(start + 9);
   });
 
+  it('ignores held-key repeats and keys under an open dialog', async () => {
+    await open(makeApi());
+    const start = visibleEnd();
+    fireEvent.keyDown(window, { key: 'l' });
+    for (let i = 0; i < 10; i++) fireEvent.keyDown(window, { key: 'l', repeat: true });
+    expect(visibleEnd()).toBe(start + 3);
+    const dlg = document.createElement('div');
+    dlg.setAttribute('aria-modal', 'true');
+    document.body.append(dlg);
+    fireEvent.keyDown(window, { key: 's' });
+    expect(visibleEnd()).toBe(start + 3);
+    dlg.remove();
+    fireEvent.keyDown(window, { key: 's' });
+    expect(visibleEnd()).toBe(start + 6);
+  });
+
+  it('keeps the game in progress across an unmount (a hub mode switch) and back', async () => {
+    const api = makeApi();
+    const r = await open(api);
+    const start = visibleEnd();
+    fireEvent.click(screen.getByTestId('call-long'));
+    fireEvent.click(screen.getByTestId('call-short'));
+    r.unmount();
+    render(<ReplayTrainer api={api} now={() => NOW} />);
+    expect(visibleEnd()).toBe(start + 6);
+    expect(screen.getByTestId('replay-rounds').querySelectorAll('li:not(.none)').length).toBe(2);
+    expect((screen.getByTestId('call-long') as HTMLButtonElement).disabled).toBe(false);
+    expect(api.klines).toHaveBeenCalledTimes(1);
+  });
+
   it('snaps a chosen start to the candle grid and skips the earliest lookup', async () => {
     const api = makeApi();
     render(<ReplayTrainer api={api} now={() => NOW} />);
@@ -191,6 +221,16 @@ describe('ReplayTrainer', () => {
     const [, fFrom, fTo] = (api.funding as ReturnType<typeof vi.fn>).mock.calls[0] as [string, number, number];
     expect(fTo - fFrom).toBe((planAt(0, '15m', 3, 5).limit - 1) * MS);
     expect(screen.getByTestId('replay-chart').getAttribute('data-ind')).toBe('oi,funding');
+  });
+
+  it('fetches funding when its overlay is turned on mid-scene', async () => {
+    setPrefs({ market: 'futures', interval: '15m', horizon: 3, rounds: 5, indicators: ['ema20'] });
+    const api = makeApi();
+    await open(api);
+    expect(api.funding).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('ind-funding'));
+    await waitFor(() => expect(api.funding).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId('replay-chart').getAttribute('data-ind')).toBe('ema20,funding');
   });
 
   it('skips the open-interest call when the whole scene is older than Binance keeps', async () => {

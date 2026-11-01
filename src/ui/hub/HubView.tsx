@@ -1,11 +1,14 @@
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { HubOverview } from './HubOverview';
 import { HubPage } from './HubPage';
 import type { HubModeKey } from './modes';
 import type { HubFeed } from './useHubStatus';
 
-/** The hub's main area (the rail lives in the shell): the 개요 or one mode's page on the common template. */
-export function HubView({ mode, onChangeMode, feed, pushOn }: { mode: HubModeKey; onChangeMode: (m: HubModeKey) => void; feed: HubFeed; pushOn: boolean }) {
+/**
+ * The hub's main area (the rail lives in the shell): the 개요 or one mode's page on the common template. Memoized: App
+ * re-renders on every chat delta, and the hub only needs to when its feed (a stable object between changes) or mode does.
+ */
+export const HubView = memo(function HubView({ mode, onChangeMode, feed, pushOn }: { mode: HubModeKey; onChangeMode: (m: HubModeKey) => void; feed: HubFeed; pushOn: boolean }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30_000); return () => clearInterval(t); }, []);
   useEffect(() => { setNow(Date.now()); }, [feed.fetchedAt]);
@@ -17,4 +20,4 @@ export function HubView({ mode, onChangeMode, feed, pushOn }: { mode: HubModeKey
         : <HubPage key={mode} modeKey={mode} mode={feed.status?.modes.find((m) => m.id === mode)} now={now} error={feed.error} loading={feed.loading} onRefresh={feed.refresh} generatedAt={feed.status?.generated_at ?? null} />}
     </div>
   );
-}
+});

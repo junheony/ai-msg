@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import type { MiniStatus } from '../../shared/mini-types';
-import { renderHead, renderLogin, renderStatus } from './render';
+import { applyBars, renderHead, renderLogin, renderStatus, updateTimes } from './render';
 import './mini.css';
 
 export const MINI_POLL_MS = 10_000;
@@ -17,13 +17,25 @@ let fetchedAt: number | null = null;
 let error: string | null = null;
 let needLogin = false;
 let inflight: AbortController | null = null;
+let headHtml = '';
+let bodyHtml = '';
 
 function paint(): void {
   const now = Date.now();
-  head.innerHTML = renderHead(status, fetchedAt, now, error);
-  if (needLogin) body.innerHTML = renderLogin();
-  else if (status) body.innerHTML = renderStatus(status, now);
-  else if (!error) body.innerHTML = '<p class="empty">…</p>';
+  const nextHead = renderHead(status, fetchedAt, now, error);
+  if (nextHead !== headHtml) {
+    const refocus = !!document.activeElement?.closest('.refresh');
+    head.innerHTML = headHtml = nextHead;
+    if (refocus) head.querySelector<HTMLElement>('.refresh')?.focus();
+  }
+  const nextBody = needLogin ? renderLogin() : status ? renderStatus(status, now) : error ? bodyHtml : '<p class="empty">…</p>';
+  if (nextBody !== bodyHtml) {
+    const from = Array.from(body.querySelectorAll<HTMLElement>('.bar i'), (el) => el.style.width);
+    body.innerHTML = bodyHtml = nextBody;
+    applyBars(body, from);
+  }
+  // A skipped rebuild can leave older texts from the tick; a rebuilt body still holds the times as fetched.
+  updateTimes(head, body, fetchedAt, now);
 }
 
 async function load(): Promise<void> {
@@ -54,7 +66,7 @@ head.addEventListener('click', (e) => {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void load(); });
 setInterval(() => { void load(); }, MINI_POLL_MS);
 // The "N초 전" texts move even when nothing new came in.
-setInterval(() => { if (document.visibilityState === 'visible') paint(); }, 5000);
+setInterval(() => { if (document.visibilityState === 'visible') updateTimes(head, body, fetchedAt, Date.now()); }, 5000);
 paint();
 void load();
 

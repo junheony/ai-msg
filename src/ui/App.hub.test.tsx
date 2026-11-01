@@ -69,6 +69,18 @@ describe('MSG hub shell', () => {
     expect(localStorage.getItem('deck.hubMode')).toBeNull();
   });
 
+  it('a hidden tab turns the hub pushes off and back on when it shows again', async () => {
+    await boot(['hub']);
+    const vis = vi.spyOn(document, 'visibilityState', 'get');
+    try {
+      vis.mockReturnValue('hidden');
+      document.dispatchEvent(new Event('visibilitychange'));
+      vis.mockReturnValue('visible');
+      document.dispatchEvent(new Event('visibilitychange'));
+      expect(sock.frames.filter((f) => f.type === 'hub_watch')).toEqual([{ type: 'hub_watch', on: true }, { type: 'hub_watch', on: false }, { type: 'hub_watch', on: true }]);
+    } finally { vis.mockRestore(); }
+  });
+
   it('a hub server is asked for pushes on hello; the pushed status lights the rail in the terminal and fills the 개요 without a fetch', async () => {
     await boot(['hub']);
     expect(sock.frames.filter((f) => f.type === 'hub_watch')).toEqual([{ type: 'hub_watch', on: true }]);

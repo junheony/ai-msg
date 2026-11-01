@@ -46,8 +46,8 @@ export function Kpi({ k }: { k: HubKpi }) {
   const size = width > 11 ? ' xs' : width > 8 ? ' sm' : '';
   return (
     <div className={`kpi ${k.status ?? ''}`}>
-      <span className="l">{k.label}</span>
-      <span className={`v${size}`}>{k.value}{k.unit && <span className="u">{k.unit}</span>}</span>
+      <span className="l" title={k.label}>{k.label}</span>
+      <span className={`v${size}`} title={`${k.value}${k.unit ?? ''}`}>{k.value}{k.unit && <span className="u">{k.unit}</span>}</span>
       {k.hint && <span className={`h ${k.status ?? ''}`}>{k.hint}</span>}
     </div>
   );
@@ -188,6 +188,9 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
   const def = modeDef(modeKey);
   const kpis = mode ? kpisOf(mode) : [];
   const sections = mode?.page?.sections ?? [];
+  // Keyed by title (a suffix only for a repeated title), so a section added above does not remount — and collapse — the rest.
+  const seen = new Map<string, number>();
+  const sectionKeys = sections.map((s) => { const n = seen.get(s.title) ?? 0; seen.set(s.title, n + 1); return n ? `${s.title}#${n}` : s.title; });
   return (
     <div className="hub-page" data-testid={`hub-mode-${modeKey}`} data-mode={modeKey}>
       <header className="ph">
@@ -215,7 +218,7 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
       {mode?.id === 'nexus' && mode.nexus && <NexusHome home={mode.nexus} now={now} />}
       {mode?.id === 'trading' && mode.trading && <TradingHome t={mode.trading} now={now} />}
       {modeKey === 'trading' && <SrPanel now={now} />}
-      {mode && sections.map((s, i) => <SectionView key={`${s.title}-${i}`} s={s} name={mode.name} />)}
+      {mode && sections.map((s, i) => <SectionView key={sectionKeys[i]} s={s} name={mode.name} />)}
       {mode && !mode.page && Object.keys(mode.metrics).length > 0 && <SectionView s={{ kind: 'kv', title: '지표', open: true, rows: Object.entries(mode.metrics).map(([k, v]) => [k, metricText(v)]) }} name={mode.name} />}
       {mode && !mode.page && mode.links.filter((l) => !l.embed).map((l) => <SectionView key={l.href} s={{ kind: 'raw', title: l.label, href: l.href }} name={mode.name} />)}
       {modeKey === 'trading' && <ReplayTrainer />}
