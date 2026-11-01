@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { buildCalendar, buildShortsView, collectShorts, kstTomorrow, parseChannels, parseClaudePick, parseCodex, parseDf, parseHistory, parseStatus, redact } from './shorts';
+import { buildCalendar, buildShortsView, collectShorts, kstTomorrow, ledgerStatusOf, normalizeLedgerStatusLabel, parseChannels, parseClaudePick, parseCodex, parseDf, parseHistory, parseLedger, parseStatus, redact } from './shorts';
 import { stripSecrets, type HubDeps } from './shared';
-import { CH1, CH2, CH3, CHANNELS, HISTORY, HOME, NOW, NO_PROBES, PLACEHOLDER, PROBES_OK, STATUS } from './__fixtures__/shorts';
+import { CH1, CH2, CH3, CHANNELS, HISTORY, HOME, LEDGER, NOW, NO_PROBES, PLACEHOLDER, PROBES_OK, STATUS } from './__fixtures__/shorts';
 
 const j = (v: unknown): string => JSON.stringify(v);
 const view = (o: { status?: unknown; channels?: unknown; history?: string | null; probes?: typeof PROBES_OK | typeof NO_PROBES; now?: number } = {}) =>
@@ -207,7 +207,7 @@ describe('Shorts 공장 · host probes', () => {
   });
   it('collectShorts reads the three files under ~/shorts_status, runs the probes with fixed argv once a minute, and ships no home path', async () => {
     const calls: string[][] = []; let clock = NOW;
-    const files: Record<string, string> = { 'shorts_status/status.json': j(STATUS), 'shorts_status/channels.json': j(CHANNELS), 'shorts_status/history.jsonl': HISTORY };
+    const files: Record<string, string> = { 'shorts_status/status.json': j(STATUS), 'shorts_status/channels.json': j(CHANNELS), 'shorts_status/history.jsonl': HISTORY, 'shorts_status/reference_ledger.json': j(LEDGER) };
     const rel = (p: string) => (p.startsWith(HOME + '/') ? p.slice(HOME.length + 1) : p);
     const deps: HubDeps = {
       fetchJson: async () => { throw new Error('offline'); }, latestRender: async () => null, countEntries: async () => null, gitLastCommit: async () => null,
@@ -221,6 +221,8 @@ describe('Shorts 공장 · host probes', () => {
     expect(v.pipeline.claude.picked).toBe('b');
     expect(v.pipeline.codex.version).toBe('codex-cli 0.159.2');
     expect(v.channels).toHaveLength(3);
+    expect(v.ledger.file.state).toBe('fresh');
+    expect(v.ledger.total).toBe(6);
     expect(v.alerts.some((a) => a.text.includes('호스트 점검'))).toBe(false);
     expect(JSON.stringify(v)).not.toContain(HOME);
     clock += 30_000;
@@ -237,5 +239,67 @@ describe('Shorts 공장 · host probes', () => {
     expect(v.pipeline.claude.state).toBe('unknown');
     expect(v.pipeline.codex.available).toBeNull();
     expect(v.state).toBe('unknown');
+  });
+});
+
+describe('Shorts 공장 · 적용 현황 (reference_ledger.json)', () => {
+  it('normalizes the status label: en dash, hyphen and stray spaces all land in the same bucket; anything else is 미분류', () => {
+    expect(normalizeLedgerStatusLabel('적용됨 – 운영 중')).toBe('적용됨-운영 중');
+    expect(normalizeLedgerStatusLabel('적용됨 - 운영 중')).toBe('적용됨-운영 중');
+    expect(normalizeLedgerStatusLabel('  적용됨–운영  중 ')).toBe('적용됨-운영 중');
+    for (const v of ['적용됨 – 운영 중', '적용됨 - 운영 중', '적용됨-운영 중', '적용됨 — 운영 중']) expect(ledgerStatusOf(v)).toBe('applied');
+    for (const v of ['구현됨 – 꺼짐', '구현됨 - 꺼짐']) expect(ledgerStatusOf(v)).toBe('built_off');
+    expect(ledgerStatusOf('문서만')).toBe('docs_only');
+    expect(ledgerStatusOf('검토 후 제외')).toBe('rejected');
+    expect(ledgerStatusOf('미착수')).toBe('todo');
+    for (const v of ['검토중', '적용됨', '', null, undefined, 3, 'applied']) expect(ledgerStatusOf(v)).toBe('unknown');
+  });
+  it('missing and malformed files are said so, with no items and zero counts', () => {
+    const missing = parseLedger(null);
+    expect(missing.file).toMatchObject({ name: 'reference_ledger.json', state: 'missing', note: '파일 없음' });
+    expect(missing).toMatchObject({ items: [], total: 0, truncated: 0, skipped: 0 });
+    expect(Object.values(missing.counts).every((n) => n === 0)).toBe(true);
+    expect(parseLedger('{ not json').file).toMatchObject({ state: 'malformed', note: 'JSON 해석 실패' });
+    expect(parseLedger('[1,2]').file).toMatchObject({ state: 'malformed', note: '객체가 아님' });
+    expect(parseLedger(j({ generated_at: '2026-11-01T19:30:00+09:00' })).file).toMatchObject({ state: 'malformed', note: 'items 배열 없음' });
+    expect(parseLedger(j({ generated_at: '2026-11-01T19:30:00+09:00', items: [] }))).toMatchObject({ file: { state: 'fresh', at: '2026-11-01T10:30:00.000Z' }, items: [], total: 0 });
+  });
+  it('reads the fixture: newest added first then newest updated, urls only when http(s), unknown type → other, id/title-less entries skipped, secrets and home paths scrubbed', () => {
+    const l = parseLedger(j(LEDGER));
+    expect(l.file).toMatchObject({ state: 'fresh', at: '2026-11-01T10:30:00.000Z' });
+    expect(l.total).toBe(6); expect(l.skipped).toBe(1); expect(l.truncated).toBe(0);
+    expect(l.items.map((i) => i.id)).toEqual(['ref-music', 'ref-caption-tool', 'ref-sub4sub', 'ref-thumb-post', 'ref-hook-3s', 'ref-odd']); // 11-01; then the three 10-25 by updated_at desc (null last); 10-20; 10-01
+    expect(l.counts).toEqual({ applied: 1, built_off: 1, docs_only: 1, rejected: 1, todo: 1, unknown: 1 });
+    expect(l.items[0]).toMatchObject({ title: '트렌드 음원 자동 매칭', url: 'https://example.com/music', type: 'video', status: 'todo', statusText: null, evidence: 'token=… in notes', nextAction: '음원 라이선스 확인', addedAt: '2026-11-01', updatedAt: null });
+    expect(l.items[1]).toMatchObject({ status: 'built_off', statusReason: '한국어 정확도 미달', evidence: 'd4e5f6a · gates/caption.py · CAPTION_ALIGN=0', url: 'https://github.com/example/caps', type: 'tool' });
+    expect(l.items[2]).toMatchObject({ status: 'rejected', statusReason: '정책 위반 위험', url: null, type: 'tip' });
+    expect(l.items[3]).toMatchObject({ status: 'docs_only', url: null, type: 'post' }); // ftp:// is not a web link
+    expect(l.items[5]).toMatchObject({ status: 'unknown', statusText: '검토중', type: 'other', whatWeTook: null, evidence: '…' }); // the whole home-rooted path is blanked, as elsewhere
+    const dump = JSON.stringify(l);
+    expect(dump).not.toContain('sk-EXAMPLE'); expect(dump).not.toContain(HOME);
+    expect(stripSecrets(l)).toEqual(l);
+  });
+  it('caps the table at 400 newest items while the counts cover the whole file; malformed dates sort last', () => {
+    const many = Array.from({ length: 405 }, (_, i) => ({ id: `r${i}`, title: `t${i}`, type: 'tip', status: '미착수', added_at: `2026-${String(1 + (i % 12)).padStart(2, '0')}-${String(1 + (i % 28)).padStart(2, '0')}` }));
+    const l = parseLedger(j({ generated_at: '2026-11-01T19:30:00+09:00', items: [...many, { id: 'nodate', title: 'x', status: '문서만', added_at: '2026/10/01' }] }));
+    expect(l.total).toBe(406); expect(l.items).toHaveLength(400); expect(l.truncated).toBe(6);
+    expect(l.counts.todo).toBe(405); expect(l.counts.docs_only).toBe(1);
+    expect(l.items.map((i) => i.addedAt ?? 'null').slice(0, 2).every((d) => d >= '2026-12')).toBe(true);
+    const full = parseLedger(j({ generated_at: '2026-11-01T19:30:00+09:00', items: [{ id: 'nodate', title: 'x', status: '문서만', added_at: '2026/10/01' }, { id: 'dated', title: 'y', status: '문서만', added_at: '2020-01-01' }] }));
+    expect(full.items.map((i) => i.id)).toEqual(['dated', 'nodate']);
+    expect(full.items[1]!.addedAt).toBeNull();
+  });
+  it('the view carries the ledger and alerts only on a malformed file, skipped entries or 미분류 (a missing ledger is not an alert)', () => {
+    const none = view({ status: STATUS, channels: CHANNELS });
+    expect(none.ledger.file.state).toBe('missing');
+    expect(texts(none).some((t) => t.includes('reference_ledger'))).toBe(false);
+    const v = buildShortsView({ status: j(STATUS), channels: j(CHANNELS), history: null, ledger: j(LEDGER), probes: PROBES_OK, probeNote: null }, NOW);
+    expect(v.ledger.total).toBe(6);
+    expect(v.alerts.find((a) => a.text === 'reference_ledger.json 항목 1개 건너뜀')?.level).toBe('info');
+    expect(v.alerts.find((a) => a.text === '적용 현황 미분류 1건')?.level).toBe('info');
+    const bad = buildShortsView({ status: j(STATUS), channels: j(CHANNELS), history: null, ledger: '{', probes: PROBES_OK, probeNote: null }, NOW);
+    expect(bad.alerts.find((a) => a.text === 'reference_ledger.json 형식 오류')).toMatchObject({ level: 'warn', hint: 'JSON 해석 실패' });
+    expect(JSON.stringify(v)).not.toContain(HOME);
+    expect(stripSecrets(v)).toEqual(v);
   });
 });

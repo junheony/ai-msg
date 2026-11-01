@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { HubMode } from '../../shared/hub-types';
-import { CH1, CHANNELS, HISTORY, HOME, NOW, NO_PROBES, PLACEHOLDER, PROBES_OK, STATUS } from '../../server/hub/__fixtures__/shorts';
+import { CH1, CHANNELS, HISTORY, HOME, LEDGER, NOW, NO_PROBES, PLACEHOLDER, PROBES_OK, STATUS } from '../../server/hub/__fixtures__/shorts';
 import { buildShortsView } from '../../server/hub/shorts';
 import { hubStatusFixture } from './__fixtures__/status';
 import { HubPage } from './HubPage';
@@ -14,6 +14,7 @@ const j = (v: unknown) => JSON.stringify(v);
 /** The same builder the server uses, so the UI sees exactly the payload the collector ships. */
 const FULL = buildShortsView({ status: j(STATUS), channels: j(CHANNELS), history: HISTORY, probes: PROBES_OK, probeNote: null }, NOW);
 const EMPTY = buildShortsView({ status: null, channels: null, history: null, probes: NO_PROBES, probeNote: '호스트 점검(df · claude-pick · codex) 진행 중' }, NOW);
+const LEDGERED = buildShortsView({ status: j(STATUS), channels: j(CHANNELS), history: HISTORY, ledger: j(LEDGER), probes: PROBES_OK, probeNote: null }, NOW);
 const BOOT = buildShortsView({ status: j(PLACEHOLDER), channels: j(CHANNELS), history: null, probes: PROBES_OK, probeNote: null }, NOW);
 const video = (shorts?: HubMode['shorts']): HubMode => ({ ...hubStatusFixture(NOW).modes.find((m) => m.id === 'video')!, ...(shorts ? { shorts } : {}) });
 const page = (mode: HubMode) => render(<HubPage modeKey="video" mode={mode} now={NOW} error={null} loading={false} onRefresh={() => {}} generatedAt={new Date(NOW).toISOString()} />);
@@ -199,6 +200,56 @@ describe('ShortsFactoryHome', () => {
     expect(txt(screen.getByTestId('sf-calendar'))).toContain('자리표시자 · 예약 정보 없음');
     expect(txt(screen.getByTestId('sf-alerts'))).toContain('내일(11-02) 예약 확인 불가');
     expect(txt(screen.getByTestId('sf-day-2026-11-02'))).not.toContain('예정 0/3');
+  });
+  it('적용 현황: chips count every status plus 미분류, the table is newest first with links, type words, badges and clipped cells; a chip filters', () => {
+    render(<ShortsFactoryHome sf={LEDGERED} now={NOW} />);
+    const sec = screen.getByTestId('sf-ledger');
+    expect(txt(sec.querySelector('.sh')!)).toContain('6건 · 30분 전 갱신');
+    const chips = within(screen.getByTestId('sf-ledger-chips')).getAllByRole('button');
+    expect(chips.map((c) => c.textContent)).toEqual(['전체6', '적용됨 – 운영 중1', '구현됨 – 꺼짐1', '문서만1', '검토 후 제외1', '미착수1', '미분류1']);
+    expect(chips[0]!.getAttribute('aria-pressed')).toBe('true');
+    expect(within(sec).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['추가일', '제목', '유형', '상태', '가져온 것', '근거', '다음 할 일']);
+    const rows = within(sec).getAllByRole('row').slice(1);
+    expect(rows.map((r) => r.getAttribute('data-testid'))).toEqual(['sf-ledger-ref-music', 'sf-ledger-ref-caption-tool', 'sf-ledger-ref-sub4sub', 'sf-ledger-ref-thumb-post', 'sf-ledger-ref-hook-3s', 'sf-ledger-ref-odd']);
+    const link = rows[0]!.querySelector('a')!;
+    expect(link.getAttribute('href')).toBe('https://example.com/music');
+    expect(link.getAttribute('target')).toBe('_blank');
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(rows[3]!.querySelector('a')).toBeNull(); // ftp:// url dropped → plain title
+    expect(rows.map((r) => txt(r.querySelector('.sf-ld-type')))).toEqual(['영상', '도구', '팁', '게시물', '영상', '기타']);
+    expect(rows.map((r) => txt(r.querySelector('.sf-badge')))).toEqual(['미착수', '구현됨 – 꺼짐', '검토 후 제외', '문서만', '적용됨 – 운영 중', '미분류']);
+    expect(txt(rows[2]!.querySelector('.sf-ld-status'))).toContain('정책 위반 위험'); // the reason is shown for 검토 후 제외
+    expect(rows[2]!.querySelector('.sf-ld-status')!.getAttribute('title')).toBe('정책 위반 위험');
+    expect(txt(rows[5]!.querySelector('.sf-ld-status'))).toContain('검토중'); // 미분류 shows the file's own label
+    expect(txt(rows[0]!)).toContain('2026-11-01');
+    expect(txt(rows[1]!)).toContain('갱신 2026-10-30');
+    expect(txt(rows[1]!)).toContain('d4e5f6a · gates/caption.py · CAPTION_ALIGN=0');
+    expect(txt(rows[1]!)).toContain('한국어 샘플 50개로 재측정');
+    expect(rows[1]!.querySelector('.sf-clip.sf-ev')!.getAttribute('title')).toBe('d4e5f6a · gates/caption.py · CAPTION_ALIGN=0');
+    expect(txt(rows[0]!)).not.toContain('sk-EXAMPLE');
+    expect(txt(sec)).not.toContain(HOME);
+    fireEvent.click(chips[4]!); // 검토 후 제외
+    expect(chips[4]!.getAttribute('aria-pressed')).toBe('true');
+    expect(chips[0]!.getAttribute('aria-pressed')).toBe('false');
+    expect(within(sec).getAllByRole('row').slice(1).map((r) => r.getAttribute('data-testid'))).toEqual(['sf-ledger-ref-sub4sub']);
+    fireEvent.click(chips[6]!); // 미분류
+    expect(within(sec).getAllByRole('row').slice(1).map((r) => r.getAttribute('data-testid'))).toEqual(['sf-ledger-ref-odd']);
+    fireEvent.click(chips[0]!);
+    expect(within(sec).getAllByRole('row').slice(1)).toHaveLength(6);
+  });
+  it('적용 현황 without a file says 파일 없음 and shows no chip or link; a malformed file says so', () => {
+    render(<ShortsFactoryHome sf={FULL} now={NOW} />);
+    const sec = screen.getByTestId('sf-ledger');
+    expect(txt(sec)).toContain('파일 없음');
+    expect(txt(sec)).toContain('reference_ledger.json 없음');
+    expect(sec.querySelectorAll('button, a[href], table')).toHaveLength(0);
+    cleanup();
+    render(<ShortsFactoryHome sf={buildShortsView({ status: j(STATUS), channels: j(CHANNELS), history: null, ledger: '{"generated_at":"2026-11-01T19:30:00+09:00"}', probes: PROBES_OK, probeNote: null }, NOW)} now={NOW} />);
+    expect(txt(screen.getByTestId('sf-ledger'))).toContain('형식 오류 · items 배열 없음');
+    expect(screen.getByTestId('sf-ledger').querySelectorAll('button, table')).toHaveLength(0);
+    cleanup();
+    render(<ShortsFactoryHome sf={buildShortsView({ status: j(STATUS), channels: j(CHANNELS), history: null, ledger: '{"generated_at":"2026-11-01T19:30:00+09:00","items":[]}', probes: PROBES_OK, probeNote: null }, NOW)} now={NOW} />);
+    expect(txt(screen.getByTestId('sf-ledger'))).toContain('항목 없음');
   });
   it('formats Seoul time', () => {
     expect(kst('2026-11-01T10:54:00.000Z')).toBe('11-01 19:54');

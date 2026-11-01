@@ -45,3 +45,16 @@ export const HISTORY = [
 ].join('\n');
 export const PROBES_OK = { disk: parseDf('Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/nvme1n1p2 1920641288 1648242724 174761600 91% /\n'), claude: parseClaudePick('claude-pick: 제외 a: 보호 계정\nclaude-pick: 후보 b: 주간 31% · 리셋 52h · 점수 0.41\nclaude-pick: 후보 c: 주간 70% · 리셋 12h · 점수 0.83 · stale\nb\nclaude-pick-exit=0\n'), codex: parseCodex('codex-cli 0.159.2\n') };
 export const NO_PROBES = { disk: { usedPct: null, note: '측정 불가 · exec 없음' }, claude: { state: 'unknown' as const, summary: '확인 불가 · exec 없음', picked: null, accounts: [] }, codex: { available: null, version: null, note: '확인 불가 · exec 없음' } };
+/** reference_ledger.json: statuses with an en dash and with a plain hyphen, one unknown status, one non-http url, one entry without a title (skipped). */
+export const LEDGER = {
+  schema: 1, generated_at: '2026-11-01T19:30:00+09:00',
+  items: [
+    { id: 'ref-hook-3s', title: '첫 3초 훅 공식', url: 'https://www.youtube.com/watch?v=hook3s', type: 'video', what_we_took: '첫 컷에 결론 자막 · 0.8초 컷 전환', status: '적용됨 – 운영 중', status_reason: null, evidence: 'a1b2c3d · render/hook.py · HOOK_FIRST=1', next_action: null, added_at: '2026-10-20', updated_at: '2026-10-28' },
+    { id: 'ref-caption-tool', title: '자막 자동 정렬 도구', url: 'https://github.com/example/caps', type: 'tool', what_we_took: 'whisper 타임스탬프 → srt 정렬', status: '구현됨 - 꺼짐', status_reason: '한국어 정확도 미달', evidence: 'd4e5f6a · gates/caption.py · CAPTION_ALIGN=0', next_action: '한국어 샘플 50개로 재측정', added_at: '2026-10-25', updated_at: '2026-10-30' },
+    { id: 'ref-thumb-post', title: '썸네일 A/B 글', url: 'ftp://not-a-web-link', type: 'post', what_we_took: '썸네일 2종 교차 테스트 아이디어', status: '문서만', status_reason: null, evidence: 'docs/thumbs.md', next_action: '쇼츠는 썸네일 노출이 적어 보류', added_at: '2026-10-25', updated_at: null },
+    { id: 'ref-sub4sub', title: '맞구독 팁', url: null, type: 'tip', what_we_took: '없음', status: '검토 후 제외', status_reason: '정책 위반 위험', evidence: '—', next_action: null, added_at: '2026-10-25', updated_at: '2026-10-26' },
+    { id: 'ref-music', title: '트렌드 음원 자동 매칭', url: 'https://example.com/music', type: 'video', what_we_took: '음원 트렌드 목록 참고', status: '미착수', status_reason: null, evidence: 'token=sk-EXAMPLE12345678 in notes', next_action: '음원 라이선스 확인', added_at: '2026-11-01', updated_at: null },
+    { id: 'ref-odd', title: '상태 모를 항목', url: null, type: 'rumor', what_we_took: null, status: '검토중', status_reason: null, evidence: '/Users/alice/notes/odd.md', next_action: null, added_at: '2026-10-01', updated_at: null },
+    { id: 'ref-untitled', url: null, type: 'tip', status: '미착수', added_at: '2026-10-02' },
+  ],
+};

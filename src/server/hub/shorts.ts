@@ -1,13 +1,13 @@
 /**
- * 영상 › Shorts 공장: the read-only view of ~/shorts_status (status.json, channels.json, history.jsonl; schema in
- * scripts/shorts-factory/SCHEMA.md) plus three host probes (df, claude-pick, codex). Attached to the 영상 mode as
+ * 영상 › Shorts 공장: the read-only view of ~/shorts_status (status.json, channels.json, history.jsonl, reference_ledger.json;
+ * schema in scripts/shorts-factory/SCHEMA.md) plus three host probes (df, claude-pick, codex). Attached to the 영상 mode as
  * `mode.shorts`; the engineering-shorts page stays exactly as collectVideo builds it.
  *
  * Honesty rules: a missing or malformed file is said so; a null count stays null (미공개/미수집), never 0; the bootstrap
  * status.json (placeholder) is never healthy. Nothing here writes, uploads or downloads.
  */
-import type { HubAlert, HubKpi, HubState, SfCalendar, SfCalendarDay, SfCalendarItem, SfChannel, SfClaudeAccount, SfFile, SfFileState, SfPipeline, SfPlatformId, SfPlatformStatus, SfRoutineStatus, SfVideo, ShortsFactoryView } from '../../shared/hub-types';
-import { SF_PLATFORMS } from '../../shared/hub-types';
+import type { HubAlert, HubKpi, HubState, SfCalendar, SfCalendarDay, SfCalendarItem, SfChannel, SfClaudeAccount, SfFile, SfFileState, SfLedger, SfLedgerItem, SfLedgerStatus, SfLedgerType, SfPipeline, SfPlatformId, SfPlatformStatus, SfRoutineStatus, SfVideo, ShortsFactoryView } from '../../shared/hub-types';
+import { SF_LEDGER_STATUSES, SF_PLATFORMS } from '../../shared/hub-types';
 import { DAY_MS, HOUR_MS, HUB_TIMEOUTS, agoFrom, arr, fmtClock, fmtDate, fmtInt, isObj, kpi, num, objs, scrub, slowCache, sortAlerts, str, toIso, type HubDeps, type SlowResult } from './shared';
 
 export const SF_DIR = 'shorts_status';
@@ -167,6 +167,49 @@ export function sparkOf(ch: SfChannel, rows: HistRow[]): SfChannel['spark'] {
   return sums.length >= 2 ? { label: '최신 영상 조회 합', values: sums.slice(-SF_LIMITS.sparkPoints) } : null;
 }
 
+/* ───────── 적용 현황: reference_ledger.json (hand-maintained; never stale, only present / missing / malformed) ───────── */
+
+/** The five status labels the ledger may carry. Dashes (en/em dash or hyphen) and spacing around them are normalized before matching. */
+const LEDGER_STATUS_BY_LABEL: Record<string, SfLedgerStatus> = { '적용됨-운영 중': 'applied', '구현됨-꺼짐': 'built_off', '문서만': 'docs_only', '검토 후 제외': 'rejected', '미착수': 'todo' };
+const LEDGER_TYPES: readonly SfLedgerType[] = ['video', 'tool', 'post', 'tip'];
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const HTTP_RE = /^https?:\/\/\S+$/i;
+export const normalizeLedgerStatusLabel = (v: string): string => v.trim().replace(/\s*[-‐‑‒–—―−]\s*/g, '-').replace(/\s+/g, ' ');
+export function ledgerStatusOf(v: unknown): SfLedgerStatus {
+  const s = str(v, 60);
+  return s === null ? 'unknown' : LEDGER_STATUS_BY_LABEL[normalizeLedgerStatusLabel(s)] ?? 'unknown';
+}
+const ledgerDate = (v: unknown): string | null => { const s = str(v, 10); return s !== null && DATE_RE.test(s) ? s : null; };
+const ledgerUrl = (v: unknown): string | null => { const s = str(v, 500); return s !== null && HTTP_RE.test(s) ? s : null; };
+const emptyCounts = (): Record<SfLedgerStatus, number> => Object.fromEntries(SF_LEDGER_STATUSES.map((k) => [k, 0])) as Record<SfLedgerStatus, number>;
+
+/** Items newest first (added_at desc, then updated_at desc, dates missing last), capped at SF_LIMITS.items; counts per normalized status cover the whole file. */
+export function parseLedger(text: string | null): SfLedger {
+  const { obj, file } = parseJsonFile('reference_ledger.json', text);
+  const counts = emptyCounts();
+  if (!obj) return { file, items: [], counts, total: 0, truncated: 0, skipped: 0 };
+  const items: SfLedgerItem[] = []; let skipped = 0;
+  const entries = Array.isArray(obj.items) ? obj.items : [];
+  for (const r of entries) {
+    if (!isObj(r)) { skipped++; continue; }
+    const id = str(r.id, 80); const title = line(r.title);
+    if (!id || !title) { skipped++; continue; }
+    const status = ledgerStatusOf(r.status);
+    const type = str(r.type, 10);
+    items.push({
+      id, title, url: ledgerUrl(r.url), type: type !== null && (LEDGER_TYPES as readonly string[]).includes(type) ? (type as SfLedgerType) : 'other',
+      whatWeTook: line(r.what_we_took), status, statusText: status === 'unknown' ? line(r.status) : null, statusReason: line(r.status_reason), evidence: line(r.evidence), nextAction: line(r.next_action),
+      addedAt: ledgerDate(r.added_at), updatedAt: ledgerDate(r.updated_at),
+    });
+    counts[status]++;
+  }
+  const desc = (a: string | null, b: string | null): number => (a === b ? 0 : a === null ? 1 : b === null ? -1 : b.localeCompare(a));
+  items.sort((a, b) => desc(a.addedAt, b.addedAt) || desc(a.updatedAt, b.updatedAt) || a.title.localeCompare(b.title));
+  const total = items.length;
+  const f: SfFile = !Array.isArray(obj.items) ? { ...file, state: 'malformed', note: 'items 배열 없음' } : file;
+  return { file: f, items: items.slice(0, SF_LIMITS.items), counts, total, truncated: Math.max(0, total - SF_LIMITS.items), skipped };
+}
+
 /* ───────── KST calendar ───────── */
 
 const DOW = ['일', '월', '화', '수', '목', '금', '토'];
@@ -267,8 +310,9 @@ const fileAlert = (f: SfFile, what: string): HubAlert | null => {
 const sumOf = (vs: (number | null)[]): { sum: number | null; n: number } => { const k = vs.filter((v): v is number => v !== null); return { sum: k.length ? k.reduce((a, b) => a + b, 0) : null, n: k.length }; };
 
 /** Builds the view from already-read inputs (pure; the tests drive this directly). */
-export function buildShortsView(input: { status: string | null; channels: string | null; history: string | null; probes: Probes; probeNote: string | null }, nowMs: number): ShortsFactoryView {
+export function buildShortsView(input: { status: string | null; channels: string | null; history: string | null; /** reference_ledger.json; undefined (older callers) reads as missing. */ ledger?: string | null; probes: Probes; probeNote: string | null }, nowMs: number): ShortsFactoryView {
   const st = parseStatus(input.status, nowMs);
+  const ledger = parseLedger(input.ledger ?? null);
   const ch = parseChannels(input.channels, nowMs);
   const hist = parseHistory(input.history);
   const channels = (ch.raw?.channels ?? []).map((c) => ({ ...c, spark: sparkOf(c, hist.rows) }));
@@ -309,6 +353,9 @@ export function buildShortsView(input: { status: string | null; channels: string
   if (codex.available === false) alerts.push({ level: 'warn', text: 'Codex 실행 불가', hint: codex.note ?? undefined });
   else if (codex.available === null) alerts.push({ level: 'warn', text: `Codex ${codex.note ?? '확인 불가'}` });
   if (hist.skipped) alerts.push({ level: 'info', text: `history.jsonl 깨진 줄 ${hist.skipped}개 건너뜀` });
+  if (ledger.file.state === 'malformed') alerts.push({ level: 'warn', text: 'reference_ledger.json 형식 오류', hint: ledger.file.note ?? undefined });
+  if (ledger.skipped) alerts.push({ level: 'info', text: `reference_ledger.json 항목 ${ledger.skipped}개 건너뜀`, hint: 'id 또는 title 없음' });
+  if (ledger.counts.unknown) alerts.push({ level: 'info', text: `적용 현황 미분류 ${ledger.counts.unknown}건`, hint: 'status 가 다섯 가지 중 하나가 아님' });
   if (unmappedReference.length) alerts.push({ level: 'info', text: `참고 관측 ${unmappedReference.length}건 채널 미지정`, hint: '수집기가 공개 조회로 채널을 찾으면 자동으로 매핑된다' });
   if (input.probeNote) alerts.push({ level: 'info', text: input.probeNote });
   const sorted = sortAlerts(alerts);
@@ -335,15 +382,15 @@ export function buildShortsView(input: { status: string | null; channels: string
   return {
     state, headline, decision, kpis, alerts: sorted,
     files: { status: st.file, channels: ch.file, history: { name: 'history.jsonl', state: input.history === null ? 'missing' : 'fresh', at: hist.rows.at(-1)?.at ?? null, note: input.history === null ? '파일 없음' : null, rows: hist.rows.length, skipped: hist.skipped } },
-    plannedTotal, liveCount, channels, calendar, pipeline, notes: st.raw?.notes ?? [], unmappedReference, generatedAt: new Date(nowMs).toISOString(),
+    plannedTotal, liveCount, channels, calendar, pipeline, notes: st.raw?.notes ?? [], unmappedReference, ledger, generatedAt: new Date(nowMs).toISOString(),
   };
 }
 
 export async function collectShorts(deps: HubDeps): Promise<ShortsFactoryView> {
   const dir = `${deps.home}/${SF_DIR}`;
-  const [status, channels, history, probes] = await Promise.all([
-    deps.readText(`${dir}/status.json`), deps.readText(`${dir}/channels.json`), deps.readTail(`${dir}/history.jsonl`, SF_LIMITS.historyBytes), probesCached(deps),
+  const [status, channels, history, ledger, probes] = await Promise.all([
+    deps.readText(`${dir}/status.json`), deps.readText(`${dir}/channels.json`), deps.readTail(`${dir}/history.jsonl`, SF_LIMITS.historyBytes), deps.readText(`${dir}/reference_ledger.json`), probesCached(deps),
   ]);
   const probeNote = probes.pending ? '호스트 점검(df · claude-pick · codex) 진행 중' : probes.error ? `호스트 점검 오류 · ${scrub(probes.error, 80)}` : probes.stale ? '호스트 점검 값은 이전 측정' : null;
-  return buildShortsView({ status, channels, history, probes: probes.value ?? PENDING, probeNote }, deps.now());
+  return buildShortsView({ status, channels, history, ledger, probes: probes.value ?? PENDING, probeNote }, deps.now());
 }
