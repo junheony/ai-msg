@@ -29,7 +29,6 @@ export function HubRail({ mode, status, onChange, mac }: { mode: HubModeKey; sta
         );
       })}
       <span className="rail-sp" />
-      <span className="rail-foot" aria-hidden="true">읽기 전용</span>
     </nav>
   );
 }

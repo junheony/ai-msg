@@ -35,6 +35,7 @@ import { createLabService, fetchLabJson } from './hub/lab';
 import { studioFileRoots } from './hub/gameStudio';
 import { createHubStatus, fetchJsonWithTimeout, liveHubDeps } from './hub/status';
 import { AuthLoginHub } from './authLogin/hub';
+import { createHubControlsLive } from './hub/controls/live';
 import { openAuthPty } from './authLogin/pty';
 import { ServerUpdateWatch, startSupervisor, supervisionCheck } from './serverUpdate';
 import { flushThenExit, installGracefulShutdown } from './lifecycle';
@@ -383,6 +384,8 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
       // Trading room SR zones (:8830 /api/sr), read once a minute, filtered per symbol server-side.
       sr: createSrService({ fetchJson: fetchSrJson }),
       lab: createLabService({ fetchJson: fetchLabJson }),
+      // 승인함 · 다음 작업 · 실행 관리 (~/.msg queues, ~/jobs); DECK_HUB_CONTROLS=0 leaves the hub read-only.
+      ...(process.env.DECK_HUB_CONTROLS === '0' ? {} : { controls: createHubControlsLive({ home: cfg.home, token, usage: () => usage.snapshot() }) }),
     };
     // MSG mini (/mini, the lock-screen widget): read-only; the widget token file is made on its first use, never logged.
     const miniTracker = new MiniTracker();

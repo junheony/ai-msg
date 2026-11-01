@@ -38,6 +38,7 @@ import { GAME_PIPELINE_PATH, HUB_FILE_PREFIX, serveHubFile, serveTextDoc, type H
 import { createMarketService, REPLAY_PREFIX, serveReplay, type MarketService } from './replay/market';
 import { SR_PREFIX, serveSr, type SrService } from './hub/sr';
 import { LAB_PREFIX, serveLab, type LabService } from './hub/lab';
+import { CTL_PREFIX, type ControlsService } from './hub/controls/http';
 import type { MiniStatusService } from './mini/status';
 import { bearerOf, type WidgetTokenStore } from './mini/widgetToken';
 
@@ -81,7 +82,7 @@ export type HttpDeps = {
   /** In-app login window (allowlisted `claude auth login` and the same for Codex / Grok). Absent = no /api/auth-login. */
   authLogin?: AuthLoginHub;
   /** MSG Hub: `GET /api/hub/status` (the overview) and the `/hub/p/<id>/` embed proxy. Absent = 404 for both. */
-  hub?: { status: HubStatusService; proxyTargets?: Record<string, ProxyTarget>; /** Named folders `/api/hub/file/<name>/…` may serve (read-only media, build outputs). */ fileRoots?: HubFileRoots; /** 게임 스튜디오's pipeline doc (docs/GAME_PIPELINE.md), served as text at GET /api/hub/game-pipeline. */ pipelineDoc?: string; /** Trading room `GET /api/hub/sr[?symbol=]` (the bot's support/resistance snapshot). Absent = 404. */ sr?: SrService; /** Read-only lab gateway summary. */ lab?: LabService };
+  hub?: { status: HubStatusService; proxyTargets?: Record<string, ProxyTarget>; /** Named folders `/api/hub/file/<name>/…` may serve (read-only media, build outputs). */ fileRoots?: HubFileRoots; /** 게임 스튜디오's pipeline doc (docs/GAME_PIPELINE.md), served as text at GET /api/hub/game-pipeline. */ pipelineDoc?: string; /** Trading room `GET /api/hub/sr[?symbol=]` (the bot's support/resistance snapshot). Absent = 404. */ sr?: SrService; /** Read-only lab gateway summary. */ lab?: LabService; /** Hub controls (승인함, 다음 작업, 실행 관리) under /api/hub/ctl/. Absent = 404. */ controls?: ControlsService };
   /** Trading room chart replay: `GET /api/replay/*` public market data fetched server-side (no keys). Default = live exchanges. */
   replay?: MarketService;
   /**
@@ -836,6 +837,12 @@ export function createRequestHandler(deps: HttpDeps) {
           if (req.method !== 'GET') { json(res, 405, { error: 'method not allowed' }); return; }
           if (!deps.hub) { json(res, 404, { error: 'not found' }); return; }
           json(res, 200, await deps.hub.status.status());
+          return;
+        }
+        // Hub controls: cookie + same-origin (above) + CSRF header + confirm header, checked in hub/controls/http.ts.
+        if (url.pathname.startsWith(CTL_PREFIX)) {
+          if (!deps.hub?.controls) { json(res, 404, { error: 'not found' }); return; }
+          await deps.hub.controls.handle(req, res, url);
           return;
         }
         if (url.pathname === LAB_PREFIX) {

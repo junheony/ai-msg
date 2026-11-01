@@ -1,129 +1,71 @@
-# Lab summary panel (BRIEF3)
+# 허브 제어 (BRIEF9): 승인함 · 다음 작업 · 실행 관리 · 바로가기
 
-Branch: `feat/hub-lab-summary`, based on `feat/hub-design-pass` (`e45405a`).
+## 요약 (한국어)
 
-## Changes
+- **승인함**
+  - 봇·에이전트가 `scripts/msg-approve request …` 로 `~/.msg/approvals/pending/*.json` 에 요청을 올리면, 개요 상단과 각 모드 페이지에 요청 카드가 뜹니다.
+  - PR 머지 요청은 base ← head, 파일 수, +/− 와 PR 링크를 보여 줍니다. 배포 요청은 대상과 버전을 보여 줍니다.
+  - 메모를 적고 승인/거절을 누르면 확인 창이 한 번 더 뜹니다. 결정하면 요청 파일이 `decided/` 로 옮겨지고 `~/.msg/msg-approvals.log` 에 한 줄이 남습니다.
+  - `pr-merge`·`deploy` 는 `~/.msg/approvals/hooks/<kind>` 실행 파일이 없으면 결정만 기록합니다. 화면에도 "실행 훅 없음 · 결정만 기록합니다" 로 표시됩니다.
+- **다음 작업**
+  - 각 카드의 버튼을 누르면 작성 창이 열립니다. 제목, 브리프, 엔진(Claude=claude-pick a/b/c, Codex, Hermes), 작업 폴더(모드 기본값이 미리 채워짐)를 정하고 → 확인 → 실행합니다.
+  - 실행하면 `~/jobs/<날짜>-<slug>/BRIEF.md` 를 만들고 REPORT/STATUS 규칙을 덧붙인 뒤 엔진을 분리 실행합니다.
+  - 최근 run.log 의 "hit your usage limit … try again at" 문구를 읽어, Codex·Hermes 를 한도 해제 시각(11/4 15:41 KST)까지 회색으로 막고 Claude 를 권합니다.
+  - "봇에게" 탭은 `~/.msg/tasks/<bot>/` 에 큐 파일만 씁니다. 외부로는 아무것도 보내지 않습니다.
+- **실행 관리**
+  - 대상: `~/jobs/*`, `~/ai-msg-*` 워크트리, `~/msg-hub-design`.
+  - 줄마다 엔진·계정, 살아 있는지, 경과 시간, REPORT 의 STATUS, 한도 도달 여부를 보여 줍니다.
+  - 로그 끝부분 보기(마스킹), REPORT.md 마크다운 렌더(raw HTML 없음)를 지원합니다.
+  - 중지는 검증된 PID 에만 SIGTERM 을 보내고 확인 창을 거칩니다. 다시 실행은 엔진을 새로 고른 뒤 새 폴더에서 돌립니다.
+- **바로가기**: 카드나 실행 줄의 "터미널" 을 누르면 그 폴더의 최신 세션이 MSG 터미널에서 열립니다. 세션이 없으면 그 폴더로 새 대화 화면이 열립니다.
+- **트레이딩 금지 규칙**은 `guard.ts` 의 코드로 강제합니다.
+  - 트레이딩·QUANT 모드에는 버튼이 없고 "QUANT/해당 채팅에서만 승인" 만 보입니다.
+  - 무장/해제, 라이브, 키, ARMED/FSD, Cont live, nexus-engine, cblabx-*, 포트 8771/8783/8792/8793/8830, ledger 를 언급하는 요청은 읽기 전용입니다. 서버도 승인과 거절을 모두 403 으로 거부하고 그 시도를 기록합니다.
+  - 브리프나 봇 작업이 이 목록에 걸리면 거부합니다.
+  - 중지·다시 실행은 이런 프로세스와 유닛을 대상으로 삼지 않습니다.
+  - 어떤 ledger 에도 쓰지 않습니다.
+- **보안**
+  - 모든 변경 요청은 세션 쿠키 + same-origin + CSRF 헤더(HMAC) + `x-msg-confirm: yes` + JSON 을 거쳐야 합니다. 거부 코드는 401/403/428/415 입니다.
+  - 모든 행동은 `~/.msg/msg-actions.log` 에 남습니다. 브리프 본문은 로그에 남기지 않고 길이와 sha 만 기록합니다.
+  - 작업 환경 변수에서 토큰·시크릿을 제거합니다.
+- **검증**
+  - 새 테스트 67개(서버 52, UI 15)가 모두 통과합니다. 금지 동작 가드 테스트를 포함합니다.
+  - `npm run typecheck`, `npm run build`(번들 검사 포함) 모두 통과합니다.
+  - 전체 스위트는 마지막 실행에서 4518개 중 4517개가 통과했습니다. 실패한 1개(TradingRoom SR 표)는 부하 중 대기 시간 초과였고, 단독으로 다시 돌리면 9/9 통과합니다. 앞선 실행에서 시간 초과로 실패했던 Grok·AccountRouter·TradingRoom 테스트도 단독 실행에서는 191/191 통과합니다.
+  - 스크린샷: `shots-controls/` 에 데스크톱·모바일 26장. 격리된 QA 호스트(포트 9386, 임시 HOME, 가짜 프로세스 표, 실제 실행 없음)에서 찍었습니다.
+  - 실제 서비스(9377)는 재시작하지 않았습니다. merge·push·deploy 도 하지 않았습니다.
 
-- Added a session-gated, GET-only `/api/hub/lab` route for the fixed same-host summary endpoint. A 60s cache coalesces requests and also caches failures; previous valid snapshots survive transport/format failures. Loading/partial responses replace old data.
-- Added a strict, allowlisted mapper: no numeric coercion, no null-to-zero fallback, no scenario probabilities. Per-field source errors distinguish `미보고` from `오류`.
-- Added the read-only Trading room lab panel: paper/ledger health, book PnL and positions, latest ten closes, certification progress (100 trades / 90 days), integrity verification, shortened Merkle root, gaps and original KST generation time. It is added above the existing Trading room content; legacy UI and collectors remain unchanged.
-- Reused the existing glass/theme and Barlow Semi Condensed typography. Native progress indicators and internally scrolling tables fit desktop and phone. Integrity failure is the first alert; stale/partial/offline states remain explicit.
-- Added mapper/cache/route/panel coverage and a reproducible isolated QA host. Two existing filesystem timestamp tests now compare against the observed `fs.stat().mtimeMs`, retaining activity-advance checks; requested millisecond values were rounded down by 0.001ms on this filesystem. A pre-existing relaunch test now waits for the fake server’s reported PID instead of selecting an unidentified child process. Existing service processes, protected ports and lab ledger files were not modified; no push, merge, deployment or service restart.
+## 마지막에 고친 것
 
-## Verification
-
-| Check | Result |
-|---|---|
-| `npx vitest run --maxWorkers=4 --retry=1` | Passed: 348 files, 4321 tests; 149.94s; exit 0 |
-| Focused lab mapper/transport/cache/route/panel + HubPage/TradingHome suite | 4 files, 55 tests passed |
-| `npm run typecheck` | Passed after final edits |
-| `npm run build` | Passed; largest main chunk 432.11 kB, below 500 kB limit |
-| `node scripts/contrast-check.mjs` | All pairs passed |
-| Live HTTP checks on isolated `127.0.0.1:9378` | GET 200; no cookie/bearer-only 401; POST/PUT/PATCH/DELETE/HEAD/OPTIONS 405 with `Allow: GET`; no-store; repeated reads return same cached snapshot |
-| Live summary check | 4 books, 12 open positions, 10 recent closes, integrity passed; schema/read-only/PAPER fields verified |
-| Browser checks | 1440/390, panel loaded; 0 controls; no page-wide horizontal overflow; no console/API failures |
-| `git diff --check` and independent static review | Passed; no remaining findings |
-
-Three pre-existing test assertions were made deterministic after full-suite failures:
-filesystem timestamp checks use actual `fs.stat().mtimeMs` (the stored value differed
-from the requested Date by 0.001ms); the relaunch test waits for the fake server’s
-reported PID and registers the close listener before stopping it. Production code is
-unchanged. All 53 tests in those three files pass independently. The complete final
-suite result is recorded above. A preceding run without retries passed 4320/4321;
-the remaining failure was the existing `setup/detect.test.ts` immediate child-exit
-assertion, also documented as timing-sensitive in BRIEF2. The final full run permits
-one retry per test; no test was skipped and that detection code was not changed.
-
-JSON parse diagnostics retain only the first 200 characters' punctuation, redacting
-source keys/values and paths. This satisfies the bounded diagnostic intent without
-logging upstream secrets. The transport also refuses redirects/non-200 responses and
-caps input at 2 MB.
-
-## Screenshots
-
-| Screenshot | CSS viewport / capture |
-|---|---|
-| [lab-desktop-trading.png](shots-lab/lab-desktop-trading.png) | 1440 × 6000 |
-| [lab-mobile-trading.png](shots-lab/lab-mobile-trading.png) | 390 × 6000, 2× pixels |
-| [lab-viewport-desktop-trading.png](shots-lab/lab-viewport-desktop-trading.png) | 1440 × 900 |
-| [lab-viewport-mobile-trading.png](shots-lab/lab-viewport-mobile-trading.png) | 390 × 900, 2× pixels |
-
-The 6000px captures show the complete new lab panel and part of the longer existing room. Screenshots show live lab summary data. Other hub sections use the existing frozen QA status; SR/replay are explicit empty fixtures. QA bound only to 127.0.0.1:9378, with the existing CDP harness and no production collectors. Desktop 1440px and phone 390px (2× pixel density). Both viewports were inspected: the lab panel has zero buttons/inputs/selects/links, and no page-wide horizontal overflow. There were no browser console errors or failed API requests in the final captures. The owned QA process was stopped after capture.
+- 실행 id(`jobs:<name>`)의 `:` 를 브라우저가 `%3A` 로 인코딩하는데, 서버가 인코딩된 경로를 그대로 매칭하고 있었습니다. 그래서 실제 화면에서는 로그·보고서·중지·다시 실행이 모두 404 였습니다. 이제 한 세그먼트만 디코드한 뒤 검증합니다. 인코딩된 `/` 는 여전히 거부하며, 이를 확인하는 테스트를 추가했습니다.
+- 확인 창과 보기 창이 `.sec` 섹션 안에서 렌더되면서 배경이 그 섹션만 어둡게 했습니다. 이제 `.hub-main` 으로 포털해 화면 전체를 덮습니다.
+- 레일 하단과 모드 메뉴 하단의 "읽기 전용" 문구를 지웠습니다. 이제 허브에서 조치를 할 수 있으므로 맞지 않는 안내였습니다.
+- 승인함·실행 관리로 스크롤할 때 제목이 상단 고정 헤더에 가리지 않도록 `scroll-margin-top` 을 두었습니다.
 
 ## Files
 
-- `src/server/hub/lab.ts`, `src/shared/lab-types.ts`: transport, allowlisted mapping, cached service and GET response.
-- `src/server/http.ts`, `src/server/server.ts`: existing session boundary and service wiring.
-- `src/ui/hub/lab/{LabPanel.tsx,api.ts,lab.css}`, `HubPage.tsx`: standalone panel and Trading room integration.
-- `src/server/hub/lab.test.ts`, `src/ui/hub/lab/LabPanel.test.tsx`, `src/test/labFixture.ts`, `HubPage.test.tsx`: coverage and isolated fixture.
-- `src/server/sessions/CodexImports.test.ts`, `src/server/ws.outside.test.ts`: filesystem precision assertions only.
-- `src/server/relaunch.test.ts`: fake-server readiness and close-event synchronization only.
-- `scripts/qa/`, `shots-lab/`, `REPORT.md`: reproduction instructions, screenshots and this report.
+- Server: `src/server/hub/controls/{guard,approvals,engines,jobs,http,live}.ts`, wired in `src/server/http.ts` and `src/server/server.ts`. `DECK_HUB_CONTROLS=0` turns the controls off.
+- CLI: `scripts/msg-approve` (`request | status | wait | list`).
+- UI: `src/ui/hub/controls/` (Approvals, Composer, Runs, CardActions, Confirm, context, api, useControls, controls.css), wired into HubView, HubOverview, HubPage and App (`openTerminal`).
+- Docs: `docs/hub-controls.md` covers the forbidden list, request gating, file formats, hooks, logs and engines.
+- QA: `scripts/qa/controls-demo.ts` is an isolated host (QA_PORT, which refuses 9377). `scripts/qa/shoot-controls.mjs` drives the scenes through the msg-hub-design CDP harness.
 
-The pre-existing workspace `../REPORT.md` receives this section as an append; this
-repository copy and the screenshot files are included in the local commit. Workspace
-`../shots-lab` points to this repository's `shots-lab` directory.
+## Screenshots (`shots-controls/`, each desktop + mobile)
 
-## Design references
+| file | what |
+| --- | --- |
+| 1-overview | Overview: inbox on top, actions on each card, runs |
+| 2-inbox | Inbox: PR merge, generic and deploy requests, a locked QUANT request |
+| 3-approve-confirm | Confirm before approving |
+| 4-composer | Composer: Codex/Hermes greyed out until 11/4 15:41, Claude suggested |
+| 5-composer-confirm | Composer review step |
+| 6-runs | Runs: alive, partial, done, BLOCKED with 한도 도달 |
+| 7-report | REPORT.md rendered |
+| 8-stop-confirm | Stop confirm (SIGTERM, verified PID) |
+| 9-rerun | Rerun with a new engine |
+| 10-terminal | Shortcut into the MSG terminal |
+| 11-pages | Video page with head actions; QUANT and Trading read-only |
 
-[The Seeker dashboard references](https://ref.theseeker.io/?category=dashboard) and [Refero Styles](https://styles.refero.design/) were reviewed for calibration. The established hub design tokens take precedence.
-
-STATUS: DONE
-
-# Unified Trading room (BRIEF4)
-
-## Changes
-
-- Created `feat/hub-trading-unified` from `feat/hub-lab-summary` at `0588eff`. Fetched the server-local main from `/home/max/ai-msg` and merged `377b1b4` as `f41e4a7` (18 incoming commits). The source repository was not modified.
-- Unified Lab and SR / DCA in the Trading room with source summaries, visible PAPER ONLY badges, source timestamps in KST, and source-section links. Existing @Trading Room and ver2 read-only information remains.
-- Reused `/api/hub/sr[?symbol=]`, adding the real `:8830/api/status` alongside `:8830/api/sr`. The two feeds have independent caches, timeouts, last-good values and error metadata. Requests use fixed GET endpoints with no credentials/redirects and a bounded JSON body; session authentication remains in the existing HTTP boundary.
-- Lab maps and displays future strategy entries generically, including nested metrics, while excluding old kNN/scenario probabilities and secret-like fields. Missing DCA fill/stage values remain explicitly unreported; existing reported status fields are shown.
-- Trading content has no buttons, form inputs, collapsible controls, embedded control pages or interactive replay screen. SR symbol navigation and external dashboard access use links; the SR chart has no zoom/drag controls.
-
-## Merge and review notes
-
-The merge completed without conflicts. Git automatically merged `HubPage.tsx` and its tests. Existing main-branch polish and the Lab implementation were retained. Review corrected the initial header-refresh exception, replay sub-screen, SR refresh/client-error handling, nested strategy bounds and source-anchor visibility.
-
-Design follows the existing hub tokens and larger typography. The `frontend-design` skill was applied with calibration from [The Seeker dashboard references](https://ref.theseeker.io/?category=dashboard), [Refero Styles](https://styles.refero.design/) and [liquid-glass](https://glass.samasante.com/); no new image assets or external palette were introduced.
-
-## Validation
-
-| Check | Final result |
-|---|---|
-| `npx vitest run --maxWorkers=4` | 350 files, **4,385 tests passed**, 98.39 s, exit 0; no retries/skips |
-| `npx tsc --noEmit` / `npm run typecheck` | Passed (final polish also typechecked) |
-| `npm run build` | Passed, including bundle-size check |
-| Focused final UI regression tests | 4 files / 47 tests passed |
-| `node scripts/contrast-check.mjs` | All pairs passed |
-| Isolated HTTP checks on `127.0.0.1:9379` | Both Lab/SR: unauthenticated GET 401; authenticated POST/PUT/PATCH/DELETE/HEAD/OPTIONS 405 with Allow: GET |
-| Real upstream data and caching | SR 37 symbols / 269 ranges; BTC filter 8 ranges; both feeds healthy; cached read reused; stage paper; DCA unreported; Lab 4 books |
-| Browser at 1440 / 390 | Zero controls inside entire Trading page, zero document/room horizontal overflow; both PAPER ONLY/KST labels, Room/ver2 content and dashboard link present; no console/API errors |
-| Source anchor / visual inspection | Lab and SR headings visible; nested strategy tree legible; empty-candle caption accurate |
-| `git diff --check` | Passed |
-
-The initial merged baseline passed 349 files / 4,348 tests. After implementation and review the final count is above;
-a CSS-source-string assertion was removed in favor of actual browser inspection. Future Lab extra trees are bounded
-to six container levels and a shared 400-node budget, with no hardcoded strategy names.
-
-## Screenshots
-
-| Screenshot | CSS capture size |
-|---|---|
-| [lab-desktop-trading-focus.png](shots-unified/lab-desktop-trading-focus.png) | 1440 × 4697 |
-| [lab-mobile-trading-focus.png](shots-unified/lab-mobile-trading-focus.png) | 390 × 7050 (2× device scale) |
-| [sr-desktop-trading-focus.png](shots-unified/sr-desktop-trading-focus.png) | 1440 × 1074 |
-| [sr-mobile-trading-focus.png](shots-unified/sr-mobile-trading-focus.png) | 390 × 2380 (2× device scale) |
-| [unified-desktop-trading.png](shots-unified/unified-desktop-trading.png) | 1440 × 16000 |
-| [unified-mobile-trading.png](shots-unified/unified-mobile-trading.png) | 390 × 16000 (2× device scale) |
-| [viewport-desktop-trading.png](shots-unified/viewport-desktop-trading.png) | 1440 × 900 |
-| [viewport-mobile-trading.png](shots-unified/viewport-mobile-trading.png) | 390 × 900 (2× device scale) |
-
-The 16,000 px overview captures include both complete new source sections; focused captures also show each source in full. The longer existing Trading content continues below the overview crop. Workspace `./shots-unified` links to `repo/shots-unified`; all eight PNGs are committed in the repository.
-
-The isolated QA host uses the production HTTP handler and Lab/SR services on loopback port 9379; 9377 was occupied and left untouched. Only the three requested upstream GET feeds are live. Other hub data is a frozen QA snapshot, and market candles are an explicit empty fixture, so the SR screenshot honestly shows a no-candles state with real SR ranges. The existing CDP harness loads the built UI from file URLs and bridges API requests to the isolated host because HTTP main-frame browser navigation stalls in this environment. Viewport widths are 1440 and 390 CSS pixels; mobile captures use 2× device scale.
-
-No production unit was restarted/stopped, no protected service was modified, no ledger/anchors JSONL was edited, no credentials were printed, and no push, deployment, or merge into main occurred. Only owned temporary QA processes were stopped. An optional Grok second opinion was unavailable because its API credential was absent; implementation review, regression tests and browser inspection were completed independently of it.
-
-No required work is blocked.
+Note: the QA host has no sessions, so 10-terminal shows the empty new-chat screen and not a resumed session. With real data, `App.tsx` resumes the folder's latest session. `controls.test.tsx` checks only that the button passes the absolute folder path; the resume step was not exercised in a test or a shot.
 
 STATUS: DONE
