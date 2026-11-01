@@ -1,0 +1,103 @@
+{
+  "schema": 1,
+  "id": "bbai-updown-race",
+  "title": "BBAI UpDown Race",
+  "titleKo": "비비에이아이 업다운 레이스",
+  "genre": "예측 레이싱",
+  "engine": "next.js / unity",
+  "status": "candidate",
+  "cover": "~/bbai-codex/race/docs/assets/race-upgrade/phase23-p23-sweep.jpg",
+  "repos": [
+    {
+      "label": "레이스 · 로컬 검증 후보",
+      "path": "~/bbai-codex/race",
+      "branch": "codex/race-finish",
+      "remote": "github.com/junheony/bbai-boredbrain"
+    }
+  ],
+  "stages": [
+    {
+      "id": "concept",
+      "evidence": [
+        "~/bbai-codex/race/docs/design/UPDOWN-DESIGN-20260914.md"
+      ]
+    },
+    {
+      "id": "assets",
+      "evidence": [
+        "~/bbai-codex/race/docs/LICENSES-CREDITS-updown-city.md"
+      ]
+    },
+    {
+      "id": "build",
+      "evidence": [
+        "~/bbai-codex/race-data/race-finish-final-package-20261031/unity-selection.json"
+      ]
+    },
+    {
+      "id": "test",
+      "evidence": [
+        "~/jobs/race/REPORT.md",
+        "~/bbai-codex/race-data/soak/local-smoke-20261031/report.json"
+      ]
+    },
+    {
+      "id": "preview",
+      "evidence": [
+        "~/bbai-codex/race/docs/assets/race-upgrade/phase23-p23-sweep.jpg"
+      ]
+    },
+    {
+      "id": "approval",
+      "evidence": []
+    },
+    {
+      "id": "release",
+      "evidence": []
+    }
+  ],
+  "artifacts": {
+    "screenshots": [
+      "~/bbai-codex/race/docs/assets/race-upgrade/*.jpg",
+      "~/bbai-codex/race/demo-video/screenshots/*.png"
+    ],
+    "concept": [
+      "~/bbai-codex/race/docs/assets/breakout/*.png",
+      "~/bbai-codex/race/public/updown/model-portraits/*.png"
+    ],
+    "builds": [
+      "~/bbai-codex/race-data/race-finish-final-package-20261031/unity-*.json"
+    ],
+    "video": [
+      "~/bbai-codex/race/demo-video/output/*.mp4"
+    ]
+  },
+  "tests": [
+    {
+      "label": "전체 회귀·빌드·명시 선택 패키징 · 승인 아님",
+      "path": "~/jobs/race/REPORT.md"
+    },
+    {
+      "label": "합성 로컬 soak · 240초·실패 보존·24시간 아님",
+      "path": "~/bbai-codex/race-data/soak/local-smoke-20261031/report.json"
+    },
+    {
+      "label": "합성 새 시작 soak · 10초",
+      "path": "~/bbai-codex/race-data/soak/local-fresh-20261031/report.json"
+    }
+  ],
+  "jobs": [
+    "race"
+  ],
+  "approvals": [
+    {
+      "what": "실기기·24시간 운영 증거 검토 후 출시",
+      "state": "pending",
+      "at": null
+    }
+  ],
+  "nextAction": {
+    "text": "운영 24시간 soak·실기기 검증 계획 결정",
+    "owner": true
+  }
+}

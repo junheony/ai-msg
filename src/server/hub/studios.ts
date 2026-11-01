@@ -22,7 +22,7 @@ const isoMs = (iso: string | null): number | null => (iso ? Date.parse(iso) : nu
 export const fmtBytes = (b: number): string => (b >= 1048576 ? `${fmtNum(b / 1048576, 1)} MB` : b >= 1024 ? `${fmtNum(b / 1024, 0)} KB` : `${fmtNum(b, 0)} B`);
 
 /** `fileMtime` with a global call budget (≤ `max` stats per collection); over budget or on error → null. */
-function statBudget(deps: HubDeps, max = 200): (file: string) => Promise<number | null> {
+export function statBudget(deps: HubDeps, max = 200): (file: string) => Promise<number | null> {
   let n = 0;
   return async (file) => { if (n++ >= max) return null; try { return await deps.fileMtime(file); } catch { return null; } };
 }
@@ -296,7 +296,7 @@ const DEFAULT_GAMES = ['neon-apex'];
 const SRC_RE = /\.(js|mjs|ts|html|css|json)$/i;
 const SHOT_RE = /\.(png|jpe?g|webp)$/i;
 
-interface Game {
+export interface Game {
   slug: string; name: string | null; version: string | null; kind: 'game' | 'concept' | 'empty';
   deployUrl: string | null; deployNote: string | null; verifiedAt: string | null; preparedAt: string | null; candidate: boolean;
   tests: { passed: number; total: number | null } | null; passLines: string[]; fairness: { runs: number | null; replays: number | null; violations: number | null; at: string | null; file: string | null; counterexamples: number } | null;
@@ -308,7 +308,7 @@ interface Game {
 /** `pre-airborne-20260908-152545.zip` → `airborne 작업 전 백업`. */
 const backupWhat = (name: string): string => { const m = /^pre-([a-z0-9]+)/i.exec(name); return m ? `${m[1]} 작업 전 백업` : '백업 스냅샷'; };
 
-async function loadGame(deps: HubDeps, root: string, slug: string, stat: (f: string) => Promise<number | null>): Promise<Game> {
+export async function loadGame(deps: HubDeps, root: string, slug: string, stat: (f: string) => Promise<number | null>): Promise<Game> {
   const dir = path.join(root, slug);
   const [top, pkgText, deployText, readmeAt, deployAt, testNames, backupNames, releaseNames, prodNames, deployNames, distNames, srcNames] = await Promise.all([
     listOpt(deps, dir), readOpt(deps, path.join(dir, 'package.json')), readOpt(deps, path.join(dir, 'DEPLOYMENT.md')), stat(path.join(dir, 'README.md')), stat(path.join(dir, 'DEPLOYMENT.md')),

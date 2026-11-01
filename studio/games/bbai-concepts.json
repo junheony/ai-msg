@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "id": "bbai-concepts",
+  "title": "BBAI Concepts",
+  "titleKo": "비비에이아이 게임 콘셉트",
+  "genre": "콘셉트 제안",
+  "status": "concept",
+  "repos": [
+    {
+      "label": "기획 문서 · 게임 미구현",
+      "path": "~/games/bbai-concepts",
+      "readonly": true
+    }
+  ],
+  "stages": [
+    {
+      "id": "concept",
+      "evidence": [
+        "~/games/bbai-concepts/CONCEPT-BRIEF.md"
+      ]
+    },
+    {
+      "id": "assets",
+      "evidence": []
+    },
+    {
+      "id": "build",
+      "evidence": []
+    },
+    {
+      "id": "test",
+      "evidence": []
+    },
+    {
+      "id": "preview",
+      "evidence": []
+    },
+    {
+      "id": "approval",
+      "evidence": []
+    },
+    {
+      "id": "release",
+      "evidence": []
+    }
+  ],
+  "approvals": [
+    {
+      "what": "신규 독립 게임 콘셉트·범위 선택",
+      "state": "pending",
+      "at": null
+    }
+  ],
+  "nextAction": {
+    "text": "A 생존 액션·B 전략 대결 중 첫 프로토타입 선택",
+    "owner": true
+  }
+}

@@ -1,0 +1,192 @@
+/* 게임 스튜디오 lobby, v2 (calm). MSG's dark base; neutral text and glass, ONE accent — the game hue (lime) — for what is
+   live or needs the owner, and ONE warning colour (red) for blocked. Done reads as a quiet filled neutral.
+   Spacing scale: 4 · 8 · 12 · 16 · 24 · 40 · 56. Crew hues stay only inside the drawn faces. */
+.gs {
+  --gs-acc: var(--mode-hue, rgb(143 207 90));
+  --gs-bad: var(--danger, #e2675b);
+  --gs-face-ink: #14141c;
+  --gs-line: var(--glass-line);
+  --gs-card: color-mix(in srgb, var(--panel) 70%, transparent);
+  --gs-notch: 12px;
+  display: flex; flex-direction: column; gap: 56px;
+  font-size: var(--fs-sm);
+}
+.gs h2, .gs h3 { margin: 0; font-family: var(--hub-font); font-weight: 600; color: var(--fg-strong, var(--fg)); }
+.gs p { margin: 0; }
+.gs-muted { color: var(--muted); }
+.gs-sec { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+/* section headings are quiet: small, muted, no notes beside them */
+.gs-sec > h2, .gs-new > h2 { font-size: var(--fs-base); font-weight: 500; color: var(--muted); letter-spacing: .01em; }
+.gs-link-btn { align-self: flex-start; padding: 4px 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: var(--fs-xs); cursor: pointer; }
+.gs-link-btn:hover { color: var(--fg); text-decoration: underline; text-underline-offset: 3px; }
+.gs :focus-visible { outline: 2px solid var(--gs-acc); outline-offset: 2px; }
+
+/* ── top: one summary line + the party ── */
+.gs-top { display: flex; flex-direction: column; gap: 24px; padding-top: 4px; }
+.gs-summary { display: flex; flex-wrap: wrap; gap: 4px 24px; color: var(--muted); font-size: var(--fs-base); }
+.gs-summary b { margin-left: 6px; font-family: var(--hub-font); font-size: var(--fs-lg); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg); }
+.gs-summary .on b, .gs-summary .owner b { color: var(--gs-acc); }
+.gs-summary .owner { color: var(--fg); }
+.gs-summary .bad b { color: var(--gs-bad); }
+
+.gs-party { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; }
+.gs-members { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.gs-member { position: relative; }
+.gs-member-btn { display: grid; grid-template-columns: auto auto; grid-template-rows: auto auto; column-gap: 10px; align-items: center; padding: 6px 14px 6px 6px; border: 0; border-radius: 999px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: default; }
+.gs-member-btn:hover, .gs-member-btn:focus-visible { background: var(--glass); }
+.gs-member-btn .gs-ava { grid-row: 1 / 3; }
+.gs-member-name { font-size: var(--fs-xs); font-weight: 600; color: var(--fg); align-self: end; }
+.gs-member-state { font-size: var(--fs-2xs); color: var(--muted); align-self: start; }
+.gs-member.st-working .gs-member-state { color: var(--gs-acc); }
+.gs-member.st-blocked .gs-member-state { color: var(--gs-bad); }
+.gs-tip { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; width: 300px; max-width: 80vw; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--gs-line); background: var(--panel, #16161e); box-shadow: 0 16px 40px rgba(0, 0, 0, .45); display: flex; flex-direction: column; gap: 6px; font-size: var(--fs-xs); line-height: 1.45;
+  display: none; }
+.gs-member:hover .gs-tip, .gs-member:focus-within .gs-tip { display: flex; }
+.gs-member:nth-last-child(-n+3) .gs-tip { left: auto; right: 0; }
+.gs-tip-game { color: var(--muted); font-size: var(--fs-2xs); }
+.gs-tip-task { color: var(--fg); font-weight: 600; }
+.gs-tip-line { color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.gs-member.st-blocked .gs-tip-line { color: color-mix(in srgb, var(--gs-bad) 75%, var(--fg)); }
+.gs-tip-meta { color: var(--faint, var(--muted)); font-size: var(--fs-2xs); }
+.gs-others { color: var(--muted); font-size: var(--fs-xs); }
+
+/* avatar: the ring is the state — a turning accent arc while working (the only motion on the page), red when blocked,
+   a quiet solid ring when done, dotted when idle */
+.gs-ava { position: relative; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: color-mix(in srgb, currentColor 12%, var(--panel)); color: var(--gs-face, #a78bfa); }
+.gs-ava.acc-a { --gs-face: #a78bfa; }
+.gs-ava.acc-b { --gs-face: #34d3b4; }
+.gs-ava.acc-c { --gs-face: #f47fa4; }
+.gs-ava.acc-codex { --gs-face: #e9c46a; }
+.gs-ava.acc-unknown { --gs-face: #9a98ad; }
+.gs-ava svg { position: relative; z-index: 1; }
+.gs-ava-ring { position: absolute; inset: -3px; border-radius: 50%; border: 2px solid var(--gs-line); }
+.gs-ava.st-working .gs-ava-ring { border-color: color-mix(in srgb, var(--gs-acc) 22%, transparent); border-top-color: var(--gs-acc); border-right-color: var(--gs-acc); animation: gs-spin 1.6s linear infinite; }
+.gs-ava.st-done .gs-ava-ring { border-color: color-mix(in srgb, var(--fg) 35%, transparent); }
+.gs-ava.st-blocked .gs-ava-ring { border-color: var(--gs-bad); }
+.gs-ava.st-idle .gs-ava-ring { border-style: dotted; border-color: var(--faint, #6e6c80); }
+.gs-ava.st-idle svg, .gs-ava.st-done svg { opacity: .7; }
+@keyframes gs-spin { to { transform: rotate(360deg); } }
+
+/* ── cartridges ── */
+.gs-cart-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; align-items: start; }
+.gs-cart {
+  position: relative; display: flex; flex-direction: column; min-width: 0;
+  /* the cartridge silhouette: one notched corner — the only "game" shape on the page */
+  clip-path: polygon(0 0, calc(100% - var(--gs-notch) * 2) 0, 100% calc(var(--gs-notch) * 2), 100% 100%, 0 100%);
+  border-radius: 14px 0 14px 14px;
+  background: var(--gs-card);
+  box-shadow: inset 0 0 0 1px var(--gs-line);
+}
+.gs-cart-art { position: relative; aspect-ratio: 16 / 9; overflow: hidden; background: #0d0d13; }
+.gs-cart-art.empty { aspect-ratio: 16 / 6; } /* no art yet: a short placeholder, not a big empty frame */
+.gs-cover { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; }
+.gs-cover img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.gs-cover.none { display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--gs-acc) 10%, transparent), transparent 60%), #101017; cursor: default; }
+.gs-cover.none span { font-family: var(--hub-font); font-size: 48px; font-weight: 600; color: color-mix(in srgb, var(--fg) 25%, transparent); }
+.gs-badge { position: absolute; top: 12px; left: 12px; padding: 3px 10px; border-radius: 6px; background: rgba(10, 10, 16, .72); color: #e8e8f0; font-size: var(--fs-2xs); font-weight: 600; backdrop-filter: blur(6px); }
+.gs-cart-body { display: flex; flex-direction: column; gap: 12px; padding: 16px 20px 16px; min-width: 0; }
+.gs-cart-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.gs-cart-head h3 { flex: 1; min-width: 0; font-size: var(--fs-xl); line-height: 1.15; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gs-ver { margin-left: 8px; font-size: var(--fs-sm); font-weight: 500; color: var(--muted); }
+.gs-btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--gs-line); background: transparent; color: var(--fg); font-family: var(--hub-font); font-size: var(--fs-sm); font-weight: 600; text-decoration: none; white-space: nowrap; flex-shrink: 0; }
+.gs-btn.play { border-color: color-mix(in srgb, var(--gs-acc) 55%, transparent); color: var(--gs-acc); }
+.gs-btn.play:hover { background: color-mix(in srgb, var(--gs-acc) 14%, transparent); }
+
+/* quest track: seven small dots, the current one larger; the line beside it says where the game is */
+.gs-quest { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.gs-track { list-style: none; margin: 0; padding: 0; display: flex; align-items: center; gap: 6px; }
+.gs-dot { width: 8px; height: 8px; border-radius: 50%; background: color-mix(in srgb, var(--fg) 14%, transparent); }
+.gs-dot.done { background: color-mix(in srgb, var(--fg) 55%, transparent); }
+.gs-dot.active { width: 12px; height: 12px; background: var(--gs-acc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--gs-acc) 22%, transparent); }
+.gs-dot.blocked { width: 12px; height: 12px; background: var(--gs-bad); box-shadow: 0 0 0 3px color-mix(in srgb, var(--gs-bad) 25%, transparent); }
+.gs-quest-now { font-size: var(--fs-sm); color: var(--fg); }
+.gs-quest-now b { font-weight: 600; }
+.gs-quest-now span { margin-left: 6px; color: var(--faint, var(--muted)); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.gs-quest.bad .gs-quest-now b { color: var(--gs-bad); }
+
+/* the one next move */
+.gs-next { display: flex; gap: 10px; align-items: baseline; min-width: 0; font-size: var(--fs-sm); line-height: 1.45; }
+.gs-next-k { flex-shrink: 0; font-size: var(--fs-xs); font-weight: 600; color: var(--muted); }
+.gs-next-t { min-width: 0; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.gs-next.owner .gs-next-k { color: var(--gs-acc); }
+.gs-next.owner .gs-next-t { color: var(--fg); }
+
+.gs-more { font-size: var(--fs-xs); color: var(--muted); }
+.gs-more summary { cursor: pointer; width: max-content; color: var(--faint, var(--muted)); }
+.gs-more summary:hover { color: var(--fg); }
+.gs-more dl { margin: 12px 0 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; }
+.gs-more dl > div { display: contents; }
+.gs-more dt { color: var(--faint, var(--muted)); }
+.gs-more dd { margin: 0; color: var(--fg); overflow-wrap: anywhere; }
+.gs-more dd.miss { color: var(--faint, var(--muted)); }
+.gs-more-links { margin-top: 12px !important; display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.gs-more-links a { display: inline-flex; gap: 4px; align-items: center; color: var(--fg); }
+
+/* ── loot | log + new game ── */
+.gs-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 56px; align-items: start; }
+.gs-side { display: flex; flex-direction: column; gap: 40px; min-width: 0; }
+.gs-loot-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 12px; }
+.gs-loot-grid li { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.gs-thumb { position: relative; display: block; aspect-ratio: 16 / 10; padding: 0; border: 0; border-radius: 10px; overflow: hidden; background: #0d0d13; cursor: zoom-in; box-shadow: inset 0 0 0 1px var(--gs-line); }
+.gs-thumb img, .gs-thumb video { display: block; width: 100%; height: 100%; object-fit: cover; }
+.gs-thumb-play { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 24px; text-shadow: 0 2px 8px rgba(0, 0, 0, .7); }
+.gs-thumb-cap { font-size: var(--fs-xs); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.gs-feed { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.gs-feed li { display: flex; gap: 16px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid var(--gs-line); font-size: var(--fs-xs); min-width: 0; }
+.gs-feed li:first-child { padding-top: 0; }
+.gs-feed li:last-child { border-bottom: 0; }
+.gs-feed-t { flex: 1; min-width: 0; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gs-feed li.bad .gs-feed-t { color: color-mix(in srgb, var(--gs-bad) 80%, var(--fg)); }
+.gs-feed time { flex-shrink: 0; color: var(--faint, var(--muted)); font-size: var(--fs-2xs); font-variant-numeric: tabular-nums; }
+
+.gs-new { display: flex; flex-direction: column; gap: 6px; padding: 20px 24px; border-radius: 14px; border: 1px dashed var(--gs-line); }
+.gs-new > h2 { margin-bottom: 6px; }
+.gs-new p { color: var(--muted); font-size: var(--fs-xs); line-height: 1.5; }
+.gs-new-link { margin-top: 8px; align-self: flex-start; display: inline-flex; gap: 4px; align-items: center; color: var(--fg); font-size: var(--fs-xs); font-weight: 600; }
+
+/* viewer */
+.gs-viewer { max-width: min(1200px, 94vw); max-height: 92vh; padding: 0; border: 0; border-radius: 14px; background: #0b0b10; color: #f0f0f6; box-shadow: 0 30px 80px rgba(0, 0, 0, .6); }
+.gs-viewer::backdrop { background: rgba(6, 6, 10, .82); backdrop-filter: blur(4px); }
+.gs-viewer-in { display: flex; flex-direction: column; }
+.gs-viewer img, .gs-viewer video { display: block; max-width: 100%; max-height: calc(92vh - 64px); margin: 0 auto; object-fit: contain; }
+.gs-viewer-cap { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; padding: 12px 16px; font-size: var(--fs-xs); color: #b9b8c8; }
+.gs-viewer-cap b { color: #fff; }
+.gs-viewer-cap a { display: inline-flex; gap: 4px; align-items: center; color: var(--link, #9ec3ef); margin-left: auto; }
+
+/* ── the old ops view, folded ── */
+.gs-detail { border-top: 1px solid var(--gs-line); padding-top: 16px; }
+.gs-detail > summary { cursor: pointer; font-family: var(--hub-font); font-size: var(--fs-base); font-weight: 500; color: var(--muted); }
+.gs-detail[open] > summary { margin-bottom: 16px; color: var(--fg); }
+.gs-detail-in { display: flex; flex-direction: column; gap: var(--s5, 20px); }
+
+@media (min-width: 1024px) {
+  .gs-cart-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px 24px; }
+  .gs-split { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 40px; }
+}
+@media (max-width: 640px) {
+  .gs { gap: 40px; }
+  .gs-top { gap: 16px; }
+  .gs-summary { gap: 4px 14px; font-size: var(--fs-sm); }
+  .gs-summary b { margin-left: 4px; }
+  .gs-summary b { font-size: var(--fs-base); }
+  /* one row of faces: the state word under each, the name moves into the tooltip */
+  .gs-members { flex-wrap: nowrap; gap: 0; overflow-x: auto; scrollbar-width: none; margin: 0 -4px; padding: 4px; }
+  .gs-member { position: static; }
+  .gs-member-btn { grid-template-columns: auto; justify-items: center; row-gap: 6px; padding: 4px 3px; border-radius: 12px; }
+  .gs-member-btn .gs-ava { grid-row: auto; }
+  .gs-member-name { display: none; } /* the face's own label and the tooltip carry the name */
+  .gs-party { position: relative; }
+  .gs-tip, .gs-member:nth-last-child(-n+3) .gs-tip { left: 0; right: 0; width: auto; max-width: none; top: 100%; }
+  .gs-cart-body { padding: 14px 16px; }
+  .gs-cart-head h3 { font-size: var(--fs-lg); white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .gs-loot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .gs-new { padding: 16px 18px; }
+  .gs-tip { width: 260px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gs-ava.st-working .gs-ava-ring { animation: none; border-color: var(--gs-acc); }
+}
+
+/* standalone preview page (game-studio.html): the hub frame fills the window */
+.gs-standalone { position: fixed; }

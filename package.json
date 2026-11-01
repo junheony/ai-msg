@@ -35,6 +35,7 @@
     "test:watch": "vitest",
     "test:e2e": "DECK_E2E=1 vitest run tests/e2e",
     "restart": "bash scripts/restart.sh",
+    "studio:preview": "tsx scripts/studio-preview.ts",
     "build:server": "node scripts/build-server.mjs",
     "prepack": "npm run build && npm run build:server"
   },

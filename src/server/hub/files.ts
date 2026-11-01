@@ -11,7 +11,9 @@ import type { ServerResponse } from 'node:http';
 
 export const HUB_FILE_PREFIX = '/api/hub/file/';
 
-export type HubFileRoots = Record<string, string>;
+/** A root is a folder; a policy root also narrows what may be served below it (the studio roots: media anywhere, builds only in build folders). */
+export interface HubFileRootPolicy { dir: string; allow: (rel: string, ext: string) => boolean }
+export type HubFileRoots = Record<string, string | HubFileRootPolicy>;
 
 const TYPES: Record<string, string> = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
@@ -33,14 +35,16 @@ export async function resolveHubFile(roots: HubFileRoots, pathname: string): Pro
   const slash = rest.indexOf('/');
   if (slash <= 0) return { status: 404 };
   const rootName = rest.slice(0, slash);
-  const root = roots[rootName];
-  if (!root) return { status: 404 };
+  const entry = roots[rootName];
+  if (!entry) return { status: 404 };
+  const root = typeof entry === 'string' ? entry : entry.dir;
   let rel: string;
   try { rel = rest.slice(slash + 1).split('/').map(decodeURIComponent).join('/'); } catch { return { status: 400 }; }
   if (!rel || rel.includes('\0') || rel.split('/').some((s) => s === '' || s === '.' || s === '..')) return { status: 400 };
   const ext = path.extname(rel).toLowerCase();
   const type = TYPES[ext];
   if (!type) return { status: 403 };
+  if (typeof entry !== 'string' && !entry.allow(rel, ext)) return { status: 403 };
   let real: string; let rootReal: string;
   try { rootReal = await fs.realpath(root); real = await fs.realpath(path.join(root, rel)); } catch { return { status: 404 }; }
   if (real !== rootReal && !real.startsWith(rootReal + path.sep)) return { status: 403 };
@@ -80,4 +84,14 @@ export async function serveHubFile(roots: HubFileRoots, pathname: string, range:
   stream.on('error', () => { if (!res.headersSent) res.writeHead(500); res.end(); });
   res.on('close', () => stream.destroy());
   stream.pipe(res);
+}
+
+/** The studio's pipeline doc (one fixed markdown file of the repo) as plain text: `GET /api/hub/game-pipeline`. */
+export const GAME_PIPELINE_PATH = '/api/hub/game-pipeline';
+export async function serveTextDoc(file: string | undefined, head: boolean, res: ServerResponse): Promise<void> {
+  let text: string | null = null;
+  if (file) { try { const st = await fs.stat(file); if (st.isFile() && st.size <= 1024 * 1024) text = await fs.readFile(file, 'utf8'); } catch { text = null; } }
+  if (text === null) { res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify({ error: 'not found' })); return; }
+  res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'x-content-type-options': 'nosniff', 'cache-control': 'private, max-age=60', 'content-security-policy': "sandbox; frame-ancestors 'self'" });
+  res.end(head ? undefined : text);
 }

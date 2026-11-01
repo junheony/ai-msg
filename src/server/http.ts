@@ -34,7 +34,7 @@ import { handleAuthLogin } from './authLogin/http';
 import type { AuthLoginHub } from './authLogin/hub';
 import type { HubStatusService } from './hub/status';
 import { HUB_PROXY_PREFIX, HUB_PROXY_TARGETS, proxyHubRequest, type ProxyTarget } from './hub/proxy';
-import { HUB_FILE_PREFIX, serveHubFile, type HubFileRoots } from './hub/files';
+import { GAME_PIPELINE_PATH, HUB_FILE_PREFIX, serveHubFile, serveTextDoc, type HubFileRoots } from './hub/files';
 import { createMarketService, REPLAY_PREFIX, serveReplay, type MarketService } from './replay/market';
 import { SR_PREFIX, serveSr, type SrService } from './hub/sr';
 import { LAB_PREFIX, serveLab, type LabService } from './hub/lab';
@@ -81,7 +81,7 @@ export type HttpDeps = {
   /** In-app login window (allowlisted `claude auth login` and the same for Codex / Grok). Absent = no /api/auth-login. */
   authLogin?: AuthLoginHub;
   /** MSG Hub: `GET /api/hub/status` (the overview) and the `/hub/p/<id>/` embed proxy. Absent = 404 for both. */
-  hub?: { status: HubStatusService; proxyTargets?: Record<string, ProxyTarget>; /** Named folders `/api/hub/file/<name>/…` may serve (read-only media, build outputs). */ fileRoots?: HubFileRoots; /** Trading room `GET /api/hub/sr[?symbol=]` (the bot's support/resistance snapshot). Absent = 404. */ sr?: SrService; /** Read-only lab gateway summary. */ lab?: LabService };
+  hub?: { status: HubStatusService; proxyTargets?: Record<string, ProxyTarget>; /** Named folders `/api/hub/file/<name>/…` may serve (read-only media, build outputs). */ fileRoots?: HubFileRoots; /** 게임 스튜디오's pipeline doc (docs/GAME_PIPELINE.md), served as text at GET /api/hub/game-pipeline. */ pipelineDoc?: string; /** Trading room `GET /api/hub/sr[?symbol=]` (the bot's support/resistance snapshot). Absent = 404. */ sr?: SrService; /** Read-only lab gateway summary. */ lab?: LabService };
   /** Trading room chart replay: `GET /api/replay/*` public market data fetched server-side (no keys). Default = live exchanges. */
   replay?: MarketService;
   /**
@@ -819,6 +819,11 @@ export function createRequestHandler(deps: HttpDeps) {
           if (req.method !== 'GET' && req.method !== 'HEAD') { json(res, 405, { error: 'method not allowed' }); return; }
           if (!deps.hub?.fileRoots) { json(res, 404, { error: 'not found' }); return; }
           await serveHubFile(deps.hub.fileRoots, url.pathname, req.headers.range, req.method === 'HEAD', res);
+          return;
+        }
+        if (url.pathname === GAME_PIPELINE_PATH) {
+          if (req.method !== 'GET' && req.method !== 'HEAD') { json(res, 405, { error: 'method not allowed' }); return; }
+          await serveTextDoc(deps.hub?.pipelineDoc, req.method === 'HEAD', res);
           return;
         }
         // Trading room chart replay: public klines/OI/funding, GET only, validated and cached in replay/market.ts.

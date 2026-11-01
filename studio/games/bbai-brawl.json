@@ -1,0 +1,122 @@
+{
+  "schema": 1,
+  "id": "bbai-brawl",
+  "title": "BBAI Brawl",
+  "titleKo": "비비에이아이 브롤 · 미배포 후보",
+  "genre": "생존 액션",
+  "engine": "three.js / unity",
+  "status": "candidate",
+  "cover": "~/bbai-codex/brawl/qa-visual-final/desktop-1440-battle-effects.png",
+  "repos": [
+    {
+      "label": "웹 · codex 미배포",
+      "path": "~/bbai-codex/brawl",
+      "branch": "codex/brawl-polish",
+      "remote": "github.com/junheony/bbai-brawl"
+    },
+    {
+      "label": "Unity · 985b3bc 재빌드 대기",
+      "path": "~/bbai-codex/unity",
+      "branch": "codex/brawl-unity-polish",
+      "remote": "github.com/junheony/bbai-brawl-unity"
+    },
+    {
+      "label": "Unity WebGL · 이전 fc74fb8 빌드",
+      "path": "~/bbai-codex/unity-build/fc74fb8",
+      "readonly": true
+    }
+  ],
+  "stages": [
+    {
+      "id": "concept",
+      "evidence": [
+        "~/bbai-codex/brawl/outputs/bbai-neural-upgrade/DESIGN.md"
+      ]
+    },
+    {
+      "id": "assets",
+      "evidence": [
+        "~/bbai-codex/brawl/docs/ASSET-QUALITY-REMAINING-2026-09-20.md"
+      ]
+    },
+    {
+      "id": "build",
+      "evidence": [
+        "~/bbai-codex/brawl/dist/index.html",
+        "~/bbai-codex/unity-build/fc74fb8/index.html"
+      ]
+    },
+    {
+      "id": "test",
+      "evidence": [
+        "~/jobs/brawl-web-3/REPORT.md"
+      ]
+    },
+    {
+      "id": "preview",
+      "evidence": [
+        "~/bbai-codex/brawl/qa-weapon-fx/desktop-final-arena.png"
+      ]
+    },
+    {
+      "id": "approval",
+      "evidence": []
+    },
+    {
+      "id": "release",
+      "evidence": []
+    }
+  ],
+  "artifacts": {
+    "screenshots": [
+      "~/bbai-codex/brawl/qa-*/*.png",
+      "~/bbai-codex/brawl/qa-*/*/*.png",
+      "~/bbai-codex/brawl/outputs/*/*.png"
+    ],
+    "builds": [
+      "~/bbai-codex/brawl/dist/*.html",
+      "~/bbai-codex/unity-build/fc74fb8/*.html"
+    ]
+  },
+  "tests": [
+    {
+      "label": "최신 성능 게이트 미달 · Unity 재빌드 대기",
+      "path": "~/jobs/brawl-web-3/REPORT.md"
+    },
+    {
+      "label": "전체 감사 7실패·85건너뜀 보존",
+      "path": "~/jobs/brawl-web-2/REPORT.md"
+    },
+    {
+      "label": "초기 RC 감사와 누락 원본",
+      "path": "~/jobs/brawl-web/REPORT.md"
+    },
+    {
+      "label": "Unity 소스 검증 · 당시 라이선스 한계",
+      "path": "~/jobs/brawl-unity/REPORT.md"
+    }
+  ],
+  "preview": [
+    {
+      "label": "AWS 구버전 0.15.0-20261027-polish · codex 미배포",
+      "url": "https://boredbrain.app/brawl/"
+    }
+  ],
+  "jobs": [
+    "brawl-web",
+    "brawl-web-2",
+    "brawl-web-3",
+    "brawl-unity"
+  ],
+  "approvals": [
+    {
+      "what": "성능·실기기·원본·인간 리플레이 게이트 후 출시",
+      "state": "pending",
+      "at": null
+    }
+  ],
+  "nextAction": {
+    "text": "Unity 985b3bc Mac 재빌드 후 성능 게이트 재측정",
+    "owner": true
+  }
+}

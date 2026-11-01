@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "id": "{{id}}",
+  "title": "{{title}}",
+  "status": "concept",
+  "reference": "{{reference}}",
+  "repos": [{ "label": "새 게임", "path": "{{target}}", "readonly": false }],
+  "stages": [
+    { "id": "concept", "evidence": [] },
+    { "id": "assets", "evidence": [] },
+    { "id": "build", "evidence": [] },
+    { "id": "test", "evidence": [] },
+    { "id": "preview", "evidence": [] },
+    { "id": "approval", "evidence": [] },
+    { "id": "release", "evidence": [] }
+  ],
+  "artifacts": { "screenshots": [], "concept": [], "builds": [], "video": [] },
+  "tests": [],
+  "preview": [],
+  "jobs": [],
+  "approvals": [],
+  "nextAction": { "text": "새 콘셉트와 레퍼런스 에셋 권리 검토", "owner": true }
+}

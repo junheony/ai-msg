@@ -1,0 +1,111 @@
+{
+  "schema": 1,
+  "id": "neon-apex-supercar",
+  "title": "NEON APEX SUPERCAR v3.1.0",
+  "titleKo": "네온 에이펙스 슈퍼카 · 미공개 후보",
+  "genre": "아케이드 레이싱",
+  "engine": "three.js",
+  "status": "candidate",
+  "reference": "neon-apex",
+  "cover": "~/jobs/neon-apex-ui-2/shots/phone-menu.png",
+  "repos": [
+    {
+      "label": "v3.1.0 원본 · 미공개",
+      "path": "~/games/neon-apex-supercar",
+      "readonly": true
+    },
+    {
+      "label": "UI 폴리시 · 비공개 저장소",
+      "path": "~/bbai-codex/neon-apex-ui",
+      "branch": "ui/menu-hud-polish",
+      "remote": "github.com/junheony/bbai-neon-apex"
+    },
+    {
+      "label": "백업",
+      "path": "~/games/neon-apex-supercar.bak-20261031",
+      "readonly": true
+    }
+  ],
+  "stages": [
+    {
+      "id": "concept",
+      "evidence": [
+        "~/games/neon-apex-supercar/README.md"
+      ]
+    },
+    {
+      "id": "assets",
+      "evidence": [
+        "~/games/neon-apex-supercar/dist/CAR-ASSET-NOTICES.txt",
+        "~/games/neon-apex-supercar/dist/THREE-LICENSE.txt"
+      ]
+    },
+    {
+      "id": "build",
+      "evidence": [
+        "~/bbai-codex/neon-apex-ui/dist/NEON-APEX.html"
+      ]
+    },
+    {
+      "id": "test",
+      "evidence": [
+        "~/jobs/neon-apex-ui-2/VALIDATION.json",
+        "~/jobs/neon-apex-ui-2/REPORT.md"
+      ]
+    },
+    {
+      "id": "preview",
+      "evidence": [
+        "~/jobs/neon-apex-ui-2/shots/manifest.json"
+      ]
+    },
+    {
+      "id": "approval",
+      "evidence": []
+    },
+    {
+      "id": "release",
+      "evidence": []
+    }
+  ],
+  "artifacts": {
+    "screenshots": [
+      "~/jobs/neon-apex-ui-2/shots/*.png",
+      "~/jobs/neon-apex-ui/shots/after/*.png",
+      "~/games/neon-apex-supercar/dist/*.png"
+    ],
+    "builds": [
+      "~/bbai-codex/neon-apex-ui/dist/*.html",
+      "~/games/neon-apex-supercar/dist/*.html"
+    ]
+  },
+  "tests": [
+    {
+      "label": "UI 최종 검증 · 릴리스 분할 실행 한계 포함",
+      "path": "~/jobs/neon-apex-ui-2/VALIDATION.json"
+    },
+    {
+      "label": "중단된 원본 릴리스 실행 기록",
+      "path": "~/jobs/neon-apex-ui-2/playtest/release-interrupted-report.json"
+    },
+    {
+      "label": "ENDLESS·후속 검사 복구 결과",
+      "path": "~/jobs/neon-apex-ui-2/playtest/recovery/release-playtest-report.json"
+    }
+  ],
+  "jobs": [
+    "neon-apex-ui",
+    "neon-apex-ui-2"
+  ],
+  "approvals": [
+    {
+      "what": "v3.1.0 공개 여부 · 분할 검증 한계 검토",
+      "state": "pending",
+      "at": null
+    }
+  ],
+  "nextAction": {
+    "text": "v3.1.0 공개 전 연속 릴리스 재검증 필요 여부 결정",
+    "owner": true
+  }
+}
