@@ -2,8 +2,9 @@
  * 영상 › Shorts 공장: the second project tab of the 영상 mode (src/server/hub/shorts.ts ships `mode.shorts`).
  * Read-only: no control anywhere below the tab bar. Every unknown is a word (미공개 · 미수집 · 측정 불가), never a 0 or a bar.
  */
-import type { HubState, SfCalendar, SfCalendarDay, SfChannel, SfFile, SfPlatformId, ShortsFactoryView } from '../../shared/hub-types';
-import { SF_PLATFORMS } from '../../shared/hub-types';
+import { useState } from 'react';
+import type { HubState, SfCalendar, SfCalendarDay, SfChannel, SfFile, SfLedger, SfLedgerItem, SfLedgerStatus, SfLedgerType, SfPlatformId, ShortsFactoryView } from '../../shared/hub-types';
+import { SF_LEDGER_STATUSES, SF_PLATFORMS } from '../../shared/hub-types';
 import { Attention, Kpi, Lead } from './HubPage';
 import { Spark } from './HubSections';
 import { relTime } from './time';
@@ -169,6 +170,67 @@ function Pipeline({ sf, now }: { sf: ShortsFactoryView; now: number }) {
   );
 }
 
+/* ───────── 적용 현황 (reference_ledger.json) ───────── */
+
+export const LEDGER_STATUS_KO: Record<SfLedgerStatus, { text: string; cls: string }> = {
+  applied: { text: '적용됨 – 운영 중', cls: 'ok' }, built_off: { text: '구현됨 – 꺼짐', cls: 'warn' }, docs_only: { text: '문서만', cls: 'muted' },
+  rejected: { text: '검토 후 제외', cls: 'na' }, todo: { text: '미착수', cls: 'info' }, unknown: { text: '미분류', cls: 'bad' },
+};
+const LEDGER_TYPE_KO: Record<SfLedgerType, string> = { video: '영상', tool: '도구', post: '게시물', tip: '팁', other: '기타' };
+type LedgerFilter = SfLedgerStatus | 'all';
+
+/** A clipped cell: the full text sits in the tooltip, '—' when the field is empty. */
+const Clip = ({ text, cls }: { text: string | null; cls?: string }) => (text ? <span className={`sf-clip ${cls ?? ''}`} title={text}>{text}</span> : <NA text="—" />);
+
+function LedgerRow({ it }: { it: SfLedgerItem }) {
+  const st = LEDGER_STATUS_KO[it.status];
+  const reason = it.status === 'rejected' || it.status === 'unknown' ? (it.statusReason ?? it.statusText) : null;
+  return (
+    <tr data-testid={`sf-ledger-${it.id}`} data-status={it.status}>
+      <td className="sf-ld-date">{it.addedAt ? <><span>{it.addedAt}</span>{it.updatedAt && it.updatedAt !== it.addedAt && <span className="sf-dim">갱신 {it.updatedAt}</span>}</> : <NA text="—" />}</td>
+      <td className="sf-name sf-ld-title">{it.url ? <a href={it.url} target="_blank" rel="noopener noreferrer" title={it.url}>{it.title}</a> : <b title={it.title}>{it.title}</b>}</td>
+      <td className="sf-ld-type">{LEDGER_TYPE_KO[it.type]}</td>
+      <td className="sf-ld-status" title={it.statusReason ?? it.statusText ?? undefined}><span className={`sf-badge ${st.cls}`}>{st.text}</span>{reason && <span className="sf-dim sf-ld-reason">{reason}</span>}</td>
+      <td className="sf-ld-text"><Clip text={it.whatWeTook} /></td>
+      <td className="sf-ld-text"><Clip text={it.evidence} cls="sf-ev" /></td>
+      <td className="sf-ld-text"><Clip text={it.nextAction} /></td>
+    </tr>
+  );
+}
+
+function Ledger({ ledger, now }: { ledger: SfLedger; now: number }) {
+  const [filter, setFilter] = useState<LedgerFilter>('all');
+  const f = ledger.file;
+  const note = f.state === 'missing' ? '파일 없음' : f.state === 'malformed' ? `형식 오류 · ${f.note ?? ''}` : `${ledger.total}건 · ${f.at ? `${relTime(f.at, now)} 갱신` : 'generated_at 없음'}`;
+  const shown = filter === 'all' ? ledger.items : ledger.items.filter((it) => it.status === filter);
+  const chips: { id: LedgerFilter; text: string; n: number; cls: string }[] = [
+    { id: 'all', text: '전체', n: ledger.total, cls: '' },
+    ...SF_LEDGER_STATUSES.filter((k) => k !== 'unknown' || ledger.counts.unknown > 0).map((k) => ({ id: k as LedgerFilter, text: LEDGER_STATUS_KO[k].text, n: ledger.counts[k], cls: LEDGER_STATUS_KO[k].cls })),
+  ];
+  return (
+    <Sec title="적용 현황" note={note} testid="sf-ledger">
+      {f.state === 'missing' ? <div className="sec-empty">reference_ledger.json 없음 · 참고한 영상·도구·글과 그 적용 결과를 ~/shorts_status/reference_ledger.json 에 적으면 보인다.</div>
+        : f.state === 'malformed' ? <div className="sec-empty">reference_ledger.json 형식 오류 · {f.note} · 파일을 고치면 보인다.</div>
+        : !ledger.total ? <div className="sec-empty">항목 없음 · items 가 비어 있다.</div> : (
+          <>
+            <div className="sf-chips" role="group" aria-label="상태 필터" data-testid="sf-ledger-chips">
+              {chips.map((c) => <button key={c.id} type="button" className={`sf-chip ${c.cls}${filter === c.id ? ' on' : ''}`} aria-pressed={filter === c.id} data-testid={`sf-ledger-chip-${c.id}`} onClick={() => setFilter(c.id)}>{c.text}<span className="sf-chip-n">{c.n}</span></button>)}
+            </div>
+            {!shown.length ? <div className="sec-empty">해당 상태의 항목 없음</div> : (
+              <div className="twrap">
+                <table className="t sf-t sf-ld">
+                  <thead><tr><th>추가일</th><th>제목</th><th>유형</th><th>상태</th><th>가져온 것</th><th>근거</th><th>다음 할 일</th></tr></thead>
+                  <tbody>{shown.map((it) => <LedgerRow key={it.id} it={it} />)}</tbody>
+                </table>
+              </div>
+            )}
+            <p className="sf-rule">추가일 내림차순 (같으면 갱신일). 상태는 적용됨 – 운영 중 · 구현됨 – 꺼짐 · 문서만 · 검토 후 제외 · 미착수 다섯 가지, 그 밖은 미분류. 근거는 커밋·경로·플래그 그대로.{ledger.truncated ? ` 최근 ${ledger.items.length}건만 표시 (${ledger.truncated}건 생략).` : ''}{ledger.skipped ? ` id 또는 title 없는 ${ledger.skipped}건 건너뜀.` : ''}</p>
+          </>
+        )}
+    </Sec>
+  );
+}
+
 /** What the page header shows while this project is selected: its own state, the newest file time, the three files as sources. */
 export function sfHeader(sf: ShortsFactoryView): { state: HubState; lastActivity: string | null; sources: { name: string; ok: boolean; label: string }[] } {
   const files = [sf.files.status, sf.files.channels, sf.files.history];
@@ -194,6 +256,7 @@ export function ShortsFactoryHome({ sf, now }: { sf: ShortsFactoryView; now: num
         <Platforms channels={sf.channels} />
         <Pipeline sf={sf} now={now} />
       </div>
+      <Ledger ledger={sf.ledger} now={now} />
       <Sec title="루틴 로그 꼬리" note={sf.pipeline.routine.logTail.length ? `${sf.pipeline.routine.logTail.length}줄` : undefined} testid="sf-log">
         {sf.pipeline.routine.logTail.length ? <pre className="sf-log">{sf.pipeline.routine.logTail.join('\n')}</pre> : <div className="sec-empty">로그 꼬리 없음 · 루틴이 status.json 의 routine.log_tail 을 채우면 보인다.</div>}
       </Sec>

@@ -284,6 +284,26 @@ export interface SfPipeline {
   claude: { state: HubState; summary: string; picked: string | null; accounts: SfClaudeAccount[] };
   codex: { available: boolean | null; version: string | null; note: string | null };
 }
+/** 적용 현황 (reference_ledger.json): one reference we studied and what became of it. `status` is the normalized bucket; `statusText` the file's own label (scrubbed) when it matched none. */
+export const SF_LEDGER_STATUSES = ['applied', 'built_off', 'docs_only', 'rejected', 'todo', 'unknown'] as const;
+export type SfLedgerStatus = (typeof SF_LEDGER_STATUSES)[number];
+export type SfLedgerType = 'video' | 'tool' | 'post' | 'tip' | 'other';
+export interface SfLedgerItem {
+  id: string; title: string; /** http(s) only; anything else is dropped. */ url: string | null; type: SfLedgerType;
+  whatWeTook: string | null; status: SfLedgerStatus; statusText: string | null; statusReason: string | null; evidence: string | null; nextAction: string | null;
+  /** `YYYY-MM-DD` as written; null when missing or malformed (sorted last). */ addedAt: string | null; updatedAt: string | null;
+}
+export interface SfLedger {
+  file: SfFile;
+  /** added_at desc, then updated_at desc; capped (see `truncated`). */
+  items: SfLedgerItem[];
+  counts: Record<SfLedgerStatus, number>;
+  /** Items in the file (before the cap), entries without id/title excluded. */
+  total: number;
+  truncated: number;
+  /** Entries skipped for lack of an id or title. */
+  skipped: number;
+}
 export interface ShortsFactoryView {
   state: HubState;
   headline: string;
@@ -300,5 +320,6 @@ export interface ShortsFactoryView {
   notes: string[];
   /** user_reference history points that could not be tied to a channel yet. */
   unmappedReference: { at: string; videoId: string; views: number | null }[];
+  ledger: SfLedger;
   generatedAt: string;
 }
