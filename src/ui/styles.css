@@ -2860,7 +2860,7 @@ mark.find-hit.current { background: var(--btn-primary-bg); color: var(--btn-prim
 
 /* The hub is read from a step back (a control room, a phone on the desk): its small type sits one step above the
    terminal's — a 13 px label here is 14, a 14 px row is 15 — and the user's 글자 크기 still multiplies on top. */
-.hub-overlay, .hub-rail, .hub-menu { --fs-2xs: calc(13px * var(--font-scale, 1)); --fs-xs: calc(14px * var(--font-scale, 1)); --fs-sm: calc(15px * var(--font-scale, 1)); --fs-base: calc(16.5px * var(--font-scale, 1)); --fs-lg: calc(19px * var(--font-scale, 1)); }
+.hub-overlay, .rail, .hub-menu { --fs-2xs: calc(13px * var(--font-scale, 1)); --fs-xs: calc(14px * var(--font-scale, 1)); --fs-sm: calc(15px * var(--font-scale, 1)); --fs-base: calc(16.5px * var(--font-scale, 1)); --fs-lg: calc(19px * var(--font-scale, 1)); }
 
 /* Mode hues: place, not state. Declared on whatever carries data-mode (the main area, a rail button, a board row,
    the switcher) so descendants inherit; --mode-ink is mixed on the same element, darker in the light theme. */
@@ -2882,9 +2882,10 @@ mark.find-hit.current { background: var(--btn-primary-bg); color: var(--btn-prim
 .hub-switch.hub-on { border-color: color-mix(in srgb, var(--mode-hue) 45%, var(--glass-line)); }
 .hub-switch-icon { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 7px; background: var(--mode-soft); color: var(--mode-ink); }
 .hub-switch-label { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
-.hub-menu { position: absolute; top: calc(100% + 8px); left: 0; z-index: 40; width: 292px; padding: 8px; border: 1px solid var(--glass-line); border-radius: 16px; background: color-mix(in srgb, var(--panel) 84%, transparent); -webkit-backdrop-filter: blur(var(--glass-blur)); backdrop-filter: blur(var(--glass-blur)); box-shadow: inset 0 1px 0 var(--glass-hi), var(--elev-3); }
+.hub-menu { position: absolute; top: calc(100% + 8px); left: 0; z-index: 40; width: 292px; max-height: calc(100vh - 72px); max-height: calc(100dvh - 72px); overflow-y: auto; padding: 8px; border: 1px solid var(--glass-line); border-radius: 16px; background: color-mix(in srgb, var(--panel) 84%, transparent); -webkit-backdrop-filter: blur(var(--glass-blur)); backdrop-filter: blur(var(--glass-blur)); box-shadow: inset 0 1px 0 var(--glass-hi), var(--elev-3); }
 .hub-menu-head { padding: 6px 10px 8px; font-size: var(--fs-xs); color: var(--faint); }
 .hub-mi { display: flex; align-items: center; gap: 10px; width: 100%; height: 38px; padding: 0 8px; border: 0; border-radius: 10px; background: transparent; color: var(--fg); font-size: var(--fs-sm); text-align: left; cursor: pointer; }
+@media (max-width: 720px), (pointer: coarse) { .hub-mi { height: var(--phone-tap); } }
 .hub-mi:hover, .hub-mi:focus-visible { background: var(--hover); outline: none; }
 .hub-mi.on { color: var(--fg-strong); background: var(--mode-soft); }
 .hub-mi-icon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 8px; background: var(--pill-bg); color: var(--muted); flex-shrink: 0; }
@@ -2896,22 +2897,22 @@ mark.find-hit.current { background: var(--btn-primary-bg); color: var(--btn-prim
 .hub-menu-foot { margin-top: 6px; padding: 8px 10px 4px; border-top: 1px solid var(--glass-line); font-size: var(--fs-2xs); color: var(--faint); line-height: 1.45; }
 
 /* Summary chips (header) */
-.hub-sum { display: flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: var(--fs-xs); color: var(--muted); }
-.hub-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px 0 8px; border-radius: 999px; border: 1px solid var(--glass-line); background: var(--glass); color: var(--fg); font-family: var(--hub-font); font-size: var(--fs-sm); font-weight: 500; font-variant-numeric: tabular-nums; }
+.hub-sum { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: var(--fs-xs); color: var(--muted); }
+.hub-chip { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; height: 24px; padding: 0 9px 0 8px; border-radius: 999px; border: 1px solid var(--glass-line); background: var(--glass); color: var(--fg); font-family: var(--hub-font); font-size: var(--fs-sm); font-weight: 500; font-variant-numeric: tabular-nums; }
 .hub-chip i, .hub-st i, .hub-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex-shrink: 0; }
 .hub-chip.ok i, .hub-st.ok i, .hub-dot.ok { background: var(--hub-ok); box-shadow: 0 0 6px color-mix(in srgb, var(--hub-ok) 60%, transparent); }
 .hub-chip.warn i, .hub-st.warn i, .hub-dot.warn { background: var(--hub-warn); box-shadow: 0 0 6px color-mix(in srgb, var(--hub-warn) 60%, transparent); }
 .hub-chip.bad i, .hub-st.bad i, .hub-dot.bad { background: var(--hub-bad); box-shadow: 0 0 7px color-mix(in srgb, var(--hub-bad) 70%, transparent); }
 .hub-dot.info { background: var(--hub-info); }
 .hub-dot.none, .hub-dot.idle, .hub-dot.unknown { background: transparent; box-shadow: inset 0 0 0 1px var(--faint); }
-.hub-sync { margin-left: 4px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* Capped: an error string lands here, and it must not take the header from the mode title. */
+.hub-sync { margin-left: 4px; min-width: 0; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 /* Shell: the rail and the main area (the terminal and the hub overlay both live in .shell-main) */
 .rail { display: flex; flex-direction: column; gap: 4px; width: 72px; padding: 10px 6px; border-right: 1px solid var(--line); background: var(--sidebar); flex-shrink: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; position: static; z-index: 21; }
 .rail::-webkit-scrollbar { display: none; }
 .rail-btn { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 9px 2px 7px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font-size: var(--fs-2xs); font-family: inherit; line-height: 1.2; cursor: pointer; }
 .rail-btn:hover { background: var(--hover); color: var(--fg); }
-.rail-btn:focus-visible { outline: var(--focus); outline-offset: -2px; }
 .rail-btn.on { background: var(--mode-soft); color: var(--fg-strong); }
 .rail-btn.on::before { content: ""; position: absolute; left: -6px; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--mode-ink); box-shadow: 0 0 12px color-mix(in srgb, var(--mode-hue) 70%, transparent); }
 .rail-btn.on .rail-ico { color: var(--mode-ink); }
@@ -2977,7 +2978,7 @@ mark.find-hit.current { background: var(--btn-primary-bg); color: var(--btn-prim
 .kpi.warn::before { background: var(--hub-warn); }
 .kpi.bad::before { background: var(--hub-bad); box-shadow: 0 0 10px var(--hub-bad); }
 .kpi.info::before { background: var(--hub-info); }
-.kpi .l { font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi .l { font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
 .kpi .v { margin-top: 6px; font-family: var(--hub-font); font-size: var(--kpi-fs, var(--fs-hub-2xl)); line-height: 1; font-weight: 500; color: var(--fg-strong); font-variant-numeric: tabular-nums; letter-spacing: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kpi .v.sm { font-size: var(--fs-display); }
 /* Seven or more tiles share one strip: step the value down so wide numbers stop truncating. */
@@ -2985,7 +2986,7 @@ mark.find-hit.current { background: var(--btn-primary-bg); color: var(--btn-prim
 .kpi:first-child:nth-last-child(n+7) .v, .kpi:first-child:nth-last-child(n+7) ~ .kpi .v { white-space: normal; overflow-wrap: anywhere; line-height: 1.05; }
 .kpi .v.xs { font-size: var(--fs-xl); line-height: 1.15; }
 .kpi .v .u { font-family: var(--font); font-size: var(--fs-xs); font-weight: 600; color: var(--muted); margin-left: 4px; }
-.kpi .h { margin-top: auto; padding-top: 6px; font-size: var(--fs-2xs); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi .h { margin-top: auto; padding-top: 6px; font-size: var(--fs-2xs); color: var(--faint); overflow-wrap: anywhere; }
 .kpi .h.warn { color: var(--hub-warn); }
 .kpi .h.bad { color: var(--hub-bad); }
 .kpi .h.ok { color: var(--hub-ok); }
@@ -2995,12 +2996,12 @@ mark.find-hit.current { background: var(--btn-primary-bg); color: var(--btn-prim
 .sec > summary, .sec > .sh { display: flex; align-items: center; gap: 12px; min-height: 50px; padding: 0 2px; list-style: none; font-size: var(--fs-base); font-weight: 600; color: var(--fg-strong); }
 .sec > summary { cursor: pointer; }
 .sec > summary:hover .sec-title { color: var(--mode-ink); }
-.sec > summary:focus-visible { outline: var(--focus); outline-offset: -2px; border-radius: 6px; }
+.sec > summary:focus-visible { border-radius: 6px; }
 .sec > summary::-webkit-details-marker { display: none; }
 .sec > summary::before { content: ""; width: 6px; height: 6px; margin: -3px 4px 0 2px; border-right: 1.5px solid var(--faint); border-bottom: 1.5px solid var(--faint); transform: rotate(45deg); flex-shrink: 0; transition: transform var(--t-fast) var(--ease); }
 .sec:not([open]) > summary::before { transform: rotate(-45deg); margin-top: 0; }
 .sec .sec-title { white-space: nowrap; }
-.sec .n { font-weight: 400; font-size: var(--fs-xs); color: var(--faint); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sec > :where(summary, .sh) .n { font-weight: 400; font-size: var(--fs-xs); color: var(--faint); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sec .cnt { margin-left: auto; font-family: var(--hub-font); font-size: var(--fs-base); color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
 .sec .b { padding: 0 2px 20px; }
 .sec.sec-raw { border-top-style: dashed; }
@@ -3088,7 +3089,6 @@ table.t { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); font-
 .card .ft { grid-area: ft; margin: 0; display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 6px; font-size: var(--fs-2xs); color: var(--faint); padding: 0; border: 0; font-variant-numeric: tabular-nums; }
 .card .open { display: inline-flex; align-items: center; gap: 2px; height: 28px; border: 1px solid var(--glass-line); background: transparent; padding: 0 6px 0 12px; border-radius: var(--r-full); color: var(--fg); font-weight: 600; font-size: var(--fs-xs); cursor: pointer; font-family: inherit; transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease); }
 .card .open:hover { background: var(--mode-soft); border-color: color-mix(in srgb, var(--mode-hue) 45%, transparent); color: var(--fg-strong); }
-.card .open:focus-visible { outline: var(--focus); }
 
 @media (prefers-reduced-motion: reduce) {
   .hub-page > * { animation: none; }

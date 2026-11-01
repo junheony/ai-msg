@@ -45,7 +45,7 @@
 .hs-grid { stroke: var(--line); stroke-width: 1; }
 .hs-zero { stroke: var(--line-strong); stroke-width: 1; stroke-dasharray: 3 3; }
 .hs-cursor { stroke: var(--faint); stroke-width: 1; stroke-dasharray: 2 3; pointer-events: none; }
-.hs-tick { font-size: 11px; fill: var(--faint); font-variant-numeric: tabular-nums; font-family: var(--hub-font); }
+.hs-tick { font-size: var(--fs-2xs); fill: var(--faint); font-variant-numeric: tabular-nums; font-family: var(--hub-font); }
 
 /* steps: a pipeline left → right, wrapping on narrow screens */
 .hs-steps { list-style: none; margin: 0; padding: 4px 0 0; display: flex; flex-wrap: wrap; gap: 10px 4px; }

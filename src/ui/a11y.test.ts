@@ -15,4 +15,8 @@ describe('accessibility baseline', () => {
     expect(css).toMatch(/button:focus-visible, select:focus-visible, input:focus-visible/);
     expect(css).toMatch(/\.sidebar-search:focus-within \{ box-shadow: var\(--focus\); \}/);
   });
+
+  it('--focus is a box-shadow value, never an outline (it would drop the forced-colors fallback outline)', () => {
+    expect(css).not.toMatch(/outline: var\(--focus\)/);
+  });
 });
