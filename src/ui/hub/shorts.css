@@ -1,0 +1,116 @@
+/* 영상 › Shorts 공장 (src/ui/hub/ShortsFactoryHome.tsx). Everything under .sf-; the frame (.sec .sh .b), KPI tiles (.kpis .kpi),
+   lead (.lead), 주의 list (.att), tables (.t) and sparklines (.hs-spark) are the hub's own classes and tokens.
+   Hierarchy: channel table and the two-week KST calendar carry the page; the rest sits in a quieter two-column grid.
+   Phone (≤720): one column, the calendar becomes a day list, tables scroll sideways. */
+
+/* project tabs under the 영상 header (the one control on the page besides 새로고침) */
+.sf-tabs { display: flex; align-items: center; gap: 4px; margin: 2px 0 -2px; padding: 0; border-bottom: 1px solid var(--line-strong); }
+.sf-tab { appearance: none; display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px; margin-bottom: -1px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-family: var(--hub-font); font-size: var(--fs-base); font-weight: 600; letter-spacing: .1px; cursor: pointer; white-space: nowrap; }
+.sf-tab:hover { color: var(--fg-strong); }
+.sf-tab[aria-selected="true"] { color: var(--fg-strong); border-bottom-color: var(--mode-ink); }
+.sf-tab:focus-visible { outline: 2px solid var(--mode-ink); outline-offset: -2px; border-radius: 6px; }
+.sf-tab-n { font-size: var(--fs-2xs); font-family: var(--font); font-weight: 600; padding: 1px 7px; border-radius: var(--r-full); background: var(--glass); border: 1px solid var(--glass-line); color: var(--muted); font-variant-numeric: tabular-nums; }
+.sf-tab-n.warn { color: var(--hub-warn); border-color: color-mix(in srgb, var(--hub-warn) 40%, var(--line)); background: var(--hub-warn-soft); }
+.sf-tab-n.bad { color: var(--hub-bad); border-color: color-mix(in srgb, var(--hub-bad) 45%, var(--line)); background: var(--hub-bad-soft); }
+
+.sf { display: flex; flex-direction: column; gap: var(--s4, 16px); min-width: 0; }
+/* nine KPIs: a fixed 5-column grid (not auto-fit) so the second row does not sit 7+2; 3 on tablet, 2 on phone — scoped to .sf */
+.sf .kpis { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.sf .sf-dim { display: block; color: var(--faint); font-weight: 400; font-size: var(--fs-2xs); font-family: var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 28ch; }
+.sf-na { color: var(--faint); font-family: var(--font); font-size: var(--fs-xs); font-weight: 500; }
+
+/* file bands: what each source file is right now */
+.sf-bands { display: flex; flex-direction: column; gap: 6px; }
+.sf-band { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 8px 12px; border-left: 3px solid var(--hub-info); border-radius: 0 8px 8px 0; background: var(--hub-info-soft); color: var(--fg); font-size: var(--fs-xs); line-height: 1.45; min-width: 0; }
+.sf-band b { color: var(--fg-strong); font-family: var(--hub-font); font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; }
+.sf-band.warn { border-left-color: var(--hub-warn); background: var(--hub-warn-soft); }
+.sf-band.bad { border-left-color: var(--hub-bad); background: var(--hub-bad-soft); }
+.sf-band.ok { border-left-color: var(--line-strong); background: var(--glass); color: var(--muted); }
+
+/* section frame extras */
+.sf-sec { min-width: 0; }
+.sf-sec > .sh { flex-wrap: wrap; row-gap: 2px; }
+.sf-sec .sf-right { margin-left: auto; }
+.sf-sec .b { display: flex; flex-direction: column; gap: 10px; padding: 4px 2px 20px; min-width: 0; }
+.sf-rule { margin: 0; font-size: var(--fs-2xs); color: var(--faint); line-height: 1.5; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.sf-list { margin: 0; padding-left: 18px; font-size: var(--fs-xs); color: var(--fg); line-height: 1.5; display: flex; flex-direction: column; gap: 2px; }
+.sf-list.warn { color: var(--hub-warn); }
+.sf-list li.ok b { color: var(--hub-ok); }
+.sf-list b { font-family: var(--hub-font); font-weight: 600; }
+
+/* channel comparison: the primary table; the first row (the channel leading today) is tinted with the mode colour */
+.sf-t td.sf-name b { display: block; color: var(--fg-strong); font-weight: 600; }
+.sf-t td.sf-name { max-width: 30ch; }
+.sf-t tr.sf-top td.sf-name b { color: var(--mode-ink); }
+.sf-t td.sf-latest { position: relative; min-width: 14ch; }
+.sf-t td.sf-latest > span { position: relative; z-index: 1; }
+.sf-bar { position: absolute; left: 6px; bottom: 5px; height: 3px; border-radius: 2px; background: color-mix(in srgb, var(--mode-ink) 55%, transparent); max-width: calc(100% - 12px); }
+.sf-t tr.sf-top .sf-bar { background: var(--mode-ink); box-shadow: 0 0 8px color-mix(in srgb, var(--mode-ink) 50%, transparent); }
+.sf-t td.sf-spark { width: 180px; min-width: 140px; }
+.sf-t td.sf-spark .hs-spark { max-width: 180px; }
+.sf-t td.sf-spark .hs-spark svg { height: 28px; }
+.sf-t td.sf-spark .hs-spark.empty { font-size: var(--fs-2xs); color: var(--faint); }
+.sf-t td.sf-col { font-size: var(--fs-xs); white-space: nowrap; }
+.sf-t td.sf-col.ok { color: var(--hub-ok); }
+.sf-t td.sf-col.warn { color: var(--hub-warn); }
+.sf-t td.sf-col .sf-dim { max-width: 36ch; }
+.sf-t td, .sf-t th { vertical-align: middle; }
+.sf-t tbody tr { height: 44px; }
+
+/* platforms */
+.sf-pt td.sf-pf { font-size: var(--fs-xs); font-weight: 500; }
+.sf-pt td.sf-pf.ok { color: var(--hub-ok); }
+.sf-pt td.sf-pf.na { color: var(--faint); font-weight: 400; }
+.sf-pt td.sf-pf.warn { color: var(--hub-warn); }
+
+/* KST calendar: 7 columns × 2 weeks; today gets the mode colour, a tomorrow with fewer bookings than channels a warn tint */
+.sf-cal-head { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; padding: 0 0 2px; font-size: var(--fs-2xs); color: var(--faint); font-weight: 600; }
+.sf-cal-head span { padding: 0 8px; }
+.sf-cal { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.sf-day { display: flex; flex-direction: column; gap: 4px; min-height: 96px; padding: 7px 8px 8px; border: 1px solid var(--glass-line); border-radius: 10px; background: var(--glass); box-shadow: inset 0 1px 0 var(--glass-hi); min-width: 0; position: relative; }
+.sf-day.today { border-color: var(--mode-ink); box-shadow: inset 0 1px 0 var(--glass-hi), 0 0 0 1px color-mix(in srgb, var(--mode-ink) 35%, transparent); }
+.sf-day.gap { border-color: color-mix(in srgb, var(--hub-warn) 45%, var(--line)); background: var(--hub-warn-soft); }
+.sf-dn { display: flex; align-items: baseline; gap: 4px; font-size: var(--fs-2xs); color: var(--muted); white-space: nowrap; overflow: hidden; }
+.sf-dn b { font-family: var(--hub-font); font-size: var(--fs-sm); font-weight: 600; color: var(--fg-strong); font-variant-numeric: tabular-nums; }
+.sf-day.today .sf-dn b { color: var(--mode-ink); }
+.sf-dn .sf-dow { color: var(--faint); }
+.sf-dn em { font-style: normal; margin-left: auto; font-size: var(--fs-2xs); font-weight: 600; color: var(--mode-ink); }
+.sf-day.gap .sf-dn em { color: var(--hub-warn); }
+.sf-day ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sf-it { display: flex; align-items: center; gap: 5px; font-size: var(--fs-2xs); line-height: 1.35; min-width: 0; color: var(--fg); }
+.sf-it .hub-dot { width: 6px; height: 6px; }
+.sf-it .sf-tm { font-family: var(--hub-font); font-size: var(--fs-xs); font-weight: 500; color: var(--fg-strong); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.sf-it .sf-ch { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.sf-it.published .sf-tm { color: var(--hub-ok); }
+.sf-none { color: var(--faint); font-size: var(--fs-2xs); }
+.sf-gap { margin-top: auto; font-size: var(--fs-2xs); font-weight: 600; color: var(--hub-warn); }
+.sf-cal-off .sf-cal { opacity: .55; }
+
+/* two quieter columns */
+.sf-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 40px; align-items: start; min-width: 0; }
+.sf-rows dt { min-width: min(100%, 12ch); }
+.sf-rows dd { text-align: right; overflow-wrap: anywhere; }
+.sf-rows dd .sf-dim { display: inline; max-width: none; white-space: normal; }
+
+/* log tail */
+.sf-log { margin: 0; padding: 10px 12px; max-height: 240px; overflow: auto; border: 1px solid var(--glass-line); border-radius: 10px; background: var(--glass); font-size: var(--fs-2xs); line-height: 1.5; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+.sf-ref { display: flex; flex-direction: column; gap: 6px; }
+
+@media (max-width: 1100px) {
+  .sf .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .sf-day { min-height: 84px; padding: 6px 6px 7px; }
+  .sf-it .sf-ch { font-size: var(--fs-2xs); }
+}
+@media (max-width: 720px) {
+  .sf .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sf-grid { grid-template-columns: 1fr; gap: 0; }
+  .sf-sec .b { padding: 2px 2px 16px; }
+  .sf-cal-head { display: none; }
+  .sf-cal { grid-template-columns: 1fr; gap: 4px; }
+  .sf-day { min-height: 0; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 6px 10px; }
+  .sf-dn { flex: 0 0 9ch; }
+  .sf-dn em { margin-left: 2px; }
+  .sf-day ul { flex: 1 1 auto; flex-direction: row; flex-wrap: wrap; gap: 2px 10px; }
+  .sf-gap { margin-top: 0; }
+  .sf-tabs { overflow-x: auto; }
+}

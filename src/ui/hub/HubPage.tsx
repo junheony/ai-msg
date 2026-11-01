@@ -4,6 +4,7 @@ import { ExternalIcon, HubIcon, ReloadIcon } from './HubIcons';
 import { Cards, Chart, Images, KvGrid, Steps } from './HubSections';
 import { NexusHome } from './NexusHome';
 import { TradingHome } from './TradingHome';
+import { readVideoProject, sfHeader, ShortsFactoryHome, VIDEO_PROJECTS, writeVideoProject, type VideoProject } from './ShortsFactoryHome';
 import { modeDef, STATE_LABEL, stateClass } from './modes';
 import { relTime } from './time';
 import { ReplayTrainer } from './replay/ReplayTrainer';
@@ -186,6 +187,13 @@ export function SectionView({ s, name }: { s: HubSection; name: string }) {
  */
 export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generatedAt }: { modeKey: HubModeId; mode: HubMode | undefined; now: number; error: string | null; loading: boolean; onRefresh: () => void; generatedAt: string | null }) {
   const def = modeDef(modeKey);
+  // 영상 carries two projects: engineering-shorts (the mode's own page) and Shorts 공장 (mode.shorts). The choice is kept.
+  const [project, setProject] = useState<VideoProject>(readVideoProject);
+  const pick = (p: VideoProject) => { setProject(p); writeVideoProject(p); };
+  const factory = modeKey === 'video' && project === 'factory';
+  const own = !factory;
+  // While Shorts 공장 is selected the header speaks for it, not for engineering-shorts.
+  const head = factory && mode?.shorts ? sfHeader(mode.shorts) : null;
   const kpis = mode ? kpisOf(mode) : [];
   const sections = mode?.page?.sections ?? [];
   // Keyed by title (a suffix only for a repeated title), so a section added above does not remount — and collapse — the rest.
@@ -196,20 +204,31 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
       <header className="ph">
         <span className="mode-ico"><HubIcon name={def.icon} size={18} /></span>
         <h1>{mode?.name ?? def.label}</h1>
-        {mode && <StatePill state={mode.state} />}
-        {mode?.tag && <span className="hub-tag">{mode.tag}</span>}
-        <span className="meta">마지막 활동 {relTime(mode?.lastActivity, now)}</span>
-        {mode && mode.sources.length > 0 && <span className="hub-src-list">{mode.sources.map((s) => <span key={s.name} className={`src${s.ok ? '' : ' bad'}`} title={s.ok ? `${s.ms}ms` : s.error ?? '오류'}>{s.name}{s.ok ? '' : ` · ${s.error ?? '오류'}`}</span>)}</span>}
+        {mode && <StatePill state={head ? head.state : mode.state} />}
+        {head ? <span className="hub-tag">Shorts 공장</span> : mode?.tag && <span className="hub-tag">{mode.tag}</span>}
+        <span className="meta">{head ? '파일 갱신' : '마지막 활동'} {relTime(head ? head.lastActivity : mode?.lastActivity, now)}</span>
+        {head && <span className="hub-src-list" data-testid="sf-src-list">{head.sources.map((s) => <span key={s.name} className={`src${s.ok ? '' : ' bad'}`} title={s.label}>{s.name}{s.ok ? '' : ` · ${s.label}`}</span>)}</span>}
+        {!head && mode && mode.sources.length > 0 && <span className="hub-src-list">{mode.sources.map((s) => <span key={s.name} className={`src${s.ok ? '' : ' bad'}`} title={s.ok ? `${s.ms}ms` : s.error ?? '오류'}>{s.name}{s.ok ? '' : ` · ${s.error ?? '오류'}`}</span>)}</span>}
         <span className="ph-end">
           <span className="pill">읽기 전용</span>
           <button type="button" className="pill btn" onClick={onRefresh} disabled={loading} aria-label="지금 새로고침"><ReloadIcon /> <span className="pill-label">{loading ? '불러오는 중…' : '새로고침'}</span></button>
         </span>
       </header>
+      {modeKey === 'video' && (
+        <nav className="sf-tabs" role="tablist" aria-label="영상 프로젝트" data-testid="hub-video-tabs">
+          {VIDEO_PROJECTS.map((p) => {
+            const n = p.id === 'factory' ? mode?.shorts?.alerts.filter((a) => a.level !== 'info').length ?? 0 : mode?.alerts.length ?? 0;
+            const worst = p.id === 'factory' ? mode?.shorts?.alerts[0]?.level : mode?.alerts[0]?.level;
+            return <button key={p.id} type="button" role="tab" className="sf-tab" aria-selected={(p.id === 'factory') === factory} onClick={() => pick(p.id)}>{p.label}{n > 0 && <span className={`sf-tab-n ${worst === 'bad' ? 'bad' : 'warn'}`}>{n}</span>}</button>;
+          })}
+        </nav>
+      )}
       {error && <div className="hub-notice" role="alert">상태를 불러오지 못했어요 · {error}</div>}
       {!mode && !error && <div className="hub-notice muted">상태를 불러오는 중…</div>}
-      {mode && <Lead state={mode.state} headline={headlineOf(mode)} decision={decisionOf(mode)} />}
-      {kpis.length > 0 && <div className="kpis" data-testid="hub-kpis">{kpis.map((k, i) => <Kpi key={i} k={k} />)}</div>}
-      {mode && (
+      {factory && mode && (mode.shorts ? <ShortsFactoryHome sf={mode.shorts} now={now} /> : <div className="hub-notice muted" data-testid="sf-absent">서버가 Shorts 공장 데이터를 보내지 않았다 · 서버를 새 빌드로 올리면 보인다.</div>)}
+      {own && mode && <Lead state={mode.state} headline={headlineOf(mode)} decision={decisionOf(mode)} />}
+      {own && kpis.length > 0 && <div className="kpis" data-testid="hub-kpis">{kpis.map((k, i) => <Kpi key={i} k={k} />)}</div>}
+      {own && mode && (
         <section className="sec open-static" aria-label="주의">
           <div className="sh"><span className="sec-title">주의</span><span className="cnt">{mode.alerts.length}</span></div>
           <Attention alerts={mode.alerts} now={now} />
@@ -218,13 +237,14 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
       {mode?.id === 'nexus' && mode.nexus && <NexusHome home={mode.nexus} now={now} />}
       {mode?.id === 'trading' && mode.trading && <TradingHome t={mode.trading} now={now} />}
       {modeKey === 'trading' && <SrPanel now={now} />}
-      {mode && sections.map((s, i) => <SectionView key={sectionKeys[i]} s={s} name={mode.name} />)}
-      {mode && !mode.page && Object.keys(mode.metrics).length > 0 && <SectionView s={{ kind: 'kv', title: '지표', open: true, rows: Object.entries(mode.metrics).map(([k, v]) => [k, metricText(v)]) }} name={mode.name} />}
-      {mode && !mode.page && mode.links.filter((l) => !l.embed).map((l) => <SectionView key={l.href} s={{ kind: 'raw', title: l.label, href: l.href }} name={mode.name} />)}
+      {own && mode && sections.map((s, i) => <SectionView key={sectionKeys[i]} s={s} name={mode.name} />)}
+      {own && mode && !mode.page && Object.keys(mode.metrics).length > 0 && <SectionView s={{ kind: 'kv', title: '지표', open: true, rows: Object.entries(mode.metrics).map(([k, v]) => [k, metricText(v)]) }} name={mode.name} />}
+      {own && mode && !mode.page && mode.links.filter((l) => !l.embed).map((l) => <SectionView key={l.href} s={{ kind: 'raw', title: l.label, href: l.href }} name={mode.name} />)}
       {modeKey === 'trading' && <ReplayTrainer />}
       {mode && (
         <footer className="foot">
-          <span>소스 {mode.sources.filter((s) => s.ok).length}/{mode.sources.length}{mode.sources.length ? ` · ${mode.sources.map((s) => `${s.name} ${s.ok ? `${s.ms}ms` : '실패'}`).join(' · ')}` : ''}</span>
+          {head ? <span>파일 {head.sources.filter((s) => s.ok).length}/{head.sources.length} 최신 · {head.sources.map((s) => `${s.name} ${s.label}`).join(' · ')}</span>
+            : <span>소스 {mode.sources.filter((s) => s.ok).length}/{mode.sources.length}{mode.sources.length ? ` · ${mode.sources.map((s) => `${s.name} ${s.ok ? `${s.ms}ms` : '실패'}`).join(' · ')}` : ''}</span>}
           <span>서버 생성 {relTime(generatedAt, now)}</span>
           <span>읽기 전용 · 제어 없음</span>
         </footer>

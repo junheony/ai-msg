@@ -119,6 +119,8 @@ export interface HubMode {
   nexus?: NexusHome;
   /** Trading Room only: the merged read-only view of the two bots (:8830 트레이딩룸, :8771/:8793 트레이딩-ver2). */
   trading?: TradingMerged;
+  /** 영상 only: the Shorts 공장 project (~/shorts_status files, read-only), shown as the mode's second tab. */
+  shorts?: ShortsFactoryView;
 }
 
 /* ───────── NEXUS home (ported from the standalone dashboard, read-only) ───────── */
@@ -204,4 +206,67 @@ export interface HubStatus {
   modes: HubMode[];
   host: string;
   generated_at: string;
+}
+
+/* ───────── Shorts 공장 (영상 mode, second project tab; src/server/hub/shorts.ts) ───────── */
+
+/** How a source file stands. `placeholder`: the bootstrap file, nothing has written real data yet. Never shown as healthy. */
+export type SfFileState = 'fresh' | 'stale' | 'placeholder' | 'missing' | 'malformed';
+export interface SfFile { name: string; state: SfFileState; /** generated_at as written in the file. */ at: string | null; /** Why malformed / what is missing (home paths scrubbed). */ note: string | null }
+export type SfPlatformId = 'youtube' | 'tiktok' | 'instagram' | 'x' | 'other';
+export const SF_PLATFORMS: readonly SfPlatformId[] = ['youtube', 'tiktok', 'instagram', 'x', 'other'];
+export type SfPlatformStatus = 'live' | 'none' | 'unknown';
+export interface SfVideo { id: string; title: string | null; views: number | null; uploadedAt: string | null }
+export interface SfChannel {
+  id: string;
+  name: string;
+  /** Daily upload slot, `HH:MM` KST, from channels.json (plan, not a schedule). */
+  publishKst: string | null;
+  platforms: Record<SfPlatformId, SfPlatformStatus>;
+  /** Public counts: null when YouTube does not expose them (shown 미공개, never 0). */
+  subscribers: number | null;
+  totalViews: number | null;
+  videoCount: number | null;
+  /** Newest first, bounded. */
+  videos: SfVideo[];
+  /** The newest video's views (null when unknown). */
+  latestViews: number | null;
+  /** From history.jsonl: the newest video's views over time when ≥2 points, else per-run sum of the latest videos. */
+  spark: { label: string; values: number[] } | null;
+  collection: { lastAttemptAt: string | null; lastSuccessAt: string | null; error: string | null; /** Last success older than the channels.json stale limit, or never. */ stale: boolean };
+}
+export interface SfCalendarItem { kind: 'scheduled' | 'published'; channelId: string; channelName: string; /** `HH:MM` KST */ time: string; title: string | null; videoId: string | null }
+export interface SfCalendarDay { /** `YYYY-MM-DD` KST */ date: string; /** 월…일 */ dow: string; today: boolean; tomorrow: boolean; items: SfCalendarItem[] }
+export interface SfCalendar { days: SfCalendarDay[]; /** `scheduled`/`published` lists could not be read (status.json missing, malformed or placeholder). */ unavailable: string | null }
+export type SfRoutineStatus = 'ok' | 'failed' | 'running' | 'unknown' | 'invalid';
+export interface SfClaudeAccount { id: string; verdict: 'candidate' | 'excluded'; /** The sanitized verdict text claude-pick printed (weekly %, reset hours, score / exclusion reason). */ detail: string }
+export interface SfPipeline {
+  routine: { lastRunAt: string | null; status: SfRoutineStatus; logTail: string[] };
+  lastRender: { file: string | null; at: string | null };
+  /** null = not reported (status.json missing, malformed, placeholder, or without a gate_failures array); [] = reported none. */
+  gateFailures: string[] | null;
+  queueDepth: number | null;
+  /** `df -P /`: null when it could not be measured (never 0). */
+  disk: { usedPct: number | null; note: string | null };
+  /** claude-pick --verbose, verdict lines only. `state` ok = an account was picked, warn = none eligible / dashboard unreachable, unknown = could not run. */
+  claude: { state: HubState; summary: string; picked: string | null; accounts: SfClaudeAccount[] };
+  codex: { available: boolean | null; version: string | null; note: string | null };
+}
+export interface ShortsFactoryView {
+  state: HubState;
+  headline: string;
+  decision: string;
+  kpis: HubKpi[];
+  alerts: HubAlert[];
+  files: { status: SfFile; channels: SfFile; history: SfFile & { rows: number; skipped: number } };
+  plannedTotal: number;
+  /** Channels whose YouTube platform is live. */
+  liveCount: number;
+  channels: SfChannel[];
+  calendar: SfCalendar;
+  pipeline: SfPipeline;
+  notes: string[];
+  /** user_reference history points that could not be tied to a channel yet. */
+  unmappedReference: { at: string; videoId: string; views: number | null }[];
+  generatedAt: string;
 }

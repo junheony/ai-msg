@@ -18,6 +18,7 @@ import {
   isObj, kpi, latestIso, num, objs, page, probe, scrub, sec, sortAlerts, str, stripSecrets, toIso, type HubDeps, type HubSelf, type HubSelfSeat,
 } from './shared';
 import { collectStudioCached } from './studios';
+import { collectShorts } from './shorts';
 import { collectYapping } from './yapping';
 
 export { DEFAULT_LINKS, HUB_CACHE_MS, HUB_TIMEOUTS, HUB_URLS, SECRET_FIELD_RE, errorText, fmtDuration, stripSecrets, toIso } from './shared';
@@ -90,10 +91,16 @@ function collectMsg(deps: HubDeps): HubMode {
 const ORDER: HubModeId[] = [...HUB_MODE_IDS];
 const NAMES: Record<HubModeId, string> = { msg: 'MSG 터미널', nexus: 'NEXUS', trading: 'Trading Room', video: '영상 스튜디오', game: '게임 스튜디오', ops: 'OPS · 펍덱', updown: 'UPDOWN', quant: 'QUANT', yapping: '야핑봇' };
 
+/** The 영상 card plus its second project tab (Shorts 공장); a failing shorts collector never takes engineering-shorts down with it. */
+async function withShorts(deps: HubDeps, video: Promise<HubMode>): Promise<HubMode> {
+  const [mode, shorts] = await Promise.all([video, collectShorts(deps).catch((err: unknown) => { console.error('[hub] shorts', errorText(err)); return null; })]);
+  return shorts ? { ...mode, shorts } : mode;
+}
+
 /** One pass over every source. A collector that throws (it should not) becomes an `unknown` card; this never rejects. */
 export async function collectHubStatus(deps: HubDeps): Promise<HubStatus> {
   const runs: Record<HubModeId, () => Promise<HubMode> | HubMode> = {
-    msg: () => collectMsg(deps), nexus: () => collectNexus(deps), trading: () => collectTrading(deps), video: () => collectStudioCached(deps, 'video'),
+    msg: () => collectMsg(deps), nexus: () => collectNexus(deps), trading: () => collectTrading(deps), video: () => withShorts(deps, collectStudioCached(deps, 'video')),
     game: () => collectStudioCached(deps, 'game'), ops: () => collectOps(deps), updown: () => collectUpdown(deps), quant: () => collectQuant(deps), yapping: () => collectYapping(deps),
   };
   const settled = await Promise.allSettled(ORDER.map(async (id) => runs[id]()));
