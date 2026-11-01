@@ -24,9 +24,29 @@ Use an identical running fixture for the BRIEF7b comparison, overriding only the
 
 ```sh
 QA_STATE=/tmp/msg-terminal-hermes-qa-state.json DIST=/tmp/msg-brief7-before-header/ui node scripts/qa/shoot-terminal.mjs shots-terminal-v2 header-before-hermes
-QA_STATE=/tmp/msg-terminal-hermes-qa-state.json DIST="$PWD/dist/ui" node scripts/qa/shoot-terminal.mjs shots-terminal-v2 header-after-hermes
+HEADER_CHECKS=1 QA_STATE=/tmp/msg-terminal-hermes-qa-state.json DIST="$PWD/dist/ui" node scripts/qa/shoot-terminal.mjs shots-terminal-v2 header-after-hermes
 ```
+
+`HEADER_CHECKS=1` enables the BRIEF7b acceptance checks on the synthetic Hermes fixture. It inspects the selected finished turn at the user-turn start, before scrolling to the answer, and takes the dedicated header screenshot at that same position. At both widths it requires one visible header identity, a visible engine/model chip, visible `자동 승인` text with an explanatory tooltip and non-danger color, and a visible error count plus `PARTIAL` answer status with no `SUCCESS` status. It targets the actual `.reply-status` markup; `[data-testid="turn-status"]` belongs to live turn activity and is not the finished-answer badge. The booleans/counts/status labels appear under `sizes.*.interactions.header` in the inspection JSON. Leave this flag off for before captures, which intentionally retain the earlier behavior. Existing before artifacts are not changed.
+
+On mobile or a narrow pane, the chip may show only `Hermes` to preserve room for the session title. The checks require a visible engine/model label and discoverable full engine/model information through visible text, `title`, or `aria-label`; they do not require the long model label to be visible at 390px. `modelChipModelVisible` records that distinction without making it a failure.
+
+The header inspection also records `.head-chip-title` width and visibility. At mobile widths up to 420px, `HEADER_CHECKS=1` requires at least 90px for the title so a technically bounded header cannot pass while reducing the session's identity to two or three characters. Desktop requires visibility without this mobile-specific threshold. Screenshot review still determines whether truncation and spacing look balanced.
+
+Usage access is tested through visible controls. Desktop uses the visible topbar usage summary. When that summary is hidden in the mobile terminal, the driver opens `메뉴` → `설정 및 계정` → `사용량 보기`, requires the usage sheet to appear, then closes it and the drawer before further interactions. `usageRoute` records the actual route and `usageClosed` verifies cleanup; a hidden button cannot satisfy discoverability by being clicked programmatically.
 
 The state records the first answer's normalized hash to keep framing stable. The explicit `SUCCESS` prefix is excluded from this hash, so a corrected status label does not change the anchor. The earlier `header-before-*` images use the frozen BRIEF6 UI and the original redacted real-Claude fixture; those remain useful baseline evidence but are not a same-fixture Hermes comparison. Only inspect/log count, geometry, status and boolean metadata; never dump raw transcript content or tokens. Screenshot names and actual validation outcomes belong in `REPORT.md` after root executes and reviews them.
 
 This harness does not prove live Hermes authentication, permissions, or resume behavior. It creates no real session or turn and performs no production operation. Optional `LAYOUT_CHECKS=1` adds xlarge-font and 400px split checks inherited from BRIEF6. It cannot substitute for adapter tests or actual desktop/mobile screenshot review.
+
+## Final BRIEF7b evidence
+
+The final capture passed at 1440×900 and 390×844:
+
+```sh
+RDP_PORT=9345 HEADER_CHECKS=1 DIST=/home/max/msg-hub-design/repo/dist/ui node scripts/qa/shoot-terminal.mjs shots-terminal-v2 header-after
+```
+
+`shots-terminal-v2/header-after-inspection.json` reports one identity mark, visible amber `자동 승인`, a finished turn with error count 1 and `PARTIAL` rather than `SUCCESS`, and a usable engine/model chip at both widths. The mobile title retains approximately 105.28px. Mobile usage is reached through `sidebar-account`, then closed successfully. Root inspected the mobile header, mobile picker and desktop header screenshots personally. The before captures remain intact for comparison.
+
+CDP 9343 was occupied by an unrelated browser, which was left untouched; the final owned capture used 9345. Root stopped the owned isolated QA host after verification. These results describe synthetic UI evidence, not a live provider turn.

@@ -63,13 +63,13 @@ describe('Chat', () => {
 
   it('pane header: engine mark (role=img) only once the engine is known — no Claude flash on an opening Codex thread', () => {
     renderChat([], false, vi.fn(), { title: 'thread', sessionEngine: null });
-    expect(document.querySelector('.head-chip-title .engine-mark')).toBeNull();
+    expect(document.querySelector('.head-identity .engine-mark')).toBeNull();
     cleanup();
     renderChat([], false, vi.fn(), { title: 'thread', sessionEngine: 'codex' });
-    expect(screen.getByRole('img', { name: 'Codex (GPT)' }).closest('.head-chip-title')).not.toBeNull();
+    expect(screen.getByRole('img', { name: 'Codex (GPT)' }).closest('.head-identity')).not.toBeNull();
     cleanup();
     renderChat([], false, vi.fn(), { title: 'thread', sessionEngine: 'claude' });
-    expect(screen.getByRole('img', { name: 'Claude' }).closest('.head-chip-title')).not.toBeNull();
+    expect(screen.getByRole('img', { name: 'Claude' }).closest('.head-identity')).not.toBeNull();
     cleanup();
     renderChat([], false, vi.fn(), { title: 'thread', sessionEngine: 'claude', isNew: true });
     expect(screen.queryByRole('img', { name: 'Claude' })).toBeNull();

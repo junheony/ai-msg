@@ -211,9 +211,10 @@ export function ActivitySteps({ items, cwd }: { items: AssistantItem[]; cwd?: st
   );
 }
 
-function Answer({ text }: { text: string }) {
+function Answer({ text, statusOverride }: { text: string; statusOverride?: 'PARTIAL' | 'BLOCKED' | 'SUCCESS' }) {
   const parsed = replyStatus(text);
-  return <>{parsed.status && <span className={`reply-status ${parsed.status.toLowerCase()}`} aria-label={`작업 상태: ${parsed.status}`}>{parsed.status}</span>}{parsed.text && <Markdown text={parsed.text} />}</>;
+  const status = parsed.status === 'BLOCKED' ? 'BLOCKED' : statusOverride ?? parsed.status;
+  return <>{status && <span className={`reply-status ${status.toLowerCase()}`} aria-label={`작업 상태: ${status}`}>{status}</span>}{parsed.text && <Markdown text={parsed.text} />}</>;
 }
 
 const NOTICE_ICON: Record<InjectedNotice['kind'], string> = { task: '⚙', command: '›_', output: '›_', hook: '↪' };
@@ -579,7 +580,7 @@ function ChoiceCards({ choices, onPick }: { choices: DeckChoices; onPick: ((text
  * markdown of) the whole transcript. Items are immutable (the reducer replaces what changes), so identity is enough.
  * `last`: the conversation's last message (its actions stay visible and it offers 재시도).
  */
-export const MessageView = memo(function MessageView({ item, cwd, last = false, steps, quietModel = false }: { item: ChatItem; /** Session folder: diff card paths are shown relative to it. */ cwd?: string; last?: boolean; steps?: AssistantItem[]; quietModel?: boolean }) {
+export const MessageView = memo(function MessageView({ item, cwd, last = false, steps, quietModel = false, statusOverride }: { item: ChatItem; /** Session folder: diff card paths are shown relative to it. */ cwd?: string; last?: boolean; steps?: AssistantItem[]; quietModel?: boolean; statusOverride?: 'PARTIAL' | 'BLOCKED' | 'SUCCESS' }) {
   const actions = useContext(MessageActionsContext);
   const regen = useContext(RegenerateContext);
   const [prefs] = usePrefs();
@@ -669,6 +670,8 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
   // deck-choices are cut from the live stretch only (textAt counts the raw text).
   const split = liveCuts ? { lead: liveLead, live: splitDeckChoices(item.text.slice(liveCut), true).text } : null;
   const reply = last && !item.streaming ? actions.onReply : undefined;
+  const completedError = steps === undefined && !item.streaming && !(steps ?? [item]).some((step) => step.streaming) && (steps ?? [item]).some((step) => step.toolCalls.some((call) => call.isError));
+  const answerStatus = statusOverride ?? (completedError ? 'PARTIAL' : undefined);
   const hasActions = !item.streaming && (!!item.text || !!retry || !!again || !!pick);
   const regenPick: RegenPick | null = pick && regen ? { models: regen.models, current: regen.current, sticky: !!(turn && branchFrom), onPick: pick } : null;
   return (
@@ -689,7 +692,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
               : '처리 중…'}
         </div>
       )}
-      {split ? split.live && <Answer text={split.live} /> : shownText && <Answer text={shownText} />}
+      {split ? split.live && <Answer text={split.live} statusOverride={answerStatus} /> : (shownText || answerStatus) && <Answer text={shownText} statusOverride={answerStatus} />}
       {choices && !item.streaming && <ChoiceCards choices={choices} onPick={reply} />}
       {item.streaming && (!split || !!split.live) && <span className="cursor" aria-label="응답 작성 중" />}
       {item.error && !(!item.streaming && isAbortError(item.error, !!item.interrupted)) && <div className="error">오류: {item.error}</div>}
@@ -721,5 +724,5 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
     </FileRootContext.Provider>
   );
 }, (before, after) => before.item === after.item && before.cwd === after.cwd && before.last === after.last
-  && before.quietModel === after.quietModel && (before.steps === after.steps || (!!before.steps && !!after.steps
+  && before.quietModel === after.quietModel && before.statusOverride === after.statusOverride && (before.steps === after.steps || (!!before.steps && !!after.steps
     && before.steps.length === after.steps.length && before.steps.every((step, i) => step === after.steps![i]))));

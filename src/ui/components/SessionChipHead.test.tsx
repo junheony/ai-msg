@@ -17,6 +17,32 @@ const startRename = () => {
   return input;
 };
 
+describe('SessionChipHead · clean identity', () => {
+  it('uses one engine mark and a model chip; equivalent folder slugs do not repeat the title', () => {
+    const { rerender, container } = render(<SessionChipHead title="Agentic Harness" sessionKey="s1" engine="hermes" model="gpt-6-astra" cwd="/work/agentic-harness" groups={() => []} />);
+    const chip = screen.getByTestId('session-chip-head');
+    expect(chip.querySelectorAll('.head-avatar, .engine-mark')).toHaveLength(1);
+    expect(chip.querySelector('.head-engine-chip')?.textContent).toContain('Hermes');
+    expect(chip.querySelector('.head-engine-chip')?.getAttribute('title')).toContain('gpt-6-astra');
+    expect(chip.getAttribute('title')).toBe('Agentic Harness');
+    expect(container.querySelector('.pane-head-main > .folder-chip')).toBeNull();
+    rerender(<SessionChipHead title="다음 배포 준비" sessionKey="s1" engine="hermes" model="gpt-6-astra" cwd="/work/agentic-harness" groups={() => []} />);
+    expect(screen.getByTestId('session-chip-head').getAttribute('title')).toContain('/work/agentic-harness');
+    fireEvent.click(screen.getByTestId('session-chip-head'));
+    expect(screen.getByRole('menuitem', { name: /폴더: agentic-harness/ })).toBeTruthy();
+  });
+  it('a custom chosen avatar replaces the engine mark and remains editable', () => {
+    const setIcon = vi.fn();
+    publishSessionAvatars(new Map([['s1', { color: 3, mono: 'Al', icon: 'glyph:anchor', iconId: 's1' }]]), { s1: 'glyph:anchor' }, setIcon);
+    render(<SessionChipHead title="작업" sessionKey="s1" engine="hermes" model="gpt-6-astra" groups={() => []} />);
+    expect(screen.getByTestId('session-chip-head').querySelectorAll('.head-avatar, .engine-mark')).toHaveLength(1);
+    expect(screen.getByTestId('session-chip-head').querySelector('.engine-mark')).toBeNull();
+    fireEvent.click(document.querySelector('.head-avatar-pick')!);
+    fireEvent.click(screen.getByRole('button', { name: '기본으로 (제목 이모지 또는 첫 글자)' }));
+    expect(setIcon).toHaveBeenCalledWith('s1', null);
+  });
+});
+
 describe('SessionChipHead · 이름 바꾸기', () => {
   it('Enter saves, Esc cancels, a keyboard blur (Tab) saves', () => {
     const onRename = vi.fn();

@@ -2,6 +2,7 @@
 // QA_STATE defaults to /tmp/msg-terminal-qa-state.json; DIST overrides its frozen UI build.
 // SIZES=desktop,mobile (1440x900 / 390x844), RDP_PORT=9343, SETTLE_MS=2500.
 // ANSWER_HASH overrides the saved normalized answer hash. EVAL runs an optional read-only DOM inspection.
+// HEADER_CHECKS=1 requires the BRIEF7b single-identity header, quiet approval chip, and error-aware PARTIAL status.
 // file:// CDP proxy is required on this host; browser HTTP navigation stalls. No real service traffic.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -176,7 +177,7 @@ const nav = async (url) => {
 
 // 5. Deterministic real-turn framing. The anchor is a text hash, never raw transcript data.
 const base = `file://${idx}`;
-const manifest = { tag, fixture: state.fixture || 'claude-real-redacted', source: state.sourceFile, counts: state.counts, dist: DIST, conciseMode: true, sizes: {}, errors };
+const manifest = { tag, fixture: state.fixture || 'claude-real-redacted', source: state.sourceFile, counts: state.counts, dist: DIST, conciseMode: true, headerChecks: process.env.HEADER_CHECKS === '1', sizes: {}, errors };
 const selectedUrl = base + '?hub=msg&session=' + encodeURIComponent(state.selectedId);
 const inspect = `(() => ({ width: innerWidth, documentWidth: document.documentElement.scrollWidth, overflow: document.documentElement.scrollWidth > innerWidth, chat: !!document.querySelector('.chat'), users: document.querySelectorAll('.msg.user').length, answers: document.querySelectorAll('.msg.assistant .markdown').length, steps: document.querySelectorAll('.tool-group,.activity-steps').length, concise: document.documentElement.dataset.concise, login: !!document.querySelector('input[type=password]'), errorToasts: document.querySelectorAll('.toast.error,.error-toast,[role=alert].toast').length, hamburger: !!document.querySelector('button.menu,.sidebar-toggle') }))()`;
 for (const sizeName of SIZES_SEL) {
@@ -213,23 +214,37 @@ for (const sizeName of SIZES_SEL) {
     shots.push({ file, scope, ...metrics }); log(file, JSON.stringify(metrics));
   };
   await evaluate(`window.__qaUser?.scrollIntoView({block:'start'}); true`); await capture('turn');
-  await evaluate(`window.__qaAnswer.closest('.msg.assistant').scrollIntoView({block:'start'}); true`); await capture('answer-top');
-  await evaluate(`window.__qaAnswer.scrollIntoView({block:'end'}); true`); await capture('answer-bottom');
   const interactions = {};
   interactions.header = await evaluate(`(() => {
-    const h=document.querySelector('[data-pane-head]'); if(!h)return null;
+    const visible=e=>{if(!e)return false;const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'&&Number(s.opacity)!==0&&r.top>=0&&r.bottom<=innerHeight+1&&r.left>=0&&r.right<=innerWidth+1;};
+    const h=[...document.querySelectorAll('[data-pane-head]')].find(visible); if(!h)return null;
     const r=h.getBoundingClientRect();
-    return {visible:r.width>0&&r.height>0,inside:r.left>=0&&r.right<=innerWidth+1,
-      identityMarks:h.querySelectorAll('.head-avatar,.engine-mark').length,
+    const title=h.querySelector('.head-chip-title'),titleWidth=title?.getBoundingClientRect().width||0;
+    const chip=h.querySelector('.head-engine-chip'),mode=h.querySelector('[data-testid="perm-badge"]'),modeText=mode?.querySelector('.perm-badge-full');
+    const chipVisibleText=chip?.innerText||'',chipAccessibleText=[chipVisibleText,chip?.getAttribute('title'),chip?.getAttribute('aria-label')].filter(Boolean).join(' ');
+    const answer=window.__qaAnswer?.closest('.msg.assistant');
+    const statusNodes=[...answer?.querySelectorAll('.reply-status')||[]];
+    const statuses=statusNodes.map(e=>e.textContent.trim()).filter(s=>/^(SUCCESS|PARTIAL|BLOCKED)$/.test(s));
+    const group=answer?.querySelector('[data-testid="activity-steps"]'),error=group?.querySelector('.activity-errors');
+    const probe=document.createElement('span');probe.style.color='var(--danger)';h.appendChild(probe);const danger=getComputedStyle(probe).color;probe.remove();
+    const modeStyle=mode?getComputedStyle(mode):null;
+    return {viewportWidth:innerWidth,visible:r.width>0&&r.height>0,inside:r.left>=0&&r.right<=innerWidth+1,titleWidth,titleVisible:visible(title),
+      identityMarks:[...h.querySelectorAll('.head-avatar,.engine-mark')].filter(visible).length,
       hermes:!!h.querySelector('[data-engine="hermes"],.engine-mark.hermes')||/hermes/i.test(h.textContent),
-      autoApprove:!!document.querySelector('[data-testid="perm-badge"]'),
-      statuses:[...document.querySelectorAll('[data-testid="turn-status"]')].map(e=>e.textContent.trim()).filter(s=>/^(SUCCESS|PARTIAL|BLOCKED)$/.test(s))};
+      modelChipVisible:visible(chip),modelChipHasEngine:/hermes/i.test(chipAccessibleText),modelChipHasVisibleLabel:/hermes|astra/i.test(chipVisibleText),
+      modelChipModelVisible:/gpt[ -]?6[ -]?astra|gpt[ -]?astra/i.test(chipVisibleText),modelChipHasModel:/gpt[ -]?6[ -]?astra|gpt[ -]?astra/i.test(chipAccessibleText),
+      autoApprove:!!mode,autoApproveVisible:visible(mode)&&visible(modeText),autoApproveText:modeText?.textContent.trim()||'',autoApproveTooltip:!!mode?.title,
+      autoApproveColor:modeStyle?.color||null,dangerColor:danger,
+      autoApproveQuiet:!!modeStyle&&modeStyle.color!==danger&&!/⚠|모두/.test(mode?.textContent||'')&&!mode?.classList.contains('danger')&&mode?.getAttribute('role')!=='alert',
+      statuses,statusVisible:statusNodes.some(visible),errorCountVisible:visible(error)&&/오류\\s*1/.test(error?.textContent||''),finished:!!group&&!group.classList.contains('live')};
   })()`);
   interactions.composer = await evaluate(`(() => {
     const t=document.querySelector('.chat textarea'),n=document.querySelector('[data-testid="composer-note"]');
     return {editable:!!t&&!t.disabled&&!t.readOnly,blockedAccount:/설정에 없는 계정|뺀 계정의 세션/.test(n?.textContent||'')};
   })()`);
   await capture('header');
+  await evaluate(`window.__qaAnswer.closest('.msg.assistant').scrollIntoView({block:'start'}); true`); await capture('answer-top');
+  await evaluate(`window.__qaAnswer.scrollIntoView({block:'end'}); true`); await capture('answer-bottom');
   interactions.options = await evaluate(`(() => { const b=document.querySelector('button.session-chip'); if(!b)return null; b.click(); return true; })()`);
   await sleep(150);
   interactions.modelMenu = await evaluate(`!!document.querySelector('[data-testid=\"model-menu\"]')`);
@@ -242,9 +257,29 @@ for (const sizeName of SIZES_SEL) {
   await capture('model-picker');
   await send('Input.dispatchKeyEvent', {type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
   await send('Input.dispatchKeyEvent', {type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
-  await evaluate(`document.querySelector('button.usage-strip')?.click(); true`); await sleep(150);
-  interactions.usageMenu = await evaluate(`!!document.querySelector('.usage-strip-pop,.usage-sheet')`);
-  await evaluate(`document.querySelector('button.usage-strip')?.click(); true`);
+  interactions.usageRoute = await evaluate(`(async () => {
+    const visible=e=>{if(!e)return false;const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&r.left>=0&&r.right<=innerWidth+1&&r.top>=0&&r.bottom<=innerHeight+1&&s.visibility!=='hidden'&&s.display!=='none';};
+    const pause=()=>new Promise(r=>setTimeout(r,150));
+    const strip=document.querySelector('button.usage-strip');
+    if(visible(strip)){strip.click();return 'topbar';}
+    const drawer=document.querySelector('button.menu[aria-label="메뉴"]');
+    if(!visible(drawer))return 'missing-opener';
+    if(drawer.getAttribute('aria-expanded')!=='true'){drawer.click();await pause();}
+    const account=document.querySelector('button.sidebar-avatar[aria-label="설정 및 계정"]');
+    if(!visible(account))return 'missing-account-menu';
+    if(account.getAttribute('aria-expanded')!=='true'){account.click();await pause();}
+    const item=[...document.querySelectorAll('.foot-menu [role="menuitem"]')].find(e=>e.textContent.trim()==='사용량 보기');
+    if(!visible(item))return 'missing-usage-action';
+    item.click();return 'sidebar-account';
+  })()`);
+  await sleep(250);
+  for(let i=0;i<20;i++){if(await evaluate(`!!document.querySelector('.usage-strip-pop,.usage-sheet')`))break;await sleep(100);}
+  interactions.usageMenu = await evaluate(`(() => {const e=document.querySelector('.usage-strip-pop,.usage-sheet');if(!e)return false;const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&r.left>=0&&r.right<=innerWidth+1;})()`);
+  await evaluate(`(() => {const close=document.querySelector('.usage-sheet button[aria-label="닫기"]');if(close)close.click();else{const strip=document.querySelector('button.usage-strip');if(strip&&strip.getBoundingClientRect().width)strip.click();}return true;})()`);
+  await sleep(150);
+  await evaluate(`(() => {const menu=document.querySelector('button.menu[aria-label="메뉴"][aria-expanded="true"]');if(menu)menu.click();return true;})()`);
+  await sleep(150);
+  interactions.usageClosed = await evaluate(`!document.querySelector('.usage-sheet,.usage-strip-pop')&&document.querySelector('button.menu[aria-label="메뉴"]')?.getAttribute('aria-expanded')!=='true'`);
   interactions.expandStep = await evaluate(`(() => { const e=document.querySelector('details.activity-steps,details.tool-group'); if(!e) return null; e.querySelector('summary')?.click(); const opened=e.open; e.querySelector('summary')?.click(); return opened && !e.open; })()`);
   if (process.env.EVAL) interactions.extra = await evaluate(process.env.EVAL);
   if (size.mobile) { await evaluate(`document.querySelector('button.menu[aria-label="메뉴"]')?.click(); true`); await capture('drawer'); }
@@ -303,11 +338,18 @@ for (const sizeName of SIZES_SEL) {
 const layoutPassed = (layout) => !!layout && !layout.error && layout.buttons?.length > 0
   && layout.buttons.every((button) => button.inside) && !layout.documentOverflow
   && !layout.chatOverflow && !layout.composerOverflow && layout.modelMenuReachable;
+const headerPassed = (header) => !!header && header.identityMarks === 1 && header.modelChipVisible
+  && header.titleVisible && (header.viewportWidth > 420 || header.titleWidth >= 90)
+  && header.modelChipHasEngine && header.modelChipHasVisibleLabel && header.modelChipHasModel && header.autoApproveVisible
+  && header.autoApproveText === '자동 승인' && header.autoApproveTooltip && header.autoApproveQuiet
+  && header.finished && header.errorCountVisible && header.statusVisible
+  && header.statuses.includes('PARTIAL') && !header.statuses.includes('SUCCESS');
 manifest.passed = errors.length === 0 && Object.values(manifest.sizes).every(({ shots, interactions }) =>
   shots.every((m) => (m.scope === 'new' || m.chat && m.users > 0 && m.answers > 0 && m.steps > 0) && !m.overflow && !m.login && m.errorToasts === 0)
-  && interactions.options && interactions.modelMenu && interactions.picker?.reachable && interactions.header?.visible && interactions.header?.inside && interactions.usageMenu && interactions.expandStep
+  && interactions.options && interactions.modelMenu && interactions.picker?.reachable && interactions.header?.visible && interactions.header?.inside && interactions.usageMenu && ['topbar','sidebar-account'].includes(interactions.usageRoute) && interactions.usageClosed && interactions.expandStep
   && (state.fixture !== 'hermes-synthetic' || interactions.picker?.hermes && interactions.picker?.astra && interactions.header?.hermes && interactions.composer?.editable && !interactions.composer?.blockedAccount && interactions.newSession && interactions.newHermes?.available && interactions.newHermes?.selected && interactions.newHermes?.astra && interactions.newHermes?.reachable)
-  && !interactions.homeHasHamburger && (!process.env.LAYOUT_CHECKS || layoutPassed(interactions.layout)));
+  && !interactions.homeHasHamburger && (!process.env.LAYOUT_CHECKS || layoutPassed(interactions.layout))
+  && (!manifest.headerChecks || state.fixture === 'hermes-synthetic' && headerPassed(interactions.header)));
 
 fs.writeFileSync(path.join(outDir, `${tag}-inspection.json`), JSON.stringify(manifest, null, 2) + '\n');
 closeSockets(); cleanup(); process.exit(manifest.passed ? 0 : 1);

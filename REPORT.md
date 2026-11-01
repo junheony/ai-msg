@@ -231,3 +231,42 @@ No paid/live provider turn was run: adapter behavior is verified with CLI mocks,
 No push, deployment, unit restart, protected-port access, ledger change or modification of `/home/max/ai-msg` occurred.
 
 STATUS: DONE
+
+# Header fix (BRIEF7b)
+
+## Changes
+
+- Continued after BRIEF7 was recorded DONE and committed as `b21f4ab`. Read `header-owner-1102.png` and used the same synthetic Hermes conversation for before/after comparisons.
+- `SessionChipHead.tsx` and `styles.css`: a single engine mark (or chosen custom avatar), title, small engine/model chip and aligned caret form one row. Equivalent title/folder slugs are no longer repeated; differing paths remain in the tooltip and folder actions remain in the menu. Rename, switcher, custom icon, focus and drag behavior are retained.
+- `Chat.tsx` and styles: automatic approval stays visibly labeled `자동 승인` with a small amber icon and explanatory tooltip. Composer approval text follows the same quieter color. No permission semantics changed.
+- `terminalPresentation.ts`, `MessageView.tsx`, and `Chat.tsx`: completed turns containing a failed tool show PARTIAL even when the answer says SUCCESS. Errors are collected across commentary and model changes, explicit turn IDs survive in-turn steering, historical null IDs reset at user boundaries, busy gaps remain unfinished, and BLOCKED stays authoritative. Original message text is preserved.
+- `App.tsx`: Terminal phone layout reserves space for the session title by using existing bottom navigation for mode switching and moving quota access to the sidebar account menu's `사용량 보기`. Usage history, limits, global search/activity and focus restoration remain available. Screenshot inspection prompted this iteration when the first mobile draft left only two title characters.
+- Regression tests cover failed/clean turns, cross-group errors, previous-turn isolation, steering and busy gaps, single/custom identity, path normalization, and the real phone drawer-to-usage interaction. `scripts/qa/shoot-terminal.mjs` now checks visible controls, title space, partial status and the reachable mobile usage route.
+
+## Validation
+
+| Check | Result |
+|---|---|
+| `npx vitest run --maxWorkers=2` | 360 files / 4,506 tests passed; 311.55 s |
+| `npm run typecheck` | Passed |
+| `npm run build` | Passed, including bundle checks; final asset `main--AzAaDYi.js` |
+| `RDP_PORT=9345 HEADER_CHECKS=1 DIST=/home/max/msg-hub-design/repo/dist/ui node scripts/qa/shoot-terminal.mjs shots-terminal-v2 header-after` | 16 captures and both-width header/interaction checks passed |
+| `node --check scripts/qa/shoot-terminal.mjs` | Passed |
+| `git diff --check` | Passed |
+
+## Before / after
+
+| View | Before | After |
+|---|---|---|
+| Desktop header and failed-tool turn, 1440×900 | [before](shots-terminal-v2/header-before-hermes-desktop-turn.png) | [after](shots-terminal-v2/header-after-desktop-header.png) |
+| Mobile header and failed-tool turn, 390×844 | [before](shots-terminal-v2/header-before-hermes-mobile-turn.png) | [after](shots-terminal-v2/header-after-mobile-header.png) |
+| Desktop model picker | [before](shots-terminal-v2/hermes-desktop-model-picker.png) | [after](shots-terminal-v2/header-after-desktop-model-picker.png) |
+| Mobile model picker | [before](shots-terminal-v2/hermes-mobile-model-picker.png) | [after](shots-terminal-v2/header-after-mobile-model-picker.png) |
+
+Final capture contains sixteen views. Root personally inspected desktop/mobile header and picker images. `header-after-inspection.json` records the same source/answer hash as BRIEF7, exactly one identity, visible amber automatic approval, discoverable full Hermes model, PARTIAL with one tool error, reachable usage and no page overflow or browser errors. The final mobile title has 105.28px of visible width. Mobile usage was opened through the visible drawer account menu and closed successfully. A separate task occupied the usual CDP port during capture; only our own stalled browser was stopped, and final capture used 9345. The owned read-only QA host was stopped after completion.
+
+The frontend-design references and design direction are documented in `docs/terminal-brief7-design.md`; independent status/header review is in `docs/terminal-brief7b-review.md`. Screenshots are synthetic UI evidence, not a live provider turn. BRIEF7's Hermes 0.18.2 runtime restriction and no-live-model verification limit still apply.
+
+No push, merge into `/home/max/ai-msg`, deployment, unit restart, protected-port access or ledger change occurred. No required work remains.
+
+STATUS: DONE

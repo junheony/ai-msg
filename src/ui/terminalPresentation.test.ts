@@ -30,6 +30,42 @@ describe('terminal presentation', () => {
     expect(presentTranscript([first, a('', { error: '권한 오류' })])).toHaveLength(2);
     expect(presentTranscript([first, a('', { notes: ['계정 변경'] })])).toHaveLength(2);
   });
+  it('marks a finished turn partial across commentary and model changes without mutating source text', () => {
+    const failure = a('검사 중', { turnId: 't1', toolCalls: [{ ...tool('bad'), isError: true }] });
+    const final = a('SUCCESS — 완료', { turnId: 't1', model: 'gpt-6-astra' });
+    const rows = presentTranscript([failure, a('수정 확인', { turnId: 't1' }), final]);
+    expect(rows.at(-1)?.statusOverride).toBe('PARTIAL');
+    expect(rows[0]?.statusOverride).toBeUndefined();
+    expect(final.text).toBe('SUCCESS — 완료');
+  });
+  it('isolates historical null-id turns by user and explicit turn ids without requiring a user boundary', () => {
+    const failure = a('도구 오류', { toolCalls: [{ ...tool('bad'), isError: true }] });
+    const history = presentTranscript([failure, a('SUCCESS — 일부 완료'), { kind: 'user', text: '다음 요청' }, a('SUCCESS — 전부 완료')]);
+    expect(history[1]?.statusOverride).toBe('PARTIAL');
+    expect(history.at(-1)?.statusOverride).toBeUndefined();
+    const explicit = presentTranscript([{ ...failure, turnId: 'old' }, a('SUCCESS — 다음 작업', { turnId: 'new' })]);
+    expect(explicit.at(-1)?.statusOverride).toBeUndefined();
+  });
+  it('preserves explicit-turn errors across steering user bubbles and waits for that turn to finish', () => {
+    const failure = a('검토', { turnId: 'steered', toolCalls: [{ ...tool('bad'), isError: true }] });
+    const items = [failure, { kind: 'user' as const, text: '검토를 더 해 줘' }, a('SUCCESS — 정리 완료', { turnId: 'steered' })];
+    expect(presentTranscript(items, true, 'steered').every((row) => !row.statusOverride)).toBe(true);
+    expect(presentTranscript(items).at(-1)?.statusOverride).toBe('PARTIAL');
+    const next = [...items, { kind: 'user' as const, text: '새 작업' }, a('새 검토', { turnId: 'next', streaming: true })];
+    expect(presentTranscript(next, true, 'next')[2]?.statusOverride).toBe('PARTIAL');
+    expect(presentTranscript(next, true, 'next').at(-1)?.statusOverride).toBeUndefined();
+  });
+
+  it('retains BLOCKED and clean SUCCESS, and waits until streaming finishes to mark partial', () => {
+    const failure = a('', { turnId: 't', toolCalls: [{ ...tool('bad'), isError: true }] });
+    expect(presentTranscript([failure, a('BLOCKED — 권한 필요', { turnId: 't' })]).at(-1)?.statusOverride).toBeUndefined();
+    expect(presentTranscript([a('SUCCESS — 확인 완료')]).at(-1)?.statusOverride).toBeUndefined();
+    const live = a('SUCCESS — 작성 중', { turnId: 't', streaming: true });
+    expect(presentTranscript([failure, live]).at(-1)?.statusOverride).toBeUndefined();
+    expect(presentTranscript([failure, { ...live, streaming: false }], true).at(-1)?.statusOverride).toBeUndefined();
+    expect(presentTranscript([failure, { ...live, streaming: false }]).at(-1)?.statusOverride).toBe('PARTIAL');
+  });
+
   it('retains local streaming state and final model, while quieting repeated models', () => {
     const live = a('', { streaming: true, toolCalls: [{ ...tool('one'), result: null }] });
     const rows = presentTranscript([a('확인 중'), live]);

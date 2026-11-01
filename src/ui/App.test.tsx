@@ -1098,13 +1098,14 @@ describe('App new build without a server restart', () => {
     fireEvent.click(screen.getByRole('button', { name: '설정 및 계정' }));
     const labels = screen.getAllByRole('menuitem').map((b) => b.textContent ?? '');
     // 동작 항목은 새로고침으로 끝나고, 그 뒤엔 비활성 버전 줄만 온다
-    expect(labels).toHaveLength(6);
+    expect(labels).toHaveLength(7);
     expect(labels[0]).toMatch(/^설정/);
-    expect(labels[1]).toBe('사용량 기록');
-    expect(labels[2]).toMatch(/^테마: /);
-    expect(labels[3]).toMatch(/^단축키/);
-    expect(labels[4]).toBe('새로고침');
-    expect(labels[5]).toMatch(/^MSG /);
+    expect(labels[1]).toBe('사용량 보기');
+    expect(labels[2]).toBe('사용량 기록');
+    expect(labels[3]).toMatch(/^테마: /);
+    expect(labels[4]).toMatch(/^단축키/);
+    expect(labels[5]).toBe('새로고침');
+    expect(labels[6]).toMatch(/^MSG /);
     expect(screen.getByTestId('foot-menu-version').getAttribute('aria-disabled')).toBe('true');
   });
 });
@@ -1279,6 +1280,22 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     expect(within(sheet).getByRole('button', { name: /토큰 사용량 기록/ }).getAttribute('aria-expanded')).toBe('true');
     fireEvent.click(within(sheet).getByRole('button', { name: '닫기' }));
     expect(document.activeElement).toBe(screen.getByTestId('usage-strip'));
+  });
+
+  it('account menu opens quota limits directly when the compact phone header omits its summary', async () => {
+    mockMatchMedia(true);
+    await boot();
+    server({ type: 'usage', usage: numbered } as unknown as ServerMessage);
+    const drawer = screen.getByRole('button', { name: '메뉴' });
+    fireEvent.click(drawer);
+    fireEvent.click(screen.getByRole('button', { name: '설정 및 계정' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '사용량 보기' }));
+    const sheet = screen.getByRole('dialog', { name: '사용량' });
+    expect(within(sheet).getByRole('button', { name: /토큰 사용량 기록/ }).getAttribute('aria-expanded')).toBe('false');
+    expect(within(sheet).getByTestId('account-b')).toBeTruthy();
+    fireEvent.click(within(sheet).getByRole('button', { name: '닫기' }));
+    expect(screen.queryByRole('dialog', { name: '사용량' })).toBeNull();
+    expect(document.activeElement).toBe(drawer);
   });
 
   const dot = () => screen.getByTestId('activity-btn');

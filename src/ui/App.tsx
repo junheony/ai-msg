@@ -1368,7 +1368,7 @@ export function App() {
     <div className="app" data-terminal={!hubShown ? 'true' : undefined}>
       <header className="topbar">
         {/* ☰ (phone drawer / tablet sidebar fold) is the terminal's: a hub mode has no sidebar to open, so the mode switch is the first thing top-left. */}
-        {phone && !hubShown && <button type="button" className="menu" aria-label="메뉴" aria-expanded={drawer} onClick={() => setDrawer((d) => !d)}>☰</button>}
+        {phone && !hubShown && <button type="button" className="menu" data-sheet-return="" aria-label="메뉴" aria-expanded={drawer} onClick={() => setDrawer((d) => !d)}>☰</button>}
         {/* Tablet / unfolded (721–1100px, CSS only shows it there): a visible way to fold the sidebar away without ⌘\. */}
         {!phone && !hubShown && <button type="button" className="icon-btn sidebar-toggle" aria-label={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} title={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} aria-pressed={!sidebarHidden} onClick={toggleSidebar} onMouseEnter={peekable && !peek ? armPeek : undefined} onMouseLeave={peekable ? () => { unlatchPeek(); leavePeek(); } : undefined}>☰</button>}
         {/* The session chip of the one pane (desktop) / the shown pane (phone) renders here (Pane → Chat, a portal). */}
@@ -1512,6 +1512,7 @@ export function App() {
             avatarTitle="MSG"
             footMenu={[
               { label: '설정', hint: `${mod},`, run: () => setSettingsOpen(true) },
+              { label: '사용량 보기', run: () => setUsageOpen('limits') },
               { label: '사용량 기록', run: () => setUsageOpen('history') },
               { label: `테마: ${THEME_LABEL[prefs.theme]}`, run: () => window.dispatchEvent(new CustomEvent('deck:cycle-theme')) },
               { label: '단축키', hint: `${mod}/`, run: () => setHelpOpen(true) },

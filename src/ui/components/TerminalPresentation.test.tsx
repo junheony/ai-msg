@@ -45,6 +45,25 @@ describe('terminal activity disclosures', () => {
     expect(screen.getByTestId('role-list').textContent).toContain('sonnet');
   });
 
+  it('replaces a success report with PARTIAL for errors earlier in the same finished turn', () => {
+    const work = a('검사 결과를 확인합니다.', { toolCalls: [{ ...call, result: '실패', isError: true }] });
+    const { rerender } = render(<Chat {...props({ items: [{ kind: 'user', text: '확인' }, work, a('계속 검토 중'), a('SUCCESS — 검토 완료')] })} />);
+    expect(screen.getByLabelText('작업 상태: PARTIAL')).toBeTruthy();
+    expect(screen.queryByLabelText('작업 상태: SUCCESS')).toBeNull();
+    rerender(<Chat {...props({ items: [work, a('BLOCKED — 해결 필요')] })} />);
+    expect(screen.getByLabelText('작업 상태: BLOCKED')).toBeTruthy();
+    expect(screen.queryByLabelText('작업 상태: PARTIAL')).toBeNull();
+  });
+
+  it('waits through a tool-to-answer streaming gap until the turn actually finishes', () => {
+    const work = a('검토 중', { toolCalls: [{ ...call, result: '실패', isError: true }] });
+    const items = [work, a('수정 내용을 정리했습니다.')];
+    const { rerender } = render(<Chat {...props({ items, busy: true, activeTurnId: 'turn' })} />);
+    expect(screen.queryByLabelText('작업 상태: PARTIAL')).toBeNull();
+    rerender(<Chat {...props({ items, busy: false })} />);
+    expect(screen.getByLabelText('작업 상태: PARTIAL')).toBeTruthy();
+  });
+
   it('keeps retry reachable and ordinary prose unchanged when formatting an explicit status', () => {
     const retry = vi.fn();
     const { rerender } = render(<MessageActionsContext.Provider value={{ onRetry: retry }}><MessageView item={a('**BLOCKED:** 권한이 필요합니다')} last /></MessageActionsContext.Provider>);

@@ -292,7 +292,7 @@ export function messageKeys(items: ChatItem[]): string[] {
   });
 }
 
-const WarnIcon = () => <svg className="perm-badge-icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 2.2 14.3 13.3H1.7z" /><path d="M8 6.6v3M8 11.6v.1" /></svg>;
+const AutoApprovalIcon = () => <svg className="perm-badge-icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 1.8 13 4v4.1c0 3-5 6-5 6s-5-3-5-6V4z" /><path d="m5.6 7.8 1.6 1.6 3.3-3.3" /></svg>;
 const TaskIcon = () => <svg className="task-add-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M9 3h4v4M13 3 7.5 8.5" /><path d="M11.5 9.5V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1h2.5" /></svg>;
 const QueueIcon = () => <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 4h8M2.5 8h5M2.5 12h4" /><path d="M12 6.5v6.5M9.75 10.75 12 13l2.25-2.25" /></svg>;
 
@@ -330,7 +330,7 @@ export function Chat(p: ChatProps) {
   const composing = useRef(false);
   // A session switch mid-composition may never deliver its compositionend here: start the next session clean.
   useEffect(() => { composing.current = false; }, [p.sessionId]);
-  const presented = useMemo(() => presentTranscript(p.items), [p.items]);
+  const presented = useMemo(() => presentTranscript(p.items, p.busy, p.activeTurnId), [p.items, p.busy, p.activeTurnId]);
   const shown = useMemo(() => presented.map((p) => p.item), [presented]);
   const keys = useMemo(() => messageKeys(shown), [shown]);
   const dividers = useMemo(() => timeDividers(shown), [shown]);
@@ -577,11 +577,11 @@ export function Chat(p: ChatProps) {
       if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f' && canFind) { e.preventDefault(); openFind(); }
     }} onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
       {drag && <div className={`drop-overlay ${p.readOnly ? 'blocked' : ''}`} data-testid="drop-overlay"><span>{p.readOnly || '여기에 파일을 놓으세요'}</span></div>}
-      <SessionChipHead key={p.sessionId ?? 'new'} title={p.title} sessionKey={p.sessionId ?? null} engine={!p.isNew ? p.sessionEngine : null} cwd={p.cwd} slot={p.headSlot ?? null} phone={phone} paneId={p.headPaneId}
+      <SessionChipHead key={p.sessionId ?? 'new'} title={p.title} sessionKey={p.sessionId ?? null} engine={!p.isNew ? p.sessionEngine : null} model={p.model} cwd={p.cwd} slot={p.headSlot ?? null} phone={phone} paneId={p.headPaneId}
         grip={p.headGrip} gripTitle={p.headGripTitle} {...(tm?.onRename ? { onRename: tm.onRename } : {})} groups={headGroups} toast={share.done}
         chips={(p.headChips || (p.onPermMode && permSupported && permMode === 'bypassPermissions')) ? <>
-          {/* 모두 자동 승인 stays on the head as a warning; the other modes live in the composer's session chip. */}
-          {p.onPermMode && permSupported && permMode === 'bypassPermissions' && <span className="chip perm-badge perm-bypassPermissions" role="img" aria-label={PERM_MODE_LABEL[permMode]} title={`${PERM_MODE_LABEL[permMode]} — ${permModeHint(permMode, effectiveEngine)}`} data-testid="perm-badge"><WarnIcon /><span className="perm-badge-full">{PERM_MODE_LABEL[permMode]}</span></span>}
+          {/* Keep the active approval policy visible without treating it as an error. */}
+          {p.onPermMode && permSupported && permMode === 'bypassPermissions' && <span className="chip perm-badge perm-bypassPermissions" role="img" aria-label={PERM_MODE_LABEL[permMode]} title={`${PERM_MODE_LABEL[permMode]} — ${permModeHint(permMode, effectiveEngine)}`} data-testid="perm-badge"><AutoApprovalIcon /><span className="perm-badge-full">자동 승인</span></span>}
           {p.headChips}
         </> : null}
         trail={p.headActions} />
@@ -623,7 +623,7 @@ export function Chat(p: ChatProps) {
                 return (
                   <Fragment key={keys[i]}>
                     {at != null && <div className="msg-time" data-testid="msg-time"><time dateTime={new Date(at).toISOString()}>{timeLabel(at)}</time></div>}
-                    <MessageView item={it} cwd={p.cwd} last={i === shown.length - 1} steps={presented[i]!.steps} quietModel={presented[i]!.quietModel} />
+                    <MessageView item={it} cwd={p.cwd} last={i === shown.length - 1} steps={presented[i]!.steps} quietModel={presented[i]!.quietModel} statusOverride={presented[i]!.statusOverride} />
                   </Fragment>
                 );
               })}

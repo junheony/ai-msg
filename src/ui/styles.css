@@ -3342,3 +3342,34 @@ table.t { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); font-
 .meta-engine.codex { color: var(--engine-codex); }
 .meta-engine.gemini { color: var(--engine-gemini); }
 .meta-engine.grok { color: var(--engine-grok); }
+
+/* BRIEF7b: one identity, one aligned session row; policy is information, not an alarm. */
+.pane-head .pane-head-main, .pane-head.in-topbar .pane-head-main { --head-av: 22px; flex-direction: row; align-items: center; }
+.pane-head .head-chip { gap: 8px; border-radius: 7px; text-align: left; }
+.head-identity { display: flex; align-items: center; justify-content: center; flex: 0 0 var(--head-av); width: var(--head-av); height: var(--head-av); }
+.head-identity > .engine-mark { width: 20px; height: 20px; margin: 0; }
+.pane-head .head-chip-title { min-width: 0; flex: 0 1 auto; }
+.head-engine-chip { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; padding: 3px 6px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); font-size: var(--fs-2xs); line-height: 1.25; font-weight: 500; letter-spacing: 0; white-space: nowrap; }
+.head-engine-model { padding-left: 6px; border-left: 1px solid var(--line-strong); max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+.pane-head .head-chip .caret { margin-left: 1px; width: 12px; text-align: center; }
+.pane-head .pane-head-chips > .chip.perm-badge { height: 24px; color: var(--warn); border-color: color-mix(in srgb, var(--warn) 22%, transparent); background: color-mix(in srgb, var(--warn) 7%, transparent); border-radius: 5px; gap: 4px; }
+.pane-head .perm-badge-full, .app[data-terminal] .topbar .perm-badge-full { display: inline; }
+.session-chip.bypass .sc-perm, .sc-perm.perm-bypassPermissions, .pick.perm-bypassPermissions { color: var(--warn); }
+@container pane (max-width: 600px) { .head-engine-model { display: none; } }
+@media (max-width: 720px) {
+  .pane-head .head-chip, .pane-head.in-topbar .head-chip { gap: 5px; padding-right: 3px; font-size: var(--fs-sm); }
+  .pane-head .pane-head-main, .pane-head.in-topbar .pane-head-main { --head-av: 18px; }
+  .head-identity > .engine-mark { width: 17px; height: 17px; }
+  .head-engine-model { display: none; }
+  .head-engine-chip { padding: 3px 4px; }
+  .app[data-terminal] .topbar .pane-head-chips > .perm-badge { padding: 0 5px; }
+}
+@media (max-width: 720px) {
+  /* Bottom navigation already exposes every mode; reserve the terminal header for the session. */
+  .app[data-terminal] .topbar .hub-switch-wrap { display: none; }
+  /* Quota limits and history stay in the drawer account menu and command palette. */
+  .app[data-terminal] .topbar > .usage-strip-wrap { display: none; }
+  .app[data-terminal] .topbar .head-chip { gap: 3px; padding-right: 1px; }
+  .app[data-terminal] .topbar .pane-head-chips > .perm-badge { padding: 0 3px; gap: 3px; }
+  .app[data-terminal] .topbar .perm-badge > svg { width: 11px; height: 11px; }
+}
