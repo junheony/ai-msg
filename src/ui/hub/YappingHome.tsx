@@ -1,5 +1,5 @@
-import type { HubKpi, HubMode, HubSection } from '../../shared/hub-types';
-import { yappingSourceSummary } from '../../shared/yapping';
+import type { HubKpi, HubMode, HubSection, YappingRising } from '../../shared/hub-types';
+import { risingPostUrl, yappingSourceSummary } from '../../shared/yapping';
 import { fmtKstFull, relTime } from './time';
 import './yapping.css';
 
@@ -13,6 +13,19 @@ function Cap({ item }: { item: HubKpi }) {
     {parts && <meter min={0} max={Number(parts[2]) || 1} value={Math.min(Number(parts[1]), Number(parts[2]))} aria-label={`${item.label} 한도 사용량`} />}
     <p>{item.hint || (missing ? '운영 기록을 확인할 수 없음' : '')}</p>
   </div>;
+}
+
+function Rising({ feed }: { feed?: YappingRising }) {
+  const items = feed?.items.filter(item => risingPostUrl(item.url)).slice(0, 10) ?? [];
+  const number = (value: number) => value.toLocaleString('ko-KR', { maximumFractionDigits: 1 });
+  return <section className="yp-rising" aria-label="Rising">
+    <div className="yp-section-head"><h3>Rising</h3><span>{feed?.windowH ? `최근 ${number(feed.windowH)}시간 · 상위 ${items.length}개` : '빠르게 확산되는 게시물'}{feed?.generatedAt ? ` · ${fmtKstFull(feed.generatedAt)} 집계` : ''}</span></div>
+    {items.length ? <ol className="yp-rising-list">{items.map(item => <li key={item.url}>
+      <span className="yp-rising-rank" aria-label={`${item.rank}위`}>{item.rank}</span>
+      <div className="yp-rising-post"><div className="yp-rising-author"><strong>{item.author}</strong><span className="yp-rising-topic">{item.topic}</span></div><a href={risingPostUrl(item.url)!} title={item.text} target="_blank" rel="noopener noreferrer">{item.text}</a></div>
+      <div className="yp-rising-stats"><strong>{number(item.velocityVph)}<span> 조회/시간</span></strong><span>게시 {number(item.ageH)}시간 경과</span></div>
+    </li>)}</ol> : <p className="yp-empty" role="status">데이터 없음 · {feed?.reason || 'Rising 수집 기록 없음'}</p>}
+  </section>;
 }
 function Recent({ section, now }: { section: Extract<HubSection, { kind: 'table' }>; now: number }) {
   return <section className="yp-recent" aria-label={section.title}>
@@ -38,6 +51,7 @@ export function YappingHome({ mode, now }: { mode: HubMode; now: number }) {
     {mode.alerts.filter((a) => !/응답 없음|시간 초과/.test(a.text)).map((a, i) => <p className="yp-alert" key={i}>{a.text}</p>)}
     <section className="yp-growth" aria-label="성장 변화">{growth.map((item) => <div className={`yp-growth-item${item.value === '데이터 없음' ? ' yp-missing' : ''}${item.hint?.startsWith('마지막 정상') ? ' yp-stale' : ''}`} key={item.label}><span className="yp-label">{item.label}</span><strong>{item.value}</strong><p>{item.hint}</p></div>)}</section>
     <div className="yp-feeds">{latest.map((section) => <Recent key={section.title} section={section} now={now} />)}</div>
+    <Rising feed={mode.rising} />
     <details className="yp-sources"><summary><span>소스 상태</span><span>{yappingSourceSummary(mode.sources)}</span></summary><div className="yp-source-body"><ul>{mode.sources.map((source) => <li key={source.name}><span>{source.name}</span><span>{source.ok ? '연결됨' : source.error || '확인 필요'}</span></li>)}</ul>{details?.kind === 'kv' && <dl>{details.rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>}</div></details>
   </div>;
 }

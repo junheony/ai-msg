@@ -117,3 +117,95 @@ node scripts/brief10-capture.mjs
 shared.ts/status.ts·거래 모듈·package lock을 변경하지 않았다. 운영 API/상태는 읽기 전용이고 시스템 유닛·ledger·포트8771/8783/8792/8793/8830의 서비스에 변경하지 않았다. merge/push/deploy/restart는 수행하지 않았다.
 
 STATUS: DONE
+
+# BRIEF10b
+
+## :8095 진단 정정 및 재측정
+
+X bot 담당자의 후속 보고에 따르면 BRIEF10 당시 timeout 원인은 **호스트 과부하**(16코어에서 load 134~160, swap 8/8GiB 사용)였다. 담당자는 `/api/status`, `/api/metrics`, `/api/posts`, `/api/yap`, `/api/replies`에 짧은 stale-while-revalidate 캐시를 추가했고 약 0.03~0.27초 응답을 보고했다. 이는 upstream 담당자가 전달한 원인/수정 내용이며, 이 작업에서 upstream 코드 변경이나 서비스 재시작은 하지 않았다. 앞선 BRIEF10의 “원인을 특정할 증거 없음”은 당시 관측 범위를 설명한 기록이고, 이 후속 진단으로 보완한다.
+
+2026-11-02 02:45 KST에 같은 호스트에서 `curl` 순차 2회와 8개 동시 GET 1회를 재측정했다. 모든 24회가 HTTP 200/exit 0이고, 기존 3초 timeout을 넘지 않았다. 아래 값은 `time_total`이다. `/api/posts` 순차 첫 요청은 0.831초로 담당자가 보고한 범위보다 길었으며, 제한된 표본으로 과부하 해소나 이후 응답시간을 보장하지 않는다.
+
+| GET 경로 | 순차 1회 | 순차 2회 | 8개 동시 | HTTP |
+|---|---:|---:|---:|---:|
+| `/api/status` | 0.040867s | 0.021137s | 0.010168s | 200 |
+| `/api/metrics` | 0.026285s | 0.023943s | 0.144054s | 200 |
+| `/api/posts` | 0.830730s | 0.335894s | 0.053931s | 200 |
+| `/api/ai_news?days=3` | 0.013542s | 0.414464s | 0.174434s | 200 |
+| `/api/yap` | 0.012299s | 0.019011s | 0.065779s | 200 |
+| `/api/replies?status=todo` | 0.007810s | 0.026647s | 0.058109s | 200 |
+| `/api/replies?status=done` | 0.103934s | 0.030331s | 0.059566s | 200 |
+| `/api/rising?limit=30` | 0.072027s | 0.148220s | 0.076827s | 200 |
+
+측정 명령(각 경로):
+
+```bash
+curl -sS --max-time 12 -o /dev/null \
+  -w '%{http_code} %{time_connect} %{time_starttransfer} %{time_total} %{size_download}' \
+  'http://127.0.0.1:8095/api/rising?limit=30'
+uptime
+free -h
+nproc
+```
+
+동시 측정은 Python `ThreadPoolExecutor(max_workers=8)`에서 같은 curl을 실행했다. 접속시간·첫 바이트·전체시간·크기·종료코드 및 시각은 [측정 원본](docs/brief10b-timings.json)에 있다. Rising 실응답은 `generated_at`, `window_h`, `count`, `items`와 30개 항목을 반환했고 요청한 항목 필드들의 자료형도 확인했다.
+
+실제 호스트 상태:
+
+```text
+02:45:03 up 52 days, 10:11, 40 users,  load average: 126.33, 148.78, 149.86
+total        used        free      shared  buff/cache   available
+Mem:           187Gi        52Gi        18Gi       933Mi       119Gi       135Gi
+Swap:          8.0Gi       8.0Gi        48Ki
+nproc: 16
+02:45:36 up 52 days, 10:12, 40 users,  load average: 130.75, 147.50, 149.40
+```
+
+캐시 적용 후 이 표본에서는 응답이 빨라졌지만, load와 swap 사용량은 여전히 높다. 기존 허브의 로컬 read-only 운영 기록 수집을 유지하고 Rising만 독립된 GET으로 추가한다.
+
+## 작업 방식
+
+`ask-claude -b -C /home/max/ai-msg-yapquant`에 기능 단위 위임을 시도했으나 Fable 사용 한도로 실패했다. `deck-run status`도 이 호스트에는 명령이 없어 exit 127이었다. 반복 재시도 없이 Codex 작업 에이전트에 구현·fixture·캡처 준비를 맡겼으며 오케스트레이터가 실측·통합 검증·보고서를 담당했다.
+
+## 구현 및 최종 검증
+
+- `src/server/hub/yapping-rising.ts`, `shared.ts`, `yapping.ts`: 고정 Rising URL을 기존 `fetchJson`/`HUB_TIMEOUTS.default`(3초)로 GET한다. 성공·실패 모두 완료 시점부터 30초 캐시하며 동시 요청은 하나로 합친다. 응답 형식·게시물 링크를 검증하고 순위 정렬/중복 제거 후 상위 10개만 반환한다. 실패하면 이전 순위를 숨기고 정제된 사유를 반환한다. 기존 로컬 운영 지표와 mode 상태는 유지한다.
+- `src/shared/hub-types.ts`, `yapping.ts`, `src/ui/hub/YappingHome.tsx`, `yapping.css`: Rising 카드에 순위·작성자·한 줄 본문·조회/시간·게시 경과시간·주제 chip·외부 링크를 표시한다. 모바일에서는 속도/경과시간을 다음 줄에 배치한다. 실패는 회색 `데이터 없음 · <사유>`다.
+- `tests/fixtures/yapping-rising.ts`와 collector/UI 테스트: 30개 역순 fixture로 상위 10개·정렬·자료형·안전한 링크·빈 응답·timeout/HTTP/연결/JSON 오류·30초 캐시·동시 조회·복구·기존 지표 독립성을 검증한다.
+- `scripts/brief10-preview.ts`, `brief10b-capture.mjs`와 캡처 안내: 별도 loopback 미리보기에서 실제 앱을 실행한다. Rising success/error fixture와 live 모드를 명시하고 이전 스크린샷을 보존한다. 기존 BRIEF10 캡처는 fixture 사용 시 거부하도록 했다. 설계와 재현 명령은 [구현 기록](docs/brief10b-rising.md)에 있다.
+
+Node 24.22.2 (`PATH=/home/max/.npm/_npx/387698761821791d/node_modules/node/bin:$PATH`)에서 실행:
+
+| 명령 | 최종 결과 |
+|---|---|
+| `npm test -- --maxWorkers=4` | 358파일 / 4,488테스트 PASS, 162.38초 |
+| `npm test -- src/server/hub/yapping.test.ts src/server/hub/yapping-rising.test.ts src/ui/hub/YappingHome.test.tsx` | 3파일 / 36테스트 PASS |
+| `npm run typecheck` | PASS (`tsc --noEmit`, exit 0) |
+| `npm run build` | PASS (Vite + check-bundle, 빌드 9.36초) |
+| `git diff --check` | PASS |
+
+첫 타입 검사에서 새 테스트의 불완전한 `HubDeps` 모의 객체에 TS2352가 발생했다. 전체 필드를 가진 typed stub으로 수정한 뒤 재검사/빌드가 통과했다. 실응답 JSON에도 `parseRising`을 적용해 순위 1~10, windowH=12, reason=null을 확인했다. 운영 endpoint의 실패 상황은 인위적으로 유발하지 않고 fixture로 검증했다.
+
+## Rising 스크린샷
+
+실제 빌드 App을 `127.0.0.1:9411`(success fixture), `:9412`(timeout fixture), `:9413`(live)에서 실행했다. 인증/세션 셸은 빈 검증용 fixture이며 운영 인증·배포 검증은 아니다. Rising fixture 외의 운영 지표는 기존 read-only 로컬 수집을 사용한다. 캡처 명령은 각 포트에 대해 다음과 같다.
+
+```bash
+BRIEF10_PORT=9411 BRIEF10B_RISING_FIXTURE=success node --import tsx scripts/brief10-preview.ts
+BRIEF10_PORT=9411 node scripts/brief10b-capture.mjs
+# 9412/error, 9413/live도 동일 방식으로 실행
+```
+
+**3시나리오 × 데스크톱/모바일 = 6개 화면 / 66개 assertion PASS**, 스크롤 포함 PNG 12개. Chromium headless 153.0.8010.12 사용. 최초 캡처 검토에서 Rising 제목이 고정 헤더에 가리는 문제를 발견해 캡처 스크립트가 실제 헤더 높이를 반영하도록 수정했다. 재캡처는 제목 가림 검사도 모두 통과했다. 제품 CSS나 화면 높이를 캡처용으로 변경하지 않았다.
+
+| 데이터 | Desktop 1440×1000 | Mobile 390×844 | 검증 |
+|---|---|---|---|
+| 실제 Rising | [화면](shots-yapquant/brief10b-rising-live-desktop.png) | [화면](shots-yapquant/brief10b-rising-live-mobile.png) | [18개 PASS](shots-yapquant/brief10b-rising-live-assertions.json) |
+| 정상 fixture | [화면](shots-yapquant/brief10b-rising-success-desktop.png) | [화면](shots-yapquant/brief10b-rising-success-mobile.png) | [24개 PASS](shots-yapquant/brief10b-rising-success-assertions.json) |
+| timeout fixture | [화면](shots-yapquant/brief10b-rising-error-desktop.png) | [화면](shots-yapquant/brief10b-rising-error-mobile.png) | [24개 PASS](shots-yapquant/brief10b-rising-error-assertions.json) |
+
+fixture 화면에는 SYNTHETIC RISING FIXTURE 배너를 명시했다. 실제 화면은 rank 1~10, 오류 없음으로 확인했다. 본문 한 줄 말줄임·안전한 외부 링크·기존 한도 카드·소스 기본 접힘·가로 넘침 없음·브라우저 console/page 오류 없음·외부 요청 없음·제목 노출을 검사했다. 실제 데스크톱/모바일 및 timeout 모바일 PNG도 직접 검토했다. 각 assertion JSON의 `screenshots`에 하위 행을 포함한 스크롤 이미지 경로가 있다. 이전 BRIEF10 산출물은 보존했다.
+
+작업용 미리보기 세 프로세스만 종료했고 포트 9411~9413이 닫혔음을 확인했다. 운영 서비스·upstream 소스·ledger·package lock은 변경하지 않았다. shared.ts 변경은 고정 Rising URL 상수 한 줄이며 공용 timeout/transport 동작은 유지했다. 작업 범위는 `feat/hub-yap-quant`의 코드·문서·테스트·스크린샷 커밋이다. **merge/push/deploy/restart는 수행하지 않았다. 배포에는 이곳 소유자의 별도 OK가 필요하다.**
+
+STATUS: DONE

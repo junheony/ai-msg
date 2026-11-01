@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { HubKpi, HubMode, HubSection, HubSource } from '../../shared/hub-types';
 import { fmtKst, isObj, num, objs, scrub, showUnit, toIso, type HubDeps } from './shared';
 import { YAPPING_READ_SCRIPT } from './yapping-read';
+import { collectRising } from './yapping-rising';
 
 export const YAPPING_UNITS = { service: 'yapping-bot.service' } as const;
 const CACHE_MS = 30_000;
@@ -34,7 +35,7 @@ export async function collectYapping(deps: HubDeps): Promise<HubMode> {
   const now = deps.now();
   const saved = cache.get(deps);
   const freshCache = !!saved && now - saved.at < CACHE_MS;
-  const [readData, service] = await Promise.all([freshCache ? Promise.resolve(saved.data) : read(deps), showUnit(deps, YAPPING_UNITS.service)]);
+  const [readData, service, risingResult] = await Promise.all([freshCache ? Promise.resolve(saved.data) : read(deps), showUnit(deps, YAPPING_UNITS.service), collectRising(deps)]);
   if (readData && !freshCache && toIso(readData.at) && isObj(readData.plan) && isObj(readData.caps) && (!Array.isArray(readData.errors) || readData.errors.length === 0)) cache.set(deps, { at: now, data: readData });
   // Retain a known good projection after transport failure; its original timestamp remains visible.
   const data = readData ?? saved?.data ?? {};
@@ -47,6 +48,7 @@ export async function collectYapping(deps: HubDeps): Promise<HubMode> {
   const sources: HubSource[] = [
     { name: '자동 성장 기록', ok: !!readData && !!at && isObj(data.plan) && isObj(data.caps) && !errors.length, ms: 0, ...(!readData || !at || !isObj(data.plan) || !isObj(data.caps) || errors.length ? { error: !readData ? '로컬 상태 읽기 실패' : errors.length ? errors.join(' · ') : '운영 기록 없음' } : {}) },
     { name: 'systemd', ok: service.active === 'active', ms: 0, ...(service.active !== 'active' ? { error: service.active === 'missing' ? '서비스 확인 불가' : '서비스 정지' } : {}) },
+    risingResult.source,
   ];
   const known = (name: string, n: number | null, cap: number | null, hint: string): HubKpi => ({ label: name, value: n === null || cap === null ? '데이터 없음' : `${n} / ${cap}`, status: stale ? 'info' : n !== null && cap !== null && n > cap ? 'warn' : 'info', hint: `${stale ? `마지막 정상 ${fmtKst(at)} · ` : ''}${cap === null ? '운영 한도 설정을 읽을 수 없음' : n === null && !hint.includes('기록') ? '완료 기록을 읽을 수 없음' : hint}` });
   const laneHint = planCurrent ? `운영일 ${day} · 완료+예약` : '오늘 레인 계획이 아직 기록되지 않음';
@@ -69,10 +71,10 @@ export async function collectYapping(deps: HubDeps): Promise<HubMode> {
   const sections: HubSection[] = [
     { kind: 'table', title: 'X 최근 게시', open: true, columns: ['시각', '게시물', '링크'], rows: posts.map((p) => [toIso(p.posted_at) ?? '', clean(p.text, 180), `https://x.com/cblabx/status/${p.tweet_id}`]), note: posts.length ? '@cblabx 최근 3건' : '데이터 없음 · 게시 완료 기록을 읽을 수 없음' },
     { kind: 'table', title: 'Telegram 미러', open: true, columns: ['시각', '게시물', '링크'], rows: channel ? mirrors.map((p) => [toIso(p.tg_posted_at) ?? '', clean(p.headline, 180), `https://t.me/${channel}/${p.tg_message_id}`]) : [], note: channel && mirrors.length ? `@${channel} 최근 3건` : '데이터 없음 · 공개 채널 또는 미러 게시 기록 없음' },
-    { kind: 'kv', title: '소스 상태', open: false, rows: [['수집 방식', '로컬 운영 기록 · 읽기 전용'], ['기록 조회', at ? fmtKst(at) : '데이터 없음'], ['게시 운영일', `${day} (03:00 KST 초기화)`], ['답글 운영일', `${dateKst(now)} (00:00 KST 초기화)`], ['API', '동시 조회 6~8초 지연 확인 · 로컬 기록으로 조회'], ['조회수 이력', '현재 누적값만 저장됨 · 시점별 관측 API 필요']] },
+    { kind: 'kv', title: '소스 상태', open: false, rows: [['수집 방식', '로컬 운영 기록 · 읽기 전용'], ['기록 조회', at ? fmtKst(at) : '데이터 없음'], ['게시 운영일', `${day} (03:00 KST 초기화)`], ['답글 운영일', `${dateKst(now)} (00:00 KST 초기화)`], ['API', '운영 통계는 로컬 기록 · Rising만 30초 캐시 API 조회'], ['조회수 이력', '현재 누적값만 저장됨 · 시점별 관측 API 필요']] },
   ];
   const alerts = service.active !== 'active' && service.active !== 'missing' ? [{ level: 'bad' as const, text: '야핑봇 서비스 정지' }] : [];
   if (total !== null && nonnegative(caps.total) !== null && total > Number(caps.total)) alerts.push({ level: 'bad', text: `전체 게시 ${total}건 · 현재 한도 ${caps.total}건 초과` });
   const state = service.active !== 'active' && service.active !== 'missing' ? 'down' : !at ? 'unknown' : stale || errors.length || !planCurrent || alerts.length ? 'warn' : 'ok';
-  return { id: 'yapping', name: '야핑봇', state, tag: '자동 성장', lastActivity: toIso(posts[0]?.posted_at), metrics: { '전체 게시': kpis[2]!.value, '답글': kpis[3]!.value, '팔로워 변화': delta }, alerts, links: [{ label: '@cblabx', href: 'https://x.com/cblabx' }], sources, page: { headline: '@cblabx 자동 성장', decision: '속보 · 리포트 · 답글 운영 현황', kpis, sections } };
+  return { rising: risingResult.rising, id: 'yapping', name: '야핑봇', state, tag: '자동 성장', lastActivity: toIso(posts[0]?.posted_at), metrics: { '전체 게시': kpis[2]!.value, '답글': kpis[3]!.value, '팔로워 변화': delta }, alerts, links: [{ label: '@cblabx', href: 'https://x.com/cblabx' }], sources, page: { headline: '@cblabx 자동 성장', decision: '속보 · 리포트 · 답글 운영 현황', kpis, sections } };
 }

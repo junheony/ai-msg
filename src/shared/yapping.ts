@@ -1,4 +1,10 @@
 import type { HubSource } from './hub-types';
+/** Only public X post permalinks; discard tracking queries and fragments. */
+export function risingPostUrl(value: unknown): string | null {
+  if (typeof value !== 'string' || !/^https:\/\/(?:x|twitter)\.com\/(?:[A-Za-z0-9_]{1,15}\/status|i\/web\/status)\/\d+\/?(?:[?#].*)?$/.test(value)) return null;
+  const url = new URL(value);
+  return `${url.origin}${url.pathname.replace(/\/$/, '')}`;
+}
 /** One summary in the collapsed source panel, including old-server API failures. */
 export function yappingSourceSummary(sources: HubSource[]): string {
   const api = sources.filter((s) => s.name.startsWith('/api/'));

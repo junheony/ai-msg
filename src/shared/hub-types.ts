@@ -123,6 +123,19 @@ export interface HubMode {
   studio?: GameStudio;
   /** 영상 only: the Shorts 공장 project (~/shorts_status files, read-only), shown as the mode's second tab. */
   shorts?: ShortsFactoryView;
+  /** 야핑봇 only: independently cached public Rising feed. */
+  rising?: YappingRising;
+}
+
+export interface YappingRisingItem {
+  rank: number; url: string; author: string; text: string;
+  velocityVph: number; ageH: number; topic: string;
+}
+export interface YappingRising {
+  generatedAt: string | null; windowH: number | null;
+  items: YappingRisingItem[];
+  /** Sanitized failure or empty-feed reason; never the upstream response body. */
+  reason: string | null;
 }
 
 /* ───────── 게임 스튜디오 (studio/games/*.json manifests + ~/jobs agents; read-only) ───────── */

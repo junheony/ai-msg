@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { collectYapping } from './yapping';
-import type { HubDeps } from './shared';
+import { HUB_URLS, type HubDeps } from './shared';
 import { YAPPING_READ_SCRIPT } from './yapping-read';
 import { yappingSourceSummary } from '../../shared/yapping';
+import { risingFixture } from '../../../tests/fixtures/yapping-rising';
 
 const NOW = Date.parse('2026-11-01T17:00:00Z'); // 02:00 KST, previous posting service day
 function projection() {
@@ -11,13 +12,23 @@ function projection() {
 function deps(data: unknown = projection()) {
   let now = NOW;
   const exec = vi.fn(async () => data === null ? null : JSON.stringify(data));
-  const fetchJson = vi.fn(async () => { throw new Error('HTTP must not be called'); });
+  const fetchJson = vi.fn(async (url: string) => { if (url !== HUB_URLS.yappingRising) throw new Error('Only the Rising feed may use HTTP'); return risingFixture(); });
   const d: HubDeps = { exec, fetchJson, latestRender: async () => null, countEntries: async () => null, gitLastCommit: async () => null, readText: async () => null, readTail: async () => null, listDir: async () => null, fileMtime: async () => null, systemdShow: async () => ({ LoadState: 'loaded', ActiveState: 'active', SubState: 'running' }), now: () => now, self: () => ({ uptimeMs: 0, sessions: 0, activeTurns: 0 }), host: 'test', home: '/home/test' };
   return { d, exec, fetchJson, advance: (ms: number) => { now += ms; } };
 }
 const kpi = (m: Awaited<ReturnType<typeof collectYapping>>, label: string) => m.page!.kpis.find((k) => k.label === label)!;
 
 describe('auto-growth yapping collector', () => {
+  it('keeps local counters and mode health when Rising times out', async () => {
+    const { d, fetchJson } = deps();
+    fetchJson.mockRejectedValue(new DOMException('private timeout detail', 'TimeoutError'));
+    const m = await collectYapping(d);
+    expect(m.state).toBe('ok');
+    expect(kpi(m, '전체 게시').value).toBe('7 / 7');
+    expect(m.rising).toMatchObject({ items: [], reason: '시간 초과' });
+    expect(m.alerts).toEqual([]);
+    expect(m.sources.find(source => source.name === '/api/rising')).toMatchObject({ ok: false, error: '시간 초과' });
+  });
   it('shows real lane cap usage and midnight replies with 3 independent public X/TG links', async () => {
     const { d, exec, fetchJson } = deps();
     const m = await collectYapping(d);
@@ -35,7 +46,7 @@ describe('auto-growth yapping collector', () => {
     expect(x.rows[0]![2]).toBe('https://x.com/cblabx/status/1');
     expect(tg.rows[0]![2]).toBe('https://t.me/blockschool/1');
     expect(m.page!.sections.some((s) => /로테이션|초안/.test(s.title))).toBe(false);
-    expect(fetchJson).not.toHaveBeenCalled();
+    expect(fetchJson).toHaveBeenCalledExactlyOnceWith(HUB_URLS.yappingRising, 3000);
     expect(exec).toHaveBeenCalledWith('python3', ['-c', YAPPING_READ_SCRIPT, '/home/test/yapping-bot', String(NOW)], { timeoutMs: 1800 });
     expect(JSON.stringify(m)).not.toContain('/home/test');
   });

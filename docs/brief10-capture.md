@@ -28,3 +28,7 @@ App은 고정 높이 셸 안에서 허브를 스크롤한다. 주 PNG 4개는 �
 HTTP 요청은 GET/HEAD만 허용한다. WebSocket은 빈 hello만 보내며 어떤 명령도 처리하지 않는다. 상위 HTTP 요청은 :8810/api/snapshot.json만 허용하고 리디렉션을 거부한다. 야핑봇은 수집기의 읽기 전용 SQLite·상태 파일 조회를 사용한다. :8095의 일부 GET은 상태를 변경하므로 이 호스트에서는 전부 차단한다. 다른 허브 수집기·프로덕션 서버·엔진·거래 API·프록시를 실행하지 않으며 ledger나 서비스 설정에 쓰지 않는다. 운영 서비스의 재시작·배포·push·merge·commit을 수행하지 않는다.
 
 2026-11-02 02:12 KST 검증: Node 24.22.2, Chromium headless 153.0.8010.12(캐시 1243)에서 네 뷰의 32개 검증 모두 통과했다. 기본 PNG 4개와 추가 스크롤 PNG 23개를 생성했으며 콘솔·페이지 오류와 외부 요청은 없었다. 문서 폭은 데스크톱 1440px·모바일 390px 그대로였다. 재실행의 사실 기록은 `shots-yapquant/assertions.json`을 기준으로 한다.
+
+## BRIEF10b override
+
+The isolated preview now also permits exactly `http://127.0.0.1:8095/api/rising?limit=30` (GET, redirects rejected). Other :8095 routes remain blocked. Local yapping operational statistics are still read from local records. Set `BRIEF10B_RISING_FIXTURE=success` or `error` only for explicit synthetic Rising previews; the manifest labels that source. Use `scripts/brief10b-capture.mjs` for these screenshots. The original capture script rejects fixture mode to preserve its live-data claim and existing artifact names.

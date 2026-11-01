@@ -1,0 +1,262 @@
+{
+  "capturedAt": "2026-11-01T17:52:24.906Z",
+  "base": "http://127.0.0.1:9411",
+  "scenario": "success",
+  "browser": {
+    "version": "153.0.8010.12",
+    "executablePath": "/home/max/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell"
+  },
+  "nature": "Production built App and Rising parser with explicitly synthetic Rising data; remaining stats use live local records. Fixture label added only for capture.",
+  "manifest": {
+    "preview": "brief10-live-read-only",
+    "ui": "dist/ui/index.html",
+    "modes": [
+      "yapping",
+      "quant"
+    ],
+    "shell": "empty fixture; no real sessions/accounts",
+    "rising": "SYNTHETIC FIXTURE: success",
+    "upstreamReads": [
+      "http://127.0.0.1:8810/api/snapshot.json"
+    ],
+    "startedAt": 1793555467466
+  },
+  "results": [
+    {
+      "size": "desktop",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "assertions": {
+        "noPageErrors": true,
+        "noConsoleErrors": true,
+        "noBlockedRequests": true,
+        "noHorizontalOverflow": true,
+        "localStatsPresent": true,
+        "sourceCollapsed": true,
+        "safeLinks": true,
+        "singleLineText": true,
+        "tenRanks": true,
+        "fieldsRendered": true,
+        "fixtureLabel": true,
+        "headingNotOccluded": true
+      },
+      "text": "Rising\n최근 12시간 · 상위 10개 · 2026-11-02 12:00 KST 집계\n1\n@fixture_1\nAI\n[FIXTURE] 1번째 공개 게시물 · 인공지능과 개발 도구에 관한 새로운 소식입니다. 긴 제목도 한 줄로 표시합니다.\n12,000.5 조회/시간\n게시 0.3시간 경과\n2\n@fixture_2\n개발 도구\n[FIXTURE] 2번째 공개 게시물 · 인공지능과 개발 도구에 관한 새로운 소식입니다. 긴 제목도 한 줄로 표시합니다.\n6,000.3 조회/시간\n게시 0.5시간 경과\n3\n@fixture_3\nAI\n[FIXTURE] 3번째 공개 게시물 · 인공지능과 개발 도구에 관한 새로운 소식입니다. 긴 제목도 한 줄로 표시합니다.\n4,000.2 조회/시간\n게시 0.8시간 경과\n4\n@fixture_4\n개발 도구\n[FIXTURE] 4번째 공개 게시물 · 인공지능과 개발 도구에 관한 새로운 소식입니다. 긴 제목도 한 줄로 표시합니다.\n3,000.1 조회/시간\n게시 1시간 경과\n5\n@fixture_5\nAI\n[FIXTURE] 5번째 공개 게시물 · 인공지능과 개발 도구에 관한 새로운 소식입니다. 긴 제목도 한 줄로 표시합니다.\n2,400.1 조회/시간\n게시 1.3시간 경과\n6\n@fixture_6\n개발 도구\n[FIXTURE] 6번째 공개 게시물 · 인공지능과 개발 도구에 관한 새로운 소식입니다. 긴 제목도 한 줄로 표시합니다.\n2,000.1 조회/시간\n게시 1.5시간 경과\n7\n@fixture_7\nAI\n[FIXTURE] 7번째 공개 게시물 · 인공지능과 개발 도구에 관한 새로운 소식입니다. 긴 제목도 한 줄로 표시합니다.\n1,714.4 조회/시간\n게시 1.8시간 경과\n8\n@fixture_8\n개발 도구\n[FIXTURE] 8번째 공개 게시물 · 인공지능과 개발 도구에 관한 새로운 소식입니다. 긴 제목도 한 줄로 표시합니다.\n1,500.1 조회/시간\n게시 2시간 경과\n9\n@fixture_9\nAI\n[FIXTURE] 9번째 공개 게시물 · 인공지능과 개발 도구에 관한 새로운 소식입니다. 긴 제목도 한 줄로 표시합니다.\n1,333.4 조회/시간\n게시 2.3시간 경과\n10\n@fixture_10\n개발 도구\n[FIXTURE] 10번째 공개 게시물 · 인공지능과 개발 도구에 관한 새로운 소식입니다. 긴 제목도 한 줄로 표시합니다.\n1,200.1 조회/시간\n게시 2.5시간 경과",
+      "ranks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "links": [
+        {
+          "href": "https://x.com/fixture_1/status/900001",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/fixture_2/status/900002",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/fixture_3/status/900003",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/fixture_4/status/900004",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/fixture_5/status/900005",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/fixture_6/status/900006",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/fixture_7/status/900007",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/fixture_8/status/900008",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/fixture_9/status/900009",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/fixture_10/status/900010",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        }
+      ],
+      "singleLineText": true,
+      "missingReason": null,
+      "localCaps": 4,
+      "sourceCollapsed": true,
+      "overflow": {
+        "viewport": 1440,
+        "document": 1440,
+        "body": 1440,
+        "hub": 1368,
+        "hubClient": 1368
+      },
+      "firstCaptureHeading": {
+        "top": 150.1875,
+        "bottom": 181.546875,
+        "stickyBottom": 123,
+        "visible": true
+      },
+      "screenshots": [
+        {
+          "file": "brief10b-rising-success-desktop.png",
+          "offset": 1132
+        },
+        {
+          "file": "brief10b-rising-success-desktop-scroll-01.png",
+          "offset": 1468
+        }
+      ],
+      "errors": [],
+      "consoleErrors": [],
+      "blockedRequests": []
+    },
+    {
+      "size": "mobile",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "assertions": {
+        "noPageErrors": true,
+        "noConsoleErrors": true,
+        "noBlockedRequests": true,
+        "noHorizontalOverflow": true,
+        "localStatsPresent": true,
+        "sourceCollapsed": true,
+        "safeLinks": true,
+        "singleLineText": true,
+        "tenRanks": true,
+        "fieldsRendered": true,
+        "fixtureLabel": true,
+        "headingNotOccluded": true
+      },
+      "text": "Rising\n최근 12시간 · 상위 10개 · 2026-11-02 12:00 KST 집계\n1\n@fixture_1\nAI\n[FIXTURE] 1번째 공개 게시물 · 인공지능과 개발 도구에 관한 새로운 소식입니다. 긴 제목도 한 줄로 표시합니다.\n12,000.5 조회/시간\n게시 0.3시간 경과\n2\n@fixture_2\n개발 도구\n[FIXTURE] 2번째 공개 게시물 · 인공지능과 개발 도구에 관한 새로운 소식입니다. 긴 제목도 한 줄로 표시합니다.\n6,000.3 조회/시간\n게시 0.5시간 경과\n3\n@fixture_3\nAI\n[FIXTURE] 3번째 공개 게시물 · 인공지능과 개발 도구에 관한 새로운 소식입니다. 긴 제목도 한 줄로 표시합니다.\n4,000.2 조회/시간\n게시 0.8시간 경과\n4\n@fixture_4\n개발 도구\n[FIXTURE] 4번째 공개 게시물 · 인공지능과 개발 도구에 관한 새로운 소식입니다. 긴 제목도 한 줄로 표시합니다.\n3,000.1 조회/시간\n게시 1시간 경과\n5\n@fixture_5\nAI\n[FIXTURE] 5번째 공개 게시물 · 인공지능과 개발 도구에 관한 새로운 소식입니다. 긴 제목도 한 줄로 표시합니다.\n2,400.1 조회/시간\n게시 1.3시간 경과\n6\n@fixture_6\n개발 도구\n[FIXTURE] 6번째 공개 게시물 · 인공지능과 개발 도구에 관한 새로운 소식입니다. 긴 제목도 한 줄로 표시합니다.\n2,000.1 조회/시간\n게시 1.5시간 경과\n7\n@fixture_7\nAI\n[FIXTURE] 7번째 공개 게시물 · 인공지능과 개발 도구에 관한 새로운 소식입니다. 긴 제목도 한 줄로 표시합니다.\n1,714.4 조회/시간\n게시 1.8시간 경과\n8\n@fixture_8\n개발 도구\n[FIXTURE] 8번째 공개 게시물 · 인공지능과 개발 도구에 관한 새로운 소식입니다. 긴 제목도 한 줄로 표시합니다.\n1,500.1 조회/시간\n게시 2시간 경과\n9\n@fixture_9\nAI\n[FIXTURE] 9번째 공개 게시물 · 인공지능과 개발 도구에 관한 새로운 소식입니다. 긴 제목도 한 줄로 표시합니다.\n1,333.4 조회/시간\n게시 2.3시간 경과\n10\n@fixture_10\n개발 도구\n[FIXTURE] 10번째 공개 게시물 · 인공지능과 개발 도구에 관한 새로운 소식입니다. 긴 제목도 한 줄로 표시합니다.\n1,200.1 조회/시간\n게시 2.5시간 경과",
+      "ranks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "links": [
+        {
+          "href": "https://x.com/fixture_1/status/900001",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/fixture_2/status/900002",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/fixture_3/status/900003",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/fixture_4/status/900004",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/fixture_5/status/900005",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/fixture_6/status/900006",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/fixture_7/status/900007",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/fixture_8/status/900008",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/fixture_9/status/900009",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/fixture_10/status/900010",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        }
+      ],
+      "singleLineText": true,
+      "missingReason": null,
+      "localCaps": 4,
+      "sourceCollapsed": true,
+      "overflow": {
+        "viewport": 390,
+        "document": 390,
+        "body": 390,
+        "hub": 390,
+        "hubClient": 390
+      },
+      "firstCaptureHeading": {
+        "top": 171.984375,
+        "bottom": 203.34375,
+        "stickyBottom": 147.109375,
+        "visible": true
+      },
+      "screenshots": [
+        {
+          "file": "brief10b-rising-success-mobile.png",
+          "offset": 2014
+        },
+        {
+          "file": "brief10b-rising-success-mobile-scroll-01.png",
+          "offset": 2601
+        },
+        {
+          "file": "brief10b-rising-success-mobile-scroll-02.png",
+          "offset": 2959
+        }
+      ],
+      "errors": [],
+      "consoleErrors": [],
+      "blockedRequests": []
+    }
+  ]
+}
