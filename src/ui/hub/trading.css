@@ -1,6 +1,19 @@
 /* Trading room merged view (src/ui/hub/TradingHome.tsx): dashboard cards on the hub's tokens. Everything under .tr-;
    the section frame (.sec .sh .b), cards (.hs-card .hs-rows), pills (.hub-st), tables (.t) and the 주의 list (.att)
    are the hub's own classes. Phone (≤720): one column, rows wrap, tables scroll sideways, nothing clips. */
+/* Trading uses the shell's normal-width face for both Hangul and Latin figures. Keep the enlarged hub scale,
+   but give numbers room rather than compressing glyphs or breaking them into vertical stacks. */
+.hub-page[data-mode="trading"] { --hub-font: var(--font); font-family: var(--font); font-variant-numeric: tabular-nums; line-height: 1.4; }
+.hub-page[data-mode="trading"] .lead .d { line-height: 1.45; }
+.hub-page[data-mode="trading"] .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+/* More specific than the shared seven-plus KPI rule, including its 1.05 leading and anywhere wrapping. */
+.hub-page[data-mode="trading"] .kpis .kpi .v { line-height: 1.15; white-space: normal; word-break: keep-all; overflow-wrap: normal; }
+.hub-page[data-mode="trading"] .kpi .l,
+.hub-page[data-mode="trading"] .hs-rows dt { white-space: normal; word-break: keep-all; overflow-wrap: break-word; }
+.hub-page[data-mode="trading"] .hs-rows > div { flex-wrap: wrap; }
+.hub-page[data-mode="trading"] .hs-rows dd { margin-left: auto; overflow-wrap: break-word; max-width: 100%; }
+.hub-page[data-mode="trading"] .hs-card-top h4 { line-height: 1.3; }
+
 .tr { display: flex; flex-direction: column; gap: var(--s4, 16px); min-width: 0; }
 .tr .tr-dim { color: var(--faint); font-weight: 400; }
 .tr .tr-mono { font-family: var(--hub-font); font-size: var(--fs-xs); font-weight: 500; letter-spacing: .2px; }
@@ -61,7 +74,7 @@
 .tr-down p { margin: 4px 0 0; color: var(--faint); font-size: var(--fs-xs); line-height: 1.4; }
 
 /* small stat tiles */
-.tr-mini { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+.tr-mini { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 8px; }
 .tr-mi { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px 8px; border: 1px solid var(--glass-line); border-radius: 10px; background: var(--glass); box-shadow: inset 0 1px 0 var(--glass-hi); min-width: 0; position: relative; overflow: hidden; }
 .tr-mi::before { content: ""; position: absolute; left: 12px; right: 12px; top: 0; height: 2px; border-radius: 0 0 2px 2px; background: transparent; }
 .tr-mi.ok::before { background: var(--hub-ok); }
@@ -77,8 +90,8 @@
 .tr-err { margin: 0; font-size: var(--fs-xs); color: var(--hub-warn); overflow-wrap: anywhere; }
 .tr-warns { margin: 0; padding-left: 18px; font-size: var(--fs-xs); color: var(--hub-warn); }
 
-/* workstreams: three cards, never merged */
-.tr-wss { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+/* Separate workstreams keep a readable width even inside a half-page section. */
+.tr-wss { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); gap: 10px; }
 .tr-ws { position: relative; overflow: hidden; container-type: inline-size; }
 .tr-ws::before { content: ""; position: absolute; left: 16px; right: 16px; top: 0; height: 2px; border-radius: 0 0 2px 2px; background: var(--line-strong); }
 .tr-ws.ok::before { background: var(--hub-ok); box-shadow: 0 0 10px var(--hub-ok); }
@@ -86,7 +99,7 @@
 .tr-ws.bad::before { background: var(--hub-bad); box-shadow: 0 0 10px var(--hub-bad); }
 .tr-ws .hs-rows dt { min-width: min(100%, 7ch); }
 .tr-ws .hs-rows dd { flex-shrink: 0; max-width: 68%; overflow-wrap: break-word; }
-/* three cards in half a page: too narrow for label and value side by side, so stack them instead of clipping either */
+/* Very narrow cards still allow the value its own line. */
 @container (max-width: 240px) {
   .tr-ws .hs-rows > div { flex-direction: column; align-items: stretch; gap: 0; }
   .tr-ws .hs-rows dt { white-space: normal; word-break: keep-all; }
@@ -99,10 +112,10 @@
 .tr-pnl .tr-dim { font-size: var(--fs-2xs); flex-basis: 100%; }
 
 /* ver2 books */
-.tr-books { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.tr-books { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); gap: 10px; }
 .tr-book { background: var(--glass); }
 .tr-eq { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font-size: var(--fs-xs); }
-.tr-eq b { font-family: var(--hub-font); font-size: var(--fs-display); font-weight: 500; line-height: 1; color: var(--fg-strong); font-variant-numeric: tabular-nums; letter-spacing: 0; }
+.tr-eq b { font-family: var(--hub-font); font-size: var(--fs-display); font-weight: 500; line-height: 1.15; color: var(--fg-strong); font-variant-numeric: tabular-nums; letter-spacing: 0; }
 .tr-eq .pos, .tr-eq .neg { font-family: var(--hub-font); font-size: var(--fs-base); font-weight: 600; font-variant-numeric: tabular-nums; }
 .tr-book .hs-spark { margin: 2px 0; }
 
@@ -126,19 +139,24 @@
 .tr-att .tx { min-width: 0; overflow-wrap: anywhere; }
 .tr-att .at { color: var(--faint); font-size: var(--fs-2xs); white-space: nowrap; }
 
-@media (max-width: 1000px) {
-  .tr-wss { grid-template-columns: 1fr; }
+@media (max-width: 1050px) {
+  .hub-page[data-mode="trading"] .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tr-grid { grid-template-columns: 1fr; gap: 0; }
 }
 @media (max-width: 720px) {
   /* the phone hides the header's text pills; the passive loading word is the one worth keeping */
   .hub-page[data-mode="trading"] .ph-end .pill.tr-loading { display: inline-flex; }
   .tr-src { grid-template-columns: 1fr; }
   .tr-src .hs-rows > div { flex-direction: column; align-items: stretch; gap: 0; }
-  .tr-src .hs-rows dd { max-width: none; text-align: left; }
+  .hub-page[data-mode="trading"] .tr-src .hs-rows dd { max-width: none; margin-left: 0; text-align: left; }
   .tr-grid { grid-template-columns: 1fr; }
   .tr-books { grid-template-columns: 1fr; }
   .tr-grid { gap: 0; }
   .tr-sec .b { padding: 2px 2px 16px; }
   .tr-ev li { grid-template-columns: auto 1fr; }
   .tr-ev li .tx { grid-column: 1 / -1; }
+}
+
+@media (max-width: 600px) {
+  .hub-page[data-mode="trading"] .kpis { grid-template-columns: minmax(0, 1fr); }
 }

@@ -1,4 +1,4 @@
-/* Inherit the hub's amber glass and Barlow figures, including the user's theme. */
+/* Inherit Trading's proportional type and the hub's amber glass, including the user's theme. */
 .lab { min-width: 0; }
 .lab .lab-header { align-items: center; gap: 14px; flex-wrap: wrap; }
 .lab h2, .lab h3, .lab h4 { margin: 0; color: var(--fg-strong); font-family: var(--hub-font); font-weight: 600; }
@@ -12,18 +12,21 @@
 .lab .lab-body { padding: 20px; }
 .lab-health { display: flex; flex-wrap: wrap; gap: 12px 24px; padding-bottom: 20px; font-size: var(--fs-base); color: var(--muted); }
 .lab-health b { margin-left: 6px; color: var(--fg-strong); font-weight: 500; }
-.lab-books { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--glass-line); border-bottom: 1px solid var(--glass-line); }
-.lab-book { min-width: 0; padding: 20px 16px; border-right: 1px solid var(--glass-line); }
-.lab-book:first-child { padding-left: 0; }
-.lab-book:last-child { border-right: 0; padding-right: 0; }
-.lab-book h3 { min-height: 2.4em; line-height: 1.2; }
+.lab-books { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--glass-line); border-bottom: 1px solid var(--glass-line); }
+.lab-book { min-width: 0; padding: 20px 24px; border-right: 1px solid var(--glass-line); }
+.lab-book:nth-child(odd) { padding-left: 0; }
+.lab-book:nth-child(even) { border-right: 0; padding-right: 0; }
+.lab-book:nth-child(n+3) { border-top: 1px solid var(--glass-line); }
+.lab-book:last-child { border-right: 0; }
+.lab-book h3 { line-height: 1.3; word-break: keep-all; }
 .lab-equity { margin-top: 10px; font-family: var(--hub-font); font-size: var(--fs-hub-xl); font-variant-numeric: tabular-nums; color: var(--fg-strong); line-height: 1.15; }
 .lab-equity small { margin-left: 5px; }
 .lab-return { font-family: var(--hub-font); font-size: var(--fs-lg); margin: 6px 0 16px; }
 .lab dl { margin: 12px 0 0; }
-.lab dl > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 5px 0; }
-.lab dt { color: var(--muted); font-size: var(--fs-sm); }
-.lab dd { margin: 0; min-width: 0; text-align: right; font-family: var(--hub-font); font-variant-numeric: tabular-nums; font-size: var(--fs-base); color: var(--fg-strong); overflow-wrap: anywhere; }
+.lab dl > div { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 16px; padding: 5px 0; }
+.lab dt { word-break: keep-all; color: var(--muted); font-size: var(--fs-sm); }
+.lab dd { margin: 0 0 0 auto; min-width: 0; max-width: 100%; text-align: right; font-family: var(--hub-font); font-variant-numeric: tabular-nums; font-size: var(--fs-base); color: var(--fg-strong); overflow-wrap: break-word; }
+.lab-book > dl dd { white-space: nowrap; }
 .lab-missing { font-size: var(--fs-sm); color: var(--muted); }
 .lab-evidence { display: grid; grid-template-columns: 1fr 1fr; gap: 36px; padding: 24px 0; }
 .lab-evidence > section { min-width: 0; }
@@ -67,13 +70,12 @@
 .lab-extra-list > li.lab-extra-nest + li.lab-extra-nest { margin-top: 6px; }
 .lab-book-extra { margin-top: 8px; border-top: 1px dashed var(--line-strong); padding-top: 4px; }
 .lab-extra-sec h3 small { margin-left: 8px; }
-.lab-disclaimer { margin: 20px 0 0; border-top: 1px solid var(--glass-line); padding-top: 16px; font-size: var(--fs-sm); color: var(--muted); line-height: 1.6; }
-@media (max-width: 1100px) { .lab-books { grid-template-columns: repeat(2, minmax(0, 1fr)); } .lab-book:nth-child(2n) { border-right: 0; } .lab-book:nth-child(n+3) { border-top: 1px solid var(--glass-line); } .lab-book:nth-child(3) { padding-left: 0; } }
-@media (max-width: 600px) {
+.lab-disclaimer { margin: 20px 0 0; border-top: 1px solid var(--glass-line); padding-top: 16px; font-size: var(--fs-sm); color: var(--muted); line-height: 1.45; }
+@media (max-width: 720px) {
   .lab .lab-body { padding: 16px; }
   .lab-clock { margin-left: 0; text-align: left; flex-basis: 100%; }
   .lab-books, .lab-evidence { grid-template-columns: minmax(0, 1fr); }
-  .lab-book, .lab-book:first-child, .lab-book:last-child { padding: 18px 0; border-right: 0; }
+  .lab-book:nth-child(n) { padding: 18px 0; border-right: 0; }
   .lab-book + .lab-book { border-top: 1px solid var(--glass-line); }
   .lab-book h3 { min-height: 0; }
   .lab-evidence { gap: 24px; }

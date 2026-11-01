@@ -1,0 +1,444 @@
+[
+  {
+    "width": 1440,
+    "documentOverflow": false,
+    "roomOverflow": false,
+    "controls": 0,
+    "condensed": 0,
+    "vertical": 0,
+    "paper": [
+      "PAPER ONLY",
+      "PAPER ONLY",
+      "PAPER ONLY · LIVE OFF",
+      "PAPER ONLY"
+    ],
+    "sections": [
+      true,
+      true,
+      true
+    ],
+    "figures": [
+      {
+        "text": "warn",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "33px",
+        "line": "37.95px",
+        "numeric": "tabular-nums",
+        "width": 378,
+        "scrollWidth": 378
+      },
+      {
+        "text": "4개",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "33px",
+        "line": "37.95px",
+        "numeric": "tabular-nums",
+        "width": 378,
+        "scrollWidth": 378
+      },
+      {
+        "text": "통과",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "33px",
+        "line": "37.95px",
+        "numeric": "tabular-nums",
+        "width": 378,
+        "scrollWidth": 378
+      },
+      {
+        "text": "7/39",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "33px",
+        "line": "37.95px",
+        "numeric": "tabular-nums",
+        "width": 378,
+        "scrollWidth": 378
+      },
+      {
+        "text": "33.6% · -0.70%",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "20.9px",
+        "line": "24.035px",
+        "numeric": "tabular-nums",
+        "width": 378,
+        "scrollWidth": 378
+      },
+      {
+        "text": "88.2% · +0.78%",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "20.9px",
+        "line": "24.035px",
+        "numeric": "tabular-nums",
+        "width": 378,
+        "scrollWidth": 378
+      },
+      {
+        "text": "+1,899",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "33px",
+        "line": "37.95px",
+        "numeric": "tabular-nums",
+        "width": 378,
+        "scrollWidth": 378
+      },
+      {
+        "text": "1/16/32",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "33px",
+        "line": "37.95px",
+        "numeric": "tabular-nums",
+        "width": 378,
+        "scrollWidth": 378
+      },
+      {
+        "text": "4시간 20분 전",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "25.3px",
+        "line": "29.095px",
+        "numeric": "tabular-nums",
+        "width": 378,
+        "scrollWidth": 378
+      },
+      {
+        "text": "60,195USDT",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "30.8px",
+        "line": "35.42px",
+        "numeric": "tabular-nums",
+        "width": 583,
+        "scrollWidth": 583
+      }
+    ],
+    "rows": [
+      {
+        "text": "실현 PnL",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "16.5px",
+        "line": "23.1px",
+        "numeric": "tabular-nums",
+        "width": 63,
+        "scrollWidth": 63
+      },
+      {
+        "text": "미실현 PnL",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "16.5px",
+        "line": "23.1px",
+        "numeric": "tabular-nums",
+        "width": 79,
+        "scrollWidth": 79
+      },
+      {
+        "text": "청산",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "16.5px",
+        "line": "23.1px",
+        "numeric": "tabular-nums",
+        "width": 30,
+        "scrollWidth": 30
+      },
+      {
+        "text": "승",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "16.5px",
+        "line": "23.1px",
+        "numeric": "tabular-nums",
+        "width": 15,
+        "scrollWidth": 15
+      },
+      {
+        "text": "열린 포지션",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "16.5px",
+        "line": "23.1px",
+        "numeric": "tabular-nums",
+        "width": 80,
+        "scrollWidth": 80
+      },
+      {
+        "text": "최대 낙폭",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "16.5px",
+        "line": "23.1px",
+        "numeric": "tabular-nums",
+        "width": 65,
+        "scrollWidth": 65
+      },
+      {
+        "text": "strategy",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "16.5px",
+        "line": "23.1px",
+        "numeric": "tabular-nums",
+        "width": 63,
+        "scrollWidth": 63
+      },
+      {
+        "text": "tf",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "16.5px",
+        "line": "23.1px",
+        "numeric": "tabular-nums",
+        "width": 12,
+        "scrollWidth": 12
+      },
+      {
+        "text": "cash_start",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "16.5px",
+        "line": "23.1px",
+        "numeric": "tabular-nums",
+        "width": 79,
+        "scrollWidth": 79
+      },
+      {
+        "text": "avg_r",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "16.5px",
+        "line": "23.1px",
+        "numeric": "tabular-nums",
+        "width": 42,
+        "scrollWidth": 42
+      }
+    ],
+    "grids": [
+      {
+        "selector": ".kpis",
+        "columns": "418px 418px 418px"
+      },
+      {
+        "selector": ".lab-books",
+        "columns": "608px 608px"
+      },
+      {
+        "selector": ".tr-wss",
+        "columns": "604px"
+      },
+      {
+        "selector": ".sr-grid",
+        "columns": "675.266px 562.719px"
+      }
+    ]
+  },
+  {
+    "width": 390,
+    "documentOverflow": false,
+    "roomOverflow": false,
+    "controls": 0,
+    "condensed": 0,
+    "vertical": 0,
+    "paper": [
+      "PAPER ONLY",
+      "PAPER ONLY",
+      "PAPER ONLY · LIVE OFF",
+      "PAPER ONLY"
+    ],
+    "sections": [
+      true,
+      true,
+      true
+    ],
+    "figures": [
+      {
+        "text": "warn",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "33px",
+        "line": "37.95px",
+        "numeric": "tabular-nums",
+        "width": 336,
+        "scrollWidth": 336
+      },
+      {
+        "text": "4개",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "33px",
+        "line": "37.95px",
+        "numeric": "tabular-nums",
+        "width": 336,
+        "scrollWidth": 336
+      },
+      {
+        "text": "통과",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "33px",
+        "line": "37.95px",
+        "numeric": "tabular-nums",
+        "width": 336,
+        "scrollWidth": 336
+      },
+      {
+        "text": "7/39",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "33px",
+        "line": "37.95px",
+        "numeric": "tabular-nums",
+        "width": 336,
+        "scrollWidth": 336
+      },
+      {
+        "text": "33.6% · -0.70%",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "18.15px",
+        "line": "20.8725px",
+        "numeric": "tabular-nums",
+        "width": 336,
+        "scrollWidth": 336
+      },
+      {
+        "text": "88.2% · +0.78%",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "18.15px",
+        "line": "20.8725px",
+        "numeric": "tabular-nums",
+        "width": 336,
+        "scrollWidth": 336
+      },
+      {
+        "text": "+1,899",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "33px",
+        "line": "37.95px",
+        "numeric": "tabular-nums",
+        "width": 336,
+        "scrollWidth": 336
+      },
+      {
+        "text": "1/16/32",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "33px",
+        "line": "37.95px",
+        "numeric": "tabular-nums",
+        "width": 336,
+        "scrollWidth": 336
+      },
+      {
+        "text": "4시간 20분 전",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "20.9px",
+        "line": "24.035px",
+        "numeric": "tabular-nums",
+        "width": 336,
+        "scrollWidth": 336
+      },
+      {
+        "text": "60,195USDT",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "30.8px",
+        "line": "35.42px",
+        "numeric": "tabular-nums",
+        "width": 334,
+        "scrollWidth": 334
+      }
+    ],
+    "rows": [
+      {
+        "text": "실현 PnL",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "16.5px",
+        "line": "23.1px",
+        "numeric": "tabular-nums",
+        "width": 63,
+        "scrollWidth": 63
+      },
+      {
+        "text": "미실현 PnL",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "16.5px",
+        "line": "23.1px",
+        "numeric": "tabular-nums",
+        "width": 79,
+        "scrollWidth": 79
+      },
+      {
+        "text": "청산",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "16.5px",
+        "line": "23.1px",
+        "numeric": "tabular-nums",
+        "width": 30,
+        "scrollWidth": 30
+      },
+      {
+        "text": "승",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "16.5px",
+        "line": "23.1px",
+        "numeric": "tabular-nums",
+        "width": 15,
+        "scrollWidth": 15
+      },
+      {
+        "text": "열린 포지션",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "16.5px",
+        "line": "23.1px",
+        "numeric": "tabular-nums",
+        "width": 80,
+        "scrollWidth": 80
+      },
+      {
+        "text": "최대 낙폭",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "16.5px",
+        "line": "23.1px",
+        "numeric": "tabular-nums",
+        "width": 65,
+        "scrollWidth": 65
+      },
+      {
+        "text": "strategy",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "16.5px",
+        "line": "23.1px",
+        "numeric": "tabular-nums",
+        "width": 63,
+        "scrollWidth": 63
+      },
+      {
+        "text": "tf",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "16.5px",
+        "line": "23.1px",
+        "numeric": "tabular-nums",
+        "width": 12,
+        "scrollWidth": 12
+      },
+      {
+        "text": "cash_start",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "16.5px",
+        "line": "23.1px",
+        "numeric": "tabular-nums",
+        "width": 79,
+        "scrollWidth": 79
+      },
+      {
+        "text": "avg_r",
+        "font": "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", Pretendard, \"Apple SD Gothic Neo\", \"Noto Sans KR\", system-ui, sans-serif",
+        "size": "16.5px",
+        "line": "23.1px",
+        "numeric": "tabular-nums",
+        "width": 42,
+        "scrollWidth": 42
+      }
+    ],
+    "grids": [
+      {
+        "selector": ".kpis",
+        "columns": "364px"
+      },
+      {
+        "selector": ".lab-books",
+        "columns": "334px"
+      },
+      {
+        "selector": ".tr-wss",
+        "columns": "362px"
+      },
+      {
+        "selector": ".sr-grid",
+        "columns": "362px"
+      }
+    ]
+  }
+]
