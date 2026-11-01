@@ -56,6 +56,22 @@ describe('chart', () => {
     const xs = Array.from(c.querySelectorAll('text.x')).map((t) => t.textContent);
     expect(xs).toContain('10-03');
   });
+  it('keeps bars inside the plot from a zero baseline, x labels apart, and legend values rounded', () => {
+    const x = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}:00`);
+    sec({ kind: 'chart', title: 'b', open: true, x, unit: 's', series: [{ name: 'p', values: x.map((_, i) => 200 + i + 0.68), style: 'bar' }] });
+    const c = screen.getByTestId('hub-chart');
+    const W = Number(c.querySelector('svg')!.getAttribute('viewBox')!.split(' ')[2]);
+    for (const r of Array.from(c.querySelectorAll('rect'))) {
+      const x0 = Number(r.getAttribute('x'));
+      expect(x0).toBeGreaterThanOrEqual(44);
+      expect(x0 + Number(r.getAttribute('width'))).toBeLessThanOrEqual(W - 12);
+    }
+    expect(Array.from(c.querySelectorAll('text:not(.x)')).map((t) => t.textContent)).toContain('0');
+    const xs = Array.from(c.querySelectorAll('text.x')).map((t) => Number(t.getAttribute('x')));
+    expect(xs.length).toBeGreaterThan(1);
+    for (let i = 1; i < xs.length; i++) expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(5 * 7);
+    expect(c.querySelector('.hs-leg b')!.textContent).toBe('224s');
+  });
   it('measures its width even when the data arrives after a first empty render', () => {
     const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 320 } as DOMRect);
     try {

@@ -21,7 +21,9 @@ const trim = (n: number): string => (n >= 100 ? String(Math.round(n)) : n >= 10 
 /** The value at a point, for the legend and the hover readout. */
 function val(v: number | null | undefined, unit?: string): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return '—';
-  const t = Math.abs(v) >= 1000 ? tick(v) : (Number.isInteger(v) ? String(v) : v.toFixed(2)).replace('-', '−');
+  const a = Math.abs(v);
+  // three significant digits or so: 233.68s → 234s, 14.62% → 14.6%, 0.0012% stays visible
+  const t = a >= 1000 ? tick(v) : (Number.isInteger(v) ? String(v) : a >= 100 ? String(Math.round(v)) : a >= 10 ? v.toFixed(1) : a >= 0.01 ? v.toFixed(2) : v.toPrecision(2)).replace('-', '−');
   return unit ? `${t}${unit}` : t;
 }
 
@@ -136,19 +138,30 @@ export function Chart({ s }: { s: Extract<HubSection, { kind: 'chart' }> }) {
   const H = 220;
   const W = Math.max(240, width);
   const pw = W - PAD.l - PAD.r; const ph = H - PAD.t - PAD.b;
-  const ax = axis(Math.min(...all), Math.max(...all), !!s.zero, s.ymin);
-  const X = (i: number) => PAD.l + (n === 1 ? pw / 2 : (i / (n - 1)) * pw);
-  const Y = (v: number) => PAD.t + ph - ((v - ax.lo) / (ax.hi - ax.lo)) * ph;
   const bars = series.filter((x) => x.style === 'bar');
+  // a bar's length means something only from zero
+  const ax = axis(Math.min(...all), Math.max(...all), !!s.zero || bars.length > 0, s.ymin);
   const slot = pw / Math.max(1, n);
+  // with bars every point sits mid-slot, so the first and last bars stay inside the plot
+  const X = (i: number) => PAD.l + (bars.length > 0 ? (i + 0.5) * slot : n === 1 ? pw / 2 : (i / (n - 1)) * pw);
+  const Y = (v: number) => PAD.t + ph - ((v - ax.lo) / (ax.hi - ax.lo)) * ph;
   const bw = Math.max(2, Math.min(28, (slot * 0.7) / Math.max(1, bars.length)));
-  // x labels: at most ~6, always the last.
-  const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(pw / 90))));
-  const labelIdx = s.x.map((_, i) => i).filter((i) => i === n - 1 || (i % every === 0 && n - 1 - i >= every / 2));
+  // x labels: at most ~6, always the last, never touching (width estimated from the tick font, ~7px a glyph).
+  const lw = Math.max(...s.x.map((l) => l.length)) * 7;
+  const step = bars.length > 0 || n === 1 ? slot : pw / (n - 1);
+  const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(pw / 90))), Math.ceil((lw + 12) / step));
+  const lab = (i: number): { x: number; anchor: 'start' | 'middle' | 'end'; l: number; r: number } => {
+    if (bars.length > 0) { const x = Math.max(PAD.l + lw / 2, Math.min(W - PAD.r - lw / 2, X(i))); return { x, anchor: 'middle', l: x - lw / 2, r: x + lw / 2 }; }
+    const anchor = i === n - 1 ? 'end' : i === 0 ? 'start' : 'middle';
+    const x = X(i);
+    return { x, anchor, l: anchor === 'end' ? x - lw : anchor === 'start' ? x : x - lw / 2, r: anchor === 'end' ? x : anchor === 'start' ? x + lw : x + lw / 2 };
+  };
+  const lastL = lab(n - 1).l;
+  const labelIdx = s.x.map((_, i) => i).filter((i) => i === n - 1 || (i % every === 0 && lab(i).r + 12 <= lastL));
   const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
     const px = ((e.clientX - r.left) / r.width) * W;
-    const i = Math.round(((px - PAD.l) / pw) * (n - 1));
+    const i = bars.length > 0 ? Math.floor((px - PAD.l) / slot) : Math.round(((px - PAD.l) / pw) * (n - 1));
     setHover(Math.max(0, Math.min(n - 1, i)));
   };
   const hv = hover === null ? n - 1 : hover;
@@ -165,7 +178,7 @@ export function Chart({ s }: { s: Extract<HubSection, { kind: 'chart' }> }) {
             <text x={PAD.l - 6} y={Y(t) + 3.5} className="hs-tick" textAnchor="end">{tick(t)}</text>
           </g>
         ))}
-        {labelIdx.map((i) => <text key={i} x={X(i)} y={H - 6} className="hs-tick x" textAnchor={i === n - 1 ? 'end' : i === 0 ? 'start' : 'middle'}>{s.x[i]}</text>)}
+        {labelIdx.map((i) => { const p = lab(i); return <text key={i} x={p.x} y={H - 6} className="hs-tick x" textAnchor={p.anchor}>{s.x[i]}</text>; })}
         {bars.map((x, k) => {
           const c = colorOf(x, series.indexOf(x));
           const base = Y(Math.max(ax.lo, Math.min(ax.hi, 0)));
