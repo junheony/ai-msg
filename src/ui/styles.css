@@ -3036,11 +3036,14 @@ mark.find-hit.current { background: var(--btn-primary-bg); color: var(--btn-prim
 .kv b { font-weight: 600; color: var(--fg-strong); font-variant-numeric: tabular-nums; text-align: right; min-width: 0; overflow-wrap: anywhere; }
 .twrap { overflow-x: auto; }
 /* Scroll hint: a side that can still scroll fades out (tables, the phone tab bar). Driven by the box's own scroll
-   timeline, which is inactive — no fade — when nothing overflows; without scroll timelines the edge stays plain. */
+   timeline, which is inactive — no fade — when nothing overflows. Gated on support: without a scroll timeline the
+   0s animation would fill to its last frame and fade the left edge for good. */
 @property --edge-l { syntax: "<length>"; inherits: false; initial-value: 0px; }
 @property --edge-r { syntax: "<length>"; inherits: false; initial-value: 0px; }
 @keyframes edge-fade { from { --edge-l: 0px; --edge-r: 28px; } 6%, 94% { --edge-l: 28px; --edge-r: 28px; } to { --edge-l: 28px; --edge-r: 0px; } }
+@supports (animation-timeline: scroll()) {
 .twrap, .tr-tw { -webkit-mask-image: linear-gradient(to right, transparent, black var(--edge-l), black calc(100% - var(--edge-r)), transparent); mask-image: linear-gradient(to right, transparent, black var(--edge-l), black calc(100% - var(--edge-r)), transparent); animation: edge-fade linear both; animation-timeline: scroll(self inline); }
+}
 table.t { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
 .t th { text-align: left; font-size: var(--fs-xs); font-weight: 500; color: var(--faint); padding: 6px 8px; border-bottom: 1px solid var(--line-strong); white-space: nowrap; }
 .t td { padding: 0 8px; height: 34px; border-bottom: 1px solid var(--line); white-space: nowrap; color: var(--fg); }
@@ -3124,7 +3127,7 @@ table.t { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); font-
   .rail-btn { flex: 0 0 64px; min-height: var(--phone-tap); height: 48px; padding: 4px 0; justify-content: center; border-radius: 8px; }
   .rail-btn.on::before { left: 16px; right: 16px; top: -4px; bottom: auto; width: auto; height: 3px; border-radius: 0 0 3px 3px; }
   .rail-sp, .rail-foot { display: none; }
-  .rail { -webkit-mask-image: linear-gradient(to right, transparent, black var(--edge-l), black calc(100% - var(--edge-r)), transparent); mask-image: linear-gradient(to right, transparent, black var(--edge-l), black calc(100% - var(--edge-r)), transparent); animation: edge-fade linear both; animation-timeline: scroll(self inline); }
+  @supports (animation-timeline: scroll()) { .rail { -webkit-mask-image: linear-gradient(to right, transparent, black var(--edge-l), black calc(100% - var(--edge-r)), transparent); mask-image: linear-gradient(to right, transparent, black var(--edge-l), black calc(100% - var(--edge-r)), transparent); animation: edge-fade linear both; animation-timeline: scroll(self inline); } }
   .shell-main { order: 1; }
   .hub-page { padding: 0 12px 20px; gap: 14px; }
   .ph { margin: 0 -12px; padding: 10px 12px 9px; gap: 6px 8px; }

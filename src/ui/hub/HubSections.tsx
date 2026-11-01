@@ -24,6 +24,8 @@ function val(v: number | null | undefined, unit?: string): string {
   const a = Math.abs(v);
   // three significant digits or so: 233.68s → 234s, 14.62% → 14.6%, 0.0012% stays visible
   const t = a >= 1000 ? tick(v) : (Number.isInteger(v) ? String(v) : a >= 100 ? String(Math.round(v)) : a >= 10 ? v.toFixed(1) : a >= 0.01 ? v.toFixed(2) : v.toPrecision(2)).replace('-', '−');
+  // a currency sign leads the number (−$60.2K, not −60.2K$); a word unit follows it
+  if (unit === '$') return t.startsWith('−') ? `−$${t.slice(1)}` : `$${t}`;
   return unit ? `${t}${unit}` : t;
 }
 

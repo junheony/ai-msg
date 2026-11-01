@@ -72,6 +72,10 @@ describe('chart', () => {
     for (let i = 1; i < xs.length; i++) expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(5 * 7);
     expect(c.querySelector('.hs-leg b')!.textContent).toBe('224s');
   });
+  it('puts a dollar sign before the number, after the minus', () => {
+    sec({ kind: 'chart', title: 'd', open: true, x: ['a', 'b'], unit: '$', series: [{ name: 'pnl', values: [60_200, -60_200] }] });
+    expect(screen.getByTestId('hub-chart').querySelector('.hs-leg b')!.textContent).toBe('−$60.2K');
+  });
   it('measures its width even when the data arrives after a first empty render', () => {
     const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 320 } as DOMRect);
     try {
