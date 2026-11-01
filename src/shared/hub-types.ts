@@ -119,6 +119,38 @@ export interface HubMode {
   nexus?: NexusHome;
   /** Trading Room only: the merged read-only view of the two bots (:8830 트레이딩룸, :8771/:8793 트레이딩-ver2). */
   trading?: TradingMerged;
+  /** 게임 스튜디오 only: the gamified studio view (manifests in studio/games/*.json + ~/jobs agents). */
+  studio?: GameStudio;
+}
+
+/* ───────── 게임 스튜디오 (studio/games/*.json manifests + ~/jobs agents; read-only) ───────── */
+
+export const STUDIO_STAGE_IDS = ['concept', 'assets', 'build', 'test', 'preview', 'approval', 'release'] as const;
+export type StudioStageId = (typeof STUDIO_STAGE_IDS)[number];
+export type StudioStageState = 'done' | 'active' | 'blocked' | 'todo';
+export interface StudioStage { id: StudioStageId; label: string; state: StudioStageState; /** Evidence items found / listed. */ found: number; total: number; at: string | null; note?: string }
+export type StudioArtifactKind = 'image' | 'video' | 'html';
+export interface StudioArtifact { src: string; kind: StudioArtifactKind; group: 'screenshots' | 'concept' | 'builds' | 'video' | 'cover'; name: string; at: string | null; game: string; gameTitle: string; /** The ~/jobs/<job> that produced it, when its path is inside a job dir. */ job: string | null }
+export type StudioAgentState = 'working' | 'done' | 'blocked' | 'idle';
+export interface StudioAgent {
+  job: string; title: string | null; account: 'a' | 'b' | 'c' | 'codex' | 'unknown'; model: string | null; state: StudioAgentState; alive: boolean;
+  /** The last human-readable run.log line (scrubbed, ≤140 chars). */
+  line: string | null; lineAt: string | null; reportAt: string | null; /** REPORT.md's STATUS reason when blocked. */ reason: string | null; game: string | null; gameTitle: string | null;
+}
+export interface StudioGame {
+  id: string; title: string; titleKo: string | null; genre: string | null; engine: string | null; status: 'live' | 'candidate' | 'building' | 'concept' | 'paused' | 'unknown';
+  reference: string | null; referenceTitle: string | null; version: string | null; cover: StudioArtifact | null; stages: StudioStage[];
+  nextAction: { text: string; owner: boolean } | null; approvals: { what: string; state: 'pending' | 'approved' | 'rejected'; at: string | null }[];
+  play: HubLink | null; previews: HubLink[]; repos: { label: string; branch: string | null; remote: string | null; readonly: boolean }[];
+  tests: { label: string; at: string | null; found: boolean }[]; jobs: string[]; artifacts: StudioArtifact[]; lastAt: string | null;
+  facts: { verifiedAt: string | null; deployUrl: string | null; tests: string | null } | null;
+}
+export interface StudioEvent { at: string; game: string | null; job: string | null; kind: 'stage' | 'loot' | 'agent' | 'report' | 'approval'; text: string; level?: 'ok' | 'warn' | 'bad' | 'info' }
+export interface GameStudio {
+  games: StudioGame[]; agents: StudioAgent[]; others: { count: number; working: number; names: string[] }; loot: StudioArtifact[]; feed: StudioEvent[];
+  summary: { working: number; owner: number; released: number; blocked: number; games: number };
+  pipeline: { doc: string | null; template: boolean; manifests: number };
+  generatedAt: string; error?: string;
 }
 
 /* ───────── NEXUS home (ported from the standalone dashboard, read-only) ───────── */

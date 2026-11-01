@@ -130,6 +130,8 @@ export interface HubDeps {
   home: string;
   /** Link-outs the server cannot derive. */
   links?: { nexus?: string };
+  /** 게임 스튜디오: the repo's `studio/` folder (manifests in games/*.json). Absent = the plain ops page only. */
+  studioDir?: string;
 }
 
 export const DEFAULT_LINKS = { nexus: 'http://max-linuxserver.tail88e649.ts.net:3005' };
