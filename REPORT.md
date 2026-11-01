@@ -1,129 +1,84 @@
-# Lab summary panel (BRIEF3)
+# BRIEF11 리서치 패널 보고
 
-Branch: `feat/hub-lab-summary`, based on `feat/hub-design-pass` (`e45405a`).
+## 요약
 
-## Changes
+허브에 **리서치 탭**과 **개요 하단 패널**을 추가했고 `feat/hub-research` 브랜치에 커밋했습니다. 머지, 푸시, 배포, 재시작은 하지 않았으므로 라이브 허브에는 새 빌드를 올려야 보입니다.
 
-- Added a session-gated, GET-only `/api/hub/lab` route for the fixed same-host summary endpoint. A 60s cache coalesces requests and also caches failures; previous valid snapshots survive transport/format failures. Loading/partial responses replace old data.
-- Added a strict, allowlisted mapper: no numeric coercion, no null-to-zero fallback, no scenario probabilities. Per-field source errors distinguish `미보고` from `오류`.
-- Added the read-only Trading room lab panel: paper/ledger health, book PnL and positions, latest ten closes, certification progress (100 trades / 90 days), integrity verification, shortened Merkle root, gaps and original KST generation time. It is added above the existing Trading room content; legacy UI and collectors remain unchanged.
-- Reused the existing glass/theme and Barlow Semi Condensed typography. Native progress indicators and internally scrolling tables fit desktop and phone. Integrity failure is the first alert; stale/partial/offline states remain explicit.
-- Added mapper/cache/route/panel coverage and a reproducible isolated QA host. Two existing filesystem timestamp tests now compare against the observed `fs.stat().mtimeMs`, retaining activity-advance checks; requested millisecond values were rounded down by 0.001ms on this filesystem. A pre-existing relaunch test now waits for the fake server’s reported PID instead of selecting an unidentified child process. Existing service processes, protected ports and lab ledger files were not modified; no push, merge, deployment or service restart.
+- **화면:** 맨 위 글을 내러티브 색의 단색 표지로 크게 싣고, 나머지는 색 띠가 있는 카드로, 그 아래에 태그 필터와 외부 리서치 목록을 둡니다. 제목은 명조 계열 Hahmlet입니다. 그라데이션, 이모지 아이콘, 가짜 숫자는 쓰지 않았습니다.
+- **데이터:** `~/.msg/research/articles.json`(글 4건)과 `sources.json`(출처 14곳)을 요청마다 읽으므로 글을 추가할 때 코드 수정이나 재시작이 필요 없습니다. 추가는 `scripts/msg-research-add`, 스키마는 `docs/research.md`에 있습니다.
+- **출처:** 14곳 모두 확인했고 뺀 곳은 없습니다. 추측한 도메인도 없습니다.
+- **검증:** 타입체크, 빌드, 대비 검사 통과. 전체 테스트 4,514건(신규 39건 포함)은 전부 통과한 실행도 있지만, 실행마다 다른 기존 테스트가 1~2건씩 간헐적으로 실패합니다(아래 "테스트 결과" 참고). 스크린샷은 `shots-research/`에 있습니다.
 
-## Verification
+**오너가 알아둘 점**
 
-| Check | Result |
-|---|---|
-| `npx vitest run --maxWorkers=4 --retry=1` | Passed: 348 files, 4321 tests; 149.94s; exit 0 |
-| Focused lab mapper/transport/cache/route/panel + HubPage/TradingHome suite | 4 files, 55 tests passed |
-| `npm run typecheck` | Passed after final edits |
-| `npm run build` | Passed; largest main chunk 432.11 kB, below 500 kB limit |
-| `node scripts/contrast-check.mjs` | All pairs passed |
-| Live HTTP checks on isolated `127.0.0.1:9378` | GET 200; no cookie/bearer-only 401; POST/PUT/PATCH/DELETE/HEAD/OPTIONS 405 with `Allow: GET`; no-store; repeated reads return same cached snapshot |
-| Live summary check | 4 books, 12 open positions, 10 recent closes, integrity passed; schema/read-only/PAPER fields verified |
-| Browser checks | 1440/390, panel loaded; 0 controls; no page-wide horizontal overflow; no console/API failures |
-| `git diff --check` and independent static review | Passed; no remaining findings |
+1. 글 4건 모두 요약이 비어 있어 지금은 "요약 대기"로 보입니다. 결론은 지어내지 않았으니 `articles.json`에 채워 주세요.
+2. Cursor 글 링크는 로그인 없이 열면 로그인 페이지로 넘어갑니다. Cursor에 로그인한 브라우저에서만 열릴 수 있습니다.
+3. Compute Markets 글은 날짜가 없어 시드 날짜 2026-11-02로 넣었습니다. "매일 갱신" 글이라 화면에는 날짜 대신 배지가 보이고, 등록일은 툴팁에 있습니다.
 
-Three pre-existing test assertions were made deterministic after full-suite failures:
-filesystem timestamp checks use actual `fs.stat().mtimeMs` (the stored value differed
-from the requested Date by 0.001ms); the relaunch test waits for the fake server’s
-reported PID and registers the close listener before stopping it. Production code is
-unchanged. All 53 tests in those three files pass independently. The complete final
-suite result is recorded above. A preceding run without retries passed 4320/4321;
-the remaining failure was the existing `setup/detect.test.ts` immediate child-exit
-assertion, also documented as timing-sensitive in BRIEF2. The final full run permits
-one retry per test; no test was skipped and that detection code was not changed.
+## 테스트 결과
 
-JSON parse diagnostics retain only the first 200 characters' punctuation, redacting
-source keys/values and paths. This satisfies the bounded diagnostic intent without
-logging upstream secrets. The transport also refuses redirects/non-200 responses and
-caps input at 2 MB.
+최종 커밋의 전체 테스트 3회와 깨끗한 `main` 2회 결과입니다. 측정 당시 머신 부하(load average)는 약 187이었습니다.
 
-## Screenshots
+| 대상 | 결과 | 실패한 테스트 |
+| --- | --- | --- |
+| 이 브랜치 1회차 | 2건 실패 / 4,514건 | `Thinking.test.tsx` 1건, `TradingRoom.test.tsx` 1건 |
+| 이 브랜치 2회차 | 전부 통과 | |
+| 이 브랜치 3회차 | 1건 실패 / 4,514건 | 총사령탑 `commanderHop` 테스트 (대기 시간 초과) |
+| `main` 1회차 | 전부 통과 (4,475건) | |
+| `main` 2회차 | 1건 실패 / 4,475건 | `#replay` 테스트 |
 
-| Screenshot | CSS viewport / capture |
-|---|---|
-| [lab-desktop-trading.png](shots-lab/lab-desktop-trading.png) | 1440 × 6000 |
-| [lab-mobile-trading.png](shots-lab/lab-mobile-trading.png) | 390 × 6000, 2× pixels |
-| [lab-viewport-desktop-trading.png](shots-lab/lab-viewport-desktop-trading.png) | 1440 × 900 |
-| [lab-viewport-mobile-trading.png](shots-lab/lab-viewport-mobile-trading.png) | 390 × 900, 2× pixels |
+실패한 테스트는 매번 달랐고 리서치 테스트는 한 번도 실패하지 않았으며, 이 변경이 없는 `main`에서도 같은 양상이 나왔습니다. `Thinking`과 `TradingRoom` 두 파일은 따로 돌리면 3회 모두 통과했습니다. 그래서 부하에 따른 기존 간헐 실패로 판단했습니다. 다만 부하가 낮을 때 돌려 본 것은 아닙니다.
 
-The 6000px captures show the complete new lab panel and part of the longer existing room. Screenshots show live lab summary data. Other hub sections use the existing frozen QA status; SR/replay are explicit empty fixtures. QA bound only to 127.0.0.1:9378, with the existing CDP harness and no production collectors. Desktop 1440px and phone 390px (2× pixel density). Both viewports were inspected: the lab panel has zero buttons/inputs/selects/links, and no page-wide horizontal overflow. There were no browser console errors or failed API requests in the final captures. The owned QA process was stopped after capture.
+## 머지 확인
 
-## Files
+| 브랜치 | 결과 |
+| --- | --- |
+| `feat/hub-controls` | 충돌 없음. 임시 워크트리에서 머지한 뒤 타입체크 통과. |
+| `feat/hub-yap-quant` | `quant.ts`, `yapping.ts`, `yapping.test.ts`, `HubPage.tsx` 4개 파일 충돌. `main`과 머지해도 똑같이 나므로 이 커밋 때문이 아닙니다. |
+| `feat/terminal-redesign` | 로컬에 브랜치가 없어 확인하지 못했습니다. |
 
-- `src/server/hub/lab.ts`, `src/shared/lab-types.ts`: transport, allowlisted mapping, cached service and GET response.
-- `src/server/http.ts`, `src/server/server.ts`: existing session boundary and service wiring.
-- `src/ui/hub/lab/{LabPanel.tsx,api.ts,lab.css}`, `HubPage.tsx`: standalone panel and Trading room integration.
-- `src/server/hub/lab.test.ts`, `src/ui/hub/lab/LabPanel.test.tsx`, `src/test/labFixture.ts`, `HubPage.test.tsx`: coverage and isolated fixture.
-- `src/server/sessions/CodexImports.test.ts`, `src/server/ws.outside.test.ts`: filesystem precision assertions only.
-- `src/server/relaunch.test.ts`: fake-server readiness and close-event synchronization only.
-- `scripts/qa/`, `shots-lab/`, `REPORT.md`: reproduction instructions, screenshots and this report.
+`feat/hub-controls` 머지 트리에서 허브 테스트를 돌렸을 때 `TradingRoom.test.tsx`의 한 건이 1번 실패했습니다. 이후 그 파일만 돌리면 `feat/hub-controls` 단독과 머지 트리 모두 3회 전부 통과해서 재현되지 않았습니다. 부하에 따른 간헐 실패로 보이지만 원인을 확인한 것은 아닙니다.
 
-The pre-existing workspace `../REPORT.md` receives this section as an append; this
-repository copy and the screenshot files are included in the local commit. Workspace
-`../shots-lab` points to this repository's `shots-lab` directory.
+## 외부 리서치 URL
 
-## Design references
+2026-11-02에 다시 요청해 14곳 모두 HTTP 200을 확인했습니다.
 
-[The Seeker dashboard references](https://ref.theseeker.io/?category=dashboard) and [Refero Styles](https://styles.refero.design/) were reviewed for calibration. The established hub design tokens take precedence.
+| 이름 | 기록한 최종 URL | 비고 |
+| --- | --- | --- |
+| Four Pillars 포필러스 (오너 픽) | https://4pillars.io/ko | `fourpillars.io`는 연결되지 않음 |
+| Tiger Research 타이거리서치 (오너 픽) | https://reports.tiger-research.com/ | |
+| Citrini Research 시트리니 (오너 픽) | https://www.citriniresearch.com/ | |
+| Blockworks 0xResearch | https://blockworks.com/newsletter/0xresearch | `0xresearch.co`는 연결되지 않음 |
+| Delphi Digital | https://delphidigital.io/ | |
+| Galaxy Research | https://www.galaxy.com/insights/research | |
+| a16z Frontier | https://a16zfrontier.com/posts/ | 옛 a16z crypto. `a16zcrypto.com`에서 리디렉션되며 새 이름으로 기록 |
+| DeSpread | https://despread.io/ | 리서치 조직 DeSpread Research는 2차 자료로만 확인 |
+| Messari | https://app.blockworks.com/ | `messari.io`가 여기로 리디렉션됨. 페이지 제목은 Blockworks Intel. Blockworks 인수는 설명에 표기 |
+| Xangle 쟁글 | https://xangle.io/ | |
+| Artemis | https://about.artemis.ai/ | `artemis.xyz`에서 리디렉션 |
+| Token Terminal | https://tokenterminal.com/ | |
+| Kaiko | https://www.kaiko.com/ | |
+| SemiAnalysis | https://semianalysis.com/ | |
 
-STATUS: DONE
+제외한 곳: 없음.
 
-# Unified Trading room (BRIEF4)
+## 결정한 사항
 
-## Changes
+- **리서치 탭 단축키 없음:** 숫자 단축키 10개가 이미 차 있어 11번째 탭에는 주지 않았습니다. 기존 단축키는 그대로입니다.
+- **기존 테스트 수정:** `App.hub.test.tsx`의 모드 목록에 리서치를 추가했습니다.
+- **필터와 표지:** 태그를 고르면 첫 번째 글이 표지가 되고 표지 색도 바뀝니다. 태그가 하나뿐이면 필터를 숨깁니다.
+- **의존성 추가:** `@fontsource-variable/hahmlet`(OFL). 글꼴 조각은 합쳐서 약 2 MB이고, 브라우저는 페이지에 필요한 조각만 받습니다.
 
-- Created `feat/hub-trading-unified` from `feat/hub-lab-summary` at `0588eff`. Fetched the server-local main from `/home/max/ai-msg` and merged `377b1b4` as `f41e4a7` (18 incoming commits). The source repository was not modified.
-- Unified Lab and SR / DCA in the Trading room with source summaries, visible PAPER ONLY badges, source timestamps in KST, and source-section links. Existing @Trading Room and ver2 read-only information remains.
-- Reused `/api/hub/sr[?symbol=]`, adding the real `:8830/api/status` alongside `:8830/api/sr`. The two feeds have independent caches, timeouts, last-good values and error metadata. Requests use fixed GET endpoints with no credentials/redirects and a bounded JSON body; session authentication remains in the existing HTTP boundary.
-- Lab maps and displays future strategy entries generically, including nested metrics, while excluding old kNN/scenario probabilities and secret-like fields. Missing DCA fill/stage values remain explicitly unreported; existing reported status fields are shown.
-- Trading content has no buttons, form inputs, collapsible controls, embedded control pages or interactive replay screen. SR symbol navigation and external dashboard access use links; the SR chart has no zoom/drag controls.
+## 테스트 중 고친 버그
 
-## Merge and review notes
+서버가 200으로 `{}`를 돌려주면 패널이 허브 페이지 전체를 죽이는 문제가 전체 테스트에서 드러났습니다. 이제 응답 형식을 검사해 오류 안내만 표시하며, 회귀 테스트도 추가했습니다.
 
-The merge completed without conflicts. Git automatically merged `HubPage.tsx` and its tests. Existing main-branch polish and the Lab implementation were retained. Review corrected the initial header-refresh exception, replay sub-screen, SR refresh/client-error handling, nested strategy bounds and source-anchor visibility.
+## 검증 범위
 
-Design follows the existing hub tokens and larger typography. The `frontend-design` skill was applied with calibration from [The Seeker dashboard references](https://ref.theseeker.io/?category=dashboard), [Refero Styles](https://styles.refero.design/) and [liquid-glass](https://glass.samasante.com/); no new image assets or external palette were introduced.
-
-## Validation
-
-| Check | Final result |
-|---|---|
-| `npx vitest run --maxWorkers=4` | 350 files, **4,385 tests passed**, 98.39 s, exit 0; no retries/skips |
-| `npx tsc --noEmit` / `npm run typecheck` | Passed (final polish also typechecked) |
-| `npm run build` | Passed, including bundle-size check |
-| Focused final UI regression tests | 4 files / 47 tests passed |
-| `node scripts/contrast-check.mjs` | All pairs passed |
-| Isolated HTTP checks on `127.0.0.1:9379` | Both Lab/SR: unauthenticated GET 401; authenticated POST/PUT/PATCH/DELETE/HEAD/OPTIONS 405 with Allow: GET |
-| Real upstream data and caching | SR 37 symbols / 269 ranges; BTC filter 8 ranges; both feeds healthy; cached read reused; stage paper; DCA unreported; Lab 4 books |
-| Browser at 1440 / 390 | Zero controls inside entire Trading page, zero document/room horizontal overflow; both PAPER ONLY/KST labels, Room/ver2 content and dashboard link present; no console/API errors |
-| Source anchor / visual inspection | Lab and SR headings visible; nested strategy tree legible; empty-candle caption accurate |
-| `git diff --check` | Passed |
-
-The initial merged baseline passed 349 files / 4,348 tests. After implementation and review the final count is above;
-a CSS-source-string assertion was removed in favor of actual browser inspection. Future Lab extra trees are bounded
-to six container levels and a shared 400-node budget, with no hardcoded strategy names.
-
-## Screenshots
-
-| Screenshot | CSS capture size |
-|---|---|
-| [lab-desktop-trading-focus.png](shots-unified/lab-desktop-trading-focus.png) | 1440 × 4697 |
-| [lab-mobile-trading-focus.png](shots-unified/lab-mobile-trading-focus.png) | 390 × 7050 (2× device scale) |
-| [sr-desktop-trading-focus.png](shots-unified/sr-desktop-trading-focus.png) | 1440 × 1074 |
-| [sr-mobile-trading-focus.png](shots-unified/sr-mobile-trading-focus.png) | 390 × 2380 (2× device scale) |
-| [unified-desktop-trading.png](shots-unified/unified-desktop-trading.png) | 1440 × 16000 |
-| [unified-mobile-trading.png](shots-unified/unified-mobile-trading.png) | 390 × 16000 (2× device scale) |
-| [viewport-desktop-trading.png](shots-unified/viewport-desktop-trading.png) | 1440 × 900 |
-| [viewport-mobile-trading.png](shots-unified/viewport-mobile-trading.png) | 390 × 900 (2× device scale) |
-
-The 16,000 px overview captures include both complete new source sections; focused captures also show each source in full. The longer existing Trading content continues below the overview crop. Workspace `./shots-unified` links to `repo/shots-unified`; all eight PNGs are committed in the repository.
-
-The isolated QA host uses the production HTTP handler and Lab/SR services on loopback port 9379; 9377 was occupied and left untouched. Only the three requested upstream GET feeds are live. Other hub data is a frozen QA snapshot, and market candles are an explicit empty fixture, so the SR screenshot honestly shows a no-candles state with real SR ranges. The existing CDP harness loads the built UI from file URLs and bridges API requests to the isolated host because HTTP main-frame browser navigation stalls in this environment. Viewport widths are 1440 and 390 CSS pixels; mobile captures use 2× device scale.
-
-No production unit was restarted/stopped, no protected service was modified, no ledger/anchors JSONL was edited, no credentials were printed, and no push, deployment, or merge into main occurred. Only owned temporary QA processes were stopped. An optional Grok second opinion was unavailable because its API credential was absent; implementation review, regression tests and browser inspection were completed independently of it.
-
-No required work is blocked.
+- 다루는 상태: 파일 없음, 형식 오류, 일부 항목 오류, 빈 요약, 구버전 서버(404), 잘못된 응답 형식.
+- `shots-research/`: 1440과 390 너비, 개요와 리서치 탭, 다크 테마. 개요 상단의 허브 상태는 테스트 픽스처이고 리서치 내용은 실제 파일입니다.
+- 라이트 테마, 필터 색 변경, 요약이 채워진 조판, 빈 상태와 오류 상태는 임시 데이터로 확인했고 저장소에는 넣지 않았습니다.
+- 이 환경의 Node는 v22.22.2이고 `engines`는 24 이상을 요구합니다. Node 24에서는 돌려 보지 않았습니다.
+- `account.txt`는 건드리지 않았고 커밋하지도 않았습니다. 라이브 서버(9377)도 건드리지 않았습니다.
 
 STATUS: DONE
