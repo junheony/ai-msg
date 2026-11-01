@@ -133,11 +133,12 @@ export type StudioStageState = 'done' | 'active' | 'blocked' | 'todo';
 export interface StudioStage { id: StudioStageId; label: string; state: StudioStageState; /** Evidence items found / listed. */ found: number; total: number; at: string | null; note?: string }
 export type StudioArtifactKind = 'image' | 'video' | 'html';
 export interface StudioArtifact { src: string; kind: StudioArtifactKind; group: 'screenshots' | 'concept' | 'builds' | 'video' | 'cover'; name: string; at: string | null; game: string; gameTitle: string; /** The ~/jobs/<job> that produced it, when its path is inside a job dir. */ job: string | null }
-export type StudioAgentState = 'working' | 'done' | 'blocked' | 'idle';
+/** blocked: a recent BLOCKED nobody took over · needs-owner: the REPORT asks the owner · superseded: a newer job took over · stopped: an old BLOCKED nobody took over. */
+export type StudioAgentState = 'working' | 'needs-owner' | 'blocked' | 'stopped' | 'superseded' | 'done' | 'idle';
 export interface StudioAgent {
   job: string; title: string | null; account: 'a' | 'b' | 'c' | 'codex' | 'unknown'; model: string | null; state: StudioAgentState; alive: boolean;
   /** The last human-readable run.log line (scrubbed, ≤140 chars). */
-  line: string | null; lineAt: string | null; reportAt: string | null; /** REPORT.md's STATUS reason when blocked. */ reason: string | null; game: string | null; gameTitle: string | null;
+  line: string | null; lineAt: string | null; reportAt: string | null; /** REPORT.md's STATUS reason when blocked. */ reason: string | null; /** The job that took over, when superseded. */ successor: string | null; game: string | null; gameTitle: string | null;
 }
 export interface StudioGame {
   id: string; title: string; titleKo: string | null; genre: string | null; engine: string | null; status: 'live' | 'candidate' | 'building' | 'concept' | 'paused' | 'unknown';
