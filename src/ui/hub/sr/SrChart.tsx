@@ -18,7 +18,17 @@ export interface SrChartProps { candles: readonly ReplayCandle[]; ranges: readon
 const KST = 'Asia/Seoul';
 const fmtTick = new Intl.DateTimeFormat('en-GB', { timeZone: KST, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 const fmtFull = new Intl.DateTimeFormat('en-GB', { timeZone: KST, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+const fmtDay = new Intl.DateTimeFormat('en-US', { timeZone: KST, month: '2-digit', day: '2-digit' });
+const fmtTime = new Intl.DateTimeFormat('en-GB', { timeZone: KST, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 const SIDE_KO = { support: '지지', resistance: '저항' } as const;
+/** Below this chart width a tick is only its date or only its time: the full `29/10, 09:00` does not fit. */
+const NARROW_PX = 480;
+
+/** The time-axis label for a tick at `ms`; `intraday` is a tick inside a day rather than at a day or month boundary. */
+export function srTick(ms: number, intraday: boolean, narrow: boolean): string {
+  const at = new Date(ms);
+  return narrow ? (intraday ? fmtTime : fmtDay).format(at) : fmtTick.format(at);
+}
 
 export function SrChart({ candles, ranges, candleColors, height = 360 }: SrChartProps) {
   const el = useRef<HTMLDivElement | null>(null);
@@ -37,7 +47,7 @@ export function SrChart({ candles, ranges, candleColors, height = 360 }: SrChart
     const host = el.current; const layer = bands.current;
     if (!lwc || !host || !layer || candles.length === 0) return;
     const theme = readChartTheme(host, candleColors);
-    const { createChart, CandlestickSeries, ColorType, CrosshairMode } = lwc;
+    const { createChart, CandlestickSeries, ColorType, CrosshairMode, TickMarkType } = lwc;
     const last = candles[candles.length - 1]!.c;
     const precision = precisionOf(last);
     const chart = createChart(host, {
@@ -45,7 +55,7 @@ export function SrChart({ candles, ranges, candleColors, height = 360 }: SrChart
       layout: { background: { type: ColorType.Solid, color: theme.bg }, textColor: theme.muted, ...chartText(theme), attributionLogo: false },
       grid: { vertLines: { color: theme.grid }, horzLines: { color: theme.grid } },
       rightPriceScale: { borderColor: theme.border, scaleMargins: { top: 0.1, bottom: 0.1 } },
-      timeScale: { borderColor: theme.border, timeVisible: true, secondsVisible: false, rightOffset: 10, barSpacing: 6, minBarSpacing: 2, tickMarkFormatter: (t: Time) => fmtTick.format(new Date((t as number) * 1000)) },
+      timeScale: { borderColor: theme.border, timeVisible: true, secondsVisible: false, rightOffset: 10, barSpacing: 6, minBarSpacing: 2, tickMarkMaxCharacterLength: 12, tickMarkFormatter: (t: Time, type: import('lightweight-charts').TickMarkType) => srTick((t as number) * 1000, type === TickMarkType.Time || type === TickMarkType.TimeWithSeconds, host.clientWidth < NARROW_PX) },
       localization: { timeFormatter: (t: Time) => fmtFull.format(new Date((t as number) * 1000)), locale: 'ko-KR' },
       crosshair: { mode: CrosshairMode.Normal },
       // The bands are placed from the price scale: keep that scale automatic so a scroll is the only thing that moves them.
@@ -76,10 +86,13 @@ export function SrChart({ candles, ranges, candleColors, height = 360 }: SrChart
     const place = () => {
       if (!alive) return;
       const w = Math.max(0, host.clientWidth - chart.priceScale('right').width());
+      const axisH = chart.timeScale().height();
+      const plotH = Math.max(0, host.clientHeight - axisH);
       layer.style.width = `${w}px`;
+      layer.style.bottom = `${axisH}px`;
       for (const { r, d } of nodes) {
         const top = candle.priceToCoordinate(r.high); const bottom = candle.priceToCoordinate(r.low);
-        if (top === null || bottom === null) { d.style.display = 'none'; continue; }
+        if (top === null || bottom === null || Math.min(top, bottom) >= plotH) { d.style.display = 'none'; continue; } // wholly below the plot: its label would sit on the time axis
         d.style.display = '';
         d.style.top = `${Math.min(top, bottom)}px`;
         d.style.height = `${Math.max(3, Math.abs(bottom - top))}px`;

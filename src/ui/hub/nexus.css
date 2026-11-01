@@ -80,6 +80,7 @@
 .nx-fut { position: absolute; top: 0; bottom: 0; right: 0; background: repeating-linear-gradient(135deg, var(--pill-bg) 0 6px, transparent 6px 12px); pointer-events: none; }
 .nx-now { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px solid var(--fg-strong); z-index: 3; pointer-events: none; }
 .nx-now em { position: absolute; top: 0; left: 3px; padding: 0 4px; border-radius: 3px; background: var(--fg-strong); color: var(--bg); font-style: normal; font-size: var(--fs-2xs); font-weight: 700; white-space: nowrap; }
+.nx-now.end em { left: auto; right: 5px; }
 .nx-band-stop { position: absolute; right: 6px; bottom: 4px; z-index: 3; }
 .nx-axis { position: relative; height: 18px; }
 .nx-axis span { position: absolute; top: 3px; transform: translateX(-50%); font-size: var(--fs-2xs); color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }

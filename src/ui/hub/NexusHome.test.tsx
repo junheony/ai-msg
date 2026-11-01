@@ -104,10 +104,17 @@ describe('NexusHome', () => {
     const now = band.querySelector('.nx-now') as HTMLElement;
     expect(now.style.left).toBe('83.33333333333334%');
     expect(now.textContent).toBe('지금 22:00');
+    expect(now.classList.contains('end')).toBe(true); // 83% along: the label hangs left so the track edge cannot cut it
     expect(band.querySelectorAll('.nx-miss').length).toBe(1);
     expect(band.textContent).toContain('국내갭 10분 칸 60개 · 최대 +1.40% (수수료 전) · 놓침 1');
     expect(band.querySelector('.nx-list')!.textContent).toContain('21:43KERNEL국내갭$1k당 +$17이체 도착 후에도 순 +1.72%');
     expect([...band.querySelectorAll('.nx-axis span')].map((s) => s.textContent)).toEqual(['12:00', '14:00', '16:00', '18:00', '20:00', '22:00', '00:00']);
+  });
+  it('colours a negative verdict red even though it contains 된다', () => {
+    const home = fixture();
+    home.score.rows[0]!.verdict = '안 된다';
+    render(<NexusHome home={home} now={T} />);
+    expect(screen.getByTestId('nx-score').querySelector('tbody tr td:nth-child(6)')!.className).toBe('st-bad');
   });
   it('renders 상장, 지갑 흐름 and 신호 성적표 as tables, 운영 메모 as a list without buttons', () => {
     render(<NexusHome home={fixture()} now={T} />);

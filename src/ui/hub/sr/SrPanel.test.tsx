@@ -39,6 +39,16 @@ const rows = () => within(screen.getByTestId('sr-table')).getAllByRole('row').sl
 
 afterEach(cleanup);
 
+describe('srTick', () => {
+  const AT = Date.parse('2026-10-29T00:00:00Z'); // 09:00 KST
+  it('keeps the full label on a wide chart, only the time or the date on a narrow one', async () => {
+    const { srTick } = await vi.importActual<typeof import('./SrChart')>('./SrChart');
+    expect(srTick(AT, true, false)).toBe('29/10, 09:00');
+    expect(srTick(AT, true, true)).toBe('09:00');
+    expect(srTick(AT, false, true)).toBe('10/29');
+  });
+});
+
 describe('sortRows', () => {
   it('nearest to the last close first, signed by side of price; strongest first when there is no price', () => {
     const btc = ZONES.filter((z) => z.symbol === 'BTCUSDT');

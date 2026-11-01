@@ -56,7 +56,7 @@ export function HubOverview({ status, error, loading, fetchedAt, now, pushOn, on
         <span className="ph-end">
           <span className="pill">{pushOn ? '실시간 푸시' : '15초 폴링'}</span>
           <span className="pill">읽기 전용</span>
-          <button type="button" className="pill btn" onClick={onRefresh} disabled={loading} aria-label="지금 새로고침"><ReloadIcon /> {loading ? '불러오는 중…' : '새로고침'}</button>
+          <button type="button" className="pill btn" onClick={onRefresh} disabled={loading} aria-label="지금 새로고침"><ReloadIcon /> <span className="pill-label">{loading ? '불러오는 중…' : '새로고침'}</span></button>
         </span>
       </header>
       {error && <div className="hub-notice" role="alert">상태를 불러오지 못했어요 · {error}{status ? ` · 마지막 성공 ${relTime(fetchedAt ? new Date(fetchedAt).toISOString() : null, now)}` : ''}</div>}
