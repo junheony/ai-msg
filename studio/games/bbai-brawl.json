@@ -6,7 +6,7 @@
   "genre": "생존 액션",
   "engine": "three.js / unity",
   "status": "candidate",
-  "cover": "~/bbai-codex/brawl/qa-weapon-fx/desktop-final-arena.png",
+  "cover": "~/bbai-codex/brawl/qa-visual-final/desktop-1440-battle-effects.png",
   "repos": [
     {
       "label": "웹 · codex 미배포",
