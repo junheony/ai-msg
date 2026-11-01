@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import type { HubStatus } from '../../shared/hub-types';
 import { HubIcon } from './HubIcons';
 import { HUB_MODES, modeDigit, STATE_LABEL, stateClass, type HubModeKey } from './modes';
@@ -8,8 +9,13 @@ import { HUB_MODES, modeDigit, STATE_LABEL, stateClass, type HubModeKey } from '
  * the state word in its accessible name.
  */
 export function HubRail({ mode, status, onChange, mac }: { mode: HubModeKey; status: HubStatus | null; onChange: (m: HubModeKey) => void; mac: boolean }) {
+  const nav = useRef<HTMLElement>(null);
+  // The phone tab bar scrolls sideways: keep the current mode's tab in view when the mode changes (⌘n, the switcher).
+  useEffect(() => {
+    nav.current?.querySelector<HTMLElement>('.rail-btn.on')?.scrollIntoView?.({ inline: 'nearest', block: 'nearest' });
+  }, [mode]);
   return (
-    <nav className="rail" aria-label="모드" data-testid="hub-rail">
+    <nav ref={nav} className="rail" aria-label="모드" data-testid="hub-rail">
       {HUB_MODES.map((m, i) => {
         const on = m.id === mode;
         const st = m.id === 'home' ? null : status?.modes.find((x) => x.id === m.id)?.state ?? null;

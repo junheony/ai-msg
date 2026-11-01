@@ -34,6 +34,9 @@ export function sortRows(ranges: readonly SrRange[], last: number | null): SrRow
   return rows;
 }
 
+/** A stable empty list, so the chart's rebuild effect does not see a new `ranges` on every render while zones are missing. */
+const NO_RANGES: SrRange[] = [];
+
 const pickSymbol = (symbols: string[], wanted?: string): string | null => (wanted && symbols.includes(wanted) ? wanted : symbols.includes('BTCUSDT') ? 'BTCUSDT' : symbols[0] ?? null);
 
 export function SrPanel({ api = liveSrApi, now = Date.now(), initialSymbol }: SrPanelProps) {
@@ -59,14 +62,14 @@ export function SrPanel({ api = liveSrApi, now = Date.now(), initialSymbol }: Sr
   useEffect(() => {
     if (!symbol) return;
     const id = ++req.current;
-    setBusy(true); setCandles(null); setCandleError(null);
+    setBusy(true); setCandles(null); setCandleError(null); setCur(null); setCurError(null);
     const zones = api.sr(symbol).then((s) => { if (req.current === id) { setCur(s); setCurError(null); } }, (e: unknown) => { if (req.current === id) { setCur(null); setCurError(e instanceof Error ? e.message : String(e)); } });
     const ks = api.klines(symbol).then((c) => { if (req.current === id) setCandles(c); }, (e: unknown) => { if (req.current === id) setCandleError(e instanceof Error ? e.message : String(e)); });
     void Promise.allSettled([zones, ks]).then(() => { if (req.current === id) setBusy(false); });
   }, [api, symbol]);
 
   const last = candles && candles.length > 0 ? candles[candles.length - 1]! : null;
-  const rows = useMemo(() => sortRows(cur?.ranges ?? [], last?.c ?? null), [cur, last]);
+  const rows = useMemo(() => sortRows(cur?.ranges ?? NO_RANGES, last?.c ?? null), [cur, last]);
   const p = precisionOf(last?.c ?? rows[0]?.r.mid ?? 0);
   const support = rows.filter((x) => x.r.side === 'support').length;
   const resistance = rows.length - support;
@@ -96,7 +99,7 @@ export function SrPanel({ api = liveSrApi, now = Date.now(), initialSymbol }: Sr
                 <span>선물 1h · {last ? <>마지막 <b className="sr-num">{price(last.c, p)}</b> · {relTime(new Date(last.t).toISOString(), now)}</> : candleError ? <span className="tr-dim">캔들 없음 · {candleError}</span> : '캔들 불러오는 중…'}</span>
                 <span className="sr-cnt"><i className="sr-sw support" />지지 {support}<i className="sr-sw resistance" />저항 {resistance}</span>
               </div>
-              {candles && candles.length > 0 && <SrChart candles={candles} ranges={cur?.ranges ?? []} candleColors={candleColors} />}
+              {candles && candles.length > 0 && <SrChart candles={candles} ranges={cur?.ranges ?? NO_RANGES} candleColors={candleColors} />}
               {candles && candles.length === 0 && <div className="sr-chart-wait" role="status">이 심볼의 선물 캔들이 없어요 · 표만 보여요</div>}
               {!candles && candleError && <div className="sr-chart-wait" role="status">캔들을 받지 못했어요 · 표는 등급순</div>}
             </div>

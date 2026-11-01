@@ -62,7 +62,7 @@ const lineData = (cs: readonly ReplayCandle[], s: Series, end: number) => {
 };
 
 /** Re-reads the theme when the shell's theme stamp or the OS scheme changes. */
-function useThemeTick(): number {
+export function useThemeTick(): number {
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const mo = new MutationObserver(() => setTick((t) => t + 1));
@@ -111,6 +111,8 @@ export function ReplayChart({ candles, visibleEnd, indicators, hidePrice, hideDa
       crosshair: { mode: CrosshairMode.Normal, vertLine: { color: theme.faint, labelVisible: !hideDate, labelBackgroundColor: theme.accent }, horzLine: { color: theme.faint, labelBackgroundColor: theme.accent } },
       handleScale: { axisPressedMouseMove: { time: true, price: false } },
       kineticScroll: { mouse: false, touch: true },
+      // A vertical swipe on a phone scrolls the page, not the chart.
+      handleScroll: { vertTouchDrag: false },
     });
     const end = Math.min(visibleEnd, candles.length - 1);
     const series = new Map<string, ISeries>();
@@ -176,19 +178,31 @@ export function ReplayChart({ candles, visibleEnd, indicators, hidePrice, hideDa
 
     const plugin = createSeriesMarkers(candle, markerData(markers, candles, end, theme));
     chart.timeScale().scrollToRealTime();
+    // Report only a change of candle: the crosshair moves on every pixel, and each report re-renders the caller.
+    let hovered: number | null = null;
     chart.subscribeCrosshairMove((p) => {
       if (!onHoverRef.current) return;
       const t = p.time as number | undefined;
-      if (t === undefined || !p.point) { onHoverRef.current(null); return; }
       // visible candles are evenly spaced; the exact one is found by its time
-      const i = indexOfTime(candles, t * 1000, built.current?.end ?? end);
+      const i = t === undefined || !p.point ? null : indexOfTime(candles, t * 1000, built.current?.end ?? end);
+      if (i === hovered) return;
+      hovered = i;
       onHoverRef.current(i);
     });
     built.current = { chart, candle, series, markers: plugin, end, theme };
     return () => { built.current = null; chart.remove(); };
-    // `visibleEnd` and `markers` are applied by the effects below; a change in everything else rebuilds.
+    // `visibleEnd`, `markers`, `oi` and `funding` are applied by the effects below; a change in everything else rebuilds.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lwc, candles, indKey, hidePrice, hideDate, candleColors, themeTick, oi, funding, values]);
+  }, [lwc, candles, indKey, hidePrice, hideDate, candleColors, themeTick, values]);
+
+  // A late OI / funding reply fills its existing pane in place (no rebuild, so zoom and scroll stay).
+  useEffect(() => {
+    const b = built.current;
+    if (!b) return;
+    const maxT = candles[b.end]!.t;
+    const oiS = b.series.get('oi'); if (oiS) oiS.setData(oiData(oi, maxT));
+    const fS = b.series.get('funding'); if (fS) fS.setData(fundingData(funding, maxT, b.theme));
+  }, [oi, funding, candles]);
 
   // Stepping forward: append the newly revealed candles (and their indicator points) to every series.
   useEffect(() => {
@@ -215,7 +229,8 @@ export function ReplayChart({ candles, visibleEnd, indicators, hidePrice, hideDa
     const fS = b.series.get('funding'); if (fS) fS.setData(fundingData(funding, candles[end]!.t, b.theme));
     b.end = end;
     b.chart.timeScale().scrollToRealTime();
-  }, [visibleEnd, candles, values, hidePrice, oi, funding]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleEnd, candles, values, hidePrice]);
 
   useEffect(() => {
     const b = built.current;

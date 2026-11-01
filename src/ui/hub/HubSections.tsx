@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { HubCardItem, HubChartSeries, HubImage, HubSection, HubStep } from '../../shared/hub-types';
 import { ExternalIcon } from './HubIcons';
 import { STATE_LABEL, stateClass } from './modes';
@@ -43,12 +43,14 @@ export function axis(min: number, max: number, zero: boolean, ymin?: number): { 
   return { lo, hi, ticks };
 }
 
-/** The container's width, live (ResizeObserver when the browser has one; the fallback is the width jsdom reports: 0 → 640). */
-function useWidth<T extends HTMLElement>(fallback = 640): [React.RefObject<T | null>, number] {
-  const ref = useRef<T>(null);
+/**
+ * The container's width, live (ResizeObserver when the browser has one; the fallback is the width jsdom reports: 0 → 640).
+ * A callback ref, so an element that appears only on a later render (a chart whose data arrived late) is still measured.
+ */
+function useWidth<T extends HTMLElement>(fallback = 640): [(el: T | null) => void, number] {
+  const [el, ref] = useState<T | null>(null);
   const [w, setW] = useState(fallback);
   useEffect(() => {
-    const el = ref.current;
     if (!el) return;
     const read = () => { const x = el.getBoundingClientRect().width; if (x > 0) setW(x); };
     read();
@@ -56,7 +58,7 @@ function useWidth<T extends HTMLElement>(fallback = 640): [React.RefObject<T | n
     const ro = new ResizeObserver(read);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [el]);
   return [ref, w];
 }
 

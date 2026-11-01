@@ -8,7 +8,7 @@ import type { ReplayCandle } from '../../../shared/replay-types';
 import type { SrRange } from '../../../shared/sr-types';
 import { chartText, readChartTheme } from '../replay/chartTheme';
 import type { CandleColors } from '../replay/history';
-import { precisionOf } from '../replay/ReplayChart';
+import { precisionOf, useThemeTick } from '../replay/ReplayChart';
 
 type LWC = typeof import('lightweight-charts');
 type Time = import('lightweight-charts').UTCTimestamp;
@@ -25,6 +25,7 @@ export function SrChart({ candles, ranges, candleColors, height = 360 }: SrChart
   const bands = useRef<HTMLDivElement | null>(null);
   const [lwc, setLwc] = useState<LWC | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const themeTick = useThemeTick();
 
   useEffect(() => {
     let alive = true;
@@ -49,6 +50,8 @@ export function SrChart({ candles, ranges, candleColors, height = 360 }: SrChart
       crosshair: { mode: CrosshairMode.Normal },
       // The bands are placed from the price scale: keep that scale automatic so a scroll is the only thing that moves them.
       handleScale: { axisPressedMouseMove: { time: true, price: false }, mouseWheel: true, pinch: true },
+      // A vertical swipe on a phone scrolls the page, not the chart.
+      handleScroll: { vertTouchDrag: false },
     });
     const candle = chart.addSeries(CandlestickSeries, {
       upColor: theme.up, downColor: theme.down, borderVisible: false, wickUpColor: theme.up, wickDownColor: theme.down,
@@ -69,7 +72,9 @@ export function SrChart({ candles, ranges, candleColors, height = 360 }: SrChart
       layer.append(d);
       return { r, d };
     });
+    let alive = true;
     const place = () => {
+      if (!alive) return;
       const w = Math.max(0, host.clientWidth - chart.priceScale('right').width());
       layer.style.width = `${w}px`;
       for (const { r, d } of nodes) {
@@ -83,16 +88,19 @@ export function SrChart({ candles, ranges, candleColors, height = 360 }: SrChart
     place();
     const raf = requestAnimationFrame(place);
     chart.timeScale().subscribeVisibleLogicalRangeChange(place);
-    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => requestAnimationFrame(place)) : null;
+    let roRaf = 0;
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { cancelAnimationFrame(roRaf); roRaf = requestAnimationFrame(place); }) : null;
     ro?.observe(host);
     return () => {
+      alive = false;
       cancelAnimationFrame(raf);
+      cancelAnimationFrame(roRaf);
       ro?.disconnect();
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(place);
       for (const { d } of nodes) d.remove();
       chart.remove();
     };
-  }, [lwc, candles, ranges, candleColors]);
+  }, [lwc, candles, ranges, candleColors, themeTick]);
 
   return (
     <div className="sr-chart" style={{ height }} data-testid="sr-chart">
