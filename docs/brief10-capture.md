@@ -32,3 +32,7 @@ HTTP 요청은 GET/HEAD만 허용한다. WebSocket은 빈 hello만 보내며 어
 ## BRIEF10b override
 
 The isolated preview now also permits exactly `http://127.0.0.1:8095/api/rising?limit=30` (GET, redirects rejected). Other :8095 routes remain blocked. Local yapping operational statistics are still read from local records. Set `BRIEF10B_RISING_FIXTURE=success` or `error` only for explicit synthetic Rising previews; the manifest labels that source. Use `scripts/brief10b-capture.mjs` for these screenshots. The original capture script rejects fixture mode to preserve its live-data claim and existing artifact names.
+
+## BRIEF10c override
+
+The preview additionally permits exactly `http://127.0.0.1:8095/api/metrics/daily?days=30` (GET, redirects rejected). `BRIEF10C_DAILY_FIXTURE=success|error` is opt-in; unset means live. Success uses `tests/fixtures/yapping-daily.ts`, ending on the current KST date while retaining the production clock. Both earlier capture scripts reject synthetic daily data. See [BRIEF10c capture commands and assertions](brief10c-capture.md); previous screenshot filenames are preserved.

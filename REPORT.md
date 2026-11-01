@@ -42,11 +42,13 @@
 
 구현 근거·캐시·회귀 테스트는 [야핑봇 결정 기록](docs/brief10-yapping.md), [QUANT 결정 기록](docs/brief10-quant.md)에 있다.
 
-## 누락 metric과 필요한 endpoint
+## 누락 metric과 필요한 endpoint (BRIEF10c 갱신)
 
-**조회수 변화만 원천 데이터가 없다.** `own_posts.impressions`와 `updated_at`은 최신 누적값 한 번만 저장한다. `/api/metrics.daily_views`는 게시 날짜별 현재 누적 조회수 합계라 기간 내 증가량이 아니다. 서로 다른 게시물 집합을 빼서 증감을 만들지 않았다.
+**BRIEF10c에서 일별 비교용 원천 API가 제공되었다.** `GET http://127.0.0.1:8095/api/metrics/daily?days=30`은 KST 일자별 `{date, followers, following, views, posts}` 배열을 오래된 날짜부터 반환한다. `days`는 1–365(기본 30), upstream 캐시는 60초다. 조회수·게시 수는 해당 날짜에 작성된 원글만 포함하고 답글·리포스트는 제외한다. 팔로워·팔로잉은 최근 14일만 기록되어 그 이전은 null이다. 이번 연결로 전일·7일 전 대비와 30일 차트를 제공한다.
 
-필요한 추가 API(현재 미구현): 읽기 전용 `GET /api/growth/observations?from=<ISO8601>&to=<ISO8601>&scope=own_originals`.
+조회수 차이는 **오늘 작성된 원글의 조회수 합계 − 비교일 작성 원글의 조회수 합계**다. 오늘은 집계 중이므로 완결된 하루와 동일한 조건은 아니다. 같은 게시물 집합에서 지난 24시간 동안 늘어난 조회수나 최근 7일 합계 비교를 뜻하지 않는다.
+
+아래는 BRIEF10 당시 제안한 별도 확장이다. 같은 게시물 집합의 시간별 조회수 증가량을 계산하려면 읽기 전용 `GET /api/growth/observations?from=<ISO8601>&to=<ISO8601>&scope=own_originals` 같은 관측 API가 필요하다. **BRIEF10c의 일별 비교에는 필요하지 않다.**
 
 ```json
 {
@@ -207,5 +209,56 @@ BRIEF10_PORT=9411 node scripts/brief10b-capture.mjs
 fixture 화면에는 SYNTHETIC RISING FIXTURE 배너를 명시했다. 실제 화면은 rank 1~10, 오류 없음으로 확인했다. 본문 한 줄 말줄임·안전한 외부 링크·기존 한도 카드·소스 기본 접힘·가로 넘침 없음·브라우저 console/page 오류 없음·외부 요청 없음·제목 노출을 검사했다. 실제 데스크톱/모바일 및 timeout 모바일 PNG도 직접 검토했다. 각 assertion JSON의 `screenshots`에 하위 행을 포함한 스크롤 이미지 경로가 있다. 이전 BRIEF10 산출물은 보존했다.
 
 작업용 미리보기 세 프로세스만 종료했고 포트 9411~9413이 닫혔음을 확인했다. 운영 서비스·upstream 소스·ledger·package lock은 변경하지 않았다. shared.ts 변경은 고정 Rising URL 상수 한 줄이며 공용 timeout/transport 동작은 유지했다. 작업 범위는 `feat/hub-yap-quant`의 코드·문서·테스트·스크린샷 커밋이다. **merge/push/deploy/restart는 수행하지 않았다. 배포에는 이곳 소유자의 별도 OK가 필요하다.**
+
+STATUS: DONE
+
+# BRIEF10c
+
+## 일별 API와 변화량
+
+`GET http://127.0.0.1:8095/api/metrics/daily?days=30`을 연결했다. 2026-11-02 02:57 KST 읽기 전용 실측에서 HTTP 200, 0.202683초, 2,278 bytes였다. 실제 배열은 2026-10-04부터 11-02까지 30개 날짜이며, 앞 16개 날짜의 팔로워·팔로잉은 null이다. 이 문서의 기존 누락 endpoint 설명도 일별 비교 API가 제공된 현재 상태로 갱신했다.
+
+- `src/server/hub/yapping-daily.ts`, `shared.ts`, `yapping.ts`: 고정 URL에 기존 3초 timeout을 적용한다. 성공·실패 모두 완료 시점부터 60초 캐시하고 동시 요청은 합친다. 날짜·순서·중복·숫자를 검증하며 실패 시 이전 일별 값을 숨기고 정제된 사유를 반환한다. 로컬 운영 지표와 Rising의 성공 여부는 독립적이다.
+- `src/shared/hub-types.ts`, `yapping.ts`: KST 오늘과 정확히 어제·7일 전 날짜를 비교한다. null이나 비교일 누락은 데이터 없음이고, 실제 0과 음수는 유지한다. 7일 비교는 오늘에서 7일 전을 뺀 값이다. 최근 7일 합계 비교가 아니다.
+- `src/ui/hub/YappingHome.tsx`, `YappingDailyChart.tsx`, `yapping.css`: 성장 타일의 전일·7일 전 대비와 오늘 기준 30일 차트를 표시한다. 조회수·게시물 막대와 팔로워 선은 같은 날짜 축, 각자의 숫자 범위를 사용한다. 팔로워 null과 누락 날짜에서 선을 끊으며 실제 관측점만 표시한다. 키보드·마우스·터치로 날짜별 수치를 확인할 수 있고 `팔로워 기록은 14일치`를 흐린 안내로 표시한다.
+- `tests/fixtures/yapping-daily.ts`와 서버·공유·UI 테스트: 앞 16일 null/최근 14일 팔로워 fixture, 내부 null·날짜 누락, 실제 0·음수, KST 자정, 캐시 만료·요청 병합·장애 복구, 운영 지표 독립성, 차트 선 분리와 키보드 표시를 검증한다.
+
+조회수는 각 날짜에 작성된 **원글**의 현재 조회수 합계이며 답글·리포스트는 제외한다. 화면에 날짜별 원글 조회수 차이와 `오늘 집계 중`을 명시했다. 같은 게시물의 지난 24시간 조회수 증가량으로 해석하면 안 된다. 최종 캡처 시점 값은 팔로워 509명, 전일 +5·7일 전 +6, 조회수 차이 전일 -414·7일 전 -15였다. 수치는 실행 시각에 따라 변한다.
+
+## 검증 및 캡처
+
+Node 24.22.2 (`PATH=/home/max/.npm/_npx/387698761821791d/node_modules/node/bin:$PATH`) 사용.
+
+| 명령 | 결과 |
+|---|---|
+| `npm test -- --maxWorkers=4` | 360파일 / 4,509테스트 PASS, 148.52초 |
+| `npm test -- src/ui/hub/YappingHome.test.tsx` | 최종 배열 타입 수정 후 8테스트 PASS |
+| `npm run typecheck` | 최종 PASS (`tsc --noEmit`, exit 0) |
+| `npm run build` | 최종 PASS (Vite + check-bundle, 2.75초) |
+| `git diff --check` | PASS |
+
+첫 타입 검사에서 차트·fixture의 배열 인덱스에 undefined 가능성 오류 4개가 발생했다. 30일 슬롯 불변식을 명시하고 날짜 레이블은 배열 순회로 변경했다. 중간 재검사 프로세스가 SIGTERM(exit 143)으로 종료되어 완료로 간주하지 않고 다시 검사했다.
+
+`scripts/brief10-preview.ts`는 별도 loopback 포트에서 실제 빌드 App을 실행하며 daily의 live/success/error를 명시한다. 이 작업에서 사용한 포트는 9414/live, 9415/success, 9416/error다. 셸 인증·세션 응답은 빈 검증 fixture이며 배포 인증 검증은 아니다. 기존 BRIEF10/10b 캡처는 보존했다. 재현은 [BRIEF10c 캡처 안내](docs/brief10c-capture.md)를 따른다.
+
+```bash
+BRIEF10_PORT=9414 node --import tsx scripts/brief10-preview.ts
+BRIEF10_PORT=9414 node scripts/brief10c-capture.mjs
+# 9415는 BRIEF10C_DAILY_FIXTURE=success, 9416은 error로 preview 실행
+```
+
+3시나리오 × 데스크톱/모바일의 **6뷰, 86개 assertion PASS**, 스크롤 포함 PNG 8개다. 실제 payload와 DOM의 날짜·수치, 30개 슬롯, 막대 수, null에 따른 선 분리·관측점 위치, 변화량, 제목 가림, 가로 넘침, 브라우저 오류·외부 요청을 검증했다. fixture 화면은 `SYNTHETIC DAILY FIXTURE` 표식을 넣었다. 라이브 데스크톱·모바일 및 timeout 모바일 화면을 직접 검토했다.
+
+| 데이터 | Desktop 1440×1000 | Mobile 390×844 | 검증 |
+|---|---|---|---|
+| 실제 API | [화면](shots-yapquant/brief10c-daily-live-desktop.png) | [화면](shots-yapquant/brief10c-daily-live-mobile.png) | [28개 PASS](shots-yapquant/brief10c-daily-live-assertions.json) |
+| 정상 fixture | [화면](shots-yapquant/brief10c-daily-success-desktop.png) | [화면](shots-yapquant/brief10c-daily-success-mobile.png) | [36개 PASS](shots-yapquant/brief10c-daily-success-assertions.json) |
+| timeout fixture | [화면](shots-yapquant/brief10c-daily-error-desktop.png) | [화면](shots-yapquant/brief10c-daily-error-mobile.png) | [22개 PASS](shots-yapquant/brief10c-daily-error-assertions.json) |
+
+## 작업 방식과 범위
+
+`ask-claude -b -C /home/max/ai-msg-yapquant` 기능 단위 위임은 Fable 한도로 실패했다. `deck-run status`는 이 호스트에 없고, `ask-gpt`/`ask-grok`은 키 미등록으로 사용할 수 없었다. 반복 재시도 없이 Codex 에이전트에 서버·UI·캡처를 분담하고 결과를 검토했다. 결정 기록은 [backend](docs/brief10c-backend.md), [UI](docs/brief10c-ui.md), [capture](docs/brief10c-capture.md)에 있다.
+
+최종 타입 수정 후 빌드와 세 시나리오 캡처를 다시 실행해 통과했다. Chromium headless 153.0.8010.12를 사용했다. 이 작업의 검증용 프로세스는 정리했고 포트 9414–9416 종료를 확인했다. 운영 서비스·upstream 코드·ledger·package lock은 변경하지 않았다. 공용 transport/timeout은 유지하고 `shared.ts`에는 daily URL 한 줄만 추가했다. **merge/push/deploy/restart는 수행하지 않았다.**
 
 STATUS: DONE

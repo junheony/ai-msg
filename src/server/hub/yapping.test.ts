@@ -4,6 +4,7 @@ import { HUB_URLS, type HubDeps } from './shared';
 import { YAPPING_READ_SCRIPT } from './yapping-read';
 import { yappingSourceSummary } from '../../shared/yapping';
 import { risingFixture } from '../../../tests/fixtures/yapping-rising';
+import { dailyFixture } from '../../../tests/fixtures/yapping-daily';
 
 const NOW = Date.parse('2026-11-01T17:00:00Z'); // 02:00 KST, previous posting service day
 function projection() {
@@ -12,7 +13,11 @@ function projection() {
 function deps(data: unknown = projection()) {
   let now = NOW;
   const exec = vi.fn(async () => data === null ? null : JSON.stringify(data));
-  const fetchJson = vi.fn(async (url: string) => { if (url !== HUB_URLS.yappingRising) throw new Error('Only the Rising feed may use HTTP'); return risingFixture(); });
+  const fetchJson = vi.fn<(url: string, timeout: number) => Promise<unknown>>(async (url: string) => {
+    if (url === HUB_URLS.yappingDaily) return dailyFixture();
+    if (url === HUB_URLS.yappingRising) return risingFixture();
+    throw new Error('Unexpected HTTP endpoint');
+  });
   const d: HubDeps = { exec, fetchJson, latestRender: async () => null, countEntries: async () => null, gitLastCommit: async () => null, readText: async () => null, readTail: async () => null, listDir: async () => null, fileMtime: async () => null, systemdShow: async () => ({ LoadState: 'loaded', ActiveState: 'active', SubState: 'running' }), now: () => now, self: () => ({ uptimeMs: 0, sessions: 0, activeTurns: 0 }), host: 'test', home: '/home/test' };
   return { d, exec, fetchJson, advance: (ms: number) => { now += ms; } };
 }
@@ -37,16 +42,21 @@ describe('auto-growth yapping collector', () => {
     expect(kpi(m, '리포트').value).toBe('1 / 2');
     expect(kpi(m, '전체 게시')).toMatchObject({ value: '7 / 7', hint: '완료 6 · 예약 1 (일반 QT 포함)' });
     expect(kpi(m, '답글').value).toBe('11 / 40');
-    expect(kpi(m, '팔로워 변화')).toMatchObject({ value: '0' });
-    expect(kpi(m, '팔로워 변화').hint).toContain('직전 수집 대비');
-    expect(kpi(m, '조회수 변화')).toMatchObject({ value: '데이터 없음', hint: '조회수 과거 관측 이력이 없어 증감 비교 불가' });
+    expect(kpi(m, '팔로워 변화')).toMatchObject({ value: '+5' });
+    expect(kpi(m, '팔로워 변화').hint).toContain('7일 전 대비 +29');
+    expect(kpi(m, '조회수 변화')).toMatchObject({ value: '+892' });
+    expect(kpi(m, '조회수 변화').hint).toContain('7일 전 대비 +262');
+    expect(kpi(m, '조회수 변화').hint).toContain('날짜별 원글 조회수 차이');
+    expect(m.daily?.rows).toHaveLength(30);
     const [x, tg] = m.page!.sections;
     if (x?.kind !== 'table' || tg?.kind !== 'table') throw Error('missing feeds');
     expect(x.rows).toHaveLength(3); expect(tg.rows).toHaveLength(3);
     expect(x.rows[0]![2]).toBe('https://x.com/cblabx/status/1');
     expect(tg.rows[0]![2]).toBe('https://t.me/blockschool/1');
     expect(m.page!.sections.some((s) => /로테이션|초안/.test(s.title))).toBe(false);
-    expect(fetchJson).toHaveBeenCalledExactlyOnceWith(HUB_URLS.yappingRising, 3000);
+    expect(fetchJson).toHaveBeenCalledTimes(2);
+    expect(fetchJson).toHaveBeenCalledWith(HUB_URLS.yappingRising, 3000);
+    expect(fetchJson).toHaveBeenCalledWith(HUB_URLS.yappingDaily, 3000);
     expect(exec).toHaveBeenCalledWith('python3', ['-c', YAPPING_READ_SCRIPT, '/home/test/yapping-bot', String(NOW)], { timeoutMs: 1800 });
     expect(JSON.stringify(m)).not.toContain('/home/test');
   });
@@ -59,7 +69,8 @@ describe('auto-growth yapping collector', () => {
   it('missing projection is explicit and never throws or invents zero counts', async () => {
     const { d } = deps(null); const m = await collectYapping(d);
     expect(m.state).toBe('unknown');
-    expect(m.page!.kpis.every((k) => k.value === '데이터 없음')).toBe(true);
+    expect(m.page!.kpis.slice(0, 4).every((k) => k.value === '데이터 없음')).toBe(true);
+    expect(kpi(m, '팔로워 변화').value).toBe('+5');
     expect(JSON.stringify(m)).not.toContain('—/—');
     expect(m.alerts).toEqual([]);
     expect(m.sources[0]!.ok).toBe(false);
@@ -82,12 +93,37 @@ describe('auto-growth yapping collector', () => {
     expect(kpi(m, '속보').value).toBe('데이터 없음');
     expect(kpi(m, '답글').value).toBe('데이터 없음');
   });
-  it('marks old follower observations and never treats nulls as zero', async () => {
-    const p = projection(); p.followers.at = '2026-10-31T00:00:00Z';
-    const m = await collectYapping(deps(p).d);
-    expect(kpi(m, '팔로워 변화').hint).toMatch(/^마지막 정상/);
-    const missing = await collectYapping(deps({ ...p, followers: { at: p.at } }).d);
-    expect(kpi(missing, '팔로워 변화').value).toBe('데이터 없음');
+  it('uses daily follower observations instead of previous-run deltas and preserves real zeros', async () => {
+    const { d, fetchJson } = deps();
+    const rows = dailyFixture(); rows[29]!.followers = rows[28]!.followers; rows[29]!.views = 0;
+    fetchJson.mockImplementation(async url => url === HUB_URLS.yappingDaily ? rows : risingFixture());
+    const m = await collectYapping(d);
+    expect(kpi(m, '팔로워 변화').value).toBe('0');
+    expect(kpi(m, '조회수 변화').value).toBe('0');
+    expect(kpi(m, '팔로워 변화').hint).toContain('오늘 − 어제');
+  });
+  it('null daily followers never become zero while independent views remain available', async () => {
+    const { d, fetchJson } = deps();
+    const rows = dailyFixture(); rows[29]!.followers = null;
+    fetchJson.mockImplementation(async url => url === HUB_URLS.yappingDaily ? rows : risingFixture());
+    const m = await collectYapping(d);
+    expect(kpi(m, '팔로워 변화').value).toBe('데이터 없음');
+    expect(kpi(m, '조회수 변화').value).toBe('+892');
+  });
+  it('daily timeout leaves local counters, Rising and mode health independent', async () => {
+    const { d, fetchJson } = deps();
+    fetchJson.mockImplementation(async url => {
+      if (url === HUB_URLS.yappingDaily) throw new DOMException('private upstream', 'TimeoutError');
+      return risingFixture();
+    });
+    const m = await collectYapping(d);
+    expect(m.state).toBe('ok');
+    expect(kpi(m, '전체 게시').value).toBe('7 / 7');
+    expect(kpi(m, '팔로워 변화').value).toBe('데이터 없음');
+    expect(kpi(m, '조회수 변화').value).toBe('데이터 없음');
+    expect(m.rising?.items).toHaveLength(10);
+    expect(m.daily).toEqual({ rows: [], reason: '시간 초과' });
+    expect(m.sources.find(source => source.name === '/api/metrics/daily')).toMatchObject({ ok: false, error: '시간 초과' });
   });
   it('accepts numeric Telegram message ids without inventing links for malformed ids', async () => {
     const p = projection();

@@ -125,6 +125,21 @@ export interface HubMode {
   shorts?: ShortsFactoryView;
   /** 야핑봇 only: independently cached public Rising feed. */
   rising?: YappingRising;
+  /** 야핑봇 only: KST calendar-day metrics, independently cached for 60 seconds. */
+  daily?: YappingDaily;
+}
+
+export interface YappingDailyRow {
+  date: string;
+  followers: number | null;
+  following: number | null;
+  /** Views and count of original posts published on this KST date; excludes replies/reposts. */
+  views: number;
+  posts: number;
+}
+export interface YappingDaily {
+  rows: YappingDailyRow[];
+  reason: string | null;
 }
 
 export interface YappingRisingItem {

@@ -80,6 +80,7 @@ export const HUB_URLS = {
   yappingStatus: 'http://127.0.0.1:8095/api/status',
   yappingMetrics: 'http://127.0.0.1:8095/api/metrics',
   yappingRising: 'http://127.0.0.1:8095/api/rising?limit=30',
+  yappingDaily: 'http://127.0.0.1:8095/api/metrics/daily?days=30',
 } as const;
 
 /** Any field named like this is dropped from every mode, whatever a source sends. */

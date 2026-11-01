@@ -1,6 +1,7 @@
 import type { HubKpi, HubMode, HubSection, YappingRising } from '../../shared/hub-types';
 import { risingPostUrl, yappingSourceSummary } from '../../shared/yapping';
 import { fmtKstFull, relTime } from './time';
+import { YappingDailyChart } from './YappingDailyChart';
 import './yapping.css';
 
 function Cap({ item }: { item: HubKpi }) {
@@ -49,7 +50,8 @@ export function YappingHome({ mode, now }: { mode: HubMode; now: number }) {
     <header className="yp-heading"><div><h2>@cblabx 자동 성장</h2><p>속보와 리포트 게시, 대화와 성장 기록</p></div><a href="https://x.com/cblabx" target="_blank" rel="noopener noreferrer">@cblabx</a></header>
     <section className="yp-budget" aria-label="일일 한도 사용량"><div className="yp-section-head"><h3>일일 한도</h3><span>게시 03:00 · 답글 00:00 KST 초기화</span></div><div className="yp-caps">{caps.map((item) => <Cap key={item.label} item={item} />)}</div></section>
     {mode.alerts.filter((a) => !/응답 없음|시간 초과/.test(a.text)).map((a, i) => <p className="yp-alert" key={i}>{a.text}</p>)}
-    <section className="yp-growth" aria-label="성장 변화">{growth.map((item) => <div className={`yp-growth-item${item.value === '데이터 없음' ? ' yp-missing' : ''}${item.hint?.startsWith('마지막 정상') ? ' yp-stale' : ''}`} key={item.label}><span className="yp-label">{item.label}</span><strong>{item.value}</strong><p>{item.hint}</p></div>)}</section>
+    <section className="yp-growth" aria-label="성장 변화">{growth.map((item) => <div data-metric={item.label === '팔로워 변화' ? 'followers' : 'views'} className={`yp-growth-item${item.value === '데이터 없음' ? ' yp-missing' : ''}${item.hint?.startsWith('마지막 정상') ? ' yp-stale' : ''}`} key={item.label}><span className="yp-label">{item.label}</span><strong>{item.value}</strong><p>{item.hint}</p></div>)}</section>
+    <YappingDailyChart daily={mode.daily} now={now} />
     <div className="yp-feeds">{latest.map((section) => <Recent key={section.title} section={section} now={now} />)}</div>
     <Rising feed={mode.rising} />
     <details className="yp-sources"><summary><span>소스 상태</span><span>{yappingSourceSummary(mode.sources)}</span></summary><div className="yp-source-body"><ul>{mode.sources.map((source) => <li key={source.name}><span>{source.name}</span><span>{source.ok ? '연결됨' : source.error || '확인 필요'}</span></li>)}</ul>{details?.kind === 'kv' && <dl>{details.rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>}</div></details>

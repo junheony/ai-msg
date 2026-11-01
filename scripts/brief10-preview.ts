@@ -13,6 +13,7 @@ import type { HubStatus } from '../src/shared/hub-types';
 import type { ServerMessage } from '../src/shared/protocol';
 import { HUB_URLS } from '../src/server/hub/shared';
 import { risingFixture } from '../tests/fixtures/yapping-rising';
+import { dailyFixture } from '../tests/fixtures/yapping-daily';
 
 const repo = fileURLToPath(new URL('../', import.meta.url));
 const uiDir = path.join(repo, 'dist/ui');
@@ -21,6 +22,8 @@ if (!Number.isInteger(port) || port < 9400 || port > 9499) throw new Error('BRIE
 const origin = `http://127.0.0.1:${port}`;
 const risingFixtureMode = process.env.BRIEF10B_RISING_FIXTURE ?? 'live';
 if (!['live', 'success', 'error'].includes(risingFixtureMode)) throw new Error('BRIEF10B_RISING_FIXTURE must be success or error (unset = live)');
+const dailyFixtureMode = process.env.BRIEF10C_DAILY_FIXTURE ?? 'live';
+if (!['live', 'success', 'error'].includes(dailyFixtureMode)) throw new Error('BRIEF10C_DAILY_FIXTURE must be success or error (unset = live)');
 await fs.access(path.join(uiDir, 'index.html'));
 const startedAt = Date.now();
 const deps = liveHubDeps({ home: os.homedir(), host: os.hostname(), self: () => ({ uptimeMs: Date.now() - startedAt, sessions: null, activeTurns: null }) });
@@ -28,15 +31,21 @@ const upstreamReads = new Set<string>();
 const upstreamAllowed = new Set([
   'http://127.0.0.1:8810/api/snapshot.json',
   HUB_URLS.yappingRising,
+  HUB_URLS.yappingDaily,
 ]);
 // Yapping's production collector reads its local SQLite/state with read-only dependencies.
-// Only the exact read-only Rising URL is allowed on :8095; other GETs can write state.
+// Only the exact read-only Rising/daily URLs are allowed on :8095; other GETs can write state.
 // Redirects cannot bypass the allowlist. No credentials, proxy routes, trading API, or mutation methods.
 deps.fetchJson = async (url, timeoutMs) => {
   if (!upstreamAllowed.has(url)) throw new Error('BRIEF10 preview blocked a non-allowlisted upstream');
   if (url === HUB_URLS.yappingRising && risingFixtureMode !== 'live') {
     if (risingFixtureMode === 'error') throw new DOMException('BRIEF10b fixture timeout', 'TimeoutError');
     return risingFixture();
+  }
+  if (url === HUB_URLS.yappingDaily && dailyFixtureMode !== 'live') {
+    if (dailyFixtureMode === 'error') throw new DOMException('BRIEF10c fixture timeout', 'TimeoutError');
+    // Keep the production clock intact while ending the synthetic series on today's KST date.
+    return dailyFixture(new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10));
   }
   upstreamReads.add(url);
   const response = await fetch(url, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } });
@@ -71,7 +80,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   if (pathname === '/api/me') return json(res, 200, { ok: true, preview: 'brief10-live-read-only' }, head);
   if (pathname === '/api/build') return json(res, 200, { build: null }, head);
   if (pathname === '/api/hub/status') return json(res, 200, await status(), head);
-  if (pathname === '/api/brief10/manifest') return json(res, 200, { preview: 'brief10-live-read-only', ui: 'dist/ui/index.html', modes: ['yapping', 'quant'], shell: 'empty fixture; no real sessions/accounts', rising: risingFixtureMode === 'live' ? 'live' : `SYNTHETIC FIXTURE: ${risingFixtureMode}`, upstreamReads: [...upstreamReads], startedAt }, head);
+  if (pathname === '/api/brief10/manifest') return json(res, 200, { preview: 'brief10-live-read-only', ui: 'dist/ui/index.html', modes: ['yapping', 'quant'], shell: 'empty fixture; no real sessions/accounts', rising: risingFixtureMode === 'live' ? 'live' : `SYNTHETIC FIXTURE: ${risingFixtureMode}`, daily: dailyFixtureMode === 'live' ? 'live' : `SYNTHETIC FIXTURE: ${dailyFixtureMode}`, upstreamReads: [...upstreamReads], startedAt }, head);
   if (pathname === '/api/usage') return json(res, 200, hello.usage, head);
   if (pathname === '/api/sessions') return json(res, 200, { projects: [], pins: [], desktop: [] }, head);
   if (pathname.startsWith('/api/') || pathname.startsWith('/hub/')) return json(res, 404, { error: 'route outside BRIEF10 preview' }, head);

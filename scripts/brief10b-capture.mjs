@@ -12,6 +12,8 @@ const base = `http://127.0.0.1:${port}`;
 const dir = path.resolve('shots-yapquant');
 const marker = await fetch(`${base}/api/me`).then(r => r.json());
 if (marker.preview !== 'brief10-live-read-only') throw new Error('Refusing capture from an unrelated server');
+const sourceManifest = await fetch(`${base}/api/brief10/manifest`).then(r => r.json());
+if (sourceManifest.daily && sourceManifest.daily !== 'live') throw new Error('Use brief10c-capture.mjs for synthetic daily fixtures; BRIEF10b captures require live daily data');
 let playwrightPath = process.env.BRIEF10_PLAYWRIGHT;
 if (!playwrightPath) {
   try { playwrightPath = require.resolve('playwright'); }
