@@ -11,6 +11,34 @@
 .tr-ro { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 8px 14px 8px 16px; border-left: 3px solid var(--mode-ink); border-radius: 0 10px 10px 0; background: var(--mode-soft); color: var(--muted); font-size: var(--fs-xs); min-width: 0; }
 .tr-ro b { color: var(--fg-strong); font-family: var(--hub-font); font-size: var(--fs-base); font-weight: 600; white-space: nowrap; }
 
+/* the two paper sources, first thing on the Trading room */
+.tr-src { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; min-width: 0; }
+.tr-src .hs-card { gap: 10px; }
+.tr-src .hs-card-sub { margin: 0; }
+.tr-src .hs-rows dt { min-width: min(100%, 11ch); }
+.tr-src .hs-rows dd { max-width: 70%; }
+.tr-src .hs-card-links { margin-top: auto; }
+.hs-badge.tr-src-paper { font-weight: 600; }
+.hs-badge.tr-src-paper.ok { color: var(--hub-ok); background: var(--hub-ok-soft); }
+.hs-badge.tr-src-paper.warn { color: var(--hub-warn); background: var(--hub-warn-soft); }
+.hs-badge.tr-src-paper.bad { color: var(--hub-bad); background: var(--hub-bad-soft); }
+
+/* source names (Lab, SR / DCA) in front of the Korean titles, on the strip cards and the section heads */
+.tr-src-name { display: inline-block; margin-right: 6px; padding: 1px 7px; border-radius: var(--r-sm, 6px); background: var(--mode-soft); color: var(--mode-ink); font-family: var(--hub-font); font-size: .82em; font-weight: 700; letter-spacing: .3px; vertical-align: 2px; white-space: nowrap; }
+
+/* the header's passive loading word in the Trading room (no button there) */
+.ph .tr-loading { color: var(--muted); }
+
+/* The Trading room's header is not sticky. It holds no control (nothing to keep in reach), and its height is not a
+   constant — the source chips wrap it to ~170px on a 1440 desktop with the real fixture — so a sticky header would
+   cover the #hub-lab / #hub-sr / #hub-practice headings after an anchor jump no matter what scroll margin is guessed.
+   Static, it scrolls away with the page and every anchored section lands with its own title, badge and clock visible.
+   Other modes keep the sticky header and the refresh button. */
+.hub-page[data-mode="trading"] .ph { position: static; }
+.hub-page[data-mode="trading"] .sec[id] { scroll-margin-top: 12px; }
+
+/* the read-only practice log card (no link to any control screen) */
+
 /* two columns of sections */
 .tr-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 40px; align-items: start; min-width: 0; }
 
@@ -102,6 +130,11 @@
   .tr-wss { grid-template-columns: 1fr; }
 }
 @media (max-width: 720px) {
+  /* the phone hides the header's text pills; the passive loading word is the one worth keeping */
+  .hub-page[data-mode="trading"] .ph-end .pill.tr-loading { display: inline-flex; }
+  .tr-src { grid-template-columns: 1fr; }
+  .tr-src .hs-rows > div { flex-direction: column; align-items: stretch; gap: 0; }
+  .tr-src .hs-rows dd { max-width: none; text-align: left; }
   .tr-grid { grid-template-columns: 1fr; }
   .tr-books { grid-template-columns: 1fr; }
   .tr-grid { gap: 0; }

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cookieValueFor } from '../auth';
 import { createRequestHandler, type HttpDeps } from '../http';
 import { labFixture, LAB_NOW } from '../../test/labFixture';
-import { createLabService, fetchLabJson, LAB_CACHE_MS, LAB_TIMEOUT_MS, LAB_URL, mapLab, serveLab } from './lab';
+import { createLabService, extraValue, fetchLabJson, LAB_CACHE_MS, LAB_EXTRA_LIMITS, LAB_TIMEOUT_MS, LAB_URL, mapLab, serveLab } from './lab';
 
 describe('lab mapper', () => {
   it('copies only supported real fields, preserves KST and excludes scenarios, secrets and home paths', () => {
@@ -58,6 +58,91 @@ describe('lab mapper', () => {
     expect(mapLab({ ...body, recent_closed_trades: null }).recent_closed_trades).toBeNull();
     expect(mapLab({ ...body, recent_closed_trades: Array(20).fill(body.recent_closed_trades[0]) }).recent_closed_trades).toHaveLength(10);
     expect(mapLab({ ...body, books: [] })).toMatchObject({ loading: true, books: [], open_positions_total: null, recent_closed_trades: [] });
+  });
+});
+
+describe('lab unknown fields (future strategies)', () => {
+  /** The real feed on 2026-11-01 (../.brief4/lab.json) already carries keys this hub never named. */
+  const future = () => {
+    const body = labFixture();
+    return {
+      ...body,
+      cache: { ttl_s: 15, upstream_timeout_s: 3 },
+      books: [{ ...body.books[0], strategy: 'kpb', tf: '15m', cash_start: 60000, avg_r: 0.37 }, { ...body.books[0], id: 'zzz_4h', label: 'ZZZ 신전략 · 4h', strategy: 'zzz', tf: '4h', ranking: { top: ['A', 'B'], note: 'new' } }],
+      ledger: { ...body.ledger, per_strategy: { kpb_15m: { signals: 40, signals_cert: 3, exits: 9, latency_median_s: 0.8 }, zzz_4h: { signals: 2, exits: 0 } }, first_certifiable_trade_kst: '2026-10-31 21:02', targets: { trades: 100, days: 90 }, criteria: ['n>=100', 'days>=90'] },
+      verify: { ...body.verify, anchor_lag_s: 12 },
+      engine: { ...body.engine, paper: { ...body.engine.paper, now_kst: '2026-11-01 17:00:00', loops: 420, mode: 'paper', last_error: null }, ledger: { ok: true, queue: 0 }, scheduler: { ok: true } },
+    };
+  };
+  it('keeps unknown top-level, book, ledger, verify and engine fields generically, in feed order, without naming strategies', () => {
+    const s = mapLab(future());
+    // the feed's own transport metadata (cache TTL, upstream timeout) is not strategy content and never reaches the page
+    expect(s.extra).not.toHaveProperty('cache');
+    expect(s.books?.[0]?.extra).toEqual({ strategy: 'kpb', tf: '15m', cash_start: 60000, avg_r: 0.37 });
+    expect(s.books?.[1]?.extra).toEqual({ strategy: 'zzz', tf: '4h', ranking: { top: ['A', 'B'], note: 'new' } });
+    expect(s.extra.ledger).toEqual({ per_strategy: { kpb_15m: { signals: 40, signals_cert: 3, exits: 9, latency_median_s: 0.8 }, zzz_4h: { signals: 2, exits: 0 } }, first_certifiable_trade_kst: '2026-10-31 21:02', targets: { trades: 100, days: 90 }, criteria: ['n>=100', 'days>=90'] });
+    expect(s.extra.verify).toEqual({ anchor_lag_s: 12 });
+    expect(s.extra.engine).toEqual({ scheduler: { ok: true }, paper: { now_kst: '2026-11-01 17:00:00', loops: 420, mode: 'paper', last_error: null }, ledger: { queue: 0 } });
+    // the known fields are still read the strict way, never duplicated into extra
+    expect(Object.keys(s.extra)).toEqual(['ledger', 'verify', 'engine']);
+    expect(s.ledger.certifiable_closed_trades).toBe(3);
+    expect(s.issues).toEqual({});
+    expect(mapLab(labFixture()).extra).toEqual({});
+  });
+  it('keeps a realistic nested future shape — backtests.strategies[].metrics, per-strategy blocks on a book — intact', () => {
+    const body = future();
+    const backtests = {
+      generated_kst: '2026-11-01 16:50', window_days: 30,
+      strategies: [
+        { id: 'kpb_15m', metrics: { sharpe: 1.42, pf: 1.31, max_dd_pct: 4.2, by_tf: { '15m': { trades: 61, win_rate: 0.54 } } }, params: { lookback: 20, atr_mult: 1.5 } },
+        { id: 'zzz_4h', metrics: { sharpe: 0.3, pf: 0.98, by_tf: { '4h': { trades: 4 } } } },
+      ],
+    };
+    const s = mapLab({ ...body, backtests, books: [{ ...labFixture().books[0], per_strategy: { kpb_15m: { metrics: { sharpe: 1.1, trades: [{ r: 0.4 }, { r: -0.2 }] } } } }] });
+    expect(s.extra.backtests).toEqual(backtests);
+    expect(s.books?.[0]?.extra).toEqual({ per_strategy: { kpb_15m: { metrics: { sharpe: 1.1, trades: [{ r: 0.4 }, { r: -0.2 }] } } } });
+    expect(JSON.stringify(s)).not.toMatch(/knn|scenario|probab|시나리오|확률/i);
+  });
+  it('caps the whole unknown tree by node count, so a deeper allowance cannot become an unbounded page', () => {
+    const wide = Array.from({ length: 20 }, () => Object.fromEntries(Array.from({ length: 24 }, (_, i) => [`k${i}`, { v: i }])));
+    const s = mapLab({ ...labFixture(), first: { ok: true }, many: wide, books: [{ ...labFixture().books[0], note: 'kept?' }] });
+    const count = (v: unknown): number => v !== null && typeof v === 'object' ? 1 + (Array.isArray(v) ? v : Object.values(v as object)).reduce((n: number, x) => n + count(x), 0) : 1;
+    const total = count(s.extra) - 1 + (s.books ?? []).reduce((n, b) => n + count(b.extra) - 1, 0);
+    expect(total).toBeLessThanOrEqual(LAB_EXTRA_LIMITS.nodes);
+    expect(total).toBeGreaterThan(LAB_EXTRA_LIMITS.nodes - 30);
+    expect(s.books?.[0]?.extra).toEqual({ note: 'kept?' });
+    expect(s.extra.first).toEqual({ ok: true });
+    expect((s.extra.many as unknown[]).length).toBeGreaterThan(0);
+  });
+  it('drops kNN scenario probabilities wherever they hide: by key, by nested key, by text', () => {
+    const body = future();
+    const s = mapLab({ ...body, knn_scenarios: { up: 0.7, down: 0.3 }, forecast: { scenario_probabilities: [0.1, 0.9], horizon: '4h', note: '시나리오 확률 상승 70%' }, books: [{ ...body.books[0], probability_up: 0.66, tags: ['momentum', 'kNN 시나리오 B'] }], ledger: { ...body.ledger, per_strategy: { knn_1h: { signals: 1 }, kpb_15m: { signals: 2, prob_win: 0.5 } } } });
+    const text = JSON.stringify(s);
+    expect(text).not.toMatch(/knn|scenario|probab|시나리오|확률/i);
+    expect(s.extra.forecast).toEqual({ horizon: '4h' });
+    expect(s.books?.[0]?.extra).toMatchObject({ tags: ['momentum'] });
+    expect(s.extra.ledger).toMatchObject({ per_strategy: { kpb_15m: { signals: 2 } } });
+  });
+  it('bounds and sanitizes malformed unknown fields: depth, breadth, length, markup, URLs, secrets, paths, non-finite numbers', () => {
+    const deep: Record<string, unknown> = { d1: { d2: { d3: { d4: { d5: { d6: { d7: 1 } } } } } } };
+    const wide = Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`k${i}`, i]));
+    const s = mapLab({ ...labFixture(), deep, wide, long: 'x'.repeat(500), html: '<img src=x onerror=alert(1)> plain', link: 'see https://evil.example/steal?c=1 and www.evil.example now', path: 'at /home/max/secret-dir/file.json', nan: NaN, inf: Infinity, api_token: 'sk-1', 'weird key!': 1, [`${'k'.repeat(60)}`]: 1, list: Array.from({ length: 50 }, (_, i) => i), fn: 'ok', mixed: [1, 'a', null, { x: 1 }, [2]] });
+    expect(s.extra.deep).toEqual({ d1: { d2: { d3: { d4: { d5: {} } } } } });
+    expect(Object.keys(s.extra.wide as object)).toHaveLength(LAB_EXTRA_LIMITS.keys);
+    expect((s.extra.long as string).length).toBe(LAB_EXTRA_LIMITS.text);
+    expect(s.extra.html).toBe('… plain');
+    expect(s.extra.link).toBe('see … and … now');
+    expect(s.extra.path).toBe('at …');
+    expect(s.extra.nan).toBeNull();
+    expect(s.extra.inf).toBeNull();
+    expect(s.extra).not.toHaveProperty('api_token');
+    expect(s.extra).not.toHaveProperty('weird key!');
+    expect((s.extra.list as unknown[]).length).toBe(LAB_EXTRA_LIMITS.items);
+    expect(s.extra.mixed).toEqual([1, 'a', null, { x: 1 }, [2]]);
+    expect(Object.keys(s.extra).some((k) => k.length > LAB_EXTRA_LIMITS.key)).toBe(false);
+    expect(JSON.stringify(s)).not.toMatch(/<|>|https?:|sk-1|\/home\//);
+    expect(extraValue(() => 1)).toBeUndefined();
+    expect(extraValue(Symbol('x') as unknown)).toBeUndefined();
   });
 });
 

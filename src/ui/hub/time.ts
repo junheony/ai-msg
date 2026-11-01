@@ -14,3 +14,12 @@ export function hhmmss(ms: number): string {
   const d = new Date(ms);
   return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
 }
+
+const KST_FULL = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+/** `2026-11-01 19:00 KST` for an ISO time; '— 미보고' when the feed gave none or garbage. */
+export function fmtKstFull(iso: string | null | undefined): string {
+  if (!iso) return '— 미보고';
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '— 미보고';
+  return `${KST_FULL.format(new Date(t))} KST`;
+}

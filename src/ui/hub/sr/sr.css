@@ -1,9 +1,22 @@
-/* 지지·저항 구간 panel (src/ui/hub/sr/SrPanel.tsx). Everything under .sr-; the section frame, table (.t) and bands
-   (.tr-band, .tr-down) are the Trading room's. The zones are DOM bands over the candle canvas: support in the ok hue,
-   resistance in the bad hue, opacity rising with the bot's confidence tier. Phone (≤720): chart over table. */
-.sr-pick { display: inline-flex; align-items: center; gap: 8px; }
-.sr-pick label { font-size: var(--fs-2xs); color: var(--faint); font-weight: 600; }
-.sr-pick .rp-input { height: 30px; font-family: var(--hub-font); font-size: var(--fs-base); font-weight: 600; letter-spacing: .2px; padding-right: 6px; }
+/* 지지·저항 · 분할매수(DCA) panel (src/ui/hub/sr/SrPanel.tsx). Everything under .sr-; the section frame, table (.t),
+   rows (.hs-rows) and bands (.tr-band, .tr-down) are the Trading room's. The zones are DOM bands over the candle canvas:
+   support in the ok hue, resistance in the bad hue, opacity rising with the bot's confidence tier. Links only — the
+   symbol row is a row of hash links. Phone (≤720): chart over table, status over DCA. */
+.sr-head { flex-wrap: wrap; row-gap: 4px; }
+.sr-paper { font-weight: 600; }
+.sr-paper.ok { color: var(--hub-ok); border-color: color-mix(in srgb, var(--hub-ok) 45%, var(--glass-line)); background: var(--hub-ok-soft); }
+.sr-paper.warn { color: var(--hub-warn); border-color: color-mix(in srgb, var(--hub-warn) 45%, var(--glass-line)); background: var(--hub-warn-soft); }
+.sr-paper.bad { color: var(--hub-bad); border-color: color-mix(in srgb, var(--hub-bad) 45%, var(--glass-line)); background: var(--hub-bad-soft); }
+.sr-clock { display: inline-flex; flex-wrap: wrap; gap: 2px 14px; font-size: var(--fs-xs); font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sr-clock b { color: var(--fg-strong); font-weight: 500; font-family: var(--hub-font); font-size: var(--fs-sm); }
+
+/* symbol links */
+.sr-syms { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sr-syms-k { font-size: var(--fs-2xs); color: var(--faint); font-weight: 600; margin-right: 4px; white-space: nowrap; }
+.sr-sym-link { display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border-radius: var(--r-full); border: 1px solid var(--glass-line); background: var(--glass); color: var(--fg); font-family: var(--hub-font); font-size: var(--fs-sm); font-weight: 600; letter-spacing: .2px; text-decoration: none; white-space: nowrap; }
+.sr-sym-link:hover { border-color: var(--line-strong); color: var(--fg-strong); }
+.sr-sym-link.on { background: var(--mode-soft); border-color: transparent; color: var(--mode-ink); }
+.sr-sym-link.more { background: transparent; color: var(--muted); font-weight: 500; }
 
 .sr-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 14px; align-items: start; min-width: 0; }
 .sr-chart-wrap { min-width: 0; border: 1px solid var(--glass-line); border-radius: 14px; background: var(--glass); box-shadow: inset 0 1px 0 var(--glass-hi), var(--glass-shadow); overflow: hidden; position: relative; }
@@ -15,6 +28,7 @@
 .sr-sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; }
 .sr-sw.support { background: color-mix(in srgb, var(--hub-ok) 70%, transparent); box-shadow: inset 0 0 0 1px var(--hub-ok); }
 .sr-sw.resistance { background: color-mix(in srgb, var(--hub-bad) 70%, transparent); box-shadow: inset 0 0 0 1px var(--hub-bad); }
+.sr-static { padding: 4px 14px 8px; }
 
 .sr-chart { position: relative; min-width: 0; }
 /* lightweight-charts gives its canvases z-index 1–2; isolate them so the band layer above is not painted over. */
@@ -44,12 +58,23 @@
 .sr-tier.t4, .sr-tier.t5 { color: var(--fg-strong); }
 .sr-tf { font-family: var(--hub-font); font-size: var(--fs-xs); color: var(--muted); letter-spacing: .3px; white-space: nowrap; }
 
+/* room status + DCA */
 .sr-foot { display: flex; flex-direction: column; gap: 8px; }
-.sr-foot .tr-band { align-self: flex-start; }
-.sr-foot .tr-band b + span, .sr-foot .tr-band > span { margin-left: 4px; }
+.sr-two { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 14px 28px; align-items: start; }
+.sr-col { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.sr-h4 { margin: 0; font-family: var(--hub-font); font-size: var(--fs-base); font-weight: 600; color: var(--fg-strong); }
+.sr-h4 .tr-dim { font-size: var(--fs-2xs); margin-left: 6px; }
+.sr-room { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.sr-room .hs-rows dt { min-width: min(100%, 14ch); }
+.sr-room .hs-rows dd { font-size: var(--fs-sm); max-width: 66%; }
+.sr-extra { border-top: 1px dashed var(--line-strong); padding-top: 6px; }
+.sr-dca { flex-direction: column; align-items: flex-start; gap: 4px; align-self: stretch; }
+.sr-dca .sr-dca-rep { font-size: var(--fs-2xs); color: var(--muted); }
+.sr-snapmeta .hs-rows dd, .sr-snapmeta dd { font-size: var(--fs-sm); }
+.sr-foot .hub-open { align-self: flex-start; }
 
 @media (max-width: 720px) {
-  .sr-grid { grid-template-columns: 1fr; gap: 10px; }
+  .sr-grid, .sr-two { grid-template-columns: 1fr; gap: 10px; }
   .sr-twrap { max-height: none; }
   /* five columns in 360px: tighter cells, smaller figures, swatch dropped (the word is already coloured), TF hits wrap */
   .sr-t th, .sr-t td { padding: 0 5px; }
@@ -61,4 +86,7 @@
   .sr-t td.sr-tf { white-space: normal; font-size: var(--fs-2xs); line-height: 1.25; max-width: 48px; height: auto; padding-top: 4px; padding-bottom: 4px; }
   .sr-cap .sr-cnt { margin-left: 0; }
   .sr .sh .tr-right { margin-left: 0; flex-basis: 100%; }
+  .sr-head .n { white-space: normal; }
+  .sr-room .hs-rows > div { flex-direction: column; align-items: stretch; gap: 0; }
+  .sr-room .hs-rows dd { max-width: none; text-align: left; }
 }

@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
-import type { LabResponse, LabSnapshot } from '../../../shared/lab-types';
+import { LAB_SUPPRESS_RE, type LabExtraValue, type LabSnapshot } from '../../../shared/lab-types';
 import { liveLabApi, type LabApi } from './api';
+import { useLabFeed, type LabFeed } from './useLabFeed';
 import './lab.css';
 
-const POLL_MS = 60_000;
+/** Nesting the generic tree will draw; the server already caps the depth (LAB_EXTRA_LIMITS), this is the second fence. */
+const EXTRA_DEPTH = 8;
 const signed = (n: number, unit = 'USDT') => `${n > 0 ? '+' : ''}${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${unit}`;
 const numeric = (n: number, digits = 0) => n.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
 const kst = (v: string | null) => v ? `${v.replace('T', ' ').replace(/\+09:00$/, '')} KST` : '— 미보고';
@@ -23,28 +24,38 @@ function Progress({ s, label, path, value, target, unit }: { s: LabSnapshot; lab
   return <div className="lab-progress"><div><span>{label}</span><b><Field s={s} path={path} value={value} format={(v: number) => numeric(v, unit === '일' ? 2 : 0)} /><small> / {target} {unit}</small></b></div>{value !== null && <progress aria-label={label} max={target} value={value} />}</div>;
 }
 
-export function LabPanel({ api = liveLabApi, now = Date.now() }: { api?: LabApi; now?: number }) {
-  const [response, setResponse] = useState<LabResponse | null>(null);
-  const [clientError, setClientError] = useState<string | null>(null);
-  const [clientFailures, setClientFailures] = useState(0);
-  useEffect(() => {
-    let alive = true, timer: ReturnType<typeof setTimeout>;
-    const poll = async () => {
-      try { const next = await api.summary(); if (alive) { setResponse(next); setClientError(null); setClientFailures(0); } }
-      catch { if (alive) { setClientError('요약 서버 연결 오류'); setClientFailures(n => n + 1); } }
-      finally { if (alive) timer = setTimeout(() => { void poll(); }, POLL_MS); }
-    };
-    void poll();
-    return () => { alive = false; clearTimeout(timer); };
-  }, [api]);
+/**
+ * Fields the hub does not know yet (a new strategy's columns, a new ledger figure) as plain text, key by key. Values are
+ * already scrubbed and bounded by the server; here they are text nodes only — never a link, never markup — and a key or
+ * string carrying a kNN/scenario/probability word is skipped once more, in case an older server let one through.
+ */
+export function ExtraTree({ v, depth = 0 }: { v: LabExtraValue; depth?: number }) {
+  if (depth > EXTRA_DEPTH) return <span className="lab-missing">…</span>;
+  if (v === null) return <span className="lab-missing">— 미보고</span>;
+  if (typeof v === 'string') return LAB_SUPPRESS_RE.test(v) ? null : <span>{v}</span>;
+  if (typeof v !== 'object') return <span>{typeof v === 'boolean' ? (v ? '예' : '아니오') : numeric(v, Number.isInteger(v) ? 0 : 2)}</span>;
+  if (Array.isArray(v)) return v.length === 0 ? <span className="lab-missing">없음</span> : <ul className="lab-extra-list">{v.map((x, i) => <li key={i} className={nested(x)}><ExtraTree v={x} depth={depth + 1} /></li>)}</ul>;
+  const entries = Object.entries(v).filter(([k]) => !LAB_SUPPRESS_RE.test(k));
+  if (entries.length === 0) return <span className="lab-missing">없음</span>;
+  return <dl className="lab-extra">{entries.map(([k, x]) => <div key={k} className={nested(x)}><dt>{k}</dt><dd><ExtraTree v={x} depth={depth + 1} /></dd></div>)}</dl>;
+}
+/** A row whose value is itself an object or list stacks label-over-children across the full width instead of a right-aligned figure. */
+const nested = (x: LabExtraValue) => typeof x === 'object' && x !== null && (Array.isArray(x) ? x.length > 0 : Object.keys(x).length > 0) ? 'lab-extra-nest' : undefined;
+const hasExtra = (v: Record<string, LabExtraValue> | undefined): v is Record<string, LabExtraValue> => !!v && Object.keys(v).length > 0;
+
+export interface LabPanelProps { api?: LabApi; now?: number; /** The page's shared read, when it already polls (the source strip does); otherwise the panel polls itself. */ feed?: LabFeed }
+
+export function LabPanel({ api = liveLabApi, now = Date.now(), feed }: LabPanelProps) {
+  const own = useLabFeed(api, feed === undefined);
+  const { response, clientError, clientFailures } = feed ?? own;
   const s = response?.snapshot;
   const age = s?.generated_at ? Math.max(response?.ageSeconds ?? 0, Math.floor((now - Date.parse(s.generated_at)) / 1000)) : null;
   const offline = response?.failures !== undefined && response.failures >= 3 || clientFailures >= 3;
   const stale = response?.stale || clientError !== null || age !== null && age >= 90;
   const failed = s?.verify.ok === false;
   const field = (path: string, value: string | number | boolean | null, format?: (v: never) => string) => s ? <Field s={s} path={path} value={value} format={format} /> : null;
-  return <section className={`sec open-static lab${offline ? ' lab-offline' : ''}`} aria-label="연구실 페이퍼 요약" data-testid="lab-panel">
-    <header className="sh lab-header"><div><h2>연구실 페이퍼 요약</h2><span className="lab-sub">트레이딩 ver2 · 읽기 전용</span></div><span className="lab-paper">PAPER · LIVE OFF</span><div className="lab-clock">기준 시각 {s ? field('generated_at', s.generated_at, kst) : '—'}{age !== null && age >= 90 && <b className="lab-warning">STALE ({age}초 전)</b>}</div></header>
+  return <section id="hub-lab" className={`sec open-static lab${offline ? ' lab-offline' : ''}`} aria-label="Lab · 연구실 페이퍼 요약" data-testid="lab-panel">
+    <header className="sh lab-header"><div><h2><span className="tr-src-name">Lab</span> 연구실 페이퍼 요약</h2><span className="lab-sub">출처 트레이딩 ver2 · :8792 /lab/api/summary · 읽기 전용</span></div><span className="lab-paper hs-badge" data-testid="lab-paper" title="live=false · read_only=true · 모의 거래 기록만">PAPER ONLY · LIVE OFF</span><div className="lab-clock">기준 시각 {s ? field('generated_at', s.generated_at, kst) : '—'}{age !== null && age >= 90 && <b className="lab-warning">STALE ({age}초 전)</b>}</div></header>
     <div className="b lab-body">
       {failed && <div className="lab-alert lab-failed" role="alert">원장 검증 실패: {s.verify.msg ?? '상세 미보고'}</div>}
       {offline && <div className="lab-alert" role="status">오프라인 · 마지막 갱신 {s ? kst(s.generated_at) : '없음'}<span>요약 서비스 연결 상태 확인</span></div>}
@@ -68,7 +79,7 @@ export function LabPanel({ api = liveLabApi, now = Date.now() }: { api?: LabApi;
               <Evidence s={s} label="미실현 PnL" path={`${p}.pnl.unrealized`} value={book.pnl.unrealized} format={signed} />
               <Evidence s={s} label="청산" path={`${p}.n_trades`} value={book.n_trades} /><Evidence s={s} label="승" path={`${p}.wins`} value={book.wins} />
               <Evidence s={s} label="열린 포지션" path={`${p}.open_positions`} value={book.open_positions} /><Evidence s={s} label="최대 낙폭" path={`${p}.max_dd_pct`} value={book.max_dd_pct} format={(v: number) => `${numeric(v, 2)}%`} />
-            </dl></article>;
+            </dl>{hasExtra(book.extra) && <div className="lab-book-extra" data-testid="lab-book-extra"><ExtraTree v={book.extra} /></div>}</article>;
           })}
         </div>}
         <div className="lab-evidence">
@@ -91,6 +102,7 @@ export function LabPanel({ api = liveLabApi, now = Date.now() }: { api?: LabApi;
           <section className="lab-detail" aria-label="열린 모의 포지션"><h3>열린 모의 포지션</h3>
             {s.books === null ? <p>{field('books', null)}</p> : s.books.map((book, i) => <div key={i} className="lab-position-book"><h4>{book.label ?? '북 이름 미보고'}</h4>{book.open === null ? <p>{field(`books.${i}.open`, null)}</p> : !book.open.length ? <p className="lab-sub">열린 포지션 없음</p> : <div className="lab-table-wrap"><table className="t lab-table"><thead><tr><th>종목</th><th>방향</th><th>진입 시각 (KST)</th><th>진입가</th><th>현재가</th><th>미실현 PnL</th><th>미실현 %</th></tr></thead><tbody>{book.open.map((position, j) => <tr key={j}>{(['sym', 'side', 'entry_kst', 'entry', 'mark', 'upnl', 'upnl_pct'] as const).map(key => <td key={key} className={typeof position[key] === 'number' ? 'n' : ''}>{field(`books.${i}.open.${j}.${key}`, position[key], key === 'upnl' ? signed : key === 'upnl_pct' ? (v: number) => signed(v, '%') : undefined)}</td>)}</tr>)}</tbody></table></div>}</div>)}
           </section>
+          {hasExtra(s.extra) && <section className="lab-detail lab-extra-sec" aria-label="추가 보고 항목" data-testid="lab-extra"><h3>추가 보고 항목 <small>요약 피드가 새로 내보낸 필드 · 그대로 표시</small></h3><ExtraTree v={s.extra} /></section>}
           <section className="lab-detail" aria-label="최근 청산"><h3>최근 청산 <small>최대 10건</small></h3>{s.recent_closed_trades === null ? <p>{field('recent_closed_trades', null)}</p> : !s.recent_closed_trades.length ? <p className="lab-sub">최근 청산 없음</p> : <div className="lab-table-wrap"><table className="t lab-table"><thead><tr><th>청산 시각 (KST)</th><th>북</th><th>종목</th><th>방향</th><th>사유</th><th>PnL</th><th>R</th><th>원장 인증</th></tr></thead><tbody>{s.recent_closed_trades.map((trade, i) => <tr key={i}>{(['exit_kst', 'book', 'sym', 'side', 'reason', 'pnl', 'r', 'ledger_certifiable'] as const).map(key => <td key={key} className={key === 'pnl' || key === 'r' ? `n ${tone(trade[key])}` : ''}>{key === 'ledger_certifiable' && trade[key] === null && !s.issues[`recent_closed_trades.${i}.${key}`] ? <span aria-label="인증 여부 미보고">—</span> : field(`recent_closed_trades.${i}.${key}`, trade[key], key === 'pnl' ? signed : key === 'r' ? (v: number) => signed(v, 'R') : key === 'ledger_certifiable' ? (v: boolean) => v ? '인증' : '불가' : undefined)}</td>)}</tr>)}</tbody></table></div>}</section>
         </>}
       </>}

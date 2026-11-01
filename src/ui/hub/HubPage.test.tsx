@@ -5,14 +5,17 @@ import { HubPage } from './HubPage';
 import { HubOverview } from './HubOverview';
 import { hubStatusFixture } from './__fixtures__/status';
 
-// The SR panel reads the server on mount and has its own test (sr/SrPanel.test.tsx); the page test only needs its frame.
+// The two Trading panels have their own tests (sr/SrPanel.test.tsx, lab/LabPanel.test.tsx, TradingRoom.test.tsx); the
+// page test only needs their frames. `paperBadge` is pure and the source strip uses it, so the real one stays.
 vi.mock('./lab/LabPanel', () => ({ LabPanel: () => <section data-testid="lab-panel" /> }));
-vi.mock('./sr/SrPanel', () => ({ SrPanel: () => <section data-testid="sr-panel" /> }));
+vi.mock('./sr/SrPanel', async () => ({ ...(await vi.importActual<typeof import('./sr/SrPanel')>('./sr/SrPanel')), SrPanel: () => <section data-testid="sr-panel" /> }));
+// The page's own Trading reads never touch the network in this test.
+const quiet = { labApi: { summary: async () => { throw new Error('offline'); } }, srApi: { sr: async () => { throw new Error('offline'); }, klines: async () => [] } };
 
 const T = Date.parse('2026-10-30T13:00:00Z');
 const STATUS = hubStatusFixture(T);
 const mode = (id: string) => STATUS.modes.find((m) => m.id === id)!;
-const page = (id: string, extra: Partial<Parameters<typeof HubPage>[0]> = {}) => render(<HubPage modeKey={id as never} mode={mode(id)} now={T} error={null} loading={false} onRefresh={() => {}} generatedAt={STATUS.generated_at} {...extra} />);
+const page = (id: string, extra: Partial<Parameters<typeof HubPage>[0]> = {}) => render(<HubPage modeKey={id as never} mode={mode(id)} now={T} error={null} loading={false} onRefresh={() => {}} generatedAt={STATUS.generated_at} {...quiet} {...extra} />);
 
 afterEach(cleanup);
 
@@ -51,7 +54,7 @@ describe('HubPage template', () => {
 
   it('a section added above does not remount the ones below (an opened or closed section keeps its state)', () => {
     const ops = mode('ops');
-    const props = { modeKey: 'ops' as never, now: T, error: null, loading: false, onRefresh: () => {}, generatedAt: STATUS.generated_at };
+    const props = { modeKey: 'ops' as never, now: T, error: null, loading: false, onRefresh: () => {}, generatedAt: STATUS.generated_at, ...quiet };
     const r = render(<HubPage {...props} mode={ops} />);
     fireEvent.click(screen.getByTestId('hub-sec-table').querySelector('summary')!);
     expect(screen.getByTestId('hub-sec-table').hasAttribute('open')).toBe(false);
@@ -167,8 +170,28 @@ describe('HubOverview', () => {
   });
 });
 
-it('mounts lab before legacy summaries even when trading data is missing', () => {
+it('mounts the source strip and both panels before legacy summaries even when trading data is missing', () => {
   const { container } = page('trading', { mode: undefined });
+  expect(screen.getByTestId('tr-src')).toBeTruthy();
   expect(screen.getByTestId('lab-panel')).toBeTruthy();
+  expect(screen.getByTestId('sr-panel')).toBeTruthy();
   expect(container.querySelector('[data-testid="tr-paper"]')).toBeNull();
+  const order = [...container.querySelectorAll('[data-testid]')].map((e) => e.getAttribute('data-testid'));
+  expect(order.indexOf('tr-src')).toBeLessThan(order.indexOf('lab-panel'));
+  expect(order.indexOf('lab-panel')).toBeLessThan(order.indexOf('sr-panel'));
+});
+
+it('trading sections are static (no fold, no frame): a 원본 is a new-tab link; other modes keep their folds', () => {
+  const t = mode('trading');
+  const withRaw = { ...t, page: { ...t.page!, sections: [...t.page!.sections, { kind: 'raw' as const, title: '원본', href: '/hub/p/trading/', embed: true }] } };
+  page('trading', { mode: withRaw });
+  expect(document.querySelector('details, summary, iframe')).toBeNull();
+  const raw = screen.getByTestId('hub-sec-raw');
+  expect(raw.tagName).toBe('SECTION');
+  expect(raw.querySelector('a')!.getAttribute('target')).toBe('_blank');
+  expect(raw.querySelector('button')).toBeNull();
+  expect(screen.getByTestId('hub-sec-bars').tagName).toBe('SECTION');
+  cleanup();
+  page('quant');
+  expect(screen.getByTestId('hub-sec-raw').tagName).toBe('DETAILS');
 });

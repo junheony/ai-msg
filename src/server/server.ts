@@ -30,7 +30,7 @@ import { grokEnv } from './engine/grokEnv';
 import { execFile } from 'node:child_process';
 import { createRequestHandler, type ServerUpdateDeps } from './http';
 import { hubSelfOf } from './hub/self';
-import { createSrService } from './hub/sr';
+import { createSrService, fetchSrJson } from './hub/sr';
 import { createLabService, fetchLabJson } from './hub/lab';
 import { createHubStatus, fetchJsonWithTimeout, liveHubDeps } from './hub/status';
 import { AuthLoginHub } from './authLogin/hub';
@@ -377,7 +377,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
       // Read-only media the hub pages show (영상 renders, 게임 builds); see hub/files.ts for the allowlist.
       fileRoots: { video: path.join(cfg.home, 'engineering-shorts'), game: path.join(cfg.home, 'games') },
       // Trading room SR zones (:8830 /api/sr), read once a minute, filtered per symbol server-side.
-      sr: createSrService({ fetchJson: fetchJsonWithTimeout }),
+      sr: createSrService({ fetchJson: fetchSrJson }),
       lab: createLabService({ fetchJson: fetchLabJson }),
     };
     // MSG mini (/mini, the lock-screen widget): read-only; the widget token file is made on its first use, never logged.

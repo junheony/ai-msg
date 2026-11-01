@@ -43,3 +43,25 @@ Fixtures and limitations:
   the summary service and the production mapper/cache, not invented lab values.
 - This script is not a production server, deployment or browser end-to-end suite. It
   depends on the existing local frozen snapshot and screenshot harness.
+
+# Unified Trading room screenshots (BRIEF4)
+
+`unified-demo.ts` is the same isolated host with the real `createSrService` added. It listens on
+`127.0.0.1:${QA_PORT}` (default **9379**; 9377 is the live demo and is refused). Its live upstreams
+are GET only and go through the production transports: `http://127.0.0.1:8792/lab/api/summary`
+and the allowlisted `http://127.0.0.1:8830/api/sr` + `/api/status` (no redirects, no credentials,
+bounded JSON, per-feed cache and last-good). No collectors, engines or ledgers are touched.
+
+```sh
+npm run build
+node --import tsx scripts/qa/unified-demo.ts /tmp/msg-unified-qa-state.json
+node scripts/qa/shoot-unified.mjs /tmp/msg-unified-qa-state.json shots-unified unified
+FOCUS='[data-testid="sr-panel"]'  node scripts/qa/shoot-unified.mjs /tmp/msg-unified-qa-state.json shots-unified sr
+FOCUS='[data-testid="lab-panel"]' node scripts/qa/shoot-unified.mjs /tmp/msg-unified-qa-state.json shots-unified lab
+```
+
+The wrapper refuses a state file whose server is not a loopback port, uses CDP port 9342 by default
+and waits 12 s before capture so both live feeds settle. Replay candles are an empty in-memory
+fixture, so the SR chart shows its "no candles" state and the table sorts by tier. The Trading room
+is links only: `#sr=SYMBOL`, `#sr-all`, `#hub-lab`, `#hub-sr` and `#hub-practice` are plain hash
+links; there is no `#replay` sub-screen and no button anywhere in `hub-mode-trading`, header included.

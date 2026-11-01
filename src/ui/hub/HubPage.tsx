@@ -1,14 +1,19 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { HubAlert, HubKpi, HubMode, HubModeId, HubSection, HubState } from '../../shared/hub-types';
+import type { LabState } from '../../shared/lab-types';
 import { ExternalIcon, HubIcon, ReloadIcon } from './HubIcons';
 import { Cards, Chart, Images, KvGrid, Steps } from './HubSections';
 import { NexusHome } from './NexusHome';
 import { TradingHome } from './TradingHome';
 import { modeDef, STATE_LABEL, stateClass } from './modes';
-import { relTime } from './time';
-import { ReplayTrainer } from './replay/ReplayTrainer';
-import { SrPanel } from './sr/SrPanel';
+import { fmtKstFull, relTime } from './time';
+import { historyStats, readHistory } from './replay/history';
+import { liveSrApi, type SrApi } from './sr/api';
+import { paperBadge, SrPanel } from './sr/SrPanel';
+import { useSrFeed, type SrFeed } from './sr/useSrFeed';
+import { liveLabApi, type LabApi } from './lab/api';
 import { LabPanel } from './lab/LabPanel';
+import { useLabFeed, type LabFeed } from './lab/useLabFeed';
 
 /* ───────── atoms shared with the 개요 ───────── */
 
@@ -118,10 +123,10 @@ function Bars({ s }: { s: Extract<HubSection, { kind: 'bars' }> }) {
  * 원본 보기: the GET-only, cookie-less proxy inside a sandboxed frame — mounted only once the section is opened — or an
  * outside link in a new tab. The upstream's control buttons are not reachable (no allow-forms; the proxy refuses non-GET).
  */
-function Raw({ s, name, open }: { s: Extract<HubSection, { kind: 'raw' }>; name: string; open: boolean }) {
+function Raw({ s, name, open, linkOnly = false }: { s: Extract<HubSection, { kind: 'raw' }>; name: string; open: boolean; linkOnly?: boolean }) {
   const [frameKey, setFrameKey] = useState(0);
-  if (!s.embed) {
-    return <div className="raw-ext"><a className="hub-open ext big" href={s.href} target="_blank" rel="noopener noreferrer">{s.title} · 새 탭 <ExternalIcon /></a><span className="meta">서버 밖 주소 · 여기서는 읽기만</span></div>;
+  if (!s.embed || linkOnly) {
+    return <div className="raw-ext"><a className="hub-open ext big" href={s.href} target="_blank" rel="noopener noreferrer">{s.title} · 새 탭 <ExternalIcon /></a><span className="meta">{s.embed ? '같은 출처 프록시 · GET 전용 · 새 탭에서만' : '서버 밖 주소 · 여기서는 읽기만'}</span></div>;
   }
   return (
     <div className="hub-frame">
@@ -146,16 +151,22 @@ export function sectionCount(s: HubSection): string | null {
   }
 }
 
-export function SectionView({ s, name }: { s: HubSection; name: string }) {
-  const [open, setOpen] = useState(!!s.open);
+/**
+ * One drill-down section. Collapsible by default; `static` renders it always open with no `<summary>` — the Trading room
+ * is links only, so even a fold is out, and 원본 보기 there is a new-tab link rather than a frame with a reload button.
+ */
+export function SectionView({ s, name, static: isStatic = false }: { s: HubSection; name: string; static?: boolean }) {
+  const [toggled, setToggled] = useState(!!s.open);
+  const open = isStatic || toggled;
   const count = sectionCount(s);
-  return (
-    <details className={`sec sec-${s.kind}`} open={open} data-testid={`hub-sec-${s.kind}`}>
-      <summary onClick={(e) => { e.preventDefault(); setOpen((o) => !o); }}>
-        <span className="sec-title">{s.title}</span>
-        {s.note && <span className="n">{s.note}</span>}
-        {count !== null && <span className={`cnt${s.kind === 'steps' ? ' frac' : ''}`}>{count}</span>}
-      </summary>
+  const head = (
+    <>
+      <span className="sec-title">{s.title}</span>
+      {s.note && <span className="n">{s.note}</span>}
+      {count !== null && <span className={`cnt${s.kind === 'steps' ? ' frac' : ''}`}>{count}</span>}
+    </>
+  );
+  const body = (
       <div className="b">
         {s.kind === 'kv' && (s.rows.length === 0 ? <div className="sec-empty">자료 없음</div> : <div className="kv">{s.rows.map(([k, v], i) => <div key={i}><span>{k}</span><b>{v}</b></div>)}</div>)}
         {s.kind === 'table' && <Table s={s} />}
@@ -173,9 +184,83 @@ export function SectionView({ s, name }: { s: HubSection; name: string }) {
         {s.kind === 'images' && (open ? <Images s={s} /> : null)}
         {s.kind === 'kvgrid' && <KvGrid s={s} />}
         {s.kind === 'text' && <pre className="text">{s.body}</pre>}
-        {s.kind === 'raw' && <Raw s={s} name={name} open={open} />}
+        {s.kind === 'raw' && <Raw s={s} name={name} open={open} linkOnly={isStatic} />}
       </div>
+  );
+  if (isStatic) {
+    return <section className={`sec sec-${s.kind} open-static`} data-testid={`hub-sec-${s.kind}`} data-static="true"><div className="sh">{head}</div>{body}</section>;
+  }
+  return (
+    <details className={`sec sec-${s.kind}`} open={open} data-testid={`hub-sec-${s.kind}`}>
+      <summary onClick={(e) => { e.preventDefault(); setToggled((o) => !o); }}>{head}</summary>
+      {body}
     </details>
+  );
+}
+
+/* ───────── Trading room: the two paper sources, up front ───────── */
+
+const LAB_STATE_KO: Record<LabState, string> = { ok: '정상', partial: '일부 오류', loading: '엔진 준비 중', stale: '이전 값', error: '오류', offline: '오프라인', 'verify-failed': '원장 검증 실패' };
+const toneOfLab = (st: LabState | undefined, clientError: string | null): '' | 'warn' | 'bad' => (!st || clientError ? 'bad' : st === 'ok' ? '' : st === 'error' || st === 'offline' || st === 'verify-failed' ? 'bad' : 'warn');
+
+/**
+ * Where the paper numbers come from, before any of them: one card per source with its PAPER ONLY verdict, the service
+ * behind it, the reading's time in KST and a link down to its section. Both sources stay discoverable from the fold.
+ */
+export function SourceStrip({ lab, sr }: { lab: LabFeed; sr: SrFeed }) {
+  const snap = lab.response?.snapshot ?? null;
+  const labTone = toneOfLab(lab.response?.state, lab.clientError);
+  const labState = lab.clientError ?? (lab.response ? LAB_STATE_KO[lab.response.state] + (lab.response.error ? ` · ${lab.response.error}` : '') : '불러오는 중…');
+  const all = sr.all;
+  const badge = paperBadge(all);
+  const srOk = all?.feeds.sr.ok ?? false, stOk = all?.feeds.status.ok ?? false;
+  const srTone = !all ? (sr.error ? 'bad' : '') : badge.tone === 'bad' ? 'bad' : !srOk && !stOk ? 'bad' : !srOk || !stOk || all.feeds.sr.stale || all.feeds.status.stale ? 'warn' : '';
+  return (
+    <div className="tr-src" data-testid="tr-src" aria-label="페이퍼 출처">
+      <article className={`hs-card ${labTone}`} data-testid="tr-src-lab">
+        <div className="hs-card-top"><h4><span className="tr-src-name">Lab</span> 연구실 페이퍼 요약</h4><span className="hs-badge tr-src-paper ok" title="live=false · read_only=true">PAPER ONLY</span></div>
+        <p className="hs-card-sub">트레이딩 ver2 · :8792 /lab/api/summary · 60초 갱신</p>
+        <dl className="hs-rows">
+          <div><dt>기준 시각</dt><dd>{fmtKstFull(snap?.generated_at ?? null)}</dd></div>
+          <div><dt>상태</dt><dd className={labTone === 'bad' ? 'bad' : labTone === 'warn' ? 'warn' : 'ok'}>{labState}</dd></div>
+          <div><dt>전략 북 · 열린 포지션</dt><dd>{snap?.books ? `${snap.books.length}개` : '미보고'} · {snap?.open_positions_total ?? '미보고'}</dd></div>
+        </dl>
+        <div className="hs-card-links"><a className="hub-open" href="#hub-lab">Lab 연구실 요약으로 ↓</a></div>
+      </article>
+      <article className={`hs-card ${srTone}`} data-testid="tr-src-sr">
+        <div className="hs-card-top"><h4><span className="tr-src-name">SR / DCA</span> 지지·저항 · 분할매수(DCA)</h4><span className={`hs-badge tr-src-paper ${badge.tone}`} title={badge.title}>{badge.text}</span></div>
+        <p className="hs-card-sub">트레이딩룸 :8830 · /api/sr + /api/status · 60초 갱신</p>
+        <dl className="hs-rows">
+          <div><dt>SR 스냅샷</dt><dd className={!all ? '' : srOk ? (all.feeds.sr.stale ? 'warn' : 'ok') : 'bad'}>{all ? (srOk ? fmtKstFull(all.snapshotAt ?? all.room?.srSnapshot?.mtime ?? null) + (all.feeds.sr.stale ? ' · 이전 값' : '') : `응답 없음${all.feeds.sr.error ? ` · ${all.feeds.sr.error}` : ''}`) : sr.error ? `응답 없음 · ${sr.error}` : '불러오는 중…'}</dd></div>
+          <div><dt>룸 상태</dt><dd className={!all ? '' : stOk ? (all.feeds.status.stale ? 'warn' : 'ok') : 'bad'}>{all ? (stOk ? fmtKstFull(all.room?.generatedAt ?? null) + (all.feeds.status.stale ? ' · 이전 값' : '') : `응답 없음${all.feeds.status.error ? ` · ${all.feeds.status.error}` : ''}`) : '—'}</dd></div>
+          <div><dt>심볼 · 구간</dt><dd>{all ? `${all.symbols.length} · ${all.rangeCount}` : '—'}</dd></div>
+        </dl>
+        <div className="hs-card-links"><a className="hub-open" href="#hub-sr">SR / DCA 지지·저항으로 ↓</a></div>
+      </article>
+    </div>
+  );
+}
+
+/**
+ * The replay log this browser holds, read-only: counts and the running result. The interactive trainer is not reachable
+ * from the Trading room — no link, no sub-screen — so the room stays links-only end to end.
+ */
+export function PracticeCard() {
+  const st = useMemo(() => historyStats(readHistory()), []);
+  const pct = (v: number | null) => (v === null ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(2)}%`);
+  return (
+    <section id="hub-practice" className="sec open-static tr-sec tr-practice" aria-label="복기 연습 기록" data-testid="hub-practice">
+      <div className="sh"><span className="sec-title">복기 연습 기록</span><span className="n">이 브라우저에 저장된 모의 복기 · 주문 없음</span><span className="cnt">{st.sessions}</span></div>
+      <div className="b">
+        <div className="tr-mini">
+          <div className="tr-mi"><span className="k">세션</span><b>{st.sessions}</b></div>
+          <div className="tr-mi"><span className="k">판단 횟수</span><b>{st.trades}</b></div>
+          <div className={`tr-mi${st.hitRate === null ? '' : st.hitRate >= 0.5 ? ' ok' : ' warn'}`}><span className="k">적중률</span><b>{st.hitRate === null ? '—' : `${Math.round(st.hitRate * 100)}%`}</b></div>
+          <div className={`tr-mi${st.totalPct > 0 ? ' ok' : st.totalPct < 0 ? ' bad' : ''}`}><span className="k">누적 결과</span><b>{pct(st.sessions ? st.totalPct : null)}</b></div>
+        </div>
+        <p className="tr-rule">이 브라우저에 저장된 복기 기록만 읽어 보여줍니다 · 재생·판단 조작 화면은 트레이딩 룸에서 열리지 않습니다</p>
+      </div>
+    </section>
   );
 }
 
@@ -185,8 +270,14 @@ export function SectionView({ s, name }: { s: HubSection; name: string }) {
  * One mode, on the common template: header (name, state, tag, activity, sources) → lead (headline, decision) → KPIs →
  * 주의 → drill-down sections (the first ones open, 원본 보기 last) → footer. Everything is read-only.
  */
-export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generatedAt }: { modeKey: HubModeId; mode: HubMode | undefined; now: number; error: string | null; loading: boolean; onRefresh: () => void; generatedAt: string | null }) {
+export interface HubPageProps { modeKey: HubModeId; mode: HubMode | undefined; now: number; error: string | null; loading: boolean; onRefresh: () => void; generatedAt: string | null; /** Trading room reads, injectable for tests. */ labApi?: LabApi; srApi?: SrApi }
+
+export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generatedAt, labApi = liveLabApi, srApi = liveSrApi }: HubPageProps) {
   const def = modeDef(modeKey);
+  const trading = modeKey === 'trading';
+  // The Trading room's two paper sources are read once here and shared with the strip and the panels.
+  const lab = useLabFeed(labApi, trading);
+  const sr = useSrFeed(srApi, trading);
   const kpis = mode ? kpisOf(mode) : [];
   const sections = mode?.page?.sections ?? [];
   // Keyed by title (a suffix only for a repeated title), so a section added above does not remount — and collapse — the rest.
@@ -203,12 +294,16 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
         {mode && mode.sources.length > 0 && <span className="hub-src-list">{mode.sources.map((s) => <span key={s.name} className={`src${s.ok ? '' : ' bad'}`} title={s.ok ? `${s.ms}ms` : s.error ?? '오류'}>{s.name}{s.ok ? '' : ` · ${s.error ?? '오류'}`}</span>)}</span>}
         <span className="ph-end">
           <span className="pill">읽기 전용</span>
-          <button type="button" className="pill btn" onClick={onRefresh} disabled={loading} aria-label="지금 새로고침"><ReloadIcon /> <span className="pill-label">{loading ? '불러오는 중…' : '새로고침'}</span></button>
+          {/* The Trading room has no control anywhere, the header included: its feeds poll on their own (60 s), so the
+              only thing left of the button there is a passive "loading" word while the status is being read. */}
+          {trading
+            ? (loading && <span className="pill tr-loading" role="status">불러오는 중…</span>)
+            : <button type="button" className="pill btn" onClick={onRefresh} disabled={loading} aria-label="지금 새로고침"><ReloadIcon /> <span className="pill-label">{loading ? '불러오는 중…' : '새로고침'}</span></button>}
         </span>
       </header>
       {error && <div className="hub-notice" role="alert">상태를 불러오지 못했어요 · {error}</div>}
       {!mode && !error && <div className="hub-notice muted">상태를 불러오는 중…</div>}
-      {modeKey === 'trading' && <LabPanel now={now} />}
+      {trading && <SourceStrip lab={lab} sr={sr} />}
       {mode && <Lead state={mode.state} headline={headlineOf(mode)} decision={decisionOf(mode)} />}
       {kpis.length > 0 && <div className="kpis" data-testid="hub-kpis">{kpis.map((k, i) => <Kpi key={i} k={k} />)}</div>}
       {mode && (
@@ -218,12 +313,13 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
         </section>
       )}
       {mode?.id === 'nexus' && mode.nexus && <NexusHome home={mode.nexus} now={now} />}
+      {trading && <LabPanel api={labApi} now={now} feed={lab} />}
+      {trading && <SrPanel api={srApi} now={now} feed={sr} />}
       {mode?.id === 'trading' && mode.trading && <TradingHome t={mode.trading} now={now} />}
-      {modeKey === 'trading' && <SrPanel now={now} />}
-      {mode && sections.map((s, i) => <SectionView key={sectionKeys[i]} s={s} name={mode.name} />)}
-      {mode && !mode.page && Object.keys(mode.metrics).length > 0 && <SectionView s={{ kind: 'kv', title: '지표', open: true, rows: Object.entries(mode.metrics).map(([k, v]) => [k, metricText(v)]) }} name={mode.name} />}
-      {mode && !mode.page && mode.links.filter((l) => !l.embed).map((l) => <SectionView key={l.href} s={{ kind: 'raw', title: l.label, href: l.href }} name={mode.name} />)}
-      {modeKey === 'trading' && <ReplayTrainer />}
+      {mode && sections.map((s, i) => <SectionView key={sectionKeys[i]} s={s} name={mode.name} static={trading} />)}
+      {mode && !mode.page && Object.keys(mode.metrics).length > 0 && <SectionView s={{ kind: 'kv', title: '지표', open: true, rows: Object.entries(mode.metrics).map(([k, v]) => [k, metricText(v)]) }} name={mode.name} static={trading} />}
+      {mode && !mode.page && mode.links.filter((l) => !l.embed).map((l) => <SectionView key={l.href} s={{ kind: 'raw', title: l.label, href: l.href }} name={mode.name} static={trading} />)}
+      {trading && <PracticeCard />}
       {mode && (
         <footer className="foot">
           <span>소스 {mode.sources.filter((s) => s.ok).length}/{mode.sources.length}{mode.sources.length ? ` · ${mode.sources.map((s) => `${s.name} ${s.ok ? `${s.ms}ms` : '실패'}`).join(' · ')}` : ''}</span>

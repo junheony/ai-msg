@@ -13,7 +13,7 @@ describe('LabPanel', () => {
     const { container } = render(<LabPanel api={{ summary: async () => answer() }} now={LAB_NOW} />);
     await screen.findByText('60,170');
     expect(container.textContent).toContain('+272.86 USDT'); expect(container.textContent).toContain('-102.48 USDT');
-    expect(container.textContent).toContain('2026-11-01 17:00:00 KST'); expect(container.textContent).toContain('PAPER · LIVE OFF');
+    expect(container.textContent).toContain('2026-11-01 17:00:00 KST'); expect(container.textContent).toContain('PAPER ONLY · LIVE OFF'); expect(container.textContent).toContain('출처 트레이딩 ver2 · :8792');
     expect(container.textContent).toContain('bbbbbbbbbbbb…'); expect(container.textContent).not.toContain('b'.repeat(64));
     expect(screen.getByRole('progressbar', { name: '인증 가능 청산' }).getAttribute('value')).toBe('3');
     expect(screen.getByRole('progressbar', { name: '기록 기간' }).getAttribute('max')).toBe('90');
@@ -71,6 +71,41 @@ describe('LabPanel', () => {
     expect(screen.getByText('60,170')).toBeTruthy(); expect(screen.getByTestId('lab-panel').className).not.toContain('lab-offline');
     await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
     expect(screen.getByTestId('lab-panel').className).toContain('lab-offline'); expect(summary).toHaveBeenCalledTimes(4);
+  });
+  it('renders unknown future fields generically as text, never as links or markup, and never a kNN/scenario word', async () => {
+    const body = labFixture() as Record<string, unknown>;
+    const mapped = mapLab({
+      ...body,
+      books: [{ ...labFixture().books[0], strategy: 'vwap_rev', cash_start: 50000, targets: { daily_r: 0.5, criteria: ['pf >= 1.3', 'see <a href="http://x">x</a>'] } }],
+      runtime: { hit_rate: 0.93, note: 'see https://evil.example/x now' },
+      cache: { ttl_s: 15, upstream_timeout_s: 3 },
+      backtests: { strategies: [{ id: 'zzz_4h', metrics: { sharpe: 1.42, by_tf: { '4h': { trades: 12 } } } }] },
+      knn_forecast: { up_prob: 0.7 }, forecast: { scenario_probabilities: [0.2, 0.8], horizon: '4h' },
+    });
+    const { container } = render(<LabPanel api={{ summary: async () => answer(mapped) }} now={LAB_NOW} />);
+    await screen.findByText('60,170');
+    const extra = screen.getByTestId('lab-extra');
+    expect(extra.textContent).toContain('hit_rate');
+    expect(extra.textContent).toContain('0.93');
+    expect(extra.textContent).toContain('see … now');
+    expect(extra.textContent).toContain('horizon');
+    expect(extra.textContent).toContain('4h');
+    // a nested future backtest result is drawn down to its metrics; the feed's cache metadata is not strategy content
+    expect(extra.textContent).toContain('sharpe');
+    expect(extra.textContent).toContain('1.42');
+    expect(extra.textContent).toContain('trades');
+    expect(extra.textContent).toContain('12');
+    expect(extra.textContent).not.toContain('ttl_s');
+    expect(extra.textContent).not.toContain('upstream_timeout_s');
+    const book = screen.getByTestId('lab-book-extra');
+    expect(book.textContent).toContain('vwap_rev');
+    expect(book.textContent).toContain('50,000');
+    expect(book.textContent).toContain('pf >= 1.3');
+    expect(book.textContent).toContain('see … plain'.replace(' plain', ''));
+    expect(container.querySelectorAll('a, button, input, select, iframe, script').length).toBe(0);
+    expect(container.innerHTML).not.toContain('evil.example');
+    expect(container.innerHTML).not.toContain('<a href');
+    expect(container.textContent).not.toMatch(/knn|scenario|probab|시나리오|확률|up_prob|0\.7\b/i);
   });
   it('shows a calm missing state without a prior snapshot', async () => {
     render(<LabPanel api={{ summary: async () => answer(null, { state: 'error', error: '연결 실패', failures: 1 }) }} now={LAB_NOW} />);

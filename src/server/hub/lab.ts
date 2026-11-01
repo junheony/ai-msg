@@ -1,7 +1,7 @@
 /** Fixed loopback summary only. No filesystem or trading control access. */
 import type { ServerResponse } from 'node:http';
-import type { LabResponse, LabSnapshot } from '../../shared/lab-types';
-import { bool, errorText, isObj, num, scrub, slowCache, stripSecrets } from './shared';
+import { LAB_SUPPRESS_RE, type LabExtra, type LabExtraValue, type LabResponse, type LabSnapshot } from '../../shared/lab-types';
+import { SECRET_FIELD_RE, bool, errorText, isObj, num, scrub, slowCache, stripSecrets } from './shared';
 
 export const LAB_PREFIX = '/api/hub/lab';
 export const LAB_URL = 'http://127.0.0.1:8792/lab/api/summary';
@@ -41,6 +41,67 @@ function validKstLocal(value: string): boolean {
 }
 class LabValidationError extends Error {}
 const obj = (v: unknown): Record<string, unknown> => isObj(v) ? v : {};
+
+/* ───────── unknown fields, kept generically ───────── */
+
+/** Old kNN scenario probabilities must never reach the room, not even through an unknown field. */
+export { LAB_SUPPRESS_RE };
+/**
+ * `depth` is container levels (a realistic future `backtests.strategies[0].metrics.sharpe` is four); `nodes` is the
+ * whole-tree cap per mapped summary so a deeper allowance cannot turn into an unbounded page.
+ */
+export const LAB_EXTRA_LIMITS = { depth: 6, nodes: 400, keys: 24, items: 20, text: 120, key: 40 } as const;
+const KNOWN_TOP = new Set(['schema', 'generated_at', 'live', 'read_only', 'sources', 'errors', 'engine', 'books', 'open_positions_total', 'recent_closed_trades', 'ledger', 'verify']);
+/** Transport metadata the feed reports about itself (its cache TTL, upstream timeout): not strategy content, never shown. */
+const KNOWN_TOP_META = new Set(['cache']);
+const KNOWN_BOOK = new Set(['id', 'label', 'equity', 'return_pct', 'pnl', 'n_trades', 'wins', 'open_positions', 'max_dd_pct', 'open']);
+const KNOWN_LEDGER = new Set(['certifiable_closed_trades', 'span_days', 'all_pass', 'expectancy']);
+const KNOWN_VERIFY = new Set(['ok', 'msg', 'entries', 'head', 'last_merkle_root', 'last_merkle_root_date', 'last_ots_status', 'gap_count', 'gap_seconds_total']);
+const KNOWN_PAPER = new Set(['ok', 'ready', 'live']);
+const KNOWN_LEDGER_ENGINE = new Set(['ok']);
+const EXTRA_KEY_RE = /^[\p{L}\p{N}_.\- ]{1,40}$/u;
+/** Markup and anything address-like cannot ride a free-text field into the page. */
+const URLISH_RE = /[a-z][a-z0-9+.-]*:\/\/\S*|\bwww\.\S+|<\/?[a-z!?][^<>]*>?|`/gi;
+
+const extraKeyOk = (k: string): boolean => EXTRA_KEY_RE.test(k) && !SECRET_FIELD_RE.test(k) && !LAB_SUPPRESS_RE.test(k);
+function extraText(v: string): string | undefined {
+  if (LAB_SUPPRESS_RE.test(v)) return undefined;
+  return scrub(v, 400).replace(URLISH_RE, '…').replace(/\s+/g, ' ').trim().slice(0, LAB_EXTRA_LIMITS.text);
+}
+/** One summary's node allowance; every kept leaf or container spends one. */
+export interface ExtraBudget { nodes: number }
+export const extraBudget = (): ExtraBudget => ({ nodes: LAB_EXTRA_LIMITS.nodes });
+/** `v` as a bounded plain tree, or undefined when nothing safe is left of it (or the budget is spent). */
+export function extraValue(v: unknown, depth = 0, budget: ExtraBudget = extraBudget()): LabExtraValue | undefined {
+  if (budget.nodes <= 0) return undefined;
+  if (v === null) { budget.nodes -= 1; return null; }
+  if (typeof v === 'boolean') { budget.nodes -= 1; return v; }
+  if (typeof v === 'number') { budget.nodes -= 1; return Number.isFinite(v) ? v : null; }
+  if (typeof v === 'string') { const t = extraText(v); if (t !== undefined) budget.nodes -= 1; return t; }
+  if (depth >= LAB_EXTRA_LIMITS.depth) return undefined;
+  if (Array.isArray(v)) {
+    budget.nodes -= 1;
+    const out: LabExtraValue[] = [];
+    for (const item of v.slice(0, LAB_EXTRA_LIMITS.items)) { const x = extraValue(item, depth + 1, budget); if (x !== undefined) out.push(x); }
+    return out;
+  }
+  if (isObj(v)) { budget.nodes -= 1; return extraObject(v, () => false, depth + 1, budget); }
+  return undefined;
+}
+/** The keys of `src` that `known` does not claim, each as a safe tree; keys are kept in the feed's order. */
+export function extraObject(src: Record<string, unknown>, known: (k: string) => boolean, depth = 0, budget: ExtraBudget = extraBudget()): LabExtra {
+  const out: LabExtra = {};
+  let n = 0;
+  for (const [k, v] of Object.entries(src)) {
+    if (known(k) || !extraKeyOk(k)) continue;
+    if (n >= LAB_EXTRA_LIMITS.keys || budget.nodes <= 0) break;
+    const x = extraValue(v, depth, budget);
+    if (x === undefined) continue;
+    out[k] = x; n += 1;
+  }
+  return out;
+}
+const nonEmpty = (e: LabExtra): LabExtra | undefined => (Object.keys(e).length ? e : undefined);
 
 export function mapLab(body: unknown): LabSnapshot {
   const raw = obj(body);
@@ -84,6 +145,8 @@ export function mapLab(body: unknown): LabSnapshot {
   const t = (v: unknown, p: string, ...s: string[]) => read(v, p, x => typeof x === 'string' && x.length ? scrub(x, 240) : null, s);
   const a = (v: unknown, p: string, ...s: string[]) => read(v, p, x => Array.isArray(x) ? x : null, s);
   const engine = container(raw.engine, 'engine'), paper = container(engine.paper, 'engine.paper'), ledgerEngine = container(engine.ledger, 'engine.ledger'), ledger = container(raw.ledger, 'ledger'), expectancy = container(ledger.expectancy, 'ledger.expectancy'), verify = container(raw.verify, 'verify');
+  // One node budget for the whole summary: book, top-level and nested unknowns share it.
+  const budget = extraBudget();
   const booksRaw = a(raw.books, 'books', 'paper_state');
   const loading = paper.ready === false || booksRaw?.length === 0;
   const books = booksRaw?.slice(0, 40).map((value, i) => {
@@ -100,6 +163,7 @@ export function mapLab(body: unknown): LabSnapshot {
         if (!isObj(value)) issues[q] = '응답 형식 오류';
         return { sym: t(position.sym, `${q}.sym`, 'paper_state'), side: side(position.side, `${q}.side`, 'paper_state'), entry_kst: time(position.entry_kst, `${q}.entry_kst`, 'paper_state'), entry: n(position.entry, `${q}.entry`, 'paper_state'), mark: n(position.mark, `${q}.mark`, 'paper_state'), upnl: n(position.upnl, `${q}.upnl`, 'paper_state'), upnl_pct: n(position.upnl_pct, `${q}.upnl_pct`, 'paper_state') };
       }) ?? null,
+      extra: extraObject(book, (k) => KNOWN_BOOK.has(k), 0, budget),
     };
   }) ?? null;
   const trades = a(raw.recent_closed_trades, 'recent_closed_trades', 'paper_trades')?.slice(0, 10).map((value, i) => {
@@ -111,6 +175,18 @@ export function mapLab(body: unknown): LabSnapshot {
     const reason = sourceError(names);
     if (raw[path] === null && reason) issues[path] = reason;
   }
+  const extra: LabExtra = extraObject(raw, (k) => KNOWN_TOP.has(k) || KNOWN_TOP_META.has(k), 0, budget);
+  const nested: LabExtra = {};
+  // Depth is counted from each known container (a book, ledger, verify, engine) so a future block under one of them
+  // gets the same nesting allowance as a top-level one; the shared node budget is what bounds the total.
+  const ledgerX = nonEmpty(extraObject(ledger, (k) => KNOWN_LEDGER.has(k), 0, budget));
+  const verifyX = nonEmpty(extraObject(verify, (k) => KNOWN_VERIFY.has(k), 0, budget));
+  const paperX = nonEmpty(extraObject(paper, (k) => KNOWN_PAPER.has(k), 0, budget));
+  const ledgerEngineX = nonEmpty(extraObject(ledgerEngine, (k) => KNOWN_LEDGER_ENGINE.has(k), 0, budget));
+  const engineX = nonEmpty(extraObject(engine, (k) => k === 'paper' || k === 'ledger', 0, budget));
+  if (ledgerX) nested.ledger = ledgerX;
+  if (verifyX) nested.verify = verifyX;
+  if (paperX || ledgerEngineX || engineX) nested.engine = { ...(engineX ?? {}), ...(paperX ? { paper: paperX } : {}), ...(ledgerEngineX ? { ledger: ledgerEngineX } : {}) };
   const generated_at = read(raw.generated_at, 'generated_at', v => typeof v === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?\+09:00$/.test(v) && validKstLocal(v.slice(0, 19)) ? v : null, []);
   return stripSecrets({
     schema: 'cblabx_lab_summary/v1', live: false, read_only: true, generated_at, loading,
@@ -118,7 +194,7 @@ export function mapLab(body: unknown): LabSnapshot {
     books: loading ? [] : books, open_positions_total: loading ? null : count(raw.open_positions_total, 'open_positions_total', 'paper_state'), recent_closed_trades: loading ? [] : trades,
     ledger: { certifiable_closed_trades: count(ledger.certifiable_closed_trades, 'ledger.certifiable_closed_trades', 'ledger_stats'), span_days: positive(ledger.span_days, 'ledger.span_days', 'ledger_exits'), all_pass: b(ledger.all_pass, 'ledger.all_pass', 'ledger_stats', 'ledger_exits'), expectancy: { ci95_lower: n(expectancy.ci95_lower, 'ledger.expectancy.ci95_lower', 'ledger_exits'), reason: t(expectancy.reason, 'ledger.expectancy.reason', 'ledger_exits') } },
     verify: { ok: b(verify.ok, 'verify.ok', 'ledger_verify'), msg: t(verify.msg, 'verify.msg', 'ledger_verify'), entries: count(verify.entries, 'verify.entries', 'ledger_verify'), head: hash(verify.head, 'verify.head', 'ledger_verify'), last_merkle_root: hash(verify.last_merkle_root, 'verify.last_merkle_root', 'ledger_roots'), last_merkle_root_date: date(verify.last_merkle_root_date, 'verify.last_merkle_root_date', 'ledger_roots'), last_ots_status: t(verify.last_ots_status, 'verify.last_ots_status', 'ledger_roots'), gap_count: count(verify.gap_count, 'verify.gap_count', 'ledger_gaps'), gap_seconds_total: count(verify.gap_seconds_total, 'verify.gap_seconds_total', 'ledger_gaps') },
-    errors, issues,
+    errors, issues, extra: { ...extra, ...nested },
   });
 }
 

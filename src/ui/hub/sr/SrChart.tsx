@@ -1,7 +1,7 @@
 /**
  * Candles with the bot's support/resistance zones laid over them as translucent bands. lightweight-charts draws the
  * candles (loaded on first use, like the replay chart); the bands are plain DOM placed with `priceToCoordinate`, so they
- * follow every scroll, zoom and resize, and carry a label the canvas could not. Read-only: nothing here sends anything.
+ * follow every resize, and carry a label the canvas could not. Read-only: nothing here sends anything.
  */
 import { useEffect, useRef, useState } from 'react';
 import type { ReplayCandle } from '../../../shared/replay-types';
@@ -60,10 +60,10 @@ export function SrChart({ candles, ranges, candleColors, height = 360 }: SrChart
       timeScale: { borderColor: theme.border, timeVisible: true, secondsVisible: false, rightOffset: 10, barSpacing: 6, minBarSpacing: 2, tickMarkMaxCharacterLength: 12, tickMarkFormatter },
       localization: { timeFormatter: (t: Time) => fmtFull.format(new Date((t as number) * 1000)), locale: 'ko-KR' },
       crosshair: { mode: CrosshairMode.Normal },
-      // The bands are placed from the price scale: keep that scale automatic so a scroll is the only thing that moves them.
-      handleScale: { axisPressedMouseMove: { time: true, price: false }, mouseWheel: true, pinch: true },
-      // A vertical swipe on a phone scrolls the page, not the chart.
-      handleScroll: { vertTouchDrag: false },
+      // A static picture: the Trading room's only interactions are links. No wheel zoom, no drag, no pinch; the whole
+      // window is fitted once and a swipe on a phone scrolls the page. The crosshair still reads a price on hover.
+      handleScale: false,
+      handleScroll: false,
     });
     const candle = chart.addSeries(CandlestickSeries, {
       upColor: theme.up, downColor: theme.down, borderVisible: false, wickUpColor: theme.up, wickDownColor: theme.down,

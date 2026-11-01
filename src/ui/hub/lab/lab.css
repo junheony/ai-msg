@@ -6,7 +6,7 @@
 .lab h3 { font-size: var(--fs-lg); }
 .lab h4 { font-size: var(--fs-base); margin: 10px 0; }
 .lab .lab-sub, .lab small { color: var(--muted); font-size: var(--fs-sm); font-weight: 400; }
-.lab-paper { border: 1px solid var(--glass-line); border-radius: var(--r-full); padding: 5px 10px; font-family: var(--hub-font); font-size: var(--fs-base); color: var(--hub-ok); white-space: nowrap; }
+.lab-paper { border: 1px solid color-mix(in srgb, var(--hub-ok) 45%, var(--glass-line)); border-radius: var(--r-full); padding: 5px 10px; font-family: var(--hub-font); font-size: var(--fs-base); font-weight: 600; color: var(--hub-ok); background: var(--hub-ok-soft); white-space: nowrap; }
 .lab-clock { margin-left: auto; color: var(--muted); font-size: var(--fs-sm); text-align: right; }
 .lab-clock b { display: block; }
 .lab .lab-body { padding: 20px; }
@@ -49,6 +49,24 @@
 .lab .lab-positive { color: var(--hub-ok); }
 .lab .lab-negative { color: var(--hub-bad); }
 .lab-offline .lab-books, .lab-offline .lab-evidence, .lab-offline .lab-detail, .lab-offline .lab-health { filter: grayscale(1); opacity: .72; }
+/* Generic future fields: scalar rows stay label-left / figure-right like the book lists; a row whose value is an object or
+   list (.lab-extra-nest) breaks the two-column flex and stacks label over children across the full width, one indented
+   rail per level, so deep strategy data reads as a left-aligned outline instead of a narrow right column. */
+.lab-extra { margin: 0; min-width: 0; }
+.lab-extra > div { align-items: flex-start; }
+.lab-extra dt { overflow-wrap: anywhere; }
+.lab-extra dd { font-family: var(--hub-font); text-align: right; }
+.lab-extra .lab-extra > div { padding: 3px 0; }
+.lab-extra .lab-extra dt, .lab-extra .lab-extra dd { font-size: var(--fs-sm); }
+.lab-extra > .lab-extra-nest { display: block; padding: 6px 0 2px; }
+.lab-extra > .lab-extra-nest > dt { margin-bottom: 4px; color: var(--fg); font-weight: 500; }
+.lab-extra > .lab-extra-nest > dd { text-align: left; margin-left: 2px; padding-left: 12px; border-left: 1px solid var(--line-strong); }
+.lab-extra-list { margin: 0; padding-left: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: var(--fs-sm); text-align: left; }
+.lab-extra-list > li { min-width: 0; overflow-wrap: anywhere; }
+.lab-extra-list > li.lab-extra-nest { flex-basis: 100%; padding-left: 12px; border-left: 1px solid var(--line-strong); }
+.lab-extra-list > li.lab-extra-nest + li.lab-extra-nest { margin-top: 6px; }
+.lab-book-extra { margin-top: 8px; border-top: 1px dashed var(--line-strong); padding-top: 4px; }
+.lab-extra-sec h3 small { margin-left: 8px; }
 .lab-disclaimer { margin: 20px 0 0; border-top: 1px solid var(--glass-line); padding-top: 16px; font-size: var(--fs-sm); color: var(--muted); line-height: 1.6; }
 @media (max-width: 1100px) { .lab-books { grid-template-columns: repeat(2, minmax(0, 1fr)); } .lab-book:nth-child(2n) { border-right: 0; } .lab-book:nth-child(n+3) { border-top: 1px solid var(--glass-line); } .lab-book:nth-child(3) { padding-left: 0; } }
 @media (max-width: 600px) {

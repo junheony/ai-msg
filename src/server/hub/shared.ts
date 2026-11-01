@@ -249,6 +249,42 @@ export function stripSecrets<T>(v: T): T {
   return v;
 }
 
+/* ───────── hardened loopback transport ───────── */
+
+/** Bodies above this are refused unread (a status/snapshot answer is a few hundred KB at most). */
+export const LOOPBACK_MAX_BYTES = 2_000_000;
+
+/**
+ * GET one of a fixed allowlist of loopback URLs and parse the JSON. The URL is matched exactly (nothing a caller
+ * builds can reach another host or path), redirects are not followed, no credentials or cookies are attached, the body is
+ * read in a bounded stream, and a parse failure logs only redacted punctuation — never a value, key or path.
+ */
+export async function fetchLoopbackJson(allow: readonly string[], url: string, timeoutMs: number, tag = 'hub'): Promise<unknown> {
+  if (!allow.includes(url)) throw new Error(`${tag}: URL not allowlisted`);
+  const response = await fetch(url, { method: 'GET', redirect: 'manual', credentials: 'omit', signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } });
+  if (response.status !== 200) throw new Error(`HTTP ${response.status}`);
+  const reader = response.body?.getReader();
+  if (!reader) throw new SyntaxError('JSON empty response');
+  const decoder = new TextDecoder();
+  let text = '', bytes = 0;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      if (bytes > LOOPBACK_MAX_BYTES) { await reader.cancel(); throw new SyntaxError('JSON response too large'); }
+      text += decoder.decode(chunk.value, { stream: true });
+    }
+    text += decoder.decode();
+  } finally { reader.releaseLock(); }
+  try { return JSON.parse(text) as unknown; }
+  catch {
+    const diagnostic = text.slice(0, 200).replace(/[^\s{}\[\]:,"]/g, '·').replace(/\s/g, ' ');
+    console.warn(`[${tag}] JSON parse failed; redacted prefix:`, diagnostic);
+    throw new SyntaxError('JSON parse failed');
+  }
+}
+
 /* ───────── systemd (read-only) ───────── */
 
 export const SYSTEMD_PROPS = ['Id', 'LoadState', 'ActiveState', 'SubState', 'Result', 'NRestarts', 'ActiveEnterTimestamp', 'InactiveEnterTimestamp', 'ExecMainStartTimestamp', 'ExecMainExitTimestamp', 'NextElapseUSecRealtime', 'LastTriggerUSec', 'TimersCalendar', 'Description'] as const;
