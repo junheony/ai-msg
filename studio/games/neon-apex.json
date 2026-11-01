@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "id": "neon-apex",
+  "title": "NEON APEX v3.0.0",
+  "titleKo": "네온 에이펙스",
+  "genre": "아케이드 레이싱",
+  "engine": "three.js",
+  "status": "live",
+  "cover": "~/games/neon-apex/dist/v3-play-390.png",
+  "repos": [
+    {
+      "label": "공개 v3.0.0 원본",
+      "path": "~/games/neon-apex",
+      "readonly": true
+    }
+  ],
+  "stages": [
+    {
+      "id": "concept",
+      "evidence": [
+        "~/games/neon-apex/README.md"
+      ]
+    },
+    {
+      "id": "assets",
+      "evidence": [
+        "~/games/neon-apex/dist/THREE-LICENSE.txt"
+      ]
+    },
+    {
+      "id": "build",
+      "evidence": [
+        "~/games/neon-apex/dist/NEON-APEX.html"
+      ]
+    },
+    {
+      "id": "test",
+      "evidence": [
+        "~/games/neon-apex/tests/v3-release-manifest.json"
+      ]
+    },
+    {
+      "id": "preview",
+      "evidence": [
+        "~/games/neon-apex/dist/v3-play-390.png"
+      ]
+    },
+    {
+      "id": "approval",
+      "evidence": []
+    },
+    {
+      "id": "release",
+      "evidence": [
+        "~/games/neon-apex/DEPLOYMENT.md"
+      ]
+    }
+  ],
+  "artifacts": {
+    "screenshots": [
+      "~/games/neon-apex/dist/*.png"
+    ],
+    "builds": [
+      "~/games/neon-apex/dist/*.html"
+    ]
+  },
+  "tests": [
+    {
+      "label": "v3.0.0 배포 검증·동결 체크섬",
+      "path": "~/games/neon-apex/tests/v3-release-manifest.json"
+    }
+  ],
+  "preview": [
+    {
+      "label": "공개 v3.0.0 · 배포 기록 기준",
+      "url": "https://neon-apex-pi.vercel.app"
+    }
+  ],
+  "nextAction": {
+    "text": "미수행 실물 휴대폰 GPU·성능 검증 계획 결정",
+    "owner": true
+  }
+}
