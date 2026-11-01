@@ -16,10 +16,12 @@ export default defineConfig({
     assetsInlineLimit: (file) => (/\.(woff2?|ttf)$/.test(file) ? false : undefined),
     // React and the other deps (mostly react-markdown + remark-gfm) as separate chunks, each under the 500 kB warning.
     rolldownOptions: {
-      // Two pages: the React shell (index.html) and the small plain-TS status page served at /mini (mini.html).
+      // Pages: the React shell (index.html) and the small plain-TS status page served at /mini (mini.html).
       input: {
         main: fileURLToPath(new URL('./src/ui/index.html', import.meta.url)),
         mini: fileURLToPath(new URL('./src/ui/mini.html', import.meta.url)),
+        // The 게임 스튜디오 alone, for scripts/studio-preview.ts (never linked from the shell).
+        studio: fileURLToPath(new URL('./src/ui/game-studio.html', import.meta.url)),
       },
       output: {
         codeSplitting: {
