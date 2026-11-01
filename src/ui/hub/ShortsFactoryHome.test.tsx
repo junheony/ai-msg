@@ -1,0 +1,209 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import type { HubMode } from '../../shared/hub-types';
+import { CH1, CHANNELS, HISTORY, HOME, NOW, NO_PROBES, PLACEHOLDER, PROBES_OK, STATUS } from '../../server/hub/__fixtures__/shorts';
+import { buildShortsView } from '../../server/hub/shorts';
+import { hubStatusFixture } from './__fixtures__/status';
+import { HubPage } from './HubPage';
+import { kst, ShortsFactoryHome, VIDEO_PROJECT_KEY } from './ShortsFactoryHome';
+
+vi.mock('./sr/SrPanel', () => ({ SrPanel: () => <section data-testid="sr-panel" /> }));
+
+const j = (v: unknown) => JSON.stringify(v);
+/** The same builder the server uses, so the UI sees exactly the payload the collector ships. */
+const FULL = buildShortsView({ status: j(STATUS), channels: j(CHANNELS), history: HISTORY, probes: PROBES_OK, probeNote: null }, NOW);
+const EMPTY = buildShortsView({ status: null, channels: null, history: null, probes: NO_PROBES, probeNote: '호스트 점검(df · claude-pick · codex) 진행 중' }, NOW);
+const BOOT = buildShortsView({ status: j(PLACEHOLDER), channels: j(CHANNELS), history: null, probes: PROBES_OK, probeNote: null }, NOW);
+const video = (shorts?: HubMode['shorts']): HubMode => ({ ...hubStatusFixture(NOW).modes.find((m) => m.id === 'video')!, ...(shorts ? { shorts } : {}) });
+const page = (mode: HubMode) => render(<HubPage modeKey="video" mode={mode} now={NOW} error={null} loading={false} onRefresh={() => {}} generatedAt={new Date(NOW).toISOString()} />);
+const txt = (el: Element | null): string => el?.textContent ?? '';
+
+beforeEach(() => localStorage.clear());
+afterEach(cleanup);
+
+describe('header while Shorts 공장 is selected', () => {
+  it('shows the factory state, file freshness and the three files as sources instead of engineering-shorts', () => {
+    localStorage.setItem(VIDEO_PROJECT_KEY, 'factory');
+    const mode = video(FULL);
+    page({ ...mode, state: 'down', lastActivity: '2026-09-01T00:00:00.000Z', tag: 'studio-tag', sources: [{ name: 'studio-src', ok: false, ms: 0, error: 'x' }] });
+    const header = screen.getByTestId('hub-mode-video').querySelector('header.ph')!;
+    expect(txt(header)).toContain('Shorts 공장');
+    expect(txt(header)).not.toContain('studio-tag');
+    expect(txt(header)).not.toContain('studio-src');
+    expect(txt(header)).toContain('파일 갱신');
+    expect(txt(header)).not.toContain('61일 전');
+    expect(within(screen.getByTestId('sf-src-list')).getAllByText(/\.json|\.jsonl/).map((e) => e.textContent)).toEqual(['status.json', 'channels.json', 'history.jsonl']);
+    expect(txt(screen.getByTestId('hub-mode-video').querySelector('footer.foot')!)).toContain('파일 3/3 최신');
+    cleanup();
+    page({ ...video(EMPTY), state: 'ok' });
+    const h2 = screen.getByTestId('hub-mode-video').querySelector('header.ph')!;
+    expect(txt(h2)).toContain('status.json · 없음');
+    expect(txt(screen.getByTestId('hub-mode-video').querySelector('footer.foot')!)).toContain('파일 0/3 최신');
+  });
+});
+
+describe('영상 project tabs', () => {
+  it('opens on engineering-shorts, switches to Shorts 공장 on click and remembers the choice', () => {
+    page(video(FULL));
+    const tabs = within(screen.getByTestId('hub-video-tabs')).getAllByRole('tab');
+    expect(tabs.map((t) => t.textContent)).toEqual(['engineering-shorts', `Shorts 공장${FULL.alerts.filter((a) => a.level !== 'info').length}`]);
+    expect(tabs[0]!.getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('hub-sec-text')).toBeTruthy(); // the studio's own section
+    expect(screen.queryByTestId('sf-root')).toBeNull();
+    fireEvent.click(tabs[1]!);
+    expect(tabs[1]!.getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('sf-root')).toBeTruthy();
+    expect(screen.queryByTestId('hub-sec-text')).toBeNull();
+    expect(screen.queryByTestId('hub-kpis')).toBeNull();
+    expect(localStorage.getItem(VIDEO_PROJECT_KEY)).toBe('factory');
+    expect(txt(screen.getByTestId('hub-mode-video'))).toContain('읽기 전용 · 제어 없음'); // the footer stays
+    cleanup();
+    page(video(FULL));
+    expect(screen.getByTestId('sf-root')).toBeTruthy(); // remembered
+    expect(screen.getByRole('tab', { name: /Shorts 공장/ }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(screen.getByRole('tab', { name: 'engineering-shorts' }));
+    expect(screen.queryByTestId('sf-root')).toBeNull();
+    expect(localStorage.getItem(VIDEO_PROJECT_KEY)).toBe('studio');
+  });
+  it('tells when the server sent no Shorts 공장 payload instead of showing an empty page', () => {
+    localStorage.setItem(VIDEO_PROJECT_KEY, 'factory');
+    page(video());
+    expect(txt(screen.getByTestId('sf-absent'))).toContain('서버가 Shorts 공장 데이터를 보내지 않았다');
+    expect(screen.queryByTestId('sf-root')).toBeNull();
+  });
+  it('only 영상 gets the tab bar', () => {
+    render(<HubPage modeKey="ops" mode={hubStatusFixture(NOW).modes.find((m) => m.id === 'ops')} now={NOW} error={null} loading={false} onRefresh={() => {}} generatedAt={null} />);
+    expect(screen.queryByTestId('hub-video-tabs')).toBeNull();
+  });
+});
+
+describe('ShortsFactoryHome', () => {
+  it('renders the lead, nine KPI tiles, 주의 and no control or link below the tabs', () => {
+    const { container } = render(<ShortsFactoryHome sf={FULL} now={NOW} />);
+    expect(txt(screen.getByTestId('hub-lead'))).toContain(FULL.headline);
+    expect(txt(screen.getByTestId('hub-lead'))).toContain('다음 결정');
+    expect(screen.getByTestId('sf-kpis').querySelectorAll('.kpi')).toHaveLength(9);
+    expect(txt(screen.getByTestId('sf-kpis'))).toContain('미공개');
+    expect(txt(screen.getByTestId('sf-kpis'))).toContain('/20');
+    expect(txt(screen.getByTestId('sf-alerts'))).toContain('썰 한 스푼 내일(11-02) 예약 없음');
+    expect(txt(screen.getByTestId('sf-alerts'))).toContain('→ 계획 20:00 KST');
+    expect(container.querySelectorAll('button, input, select, textarea, form, [onclick], [role="button"], a[href]')).toHaveLength(0);
+    expect(container.textContent).not.toContain(HOME);
+  });
+  it('channel table: leader first with a bar, 미공개 for hidden counts, sparkline from history, failure keeps the previous data', () => {
+    render(<ShortsFactoryHome sf={FULL} now={NOW} />);
+    const t = screen.getByTestId('sf-channels');
+    const rows = within(t).getAllByRole('row').slice(1);
+    expect(rows.map((r) => txt(r.querySelector('.sf-name b')))).toEqual(['Curious Minute', '궁금한 1분', '썰 한 스푼']); // 1,157 > 545 > 미수집
+    expect(rows[0]!.className).toContain('sf-top');
+    expect(rows[0]!.querySelector('.sf-bar')).toBeTruthy();
+    expect(rows[2]!.querySelector('.sf-bar')).toBeNull(); // nothing collected → no bar, no zero
+    expect(txt(rows[2]!)).toContain('미수집');
+    expect(txt(rows[1]!)).toContain('미공개');
+    expect(txt(rows[0]!)).toContain('1,200');
+    expect(t.querySelectorAll('.hs-spark svg')).toHaveLength(1); // only 궁금한 1분 has ≥2 history points
+    expect(txt(rows[0]!)).toContain('실패 · 이전 값 유지');
+    expect(txt(rows[0]!)).toContain('yt-dlp timeout');
+    expect(txt(rows[1]!)).toContain('11-01 19:40'); // last success, KST
+    expect(txt(t)).toContain('개설 2/20');
+  });
+  it('platforms: YouTube 개설, the rest 미개설; a channel without a platforms block is 미확인 everywhere', () => {
+    render(<ShortsFactoryHome sf={FULL} now={NOW} />);
+    const t = screen.getByTestId('sf-platforms');
+    expect(within(t).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['채널', 'YouTube', 'TikTok', 'Instagram', 'X', '기타']);
+    const rows = within(t).getAllByRole('row').slice(1);
+    expect(Array.from(rows[0]!.querySelectorAll('td.sf-pf')).map((c) => c.textContent)).toEqual(['개설', '미개설', '미개설', '미개설', '미개설']);
+    expect(Array.from(rows[2]!.querySelectorAll('td.sf-pf')).map((c) => c.textContent)).toEqual(['미확인', '미확인', '미확인', '미확인', '미확인']);
+  });
+  it('calendar coverage counts distinct known channels: two bookings on one channel do not hide a channel with none', () => {
+    const doubled = buildShortsView({ status: j({ ...STATUS, scheduled: [...STATUS.scheduled.filter((r) => !r.publish_at.startsWith('2026-11-02')), { channel_id: CH1, video_id: 'a', title: 'a', publish_at: '2026-11-02T18:00:00+09:00' }, { channel_id: CH1, video_id: 'b', title: 'b', publish_at: '2026-11-02T19:00:00+09:00' }, { channel_id: 'UCstranger', video_id: 'c', title: 'c', publish_at: '2026-11-02T20:00:00+09:00' }] }), channels: j(CHANNELS), history: HISTORY, probes: PROBES_OK, probeNote: null }, NOW);
+    render(<ShortsFactoryHome sf={doubled} now={NOW} />);
+    expect(txt(screen.getByTestId('sf-day-2026-11-02'))).toContain('예정 1/3');
+    expect(txt(screen.getByTestId('sf-calendar'))).toContain('내일 예정 1/3');
+  });
+
+  it('pipeline says 미보고 for gate failures when status.json carries no array, 없음 only for an empty one', () => {
+    const { gate_failures: _g, ...noGates } = STATUS;
+    render(<ShortsFactoryHome sf={buildShortsView({ status: j(noGates), channels: j(CHANNELS), history: null, probes: PROBES_OK, probeNote: null }, NOW)} now={NOW} />);
+    expect(txt(screen.getByTestId('sf-pipeline'))).toContain('게이트 실패미보고');
+    expect(screen.queryByTestId('sf-gates')).toBeNull();
+    cleanup();
+    render(<ShortsFactoryHome sf={buildShortsView({ status: j({ ...STATUS, gate_failures: [] }), channels: j(CHANNELS), history: null, probes: PROBES_OK, probeNote: null }, NOW)} now={NOW} />);
+    expect(txt(screen.getByTestId('sf-pipeline'))).toContain('게이트 실패없음');
+  });
+
+  it('calendar: two KST weeks from Monday, today and tomorrow marked, scheduled and published listed, a short tomorrow flagged', () => {
+    render(<ShortsFactoryHome sf={FULL} now={NOW} />);
+    const cal = screen.getByTestId('sf-calendar');
+    const days = within(cal).getAllByRole('listitem').filter((li) => li.className.includes('sf-day'));
+    expect(days).toHaveLength(14);
+    expect(days[0]!.getAttribute('data-testid')).toBe('sf-day-2026-10-26');
+    const today = screen.getByTestId('sf-day-2026-11-01');
+    expect(today.className).toContain('today');
+    expect(txt(today)).toContain('오늘');
+    expect(txt(today)).toContain('18:00궁금한 1분');
+    expect(today.querySelector('.sf-it.published')).toBeTruthy();
+    const tomorrow = screen.getByTestId('sf-day-2026-11-02');
+    expect(tomorrow.className).toContain('tomorrow');
+    expect(tomorrow.className).toContain('gap'); // 2 of 3 channels booked
+    expect(txt(tomorrow)).toContain('예정 2/3');
+    expect(tomorrow.querySelectorAll('.sf-it.scheduled')).toHaveLength(2);
+    expect(txt(screen.getByTestId('sf-day-2026-11-05'))).toContain('18:00궁금한 1분');
+    expect(txt(screen.getByTestId('sf-day-2026-11-08'))).toContain('—');
+    expect(txt(cal)).toContain('내일 예정 2/3');
+  });
+  it('pipeline and log: routine, render, gates, queue, disk, Claude verdicts (sanitized) and Codex; the log tail is a pre', () => {
+    render(<ShortsFactoryHome sf={FULL} now={NOW} />);
+    const p = txt(screen.getByTestId('sf-pipeline'));
+    expect(p).toContain('루틴 상태정상');
+    expect(p).toContain('ep-041.mp4');
+    expect(p).toContain('1건');
+    expect(p).toContain('91%');
+    expect(p).toContain('계정 b 선택 · 후보 2/3');
+    expect(p).toContain('codex-cli 0.159.2');
+    expect(txt(screen.getByTestId('sf-gates'))).toContain('caption-length · ep-040 caption 2.1s over');
+    const claude = screen.getByTestId('sf-claude');
+    expect(within(claude).getAllByRole('listitem').map((l) => l.textContent)).toEqual(['a 제외 · 보호 계정', 'b 후보 · 주간 31% · 리셋 52h · 점수 0.41', 'c 후보 · 주간 70% · 리셋 12h · 점수 0.83 · stale']);
+    expect(screen.getByTestId('sf-log').querySelector('pre')!.textContent).toContain('[19:54:50] upload queued');
+    expect(screen.getByTestId('sf-log').querySelector('pre')!.textContent).not.toContain(HOME);
+    expect(txt(screen.getByTestId('sf-notes'))).toContain('TikTok 계정 신청 대기');
+    expect(txt(screen.getByTestId('sf-notes'))).toContain('VFfjBXHu6Oo 431회');
+    expect(txt(screen.getByTestId('sf-band'))).toContain('파일 최신');
+  });
+  it('with nothing on disk every area says what is missing and what to do; nothing reads as healthy', () => {
+    render(<ShortsFactoryHome sf={EMPTY} now={NOW} />);
+    const band = txt(screen.getByTestId('sf-band'));
+    expect(band).toContain('status.json 없음');
+    expect(band).toContain('SCHEMA.md 의 routine 블록부터');
+    expect(band).toContain('channels.json 없음');
+    expect(band).toContain('collect_youtube.py 를 한 번 실행하면 채워진다');
+    expect(band).toContain('history.jsonl 없음');
+    expect(screen.getByTestId('sf-kpis').querySelectorAll('.kpi.ok')).toHaveLength(0);
+    expect(txt(screen.getByTestId('sf-channels'))).toContain('채널 데이터 없음');
+    expect(txt(screen.getByTestId('sf-platforms'))).toContain('채널 데이터 없음');
+    expect(txt(screen.getByTestId('sf-calendar'))).toContain('status.json 없음 · 예정·게시를 그릴 수 없다');
+    expect(screen.getByTestId('sf-calendar').querySelectorAll('.sf-day.gap')).toHaveLength(0); // no channels → nothing to flag
+    const p = txt(screen.getByTestId('sf-pipeline'));
+    expect(p).toContain('미보고');
+    expect(p).toContain('측정 불가');
+    expect(p).toContain('확인 불가');
+    expect(txt(screen.getByTestId('sf-log'))).toContain('로그 꼬리 없음');
+    expect(txt(screen.getByTestId('sf-alerts'))).toContain('호스트 점검(df · claude-pick · codex) 진행 중');
+    expect(screen.queryByTestId('sf-notes')).toBeNull();
+  });
+  it('the bootstrap placeholder is banded as such and the calendar is dimmed, not drawn as empty days', () => {
+    render(<ShortsFactoryHome sf={BOOT} now={NOW} />);
+    expect(txt(screen.getByTestId('sf-band'))).toContain('status.json 자리표시자');
+    expect(screen.getByTestId('sf-calendar').className).toContain('sf-cal-off');
+    expect(txt(screen.getByTestId('sf-calendar'))).toContain('자리표시자 · 예약 정보 없음');
+    expect(txt(screen.getByTestId('sf-alerts'))).toContain('내일(11-02) 예약 확인 불가');
+    expect(txt(screen.getByTestId('sf-day-2026-11-02'))).not.toContain('예정 0/3');
+  });
+  it('formats Seoul time', () => {
+    expect(kst('2026-11-01T10:54:00.000Z')).toBe('11-01 19:54');
+    expect(kst('2026-11-01T15:30:00Z')).toBe('11-02 00:30');
+    expect(kst(null)).toBe('—');
+    expect(kst('nope')).toBe('—');
+  });
+});
