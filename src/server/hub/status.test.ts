@@ -170,7 +170,7 @@ describe('hub status aggregator', () => {
     const svc = createHubStatus(d);
     const [a, b] = await Promise.all([svc.status(), svc.status()]);
     expect(a).toBe(b);
-    expect(d.calls.filter((u) => u === HUB_URLS.nexus).length).toBe(1);
+    expect(n).toBe(1);
     now += 14_999;
     expect(await svc.status()).toBe(a);
     now += 2;
@@ -180,7 +180,7 @@ describe('hub status aggregator', () => {
     await new Promise((r) => setTimeout(r, 0));
     const fresh = await svc.status();
     expect(fresh).not.toBe(a);
-    expect(d.calls.filter((u) => u === HUB_URLS.nexus).length).toBe(2);
+    expect(n).toBe(2);
   });
 });
 

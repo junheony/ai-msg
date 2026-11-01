@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { HubSection } from '../../shared/hub-types';
 import { fmtVal } from './quant';
-import { HUB_URLS, fmtKst, parseSystemdTime, scrub, unitInfo, type HubDeps } from './shared';
+import { HUB_URLS, SLOW_ERROR_RETRY_MS, fmtKst, parseSystemdTime, scrub, slowCache, unitInfo, type HubDeps } from './shared';
 import { collectVideo, parseBacklogNow, parseProjectYaml } from './studios';
 
 const NOW = Date.parse('2026-10-30T13:00:00Z'); // 22:00 KST
@@ -52,6 +52,20 @@ describe('shared helpers', () => {
     expect(scrub('see /home/max/quant/results/x.txt and /Users/alice/y.md now')).toBe('see … and … now');
     expect(scrub('a'.repeat(300), 10)).toHaveLength(10);
     expect(scrub(42)).toBe('');
+  });
+  it('slowCache holds a failure for min(ttl, 30 s) before loading again', async () => {
+    let now = NOW; let n = 0; let fail = true;
+    const c = slowCache(120_000, async () => { n += 1; if (fail) throw new Error('down'); return n; }, () => now);
+    expect(await c()).toMatchObject({ value: null, stale: true, error: '오류' });
+    now += SLOW_ERROR_RETRY_MS - 1; fail = false;
+    expect(await c()).toMatchObject({ value: null, stale: true, error: '오류' });
+    expect(n).toBe(1);
+    now += 1;
+    expect(await c()).toMatchObject({ value: 2, stale: false, error: null });
+    expect(n).toBe(2);
+    const short = slowCache(5_000, async () => { n += 1; throw new Error('x'); }, () => now);
+    await short(); now += 5_000; await short();
+    expect(n).toBe(4);
   });
 });
 

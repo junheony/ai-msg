@@ -53,6 +53,32 @@ export function rewriteProxiedText(text: string, prefix: string): string {
   return text.replace(/(["'(])\/(?=(?:api|ops|css|js|static|assets|img|images|fonts|font|data|media|public|_next|favicon)(?:[/"'?)#]|\.))/g, `$1${prefix}`);
 }
 
+/**
+ * The path as the upstream will see it, for the deny-list: each segment percent-decoded (twice, so `%256B` cannot hide
+ * a `k` from a double-decoding upstream; both spellings are returned, newline-joined). Null when a segment does not decode
+ * or decodes to a slash/backslash.
+ */
+export function decodedProxyPath(path: string): string | null {
+  if (path.includes('\\')) return null;
+  /** One decoding pass: the decoded path, 'bad' for an undecodable segment, 'sep' for an encoded separator. */
+  const once = (p: string): string | 'bad' | 'sep' => {
+    const out: string[] = [];
+    for (const seg of p.split('/')) {
+      let d: string;
+      try { d = decodeURIComponent(seg); } catch { return 'bad'; }
+      if (d.includes('/') || d.includes('\\')) return 'sep';
+      out.push(d);
+    }
+    return out.join('/');
+  };
+  const a = once(path);
+  if (a === 'bad' || a === 'sep') return null;
+  // A second pass may fail on a literal `%` in a name (fine); a separator hidden under two encodings is refused.
+  const b = once(a);
+  if (b === 'sep') return null;
+  return b === 'bad' || b === a ? a : `${a}\n${b}`;
+}
+
 const typeOf = (headers: http.IncomingHttpHeaders): string => String(headers['content-type'] ?? '');
 
 /**
@@ -67,7 +93,9 @@ export function proxyHubRequest(req: http.IncomingMessage, res: http.ServerRespo
     if (!parsed || !target) return json(404, { error: 'not found' });
     if (parsed.rest === '') { res.writeHead(302, { location: `${HUB_PROXY_PREFIX}${parsed.id}/${url.search}`, 'cache-control': 'no-store' }); res.end(); return resolve(); }
     const path = upstreamPath(target, parsed.rest);
-    if (PROXY_DENY_RE.test(path)) return json(403, { error: '허용되지 않은 경로입니다' });
+    const decoded = decodedProxyPath(path);
+    if (decoded === null) return json(400, { error: '잘못된 경로입니다' });
+    if (decoded.split('\n').some((p) => PROXY_DENY_RE.test(p))) return json(403, { error: '허용되지 않은 경로입니다' });
     const prefix = `${HUB_PROXY_PREFIX}${parsed.id}/`;
     const headers: Record<string, string> = { host: `127.0.0.1:${target.port}`, 'accept-encoding': 'identity' };
     for (const [k, v] of Object.entries(req.headers)) if (PASS_REQ.has(k) && typeof v === 'string') headers[k] = v;
@@ -86,10 +114,18 @@ export function proxyHubRequest(req: http.IncomingMessage, res: http.ServerRespo
         return;
       }
       const chunks: Buffer[] = [];
-      let size = 0;
-      ur.on('data', (c: Buffer) => { size += c.length; if (size <= MAX_REWRITE_BYTES) chunks.push(c); });
-      ur.on('error', () => { if (!res.headersSent) json(502, { error: '업스트림 오류' }); else { res.destroy(); resolve(); } });
+      let size = 0; let over = false;
+      ur.on('data', (c: Buffer) => {
+        if (over) return;
+        size += c.length;
+        if (size <= MAX_REWRITE_BYTES) { chunks.push(c); return; }
+        // An un-sized body past the cap: a clear error beats a silently truncated 200.
+        over = true; chunks.length = 0; ur.destroy();
+        json(502, { error: '업스트림 응답이 너무 큽니다' });
+      });
+      ur.on('error', () => { if (over) return; if (!res.headersSent) json(502, { error: '업스트림 오류' }); else { res.destroy(); resolve(); } });
       ur.on('end', () => {
+        if (over) return;
         const body = Buffer.from(rewriteProxiedText(Buffer.concat(chunks).toString('utf8'), prefix), 'utf8');
         delete out['content-length'];
         res.writeHead(status, { ...out, 'content-length': String(body.length) });
@@ -98,7 +134,7 @@ export function proxyHubRequest(req: http.IncomingMessage, res: http.ServerRespo
       });
     });
     up.on('timeout', () => up.destroy(new Error('timeout')));
-    up.on('error', () => { if (!res.headersSent) json(502, { error: '업스트림 연결 실패' }); else { res.destroy(); resolve(); } });
+    up.on('error', () => { if (res.writableEnded) return resolve(); if (!res.headersSent) json(502, { error: '업스트림 연결 실패' }); else { res.destroy(); resolve(); } });
     req.on('close', () => { if (!up.destroyed) up.destroy(); });
     up.end();
   });

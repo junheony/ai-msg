@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { HubSection } from '../../shared/hub-types';
 import { collectNexus, hrefOf, mapNexusHome, NEXUS_LIMITS } from './nexus';
-import { HUB_TIMEOUTS, HUB_URLS, SECRET_FIELD_RE, SLOW_CACHE_MS, stripSecrets, type HubDeps } from './shared';
+import { HUB_TIMEOUTS, HUB_URLS, SECRET_FIELD_RE, SLOW_CACHE_MS, SLOW_ERROR_RETRY_MS, stripSecrets, type HubDeps } from './shared';
 
 const NOW = Date.parse('2026-10-30T13:00:00Z'); // 22:00 KST
 const S = NOW / 1000;
@@ -220,14 +220,18 @@ describe('collectNexus', () => {
     expect(old.nexus).toBeUndefined();
     expect(old.alerts[0]).toMatchObject({ level: 'bad', text: '응답 없음 · 시간 초과' });
   });
-  it('does not cache a failed dashboard probe as a good answer: the next collect asks again', async () => {
-    let n = 0; let ok = false;
-    const d = deps({ nexus: ENGINE, nexusHome: home() });
+  it('does not cache a failed dashboard probe as a good answer: once the failure backoff passes, the next collect asks again', async () => {
+    let n = 0; let ok = false; let now = NOW;
+    const d = { ...deps({ nexus: ENGINE, nexusHome: home() }), now: () => now };
     const inner = d.fetchJson;
     d.fetchJson = async (url, t) => { if (url === HUB_URLS.nexusHome) { n += 1; if (!ok) throw new Error('연결 실패'); } return inner(url, t); };
     const a = await collectNexus(d);
     expect(a.nexus).toBeUndefined();
     ok = true;
+    const held = await collectNexus(d);
+    expect(n).toBe(1); // within the failure backoff the down source is not re-probed
+    expect(held.sources[1]).toMatchObject({ ok: false, error: '연결 실패' });
+    now += Math.min(SLOW_CACHE_MS.nexus, SLOW_ERROR_RETRY_MS);
     const b = await collectNexus(d);
     expect(n).toBe(2); // asked again (the retry runs behind; this answer still says the failure)
     expect(b.nexus).toBeUndefined();
