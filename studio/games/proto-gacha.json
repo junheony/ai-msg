@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "id": "proto-gacha",
+  "title": "Robot Gacha",
+  "titleKo": "로봇 가챠 · 게임 내 이름 Robot Codex",
+  "genre": "로봇 수집",
+  "engine": "Vite / Capacitor",
+  "status": "building",
+  "cover": "~/jobs/proto-gacha/shots/gameplay.png",
+  "repos": [
+    {
+      "label": "프로토타입 · 원격 미연결",
+      "path": "~/bbai-codex/proto-gacha",
+      "branch": "main"
+    }
+  ],
+  "stages": [
+    {
+      "id": "concept",
+      "evidence": [
+        "~/bbai-codex/proto-gacha/DESIGN.md"
+      ]
+    },
+    {
+      "id": "assets",
+      "evidence": []
+    },
+    {
+      "id": "build",
+      "evidence": [
+        "~/bbai-codex/proto-gacha/dist/index.html"
+      ]
+    },
+    {
+      "id": "test",
+      "evidence": [
+        "~/jobs/proto-gacha/REPORT.md"
+      ]
+    },
+    {
+      "id": "preview",
+      "evidence": []
+    },
+    {
+      "id": "approval",
+      "evidence": []
+    },
+    {
+      "id": "release",
+      "evidence": []
+    }
+  ],
+  "artifacts": {
+    "screenshots": [
+      "~/jobs/proto-gacha/shots/*.png"
+    ],
+    "builds": [
+      "~/bbai-codex/proto-gacha/dist/*.html"
+    ]
+  },
+  "tests": [
+    {
+      "label": "빌드·스모크 통과 · 실기기 미검증",
+      "path": "~/jobs/proto-gacha/REPORT.md"
+    }
+  ],
+  "preview": [],
+  "jobs": [
+    "proto-gacha"
+  ],
+  "approvals": [],
+  "nextAction": {
+    "text": "실기기 APK 테스트, 밸런스 조정, OFL 폰트 허용 검토",
+    "owner": false
+  }
+}

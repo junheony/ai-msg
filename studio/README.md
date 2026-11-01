@@ -6,7 +6,7 @@
 
 ## 상태와 근거 읽기
 
-단계 순서는 `concept → assets → build → test → preview → approval → release`입니다. `stages[].evidence`의 실제 파일과 `approvals`를 바탕으로 서버가 상태를 계산합니다. 단계에 `state`를 직접 적지 않습니다. 연결된 작업의 `REPORT.md`가 `STATUS: BLOCKED: …`로 끝나면 차단 상태가 드러납니다. `jobs`는 `~/jobs/<작업명>/`과 연결되며 `BRIEF.md`, `REPORT.md`, `pid.txt`, `run.log` 등의 기록으로 작업 상태를 보여줍니다.
+단계 순서는 `concept → assets → build → test → preview → approval → release`입니다. `stages[].evidence`의 실제 파일과 `approvals`를 바탕으로 서버가 상태를 계산합니다. 단계에 `state`를 직접 적지 않습니다. 연결된 작업의 `REPORT.md`가 `STATUS: BLOCKED: …`로 끝나면 상태를 다음 순서로 판단합니다. 같은 게임의 더 새로운 작업이 이어받았으면 `이어받음`(`name-N`→더 큰 N, `name`→`name-cx`, 또는 새 작업의 BRIEF/REPORT가 이전 단계로 명시), 보고서가 오너를 요구하면 `승인 필요`, 3시간 이내면 `막힘`, 그보다 오래되면 `중단됨`입니다. 단계를 막는 것은 최근 `막힘`뿐입니다. `jobs`는 `~/jobs/<작업명>/`과 연결되며 등록된 작업의 후속(`-2`, `-cx`)은 폴더가 생기면 자동으로 같은 게임에 묶입니다. `BRIEF.md`, `REPORT.md`, `pid.txt`, `run.log` 등의 기록으로 작업 상태를 보여줍니다.
 
 **근거 파일이 있다는 것은 테스트 통과·품질 승인·출시 허가를 뜻하지 않습니다.** 실패한 감사나 중단된 실행도 중요한 근거입니다. `tests[].label`과 원본 보고서의 한계를 함께 읽어야 합니다. `approvals`의 `approved`는 해당 범위에 대한 명시적 오너 승인이 있을 때만 기록합니다. 기존 공개 배포 사실이나 로컬 패키지 선택 기록에서 승인을 추정하지 않습니다. `release`에는 실제 출시 기록을 넣고, 후보의 로컬 `release/index.html`이나 배포 방법 문서만으로 완료 처리하지 않습니다.
 
@@ -21,6 +21,8 @@
 | `bbai-brawl` | 웹·Unity codex 브랜치와 이전 fc74fb8 WebGL 빌드. AWS `/brawl/`는 **구버전 0.15.0-20261027-polish**이며 codex 변경은 미배포. 최신 성능 게이트 미달 및 Unity 985b3bc 재빌드 대기를 보존. |
 | `bbai-updown-race` | 명시적으로 선택한 Unity 패키지는 승인된 패키지를 뜻하지 않음. 로컬 합성 soak는 약 240초와 10초로 운영 24시간 증거가 아님. `demo-video` 영상·캡처에는 플랫폼 소개 자료가 포함되어 레이스 검증으로 사용하지 않음. |
 | `bbai-concepts` | 콘셉트 제안 문서만 존재. 게임·에셋·빌드·출시 근거 없음. |
+| `game-kit` | 공용 TypeScript 엔진. 단위 테스트 153개 통과 보고. 실기기·실제 Workers/D1 미검증. 데모 테마 폰트가 OFL이라 CC0/자가제작 규칙 검토 전까지 에셋 단계 증거를 비워 둠. |
+| `proto-merge`·`proto-stack`·`proto-gacha` | 빌드·스모크와 스크린샷 보고만 있음. 사람 플레이와 실기기 미검증, APK 미빌드. 번들 폰트가 OFL이라 에셋 단계 증거를 비워 둠. 원격 미연결. |
 
 기존 게임의 에셋·라이선스 문서는 과거 출처 기록입니다. 목록에 포함됐다는 이유로 새 게임에서 재사용할 수 있다고 판단하지 않습니다. 신규 파이프라인은 CC0 또는 직접 만든 에셋만 허용하며, 복사한 참조의 권리 불명 에셋은 교체하고 `assets/LICENSES.md`에 기록합니다.
 

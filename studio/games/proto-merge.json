@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "id": "proto-merge",
+  "title": "Brain Merge",
+  "titleKo": "브레인 머지 · 프로토타입",
+  "genre": "물리 머지 퍼즐",
+  "engine": "Vite / Capacitor",
+  "status": "building",
+  "cover": "~/jobs/proto-merge/shots/02-gameplay.png",
+  "repos": [
+    {
+      "label": "프로토타입 · 원격 미연결",
+      "path": "~/bbai-codex/proto-merge",
+      "branch": "main"
+    }
+  ],
+  "stages": [
+    {
+      "id": "concept",
+      "evidence": [
+        "~/bbai-codex/proto-merge/DESIGN.md"
+      ]
+    },
+    {
+      "id": "assets",
+      "evidence": []
+    },
+    {
+      "id": "build",
+      "evidence": [
+        "~/bbai-codex/proto-merge/dist/index.html"
+      ]
+    },
+    {
+      "id": "test",
+      "evidence": [
+        "~/jobs/proto-merge/REPORT.md"
+      ]
+    },
+    {
+      "id": "preview",
+      "evidence": []
+    },
+    {
+      "id": "approval",
+      "evidence": []
+    },
+    {
+      "id": "release",
+      "evidence": []
+    }
+  ],
+  "artifacts": {
+    "screenshots": [
+      "~/jobs/proto-merge/shots/*.png"
+    ],
+    "builds": [
+      "~/bbai-codex/proto-merge/dist/*.html"
+    ]
+  },
+  "tests": [
+    {
+      "label": "빌드·시뮬 4개 통과 · 사람·실기기 미검증",
+      "path": "~/jobs/proto-merge/REPORT.md"
+    }
+  ],
+  "preview": [],
+  "jobs": [
+    "proto-merge"
+  ],
+  "approvals": [],
+  "nextAction": {
+    "text": "사람·실기기 플레이테스트, APK 빌드, OFL 폰트 허용 검토",
+    "owner": false
+  }
+}
