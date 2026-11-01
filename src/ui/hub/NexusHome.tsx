@@ -61,6 +61,8 @@ const toneCls = (t: string): string => TONE_CLS[t] ?? '';
 const TONE_RANK: Record<string, number> = { go: 0, bad: 1, warn: 2, q: 3, info: 4 };
 /** Stale thresholds (s), as the dashboard's home_shape STALE_S. */
 const STALE = { pulse: 300, peg: 300, kol: 900, bins: 600 } as const;
+/** Past this point of the band the 지금 label hangs left of its line, or a phone-width track would cut it off. */
+const NOW_FLIP_PCT = 70;
 
 const Ext = ({ href, children, className = 'nx-ext' }: { href: string; children: React.ReactNode; className?: string }) => (
   <a className={className} href={href} target="_blank" rel="noopener noreferrer">{children} <ExternalIcon /></a>
@@ -191,7 +193,7 @@ function Band({ home, now }: { home: NexusHomeData; now: number }) {
             ))}
             {real.map((r, i) => { const t = ms(r.t); return t === null ? null : <span key={i} className="nx-miss" style={{ left: `${pct(t)}%` }} title={`${kst(r.t)} ${r.sym} 놓침 $1k당 ${usd1k(r.net1k)} ${r.why}`} />; })}
             <span className="nx-fut" style={{ left: `${pct(tn)}%` }} />
-            <span className="nx-now" style={{ left: `${pct(tn)}%` }}><em>지금 {kst(B.now ?? new Date(tn).toISOString())}</em></span>
+            <span className={`nx-now${pct(tn) > NOW_FLIP_PCT ? ' end' : ''}`} style={{ left: `${pct(tn)}%` }}><em>지금 {kst(B.now ?? new Date(tn).toISOString())}</em></span>
             {stale && <span className="nx-stop nx-band-stop">스캔 멈춤 {secAgo(B.bins_age_s)}</span>}
           </div>
           <div className="nx-axis">{ticks.map((t) => <span key={t} style={{ left: `${pct(t)}%` }}>{HHMM.format(new Date(t))}</span>)}</div>
@@ -265,7 +267,7 @@ function Score({ home }: { home: NexusHomeData }) {
   const S = home.score;
   const more = home.tabs.find((t) => t.label === '더보기');
   const stripKey = (s: string) => s.replace(/\s*\([^)]*\)\s*$/, '');
-  const vcls = (v: string) => (/된다|돈 됐다/.test(v) ? 'st-ok' : /허수|안 된다|폐기/.test(v) ? 'st-bad' : '');
+  const vcls = (v: string) => (/허수|안 ?된다|폐기/.test(v) ? 'st-bad' : /된다|돈 됐다/.test(v) ? 'st-ok' : '');
   return (
     <Sec title="신호 성적표" testid="nx-score" note={S.ok === false ? '못 읽음' : `7일 · 알림 결과 원장 · ${secAgo(S.age_s)} 채점`} right={more && <Ext href={more.href}>성적 전체</Ext>}>
       <div className="twrap">
