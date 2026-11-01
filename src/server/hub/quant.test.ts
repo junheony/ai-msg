@@ -1,6 +1,10 @@
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { HubCardItem, HubSection } from '../../shared/hub-types';
-import { collectQuant, fmtVal, fmtWon, parseFriends } from './quant';
+import { ACCOUNT_METADATA_PY, collectQuant, fmtVal, fmtWon, parseFriends } from './quant';
 import { HUB_URLS, type HubDeps } from './shared';
 
 const NOW = Date.parse('2026-10-30T13:00:00Z'); // 10-30 22:00 KST → 어제 = 10-29, 7일 = 10-23~10-29
@@ -95,21 +99,21 @@ const FULL: Fx = {
 /* ───────── tests ───────── */
 
 describe('QUANT collector (work environment)', () => {
-  it('builds the three account cards with rows, equity sparkline, 7-day top symbols and collector health', async () => {
+  it('builds all discovered account cards with rows, equity sparkline, 7-day top symbols and collector health', async () => {
     const m = await collectQuant(deps(FULL));
-    expect(m).toMatchObject({ id: 'quant', state: 'warn', lastActivity: iso(-300_000), metrics: { '7일 순익': '+1,784만원', '어제': '+165만원', '유닛 가동': '1/4', '생성': '5분 전' } });
+    expect(m).toMatchObject({ id: 'quant', state: 'warn', lastActivity: iso(-300_000), metrics: { '7일 순익': '+1,854만원', '어제': '+175만원', '유닛 가동': '1/4', '생성': '5분 전' } });
     expect(m.sources).toEqual([{ name: 'snapshot.json', ok: true, ms: 0 }, { name: 'friends_snapshot.json', ok: true, ms: 0 }]);
-    expect(m.page!.headline).toBe('친구 계정 3 · 7일 순익 +1,784만원 (+3.55bp) · 자본(원가) 58.85억 · 라이브 페이퍼 유닛 2 정지(10-11) · v9pp-ex 실패');
+    expect(m.page!.headline).toBe('계정 4 · 7일 순익 +1,854만원 (+3.61bp) · 자본(원가) 59.85억 · 라이브 페이퍼 유닛 2 정지(10-11) · v9pp-ex 실패');
     expect(m.page!.decision).toBe('정지된 v9flws A/B(sh·a1) 재개/폐기 결정 · v9pp-ex 실패 확인 · 수집 지연 계정(빗썸2) 확인 · 어제 적자 계정(범수3) 상위 심볼 확인');
     expect(m.page!.kpis.map((k) => [k.label, k.value, k.status])).toEqual([
-      ['7일 순익 합', '+1,784만원', 'ok'], ['7일 평균 bp', '+3.55bp', 'ok'], ['어제 순익', '+165만원', 'ok'], ['총 자본 (원가)', '58.85억', 'info'],
-      ['어제 체결 수', '3,000', undefined], ['페이퍼 유닛 가동', '1/4', 'bad'], ['스냅샷 신선도', '20분 전', 'ok'],
+      ['7일 순익 합', '+1,854만원', 'ok'], ['7일 평균 bp', '+3.61bp', 'ok'], ['어제 순익', '+175만원', 'ok'], ['총 자본 (원가)', '59.85억', 'info'],
+      ['어제 체결 수', '4,000', undefined], ['페이퍼 유닛 가동', '1/4', 'bad'], ['스냅샷 신선도', '20분 전', 'ok'],
     ]);
     const secs = m.page!.sections;
-    expect(secs.map((s) => s.kind)).toEqual(['cards', 'cards', 'chart', 'chart', 'table', 'table', 'list', 'kv', 'raw']);
+    expect(secs.map((s) => s.kind)).toEqual(['cards', 'cards', 'chart', 'chart', 'table', 'list', 'kv', 'raw']);
     const acct = section(secs, /^계정/) as { kind: 'cards'; items: HubCardItem[]; cols: number; open: boolean; note: string };
     expect(acct).toMatchObject({ cols: 3, open: true, note: expect.stringContaining('7일 = 10-23~10-29') });
-    expect(acct.items.map((c) => [c.title, c.badge, c.state])).toEqual([['빗썸1', '빗썸 현물', 'ok'], ['빗썸2', '빗썸 현물', 'warn'], ['범수동생계정3', '빗썸 현물', 'warn']]);
+    expect(acct.items.map((c) => [c.title, c.badge, c.state])).toEqual([['빗썸1', '빗썸', 'ok'], ['빗썸2', '빗썸', 'warn'], ['범수3', '거래소 미보고', 'warn'], ['WILL', '거래소 미보고', 'ok']]);
     const b1 = acct.items[0]!;
     expect(b1.sub).toBe('SEED 15.51억 → 21.5억 (+39%) · 원가 기준 · 03-13~10-30');
     expect(b1.rows).toEqual([
@@ -126,8 +130,9 @@ describe('QUANT collector (work environment)', () => {
     expect(row(acct.items[1]!, /수집 상태/)).toEqual({ label: '수집 상태', value: '🔴 수집 3시간전 · 디스크 57%(잔여 21G)', status: 'warn' });
     expect(row(acct.items[2]!, /어제 순익/)).toEqual({ label: '어제 순익 (10-29)', value: '-25만원 (-1.25bp)', status: 'bad' });
     expect(row(acct.items[2]!, /상위 심볼/)!.value).toBe('DOGE -140만원');
-    // other accounts are a small table, never summed into the friends' figures
-    expect(section(secs, /기타 계정/)).toMatchObject({ kind: 'table', rows: [['WILL', '10억', '+70만원', '+7bp', '+10만원']] });
+    // Every discovered account participates in the cards and totals.
+    expect(section(secs, /기타 계정/)).toBeUndefined();
+    expect(m.metrics['계정']).toBe(4);
     noHome(m);
   });
 
@@ -135,7 +140,7 @@ describe('QUANT collector (work environment)', () => {
     const secs = (await collectQuant(deps(FULL))).page!.sections;
     const eq = section(secs, /^자본 추이/) as { kind: 'chart'; x: string[]; series: { name: string; values: (number | null)[] }[]; unit: string; open: boolean; note: string };
     expect(eq.x).toEqual(['03-13', '10-25', '10-26', '10-27', '10-28', '10-29', '10-30']);
-    expect(eq.series.map((s) => s.name)).toEqual(['빗썸1', '빗썸2', '범수동생계정3']);
+    expect(eq.series.map((s) => s.name)).toEqual(['빗썸1', '빗썸2', '범수3', 'WILL']);
     expect(eq.series[0]!.values).toEqual([15.51, 20, 20.5, 21, 21.2, 21.46, 21.5]);
     expect(eq.series[1]!.values).toEqual([null, 18, 18.1, 18.2, 18.3, 18.64, 18.7]);
     expect(eq.series[2]!.values).toEqual([null, 18, 18.2, null, 18.5, 18.6, 18.65]);
@@ -143,7 +148,7 @@ describe('QUANT collector (work environment)', () => {
     const daily = section(secs, /^일별 순익/) as { kind: 'chart'; x: string[]; series: { name: string; values: (number | null)[]; style?: string }[]; zero?: boolean; note: string };
     expect(daily.x).toEqual(['10-23', '10-24', '10-25', '10-26', '10-27', '10-28', '10-29']); // today (10-30, partial) excluded
     expect(daily.zero).toBe(true);
-    expect(daily.series.map((s) => s.style)).toEqual(['bar', 'bar', 'bar']);
+    expect(daily.series.map((s) => s.style)).toEqual(['bar', 'bar', 'bar', 'bar']);
     expect(daily.series[2]!.values).toEqual([800_000, 800_000, 800_000, 800_000, 800_000, 800_000, -250_000]);
   });
 
@@ -190,7 +195,7 @@ describe('QUANT collector (work environment)', () => {
       { level: 'bad', text: 'v9pp-ex 실패 (exit-code) · 10-15 00:43', hint: '로그 확인 후 재시작/폐기 결정', at: '2026-10-14T15:43:32.000Z' },
       { level: 'warn', text: '계정 수집 지연: 빗썸2 🔴 수집 3시간전 · 디스크 57%(잔여 21G)', hint: 'infra watch 2026-10-30' },
       { level: 'info', text: '페이퍼 A/B 유닛 2개 정지 19일 (10-11 13:01) — 재개/폐기 미결', at: '2026-10-11T04:01:43.998Z' },
-      { level: 'info', text: '범수동생계정3 어제 순익 -25만원', hint: '상위 심볼: DOGE -20만원' },
+      { level: 'info', text: '범수3 어제 순익 -25만원', hint: '상위 심볼: DOGE -20만원' },
     ]);
     // the 24h A/B table and the raw proxy embed stay, collapsed, with paths blanked
     expect(section(m.page!.sections, /24h A\/B 스코어/)).toMatchObject({ kind: 'table', open: false, columns: ['창', '유닛', '체결N', '체결대금'], rows: [['1h', 'wf', '53', '2,068,042원'], ['24h', 'sh', '2,524', '2.77억']], num: [2, 3] });
@@ -202,21 +207,21 @@ describe('QUANT collector (work environment)', () => {
   it('without the friends file the page degrades: a text section with a note, no charts, "—" KPIs, a warn alert; without both sources it is down', async () => {
     const m = await collectQuant(deps({ ...FULL, files: { 'quant_analyzer/results/daily/infra_2026-10-30.txt': INFRA } }));
     expect(m.state).toBe('warn');
-    expect(m.alerts.map((a) => a.text)).toContain('friends_snapshot 없음 · 파일 없음 — 계정 카드·자본 차트 생략');
+    expect(m.alerts.map((a) => a.text)).toContain('friends_snapshot 없음 · 파일 없음 — 계정 수치는 qa_dash 기준');
     expect(m.sources[1]).toEqual({ name: 'friends_snapshot.json', ok: false, ms: 0, error: '파일 없음' });
     const secs = m.page!.sections;
-    expect(secs[0]).toMatchObject({ kind: 'text', title: '계정 (친구 3)', open: true, body: expect.stringContaining('friends_snapshot 이 없어'), note: '계정 카드 · 자본 추이 · 일별 순익 생략' });
+    expect(secs[0]).toMatchObject({ kind: 'text', title: '계정 (0)', open: true, body: expect.stringContaining('등록된 계정 정보 없음'), note: '계정 카드 · 자본 추이 · 일별 순익 생략' });
     expect(secs.map((s) => s.kind)).toEqual(['text', 'cards', 'table', 'list', 'kv', 'raw']);
     expect(m.page!.kpis.slice(0, 5).map((k) => k.value)).toEqual(['—', '—', '—', '—', '—']);
     expect(m.page!.kpis[6]).toMatchObject({ label: '스냅샷 신선도', value: '—', status: 'bad' });
-    expect(m.page!.headline).toBe('친구 계정 0 · 7일 순익 — · 라이브 페이퍼 유닛 2 정지(10-11) · v9pp-ex 실패');
+    expect(m.page!.headline).toBe('계정 0 · 7일 순익 — · 라이브 페이퍼 유닛 2 정지(10-11) · v9pp-ex 실패');
     expect(m.page!.decision).toContain('friends_snapshot 타이머 확인');
-    expect(m.metrics).toEqual({ '7일 순익': '—', '어제': '—', '유닛 가동': '1/4', '생성': '5분 전' });
+    expect(m.metrics).toEqual({ '계정': 0, '7일 순익': '—', '어제': '—', '유닛 가동': '1/4', '생성': '5분 전' });
     // qa_dash down but the friends file present: cards and charts still come, the units fall back to systemd only
     const m2 = await collectQuant(deps({ ...FULL, urls: {} }));
     expect(m2.state).toBe('warn');
     expect(m2.alerts.map((a) => a.text)).toContain('qa_dash 응답 없음 · 연결 실패');
-    expect(m2.page!.sections.map((s) => s.kind)).toEqual(['cards', 'cards', 'chart', 'chart', 'table', 'list', 'kv', 'raw']);
+    expect(m2.page!.sections.map((s) => s.kind)).toEqual(['cards', 'cards', 'chart', 'chart', 'list', 'kv', 'raw']);
     expect(cards(m2.page!.sections, /라이브 페이퍼 유닛/).map((u) => u.title)).toEqual(['v9flws-sh', 'v9mk4-m3', 'v9pp-ex']);
     expect(section(m2.page!.sections, /붉은 타일/)).toMatchObject({ items: [{ level: 'ok', text: 'qa_dash 응답 없음 — 타일 확인 불가' }] });
     // neither source: down
@@ -271,4 +276,113 @@ describe('QUANT collector (work environment)', () => {
     expect(fmtWon(215_000_000)).toBe('+2.15억');
     expect(fmtWon(900)).toBe('+900원');
   });
+});
+
+const upbitSnapshot = {
+  generated_at: iso(-1000), tabs: [{ tab: 'upbit', title: '업비트', exchange: 'upbit', accounts: [
+    { key: 'live-key', snapshot_name: 'new-user', label: '새 계정', has_data: true, collector_state: 'active' },
+    { key: 'empty-key', snapshot_name: 'missing-user', label: '미수집 계정', has_data: false, reason: 'collector inactive, 401 IP not registered', collector_state: 'inactive' },
+  ], sections: [
+    { id: 'live', account: 'live-key', kind: 'tiles', items: [tile('현재 자본 (원가)', 120000, 'krw'), tile('7일 순익 (수수료 후)', 900, 'krw'), tile('7일 회전', 10000, 'krw')] },
+    { id: 'empty', account: 'empty-key', kind: 'tiles', items: [tile('현재 자본 (원가)', null, 'krw', { reason: '401 IP not registered' }), tile('7일 순익', null, 'krw')] },
+  ] }],
+};
+
+describe('dynamic QUANT accounts', () => {
+  it('unions arbitrary friend names, gauge-only names and snapshot accounts, deduplicating snapshot_name aliases', async () => {
+    const m = await collectQuant(deps({ urls: { quant: upbitSnapshot }, files: { [FRIENDS_FILE]: JSON.stringify({ accts: ['new-user', 'live-key', '다른 거래소 새 이름'], gauge: { 'gauge only': { net: 10 } } }) } }));
+    const accounts = cards(m.page!.sections, /^계정/);
+    expect(accounts.map((a) => a.title)).toEqual(['새 계정', '다른 거래소 새 이름', 'gauge only', '미수집 계정']);
+    expect(accounts[0]!.badge).toBe('업비트');
+    expect(m.metrics['계정']).toBe(4);
+    expect(m.page!.headline).toContain('계정 4');
+    expect(accounts.some((a) => /빗썸1|빗썸2|범수3/.test(a.title))).toBe(false);
+    noHome(m);
+  });
+
+  it('renders snapshot values without a friends file and keeps no-data accounts with their reason', async () => {
+    const m = await collectQuant(deps({ urls: { quant: upbitSnapshot } }));
+    const accounts = cards(m.page!.sections, /^계정/);
+    expect(accounts).toHaveLength(2);
+    expect(row(accounts[0]!, /^현재 자본/)).toMatchObject({ value: '120,000원' });
+    expect(accounts[1]).toMatchObject({ title: '미수집 계정', badge: '업비트', state: 'unknown', sub: '데이터 없음', note: expect.stringContaining('401 IP not registered') });
+    expect(accounts[1]!.rows.every((r) => r.value === '—' && r.status === 'info')).toBe(true);
+    expect(m.metrics).toMatchObject({ '계정': 2, '7일 순익': '+900원' });
+    expect(m.page!.kpis.find((k) => k.label === '총 자본 (원가)')?.value).toBe('120,000원');
+    expect(m.page!.sections[0]!.title).toBe('계정 (2)');
+  });
+
+  it('keeps the last valid snapshot through timeouts, coalesces refresh and exposes stale freshness', async () => {
+    const d = deps({});
+    let now = NOW;
+    let calls = 0;
+    d.now = () => now;
+    d.fetchJson = async () => { calls++; if (calls > 1) throw new DOMException('Timed out', 'TimeoutError'); return upbitSnapshot; };
+    const initial = await collectQuant(d);
+    await Promise.all([collectQuant(d), collectQuant(d)]);
+    expect(calls).toBe(1);
+    now += 61000;
+    const [failed, concurrent] = await Promise.all([collectQuant(d), collectQuant(d)]);
+    expect(calls).toBe(2);
+    expect(failed.sources[0]).toMatchObject({ ok: false, error: '시간 초과' });
+    expect(cards(failed.page!.sections, /^계정/)).toEqual(cards(initial.page!.sections, /^계정/));
+    expect(concurrent.metrics['계정']).toBe(2);
+    expect(failed.alerts.some((a) => a.text.includes('이전 값'))).toBe(true);
+    expect(JSON.stringify(section(failed.page!.sections, /소스 신선도/))).toContain('이전 값(갱신 실패)');
+    await collectQuant(d);
+    expect(calls).toBe(2);
+  });
+
+  it('rejects malformed successful transport responses instead of replacing a valid snapshot', async () => {
+    const d = deps({});
+    let now = NOW;
+    d.now = () => now;
+    d.fetchJson = async () => upbitSnapshot;
+    await collectQuant(d);
+    now += 61000;
+    d.fetchJson = async () => ({ error: 'not a snapshot' });
+    const m = await collectQuant(d);
+    expect(m.sources[0]).toMatchObject({ ok: false, error: '응답 형식 오류' });
+    expect(m.metrics['계정']).toBe(2);
+  });
+});
+
+
+it('has_data=false overrides contradictory stale tiles and friend figures, never turning null into zero', async () => {
+  const snapshot = { generated_at: iso(-1000), tabs: [{ tab: 'exchange', accounts: [{ key: 'x', snapshot_name: 'stale', label: '중지 계정', has_data: false, reason: 'collector inactive' }], sections: [{ id: 'x', account: 'x', kind: 'tiles', items: [tile('7일 순익', 1000000, 'krw')] }] }] };
+  const m = await collectQuant(deps({ urls: { quant: snapshot }, files: { [FRIENDS_FILE]: JSON.stringify({ accts: ['stale'], gauge: { stale: { net: 1000000 } } }) } }));
+  expect(cards(m.page!.sections, /^계정/)[0]).toMatchObject({ note: 'collector inactive', rows: [{ label: '7일 순익', value: '—', status: 'info' }] });
+  expect(m.metrics).toMatchObject({ '계정': 1, '7일 순익': '—' });
+  const empty = await collectQuant(deps({ urls: { quant: { tabs: [] } }, files: { [FRIENDS_FILE]: JSON.stringify({ accts: ['nulls'], daily: { nulls: { '2026-10-29': { net: null, turn: null } } } }) } }));
+  expect(empty.metrics['7일 순익']).toBe('—');
+});
+
+
+it('reads exchange/label metadata once and only enriches dynamically present accounts', async () => {
+  const d = deps({ files: { [FRIENDS_FILE]: JSON.stringify({ accts: ['any-name'] }) } });
+  const calls: string[][] = [];
+  d.exec = async (cmd, args) => { expect(cmd).toBe('python3'); calls.push(args); return JSON.stringify([{ name: 'any-name', label: '메타데이터 이름', exchange: 'bithumb' }, { name: 'not-present', label: '추가하지 않음', exchange: 'upbit' }]); };
+  const m = await collectQuant(d);
+  await collectQuant(d);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]).toEqual(['-I', '-c', ACCOUNT_METADATA_PY, HOME + '/arbitrage-nexus/scripts/friends_snapshot.py']);
+  expect(cards(m.page!.sections, /^계정/)).toMatchObject([{ title: '메타데이터 이름', badge: '빗썸' }]);
+  expect(m.metrics['계정']).toBe(1);
+});
+
+
+it('metadata parser reads only ACCTS literals without running Python source or exposing archive paths', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'quant-registry-'));
+  const source = path.join(dir, 'source.py');
+  const sideEffect = path.join(dir, 'must-not-exist');
+  try {
+    writeFileSync(source, `open(${JSON.stringify(sideEffect)}, "w").write("executed")\nACCTS = [("dynamic", "/private/archive", "표시명", "bithumb")]\nraise RuntimeError("must not execute")\n`);
+    const result = spawnSync('python3', ['-I', '-c', ACCOUNT_METADATA_PY, source], { encoding: 'utf8', timeout: 3000 });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual([{ name: 'dynamic', label: '표시명', exchange: 'bithumb' }]);
+    expect(existsSync(sideEffect)).toBe(false);
+    expect(result.stdout).not.toContain('/private/archive');
+    writeFileSync(source, 'ACCTS = make_accounts()');
+    expect(spawnSync('python3', ['-I', '-c', ACCOUNT_METADATA_PY, source], { timeout: 3000 }).status).not.toBe(0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
