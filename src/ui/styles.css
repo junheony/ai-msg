@@ -3135,9 +3135,10 @@ table.t { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); font-
   .mode-ico { width: 30px; height: 30px; border-radius: 9px; }
   .ph .hub-src-list { display: none; }
   .ph-end .pill:not(.btn) { display: none; }
-  /* One row: the meta line gives way (its flex basis is 0, so it never pushes 새로고침 down) and 새로고침 is its icon
-     (the button keeps its aria-label). */
-  .ph .meta { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 새로고침 stays on the title row as its icon (the button keeps its aria-label); the meta line takes the row under
+     it, whole — squeezed in beside the badges it read "마지…". */
+  .ph-end { order: 1; }
+  .ph .meta { order: 2; flex: 1 0 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ph-end .pill.btn { width: var(--phone-tap); height: var(--phone-tap); padding: 0; justify-content: center; }
   .ph-end .pill-label { display: none; }
   .lead { padding-left: 16px; }
