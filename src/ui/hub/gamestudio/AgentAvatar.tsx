@@ -4,7 +4,7 @@ import type { StudioAgent } from '../../../shared/hub-types';
 /**
  * A crew member's face, drawn (no image assets): each account has its own head shape and colour so a glance tells
  * who is who — Claude a (round, antenna), b (visor), c (hexagon), Codex (terminal screen). The ring around it is the
- * state: a turning arc while working, solid green when done, red when blocked, a dotted grey when idle.
+ * state: a turning accent arc while working, a quiet solid ring when done, red when blocked, dotted grey when idle.
  */
 const FACES: Record<StudioAgent['account'], ReactElement> = {
   a: (
@@ -62,7 +62,6 @@ export function AgentAvatar({ account, state, size = 56, title }: { account: Stu
     <span className={`gs-ava acc-${account} st-${state}`} style={{ width: size, height: size }} role="img" aria-label={title ?? `${agentName({ account })} · ${AGENT_STATE_LABEL[state]}`}>
       <span className="gs-ava-ring" aria-hidden="true" />
       <svg viewBox="0 0 48 48" width={size * 0.72} height={size * 0.72} aria-hidden="true">{FACES[account]}</svg>
-      {state !== 'working' && <span className="gs-ava-badge" aria-hidden="true">{state === 'done' ? '✓' : state === 'blocked' ? '!' : 'z'}</span>}
     </span>
   );
 }

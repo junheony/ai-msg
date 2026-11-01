@@ -41,38 +41,55 @@ const STUDIO: GameStudio = {
 afterEach(cleanup);
 
 describe('GameStudioHome', () => {
-  it('shows the lobby line, the party, one cartridge per game with its quest track and callout', () => {
+  it('shows one summary line, a compact party, and calm cartridges with a dot track and one next move', () => {
     render(<GameStudioHome studio={STUDIO} now={T} />);
     const lobby = screen.getByTestId('gs-lobby');
-    expect(lobby.textContent).toContain('1작업 중 에이전트');
-    expect(lobby.textContent).toContain('1오너 확인 필요');
+    expect(lobby.textContent).toContain('작업 중 1');
+    expect(lobby.textContent).toContain('오너 확인 1');
     const agents = screen.getAllByTestId('gs-agent');
     expect(agents).toHaveLength(2);
-    expect(agents[0]!.textContent).toContain('Claude b');
-    expect(agents[0]!.textContent).toContain('작업 중');
-    expect(agents[1]!.textContent).toContain('라이선스 확인 필요');
-    expect(screen.getByText(/다른 프로젝트 에이전트 3 · 작업 중 1/)).toBeTruthy();
+    expect(within(agents[0]!).getByRole('button').textContent).toBe('Claude b작업 중');
+    // task, line, job and time live in the hover/focus tooltip, linked to the face for screen readers
+    const tip = within(agents[1]!).getByRole('tooltip', { hidden: true });
+    expect(tip.textContent).toContain('라이선스 확인 필요');
+    expect(within(agents[1]!).getByRole('button').getAttribute('aria-describedby')).toBe(tip.id);
+    expect(screen.getByText('다른 프로젝트 에이전트 3')).toBeTruthy();
 
     const carts = screen.getAllByTestId('gs-cart');
     expect(carts).toHaveLength(2);
     const track = within(carts[0]!).getByRole('list', { name: /퀘스트 5\/7 · 지금 오너 승인/ });
-    expect(track.querySelectorAll('.gs-node')).toHaveLength(7);
+    expect(track.querySelectorAll('.gs-dot')).toHaveLength(7);
+    expect(track.querySelector('.gs-dot.active')?.getAttribute('aria-label')).toBe('오너 승인 진행 중');
+    expect(carts[0]!.textContent).toContain('오너 승인 기다리는 중');
+    expect(carts[0]!.querySelectorAll('.gs-badge')).toHaveLength(1);
     expect(within(carts[0]!).getByTestId('gs-next').textContent).toContain('오너 OK 필요');
     expect(within(carts[0]!).getByRole('link', { name: /플레이/ }).getAttribute('href')).toBe('/api/hub/file/scodex/brawl/dist/index.html');
     expect(within(carts[1]!).getByTestId('gs-next').textContent).toContain('막힘 해결');
-    expect(within(carts[1]!).getByText(/레퍼런스/).textContent).toContain('Bored Brawl');
+    expect(carts[1]!.querySelector('.gs-badge')?.textContent).toBe('제작 중');
+    expect(carts[1]!.textContent).toContain('에셋에서 막힘');
+    // lineage, repos, tests sit behind 자세히
+    const more = carts[1]!.querySelector('details.gs-more') as HTMLDetailsElement;
+    expect(more.open).toBe(false);
+    expect(more.textContent).toContain('레퍼런스Bored Brawl');
     expect(screen.getByRole('link', { name: /파이프라인 문서/ }).getAttribute('href')).toBe('/api/hub/game-pipeline');
   });
 
-  it('filters the loot by game and opens a viewer', () => {
+  it('caps the loot and the quest log behind 더 보기, and opens a viewer', () => {
     HTMLDialogElement.prototype.showModal ??= function (this: HTMLDialogElement) { this.open = true; };
-    render(<GameStudioHome studio={STUDIO} now={T} />);
-    const loot = screen.getByRole('region', { name: '획득한 결과물' });
-    expect(loot.querySelectorAll('.gs-thumb')).toHaveLength(2);
-    fireEvent.click(within(loot).getByRole('button', { name: 'Neon 2' }));
-    expect(loot.querySelectorAll('.gs-thumb')).toHaveLength(1);
-    fireEvent.click(within(loot).getByRole('button', { name: /Neon 2 c.png 크게 보기/ }));
-    expect(document.querySelector('.gs-viewer')?.textContent).toContain('c.png');
+    const loot = Array.from({ length: 9 }, (_, i) => ({ ...STUDIO.loot[i % 2]!, src: `/api/hub/file/sjobs/q/${i}.png`, name: `${i}.png` }));
+    const feed = Array.from({ length: 8 }, (_, i) => ({ ...STUDIO.feed[0]!, text: `소식 ${i}` }));
+    render(<GameStudioHome studio={{ ...STUDIO, loot, feed }} now={T} />);
+    const sec = screen.getByRole('region', { name: '결과물' });
+    expect(sec.querySelectorAll('.gs-thumb')).toHaveLength(6);
+    expect(sec.querySelector('.gs-thumb-cap')?.textContent).toBe('Bored Brawl');
+    fireEvent.click(within(sec).getByRole('button', { name: '더 보기 (3)' }));
+    expect(sec.querySelectorAll('.gs-thumb')).toHaveLength(9);
+    const log = screen.getByRole('region', { name: '퀘스트 로그' });
+    expect(log.querySelectorAll('li')).toHaveLength(5);
+    fireEvent.click(within(log).getByRole('button', { name: '더 보기 (3)' }));
+    expect(log.querySelectorAll('li')).toHaveLength(8);
+    fireEvent.click(within(sec).getByRole('button', { name: /Neon 2 1.png 크게 보기/ }));
+    expect(document.querySelector('.gs-viewer')?.textContent).toContain('1.png');
   });
 
   it('kst formats Seoul time and reads 기록 없음 for nothing', () => {
