@@ -11,7 +11,7 @@
 import path from 'node:path';
 import type { HubAlert, HubCardItem, HubImage, HubKpi, HubLink, HubMetricValue, HubMode, HubSection, HubSource, HubState, HubStep } from '../../shared/hub-types';
 import { hubFileUrl } from './files';
-import { DAY_MS, IDLE_DAYS, agoFrom, fmtAgo, fmtDate, fmtKst, fmtNum, isObj, kpi, latestIso, num, page, scrub, sec, sortAlerts, str, toIso, type HubDeps } from './shared';
+import { DAY_MS, IDLE_DAYS, SLOW_CACHE_MS, agoFrom, fmtAgo, fmtDate, fmtKst, fmtNum, isObj, kpi, latestIso, num, page, scrub, sec, slowCache, sortAlerts, str, toIso, type HubDeps, type SlowResult } from './shared';
 
 /* ───────── helpers (studio-local; `fmtBytes` and `statBudget` would belong in shared.ts) ───────── */
 
@@ -543,4 +543,22 @@ export async function collectGame(deps: HubDeps): Promise<HubMode> {
   const links: HubLink[] = [];
   for (const g of deployed) if (!links.some((l) => l.href === g.deployUrl)) links.push({ label: deployed.length > 1 ? `Vercel · ${g.slug}` : 'Vercel', href: g.deployUrl! });
   return { id: 'game', name: '게임 스튜디오', state, lastActivity, metrics, alerts: sortAlerts(alerts), links, sources: [source], page: page(headline, decision, kpis, sections) };
+}
+
+/* ───────── cache ───────── */
+
+type StudioCaches = Record<'video' | 'game', () => Promise<SlowResult<HubMode>>>;
+/** Keyed by the deps object (tests get a fresh cache per fake deps). */
+const studioCaches = new WeakMap<HubDeps, StudioCaches>();
+
+/** The studio card from a 60 s cache (SLOW_CACHE_MS.studio): the walks behind it need not run on every 15 s hub pass. */
+export async function collectStudioCached(deps: HubDeps, which: 'video' | 'game'): Promise<HubMode> {
+  let c = studioCaches.get(deps);
+  if (!c) {
+    c = { video: slowCache(SLOW_CACHE_MS.studio, () => collectVideo(deps), deps.now), game: slowCache(SLOW_CACHE_MS.studio, () => collectGame(deps), deps.now) };
+    studioCaches.set(deps, c);
+  }
+  const r = await c[which]();
+  if (r.value === null) throw new Error(r.error ?? '오류');
+  return r.value;
 }

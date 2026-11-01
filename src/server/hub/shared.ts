@@ -15,7 +15,7 @@ export const HUB_TIMEOUTS = {
   firstWait: 4_000,
 } as const;
 /** Slow sources keep their own answer this long (the hub cache is 15 s; ssh/psql/500 KB JSON should not run that often). */
-export const SLOW_CACHE_MS = { ops: 60_000, ssh: 120_000, psql: 60_000, nexus: 20_000, quant: 60_000, /** ver2 equity (~6k rows) and trades/events: once a minute is plenty. */ ver2: 60_000 } as const;
+export const SLOW_CACHE_MS = { ops: 60_000, ssh: 120_000, psql: 60_000, nexus: 20_000, quant: 60_000, /** ver2 equity (~6k rows) and trades/events: once a minute is plenty. */ ver2: 60_000, /** 영상/게임 studios: directory walks, 50 episodes, 10 `git log`s. */ studio: 60_000 } as const;
 /** A slow source's last good answer is still shown this long after it stopped answering (marked 이전 값 사용); older, the source counts as down. */
 export const STALE_LIMIT_MS = { nexus: 5 * 60_000 } as const;
 

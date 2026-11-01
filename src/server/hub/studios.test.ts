@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { HubSection } from '../../shared/hub-types';
 import type { HubDeps } from './shared';
-import { blockerKo, collectGame, collectVideo, episodeSteps, fmtBytes, gateWord, parseBacklogNow, parseProjectYaml } from './studios';
+import { blockerKo, collectGame, collectStudioCached, collectVideo, episodeSteps, fmtBytes, gateWord, parseBacklogNow, parseProjectYaml } from './studios';
 
 const NOW = Date.parse('2026-10-30T13:00:00Z'); // 22:00 KST
 const HOME = '/Users/alice';
@@ -397,5 +397,22 @@ describe('fmtBytes', () => {
     expect(fmtBytes(934)).toBe('934 B');
     expect(fmtBytes(559482)).toBe('546 KB');
     expect(fmtBytes(18497751)).toBe('17.6 MB');
+  });
+});
+
+describe('studio cache', () => {
+  it('reuses a card for 60 s per deps (no directory walk on every hub pass), then collects again', async () => {
+    let now = NOW; let lists = 0;
+    const base = deps({ dirs: { games: ['a'] }, files: { 'games/a/README.md': '# A' } });
+    const d: HubDeps = { ...base, now: () => now, listDir: async (p) => { lists++; return base.listDir(p); } };
+    const first = await collectStudioCached(d, 'game');
+    const n = lists;
+    expect(n).toBeGreaterThan(0);
+    now += 59_999;
+    expect(await collectStudioCached(d, 'game')).toBe(first);
+    expect(lists).toBe(n);
+    now += 1;
+    await collectStudioCached(d, 'game');
+    expect(lists).toBeGreaterThan(n);
   });
 });

@@ -132,8 +132,10 @@ export function createMiniStatus(deps: MiniDeps): MiniStatusService {
   };
   return {
     async status() {
-      const wait = new Promise<void>((r) => setTimeout(r, deps.hubTimeoutMs ?? HUB_TIMEOUT_MS).unref?.());
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const wait = new Promise<void>((r) => { timer = setTimeout(r, deps.hubTimeoutMs ?? HUB_TIMEOUT_MS); timer.unref?.(); });
       await Promise.race([refreshHub(), wait]);
+      if (timer !== null) clearTimeout(timer);
       return buildMiniStatus(deps, lastHub);
     },
   };

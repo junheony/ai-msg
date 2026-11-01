@@ -36,7 +36,12 @@ describe('MiniTracker', () => {
     expect(tr.session('s1')!.waitingOn).toBeNull();
     tr.observe({ type: 'question_request', ...scope, requestId: 'q1', questions: [] });
     expect(tr.session('s1')!.waitingOn).toBe('q1');
-    tr.resolved('q1');
+    tr.observe({ type: 'question_resolved', requestId: 'q1', answers: null });
+    expect(tr.session('s1')!.waitingOn).toBeNull();
+    tr.observe({ type: 'permission_request', ...scope, requestId: 'p2', toolName: 'Bash', input: {}, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: true, sessionLabel: null });
+    tr.observe({ type: 'permission_resolved', requestId: 'other', decision: 'once' });
+    expect(tr.session('s1')!.waitingOn).toBe('p2');
+    tr.observe({ type: 'permission_resolved', requestId: 'p2', decision: 'once' });
     expect(tr.session('s1')!.waitingOn).toBeNull();
   });
 

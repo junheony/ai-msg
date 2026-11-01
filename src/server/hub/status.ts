@@ -17,7 +17,7 @@ import {
   DAY_MS, DEFAULT_LINKS, HOUR_MS, HUB_CACHE_MS, HUB_TIMEOUTS, HUB_URLS, SECRET_FIELD_RE, STALLED_S, SYSTEMD_PROPS, agoFrom, bool, downMode, errorText, fmtAgo, fmtClock, fmtDuration, fmtInt, fmtKst, fmtNum, fmtUsd,
   isObj, kpi, latestIso, num, objs, page, probe, scrub, sec, sortAlerts, str, stripSecrets, toIso, type HubDeps, type HubSelf, type HubSelfSeat,
 } from './shared';
-import { collectGame, collectVideo } from './studios';
+import { collectStudioCached } from './studios';
 import { collectYapping } from './yapping';
 
 export { DEFAULT_LINKS, HUB_CACHE_MS, HUB_TIMEOUTS, HUB_URLS, SECRET_FIELD_RE, errorText, fmtDuration, stripSecrets, toIso } from './shared';
@@ -93,8 +93,8 @@ const NAMES: Record<HubModeId, string> = { msg: 'MSG 터미널', nexus: 'NEXUS',
 /** One pass over every source. A collector that throws (it should not) becomes an `unknown` card; this never rejects. */
 export async function collectHubStatus(deps: HubDeps): Promise<HubStatus> {
   const runs: Record<HubModeId, () => Promise<HubMode> | HubMode> = {
-    msg: () => collectMsg(deps), nexus: () => collectNexus(deps), trading: () => collectTrading(deps), video: () => collectVideo(deps),
-    game: () => collectGame(deps), ops: () => collectOps(deps), updown: () => collectUpdown(deps), quant: () => collectQuant(deps), yapping: () => collectYapping(deps),
+    msg: () => collectMsg(deps), nexus: () => collectNexus(deps), trading: () => collectTrading(deps), video: () => collectStudioCached(deps, 'video'),
+    game: () => collectStudioCached(deps, 'game'), ops: () => collectOps(deps), updown: () => collectUpdown(deps), quant: () => collectQuant(deps), yapping: () => collectYapping(deps),
   };
   const settled = await Promise.allSettled(ORDER.map(async (id) => runs[id]()));
   const modes = settled.map((r, i): HubMode => {
