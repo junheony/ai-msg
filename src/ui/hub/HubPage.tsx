@@ -8,6 +8,7 @@ import { modeDef, STATE_LABEL, stateClass } from './modes';
 import { relTime } from './time';
 import { ReplayTrainer } from './replay/ReplayTrainer';
 import { SrPanel } from './sr/SrPanel';
+import { LabPanel } from './lab/LabPanel';
 
 /* ───────── atoms shared with the 개요 ───────── */
 
@@ -204,6 +205,7 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
       </header>
       {error && <div className="hub-notice" role="alert">상태를 불러오지 못했어요 · {error}</div>}
       {!mode && !error && <div className="hub-notice muted">상태를 불러오는 중…</div>}
+      {modeKey === 'trading' && <LabPanel now={now} />}
       {mode && <Lead state={mode.state} headline={headlineOf(mode)} decision={decisionOf(mode)} />}
       {kpis.length > 0 && <div className="kpis" data-testid="hub-kpis">{kpis.map((k, i) => <Kpi key={i} k={k} />)}</div>}
       {mode && (

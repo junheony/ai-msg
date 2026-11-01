@@ -222,7 +222,9 @@ describe('ws: the sidebar times stay current', () => {
     const later = new Date(before + 120_000);
     await fs.appendFile(fileOf(cwd, S), line('cli', 'from a terminal'));
     await fs.utimes(fileOf(cwd, S), later, later);
-    expect(lastOf(await a.next('index', (m) => (lastOf(m, S) ?? 0) > before), S)).toBe(later.getTime());
+    // Compare the filesystem's stored precision, not the requested Date milliseconds.
+    const actualMtime = (await fs.stat(fileOf(cwd, S))).mtimeMs;
+    expect(lastOf(await a.next('index', (m) => (lastOf(m, S) ?? 0) > before), S)).toBe(actualMtime);
     a.close();
   });
 

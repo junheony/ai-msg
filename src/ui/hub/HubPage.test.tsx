@@ -6,6 +6,7 @@ import { HubOverview } from './HubOverview';
 import { hubStatusFixture } from './__fixtures__/status';
 
 // The SR panel reads the server on mount and has its own test (sr/SrPanel.test.tsx); the page test only needs its frame.
+vi.mock('./lab/LabPanel', () => ({ LabPanel: () => <section data-testid="lab-panel" /> }));
 vi.mock('./sr/SrPanel', () => ({ SrPanel: () => <section data-testid="sr-panel" /> }));
 
 const T = Date.parse('2026-10-30T13:00:00Z');
@@ -145,4 +146,10 @@ describe('HubOverview', () => {
     expect(screen.getByText('15초 폴링')).toBeTruthy();
     expect(screen.getByRole('alert').textContent).toContain('마지막 성공 2분 전');
   });
+});
+
+it('mounts lab before legacy summaries even when trading data is missing', () => {
+  const { container } = page('trading', { mode: undefined });
+  expect(screen.getByTestId('lab-panel')).toBeTruthy();
+  expect(container.querySelector('[data-testid="tr-paper"]')).toBeNull();
 });

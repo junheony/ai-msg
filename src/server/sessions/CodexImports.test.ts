@@ -72,12 +72,16 @@ describe('CodexRolloutIndex', () => {
     expect(first).toBe(5);
 
     // Appending (the thread goes on) only bumps activity; the head is not re-read.
+    const priorActivity = idx.lookup(DESKTOP_ID)!.lastModified;
     await fs.appendFile(desktop, jsonl([assistant('more')]));
     const later = new Date(Date.now() + 60_000);
     await fs.utimes(desktop, later, later);
+    // Filesystems can round the requested timestamp to fractional milliseconds.
+    const actualMtime = (await fs.stat(desktop)).mtimeMs;
     await idx.refresh();
     expect(reads).toBe(first);
-    expect(idx.lookup(DESKTOP_ID)?.lastModified).toBe(later.getTime());
+    expect(idx.lookup(DESKTOP_ID)?.lastModified).toBe(actualMtime);
+    expect(actualMtime).toBeGreaterThan(priorActivity);
   });
 
   it('lists `codex exec` threads of any age (codexExec), gone folders too, not sub-agents', async () => {

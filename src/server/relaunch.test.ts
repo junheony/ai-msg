@@ -53,9 +53,11 @@ describe('scripts/relaunch.sh', () => {
   }, 15_000);
 
   it('only one loop at a time: a second start is refused; stop ends the loop but leaves the server running', async () => {
-    const w = await world('echo "server up $$" >> "$HOME/../server.pid" 2>/dev/null; sleep 30');
+    const w = await world('echo "server up $$"; exec sleep 30');
     const loop = w.run(); procs.push(loop);
-    await w.until((t) => t.includes('루프 시작'));
+    const loopClosed = new Promise<void>((resolve) => loop.once('close', () => resolve()));
+    const ready = await w.until((t) => /^server up \d+$/m.test(t));
+    const serverPid = Number(/^server up (\d+)$/m.exec(ready)?.[1]);
     const pid = Number((await fs.readFile(path.join(w.conf, 'relaunch.pid'), 'utf8')).trim());
     expect(pid).toBe(loop.pid);
 
@@ -68,15 +70,13 @@ describe('scripts/relaunch.sh', () => {
     expect(status.code).toBe(0);
     expect(status.out).toContain(`pid ${pid}`);
 
-    // The server (here: a sleeping bash) is the loop's child; stopping the loop must not take it down.
-    const children = await new Promise<string>((resolve) => { let out = ''; const ps = spawn('pgrep', ['-P', String(pid)]); ps.stdout.on('data', (d: Buffer) => { out += d.toString(); }); ps.on('close', () => resolve(out)); });
-    const serverPid = Number(children.trim().split('\n')[0]);
+    // The fake server reports its own PID before exec; transient startup helpers are not the server.
     expect(serverPid).toBeGreaterThan(0);
 
     const stop = await w.finished(w.run('stop'));
     expect(stop.code).toBe(0);
     expect(stop.out).toContain('서버는 그대로');
-    await new Promise<void>((r) => loop.on('close', () => r()));
+    await loopClosed;
     expect(await fs.access(path.join(w.conf, 'relaunch.pid')).then(() => true, () => false)).toBe(false);
     expect(() => process.kill(serverPid, 0)).not.toThrow();
     process.kill(serverPid, 'SIGKILL');
