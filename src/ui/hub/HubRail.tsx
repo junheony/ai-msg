@@ -18,11 +18,11 @@ export function HubRail({ mode, status, onChange, mac }: { mode: HubModeKey; sta
     <nav ref={nav} className="rail" aria-label="모드" data-testid="hub-rail">
       {HUB_MODES.map((m, i) => {
         const on = m.id === mode;
-        const st = m.id === 'home' ? null : status?.modes.find((x) => x.id === m.id)?.state ?? null;
-        const kbd = `${mac ? '⌘' : 'Ctrl+'}${modeDigit(i)}`;
+        const st = m.id === 'home' || m.id === 'research' ? null : status?.modes.find((x) => x.id === m.id)?.state ?? null;
+        const digit = modeDigit(i);
         return (
           <button key={m.id} type="button" className={`rail-btn${on ? ' on' : ''}`} aria-current={on ? 'page' : undefined} data-mode={m.id}
-            aria-label={st ? `${m.label} · ${STATE_LABEL[st]}` : m.label} title={`${m.label} (${kbd})`} onClick={() => onChange(m.id)}>
+            aria-label={st ? `${m.label} · ${STATE_LABEL[st]}` : m.label} title={digit === null ? m.label : `${m.label} (${mac ? '⌘' : 'Ctrl+'}${digit})`} onClick={() => onChange(m.id)}>
             <span className="rail-ico"><HubIcon name={m.icon} size={18} />{st && <i className={`hub-dot ${stateClass(st)}`} />}</span>
             <span className="rail-label">{m.short}</span>
           </button>

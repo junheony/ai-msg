@@ -51,10 +51,10 @@ describe('MSG hub shell', () => {
   });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-  it('starts in the terminal with the rail in place: ten modes, no overlay, no polling, and Ctrl+1 keeps its pinned-row meaning', async () => {
+  it('starts in the terminal with the rail in place: every mode, no overlay, no polling, and Ctrl+1 keeps its pinned-row meaning', async () => {
     await boot();
     expect(switcher().getAttribute('aria-label')).toBe('모드: MSG 터미널');
-    expect(railButtons().map((b) => b.dataset.mode)).toEqual(['home', 'msg', 'nexus', 'trading', 'video', 'game', 'ops', 'updown', 'quant', 'yapping']);
+    expect(railButtons().map((b) => b.dataset.mode)).toEqual(['home', 'msg', 'nexus', 'trading', 'video', 'game', 'ops', 'updown', 'quant', 'yapping', 'research']);
     expect(railButtons()[1]!.getAttribute('aria-current')).toBe('page');
     // The rail is the body's first child and the terminal its sibling: it never moves between modes.
     const body = document.querySelector('.body')!;
@@ -118,7 +118,7 @@ describe('MSG hub shell', () => {
     await boot();
     fireEvent.click(switcher());
     const items = screen.getAllByRole('menuitemradio');
-    expect(items.map((i) => i.textContent?.replace(/⌘\d|Ctrl\+\d/g, '').trim())).toEqual(['개요', 'MSG 터미널', 'NEXUS', 'Trading Room', '영상 스튜디오', '게임 스튜디오', 'OPS · 펍덱', 'UPDOWN', 'QUANT', '야핑봇']);
+    expect(items.map((i) => i.textContent?.replace(/⌘\d|Ctrl\+\d/g, '').trim())).toEqual(['개요', 'MSG 터미널', 'NEXUS', 'Trading Room', '영상 스튜디오', '게임 스튜디오', 'OPS · 펍덱', 'UPDOWN', 'QUANT', '야핑봇', '리서치']);
     expect(items[1]!.getAttribute('aria-checked')).toBe('true');
     fireEvent.click(items[0]!);
     const overview = await screen.findByTestId('hub-overview');

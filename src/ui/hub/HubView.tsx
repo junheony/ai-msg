@@ -1,6 +1,7 @@
 import { memo, useEffect, useState } from 'react';
 import { HubOverview } from './HubOverview';
 import { HubPage } from './HubPage';
+import { ResearchPage } from './research/ResearchPanel';
 import type { HubModeKey } from './modes';
 import type { HubFeed } from './useHubStatus';
 
@@ -13,6 +14,7 @@ export const HubView = memo(function HubView({ mode, onChangeMode, feed, pushOn 
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30_000); return () => clearInterval(t); }, []);
   useEffect(() => { setNow(Date.now()); }, [feed.fetchedAt]);
   if (mode === 'msg') return null;
+  if (mode === 'research') return <div className="hub-main" data-mode={mode}><ResearchPage /></div>;
   return (
     <div className="hub-main" data-mode={mode}>
       {mode === 'home'
