@@ -326,7 +326,7 @@ async function loadStudioGame(ctx: Ctx, m: Manifest, agentsByJob: Map<string, St
   // Cover: the manifest's cover, else the newest screenshot / concept image.
   let cover: StudioArtifact | null = null;
   const coverAbs = m.cover ? ex(m.cover) : null;
-  if (coverAbs && kindOf(coverAbs) === 'image') { const ms = await stat(coverAbs); const src = studioFileUrl(home, coverAbs); if (ms !== null && src) cover = { src, kind: 'image', group: 'cover', name: path.basename(coverAbs), at: msIso(ms), game: m.id, gameTitle: m.title, job: jobOf(home, coverAbs) }; }
+  if (coverAbs && kindOf(coverAbs) === 'image') { const ms = await deps.fileMtime(coverAbs).catch(() => null); /* outside the stat budget: an explicit cover must never lose to a busy studio (≤ MAX_GAMES calls) */ const src = studioFileUrl(home, coverAbs); if (ms !== null && src) cover = { src, kind: 'image', group: 'cover', name: path.basename(coverAbs), at: msIso(ms), game: m.id, gameTitle: m.title, job: jobOf(home, coverAbs) }; }
   cover ??= loot.find((a) => a.kind === 'image' && a.group === 'screenshots') ?? loot.find((a) => a.kind === 'image') ?? null;
   // Agents linked to this game; the newest one decides whether the active stage is blocked.
   const agents = m.jobs.map((j) => agentsByJob.get(j)).filter((a): a is StudioAgent => !!a);
