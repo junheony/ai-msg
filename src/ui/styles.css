@@ -3168,3 +3168,126 @@ table.t { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); font-
   .hub-menu { width: min(300px, calc(100vw - 16px)); }
   .hub-switch { height: var(--phone-tap); padding: 0 6px 0 4px; border: 0; background: transparent; box-shadow: none; }
 }
+
+/* BRIEF6: the terminal workbench. Scope chrome to terminal mode; hub pages keep their own rhythm. */
+.chat { --composer-fade: 16px; }
+:root:not([data-width="wide"]) .chat { --read-width: 960px; }
+:root[data-width="wide"] .chat { --read-width: 1040px; }
+.chat .chat-body { padding: 22px 32px 28px; gap: 20px; }
+.panes[data-count="1"] .chat .chat-body > *,
+.panes[data-count="1"] .chat .composer-wrap > * { max-width: var(--read-width); }
+.chat .msg.assistant { gap: 10px; }
+.chat .msg.assistant > .markdown { line-height: 1.75; overflow-wrap: anywhere; }
+.chat .msg.assistant > .markdown p { margin-top: 0; margin-bottom: .9em; }
+.chat .msg.assistant > .markdown p:last-child { margin-bottom: 0; }
+.chat .msg.assistant > .markdown li + li { margin-top: .35em; }
+.chat .msg.user { margin-top: 10px; margin-bottom: 8px; }
+.chat .msg.user pre { max-width: min(84%, 720px); padding: 14px 20px; background: color-mix(in srgb, var(--accent) 15%, var(--panel)); border-radius: 16px 16px 4px 16px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 19%, var(--line)); line-height: 1.7; }
+.chat .turn-foot { min-height: 24px; gap: 9px; }
+.chat .turn-foot .msg-model { background: transparent; box-shadow: none; padding-left: 0; color: var(--faint); }
+@media (hover: hover) {
+  .chat .quiet-model .turn-foot > :not(.msg-actions):not(.role-badge) { opacity: 0; transition: opacity var(--t-fast); }
+  .chat .quiet-model:hover .turn-foot > *, .chat .quiet-model:focus-within .turn-foot > * { opacity: 1; }
+}
+.activity-steps { color: var(--muted); font-size: var(--fs-sm); min-width: 0; }
+.activity-steps > summary { display: flex; align-items: center; gap: 9px; width: fit-content; max-width: 100%; min-height: 32px; list-style: none; cursor: pointer; border-radius: 6px; padding: 2px 5px 2px 0; }
+.activity-steps > summary::-webkit-details-marker { display: none; }
+.activity-steps > summary:hover { color: var(--fg); }
+.activity-steps > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.activity-caret { display: inline-block; width: 14px; text-align: center; font-size: var(--fs-lg); line-height: 1; }
+.activity-steps[open] > summary .activity-caret { transform: rotate(90deg); }
+.activity-title { font-weight: 500; white-space: nowrap; }
+.activity-count { color: var(--faint); font-size: var(--fs-xs); }
+.activity-steps.live .activity-title { color: var(--accent); }
+.activity-steps.live .activity-caret { color: var(--accent); }
+.activity-errors { color: var(--danger); font-size: var(--fs-xs); }
+.activity-steps-body { margin: 8px 0 6px 6px; padding: 4px 0 4px 18px; border-left: 1px solid var(--line-strong); display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.activity-step { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 7px; }
+.activity-step > * { max-width: 100%; }
+.activity-source { font-size: var(--fs-2xs); color: var(--faint); }
+.activity-step .tool-group > summary, .activity-step .tool-call > summary { background: transparent; box-shadow: none; padding-left: 0; }
+.reply-status { display: inline-flex; align-items: center; align-self: flex-start; gap: 6px; width: fit-content; padding: 3px 8px; border-radius: 5px; font-size: var(--fs-2xs); font-weight: 650; line-height: 1.35; }
+.reply-status::before, .preview-status { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.reply-status.success, .preview-status.success { color: var(--ok); }
+.reply-status.partial, .preview-status.partial { color: var(--warn); }
+.reply-status.blocked, .preview-status.blocked { color: var(--danger); }
+.reply-status.success { background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.reply-status.partial { background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.reply-status.blocked { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.chat .composer-wrap { padding-left: 32px; padding-right: 32px; }
+.chat .composer { border-radius: 14px; background: var(--panel); border: 1px solid var(--line-strong); box-shadow: 0 5px 18px rgba(0, 0, 0, .12); }
+.chat .composer:focus-within { border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 15%, transparent); }
+.chat .composer-top { padding: 10px 15px 2px; }
+.chat .composer .session-chip { min-height: 32px; border-radius: 7px; background: var(--bg-raised); color: var(--fg); padding: 0 10px; box-shadow: inset 0 0 0 1px var(--line); }
+.chat .composer .sc-model { font-weight: 600; }
+.chat .composer textarea { min-height: 52px; padding: 8px 18px 6px; line-height: 1.65; }
+.chat .composer textarea::placeholder { color: var(--faint); }
+.chat .composer-status:has(.ctx-hint) { padding: 0 18px 6px; }
+.chat .composer-status .ctx-hint { padding: 0; margin: 0; color: var(--faint); font-size: var(--fs-2xs); }
+.chat .composer-row { padding: 6px 12px 8px; gap: 10px; border-top: 1px solid var(--line); }
+.composer-shortcut { font-size: var(--fs-2xs); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat .composer .attach { border-radius: 9px; background: var(--bg-raised); border: 1px solid var(--line); }
+.chat .composer .send { width: 38px; height: 38px; border-radius: 10px; }
+.chat .composer .send:not(:disabled):not(.stop) { background: var(--btn-primary-bg); color: var(--btn-primary-fg); }
+.app[data-terminal] .sidebar li.session-item { min-height: 66px; border-radius: 10px; }
+.app[data-terminal] .sidebar li.session-item.active { --row-tint: color-mix(in srgb, var(--accent) 12%, var(--sidebar)); background: var(--row-tint); box-shadow: inset 3px 0 0 var(--accent); }
+.app[data-terminal] .sidebar .row-text { gap: 6px; }
+.app[data-terminal] .sidebar .session-title { line-height: 1.35; }
+.app[data-terminal] .sidebar li.active .session-title { font-weight: 650; }
+.app[data-terminal] .sidebar .session-meta { font-size: var(--fs-xs); }
+.usage-out-count { display: none; }
+.app[data-terminal] .usage-strip .usage-out { display: none; }
+.app[data-terminal] .usage-out-count { display: inline-flex; padding-left: 9px; margin-left: 4px; border-left: 1px solid var(--line-strong); color: var(--muted); font-size: var(--fs-xs); }
+.app[data-terminal] .usage-strip { background: transparent; box-shadow: none; border: 1px solid var(--line); padding: 4px 8px; min-height: 32px; border-radius: 8px; }
+@container pane (max-width: 600px) {
+  .chat .chat-body { padding: 16px 18px 22px; gap: 18px; }
+  .chat .composer-wrap { padding-left: 14px; padding-right: 14px; }
+  .chat .composer-shortcut { display: none; }
+  .chat .composer .sc-extra { display: none; }
+  .chat .msg.user pre { max-width: 92%; padding: 12px 16px; }
+}
+@media (max-width: 720px) {
+  .chat .chat-body { padding: 14px 18px 20px; gap: 18px; }
+  .chat .composer-wrap { padding-left: 10px; padding-right: 10px; }
+  .chat .composer-top { padding: 10px 10px 2px; }
+  .chat .composer textarea { min-height: 48px; padding: 8px 14px 6px; }
+  .chat .composer-status:has(.ctx-hint) { padding-left: 14px; padding-right: 14px; }
+  .chat .composer-row { padding: 6px 8px 8px; }
+  .chat .composer .send, .chat .composer .attach { width: 44px; height: 44px; }
+  .activity-steps > summary { min-height: 44px; gap: 7px; }
+  .activity-count { font-size: var(--fs-2xs); }
+  .app[data-terminal] .usage-out-count { padding-left: 5px; margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat .quiet-model .turn-foot > * { transition: none; }
+}
+
+@media (hover: none) {
+  .chat .quiet-model .turn-foot > .msg-model { display: none; }
+}
+
+/* Commentary does not reserve an invisible metadata row. Its controls occupy the inter-message gutter. */
+.chat .quiet-model:not(:has(.turn-badge, .role-badge)) { position: relative; padding-bottom: 6px; }
+.chat .quiet-model:not(:has(.turn-badge, .role-badge)) > .turn-foot { position: absolute; left: 0; bottom: -22px; margin-top: 0; min-height: 0; }
+.chat .composer .sc-seg + .sc-seg { margin-left: 9px; padding-left: 9px; border-left: 1px solid var(--line-strong); }
+.chat .composer .sc-dot { display: none; }
+.chat .composer .sc-acct { color: var(--muted); }
+@media (max-width: 720px) {
+  .app[data-terminal] .topbar .perm-badge-full { display: none; }
+  .app[data-terminal] .topbar .pane-head-chips > .perm-badge { padding: 0 5px; }
+  .app[data-terminal] .topbar .pane-head-chips { flex: 0 0 auto; }
+  .app[data-terminal] .topbar .pane-head { gap: 3px; }
+  .app[data-terminal] .topbar .head-chip-title { min-width: 0; }
+  .chat .composer .sc-seg + .sc-seg { margin-left: 7px; padding-left: 7px; }
+}
+
+/* Phone header reserves the session name; quota details remain in the same accessible disclosure. */
+@media (max-width: 720px) {
+  .app[data-terminal] .topbar { column-gap: 4px; }
+  .app[data-terminal] .topbar .usage-strip { padding: 4px 6px; }
+  .app[data-terminal] .topbar .usage-strip-head,
+  .app[data-terminal] .topbar .usage-summary .usage-seg-who,
+  .app[data-terminal] .topbar .usage-summary .usage-seg-bar,
+  .app[data-terminal] .topbar .usage-out-count { display: none; }
+  .app[data-terminal] .topbar .pane-head-chips > .perm-badge { padding: 0 3px; }
+}

@@ -127,3 +127,59 @@ No production unit was restarted/stopped, no protected service was modified, no 
 No required work is blocked.
 
 STATUS: DONE
+
+# Terminal redesign (BRIEF6)
+
+## Changes
+
+- Created `feat/terminal-redesign` from the fetched server main, `58b88d6`. Read `terminal-owner-1102.png` before implementation. The source repository `/home/max/ai-msg` was not modified.
+- `src/ui/terminalPresentation.ts`, `MessageView.tsx`, and `Chat.tsx`: combine consecutive tool/thinking records into quiet, expandable process groups, preserving original order, tool inspection, model provenance and turn boundaries. Narrative commentary remains visible. Repeated model labels appear on hover/focus; meaningful turn and role controls remain available. Explicit leading SUCCESS/PARTIAL/BLOCKED markers become small colored status tags.
+- `styles.css` and `App.tsx`: scope the redesign to Terminal, widen the normal transcript lane to 960px (wide setting 1040px), retain the larger Korean type scale, improve answer rhythm, distinguish user bubbles, and reduce repeated footer space. The hamburger remains exclusive to Terminal.
+- `Composer.tsx`, `Chat.tsx`, and `UsageStrip.tsx`: integrate cache state into a solid composer, clarify model/account/approval controls, enlarge send controls and simplify header quota summaries. Existing keyboard shortcuts and controls remain mounted.
+- `Sidebar.tsx`: remove markdown/status prefixes from previews, display status dots, and strengthen spacing and the active row. `FindBar.tsx` excludes content hidden inside any closed process disclosure. Historical-message memoization and grouped role summaries are covered by regression tests. `src/server/ws.tasks.test.ts` waits for server closure and uses bounded temporary-directory cleanup retries, fixing a teardown race found during validation without changing production code or assertions.
+- `scripts/qa/terminal-demo.ts`, `shoot-terminal.mjs`, `terminal-README.md`, `docs/terminal-redesign-plan.md`, and `shots-terminal/`: reproducible isolated real-session comparison, design decisions and browser inspection evidence.
+
+## Validation
+
+| Check | Final result |
+|---|---|
+| `npx vitest run --maxWorkers=4` | **357 files / 4,469 tests passed**, 83.24 s, exit 0 |
+| `npm run typecheck` | Passed |
+| `npm run build` | Passed, including bundle checks; final UI asset `main-xnOjKvfr.js` |
+| `node scripts/contrast-check.mjs` | All dark/light pairs passed |
+| `node scripts/qa/shoot-terminal.mjs shots-terminal before` | Eight baseline captures; same frozen real session and answer anchor |
+| `DIST="$PWD/dist/ui" node scripts/qa/shoot-terminal.mjs shots-terminal after` | Eight final captures; zero browser errors, failed API checks, error toasts or horizontal overflow |
+| `DIST=/home/max/msg-hub-design/repo/dist/ui LAYOUT_CHECKS=1 RDP_PORT=9344 node scripts/qa/shoot-terminal.mjs /tmp/terminal-final-layout-shots layout` | Final build passed 1.35× type scale, actual 400px split pane and 390px mobile composer bounds/menu checks |
+| Browser interactions | Process expand/collapse, options, model menu, usage menu and hamburger absence on home passed |
+| `git diff --check` | Passed |
+
+The fetched baseline passed 355 files / 4,446 tests. Validation exposed one fixed-pixel caret font-size violation and an existing WebSocket task fixture teardown race (`ENOTEMPTY` after all test assertions passed). The caret now uses the existing type token; the fixture awaits server closure before bounded cleanup. The font rule and all assertions were retained. The focused task suite passed all seven tests and typecheck after the fixture fix; the final full-suite result is above. Read-only review also identified and resolved historical-message rerenders, missing grouped role summaries and invisible nested search matches.
+
+## Before / after screenshots
+
+All screenshots use the same frozen long session and answer (normalized hash `cbc35fd3`). Desktop captures are 1440×900; mobile captures are 390×844 at device scale 1.
+
+| View | Before | After |
+|---|---|---|
+| Desktop tool-heavy turn | [before](shots-terminal/before-desktop-turn.png) | [after](shots-terminal/after-desktop-turn.png) |
+| Desktop long answer, top | [before](shots-terminal/before-desktop-answer-top.png) | [after](shots-terminal/after-desktop-answer-top.png) |
+| Desktop long answer, bottom | [before](shots-terminal/before-desktop-answer-bottom.png) | [after](shots-terminal/after-desktop-answer-bottom.png) |
+| Desktop session list | [before](shots-terminal/before-desktop-list.png) | [after](shots-terminal/after-desktop-list.png) |
+| Mobile tool-heavy turn | [before](shots-terminal/before-mobile-turn.png) | [after](shots-terminal/after-mobile-turn.png) |
+| Mobile long answer, top | [before](shots-terminal/before-mobile-answer-top.png) | [after](shots-terminal/after-mobile-answer-top.png) |
+| Mobile long answer, bottom | [before](shots-terminal/before-mobile-answer-bottom.png) | [after](shots-terminal/after-mobile-answer-bottom.png) |
+| Mobile session drawer | [before](shots-terminal/before-mobile-drawer.png) | [after](shots-terminal/after-mobile-drawer.png) |
+
+Personally inspected the before/after images and iterated on excessive footer gaps, composer height and mobile title space. The final turn replaces repeated pill stacks with compact process rows, keeps explanatory text visible, and gives the answer more usable width. Metrics are in `shots-terminal/before-inspection.json`, `after-inspection.json` and `layout-inspection.json`.
+
+## Reproduction and limits
+
+The owned, read-only demo runs on `127.0.0.1:9381`; occupied 9377 was left untouched. It freezes a production-parser snapshot of 1,000 real transcript messages (35 user, 490 assistant, 421 tool calls) from the Agentic Harness session, plus seven real sidebar titles/previews. Secret-shaped strings are redacted and tool payloads withheld; no raw transcript is committed. Usage is explicitly offline/empty, demo pin selection is synthetic, and fork status is an isolated no-divergence fixture. These are not claims about live account state.
+
+The browser uses a file-origin build and CDP bridge to the isolated host because HTTP main-frame navigation stalls in this environment. Unauthenticated reads return 401 and mutations return 405; the host cannot execute turns. Live queue/running-task controls were not exercised in the browser, although the full component suite passed. Leading bare uppercase status words followed by Korean text intentionally use the owner's report convention; ordinary prose beginning with the same pattern may also be tagged.
+
+The `frontend-design` skill was applied, with calibration from [The Seeker](https://ref.theseeker.io/?category=dashboard), [Refero](https://styles.refero.design/), [glass.samasante.com](https://glass.samasante.com/), [Navbar Gallery](https://navbar.gallery/), [Cursor Agent](https://cursor.com/docs/agent/overview), [Warp](https://www.warp.dev/ai) and [Raycast AI](https://www.raycast.com/core-features/ai). Existing hub tokens take precedence. Claude delegation was quota-blocked and the other external providers were unavailable; native delegated implementation, QA and review completed the work.
+
+No push, merge into main, deployment, unit restart, protected-service access or ledger change occurred. No required work remains blocked.
+
+STATUS: DONE

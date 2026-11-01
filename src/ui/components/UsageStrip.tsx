@@ -244,6 +244,7 @@ export function UsageStrip({ usage, current, next = null, grok = null, phone = f
             {out.map((s) => <span key={s.seat} className={`usage-out-pill ${s.kind}`} data-testid={`out-${s.seat}`}>{s.label}{!phone && <small>{outWord(s)}</small>}</span>)}
           </span>
         )}
+        {out.length > 0 && <span className="usage-out-count" aria-hidden="true">확인 {out.length}</span>}
         <span className="usage-strip-caret" aria-hidden="true">{pop ? '▴' : '▾'}</span>
       </button>
       {pop && (

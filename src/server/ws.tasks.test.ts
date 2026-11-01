@@ -86,7 +86,13 @@ beforeAll(async () => {
   origin = `http://127.0.0.1:${port}`;
   wsUrl = `ws://127.0.0.1:${port}/ws`;
 });
-afterAll(async () => { wsApi.close(); server.close(); await fs.rm(base, { recursive: true, force: true }); await fs.rm(work, { recursive: true, force: true }); });
+afterAll(async () => {
+  wsApi.close();
+  await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+  // Final task-state writes can settle after the last status event; match the bounded cleanup in ws.bottleneck.
+  await fs.rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  await fs.rm(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+});
 
 function open(): Promise<{ ws: WebSocket; msgs: ServerMessage[] }> {
   return new Promise((resolve, reject) => {

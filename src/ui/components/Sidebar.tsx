@@ -1,3 +1,4 @@
+import { sessionPreview, type ReplyStatus } from '../terminalPresentation';
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import type { EngineKind } from '../../shared/models';
 import type { SessionActivity } from '../../shared/protocol';
@@ -316,9 +317,10 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
    * Line 2: the last reply's preview when there is one, else the project folder. Only a non-Claude engine gets a mark (a
    * 12px muted glyph up front); a row deck cannot continue gets a one-word tag. Statuses are the row end's job.
    */
-  const metaLine = (p: { engine: EngineKind; tag?: string | null; text: string; title?: string }) => (
+  const metaLine = (p: { engine: EngineKind; tag?: string | null; text: string; title?: string; status?: ReplyStatus | null }) => (
     <span className="session-meta" {...(p.title ? { title: p.title } : {})}>
       {p.engine !== 'claude' && <MetaEngine engine={p.engine} />}
+      {p.status && <span className={`preview-status ${p.status.toLowerCase()}`} aria-label={`작업 상태: ${p.status}`} title={p.status} />}
       {p.tag && <span className="meta-tag">{p.tag}</span>}
       <span className="meta-text">{p.text}</span>
     </span>
@@ -354,8 +356,9 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     const current = !!currentSessionId && members.includes(currentSessionId);
     const engine = engineOf(target);
     // A 갈래 row shows its newest version (`target`): title and preview both come from it.
-    const preview = oneLine(target.preview);
-    const meta = metaLine({ engine, tag: rowTag(s), text: preview || slug, ...(s.imported ? { title: importTitle(s) } : {}) });
+    const parsedPreview = sessionPreview(target.preview);
+    const preview = parsedPreview.text;
+    const meta = metaLine({ engine, tag: rowTag(s), status: parsedPreview.status, text: preview || slug, ...(s.imported ? { title: importTitle(s) } : {}) });
     const avatarEl = avatarOf(slug, s.sessionId, target.title);
     // The row's tooltip keeps what the row stopped showing: folder, engine, run kind, 갈래, the time.
     const facts = [slug, engine !== 'claude' ? ENGINE_NAME[engine] ?? engine : null, s.codexExec || s.autoRun ? '자동 실행' : null, ...grokBotTags(s).filter((t) => !t.startsWith('안 읽음')), s.codexArchived ? 'Codex 보관' : null, s.cwdMissing ? '폴더 없음' : null, members.length > 1 ? `갈래 ${members.length}` : null, ago(target.lastModified, now)];
@@ -700,7 +703,6 @@ export function rowTag(s: SessionEntry): string | null {
 
 /** A preview as one line (the row truncates it with an ellipsis). */
 /** One line for the row. Fences and inline code drop out so a CSS reply does not become the preview. */
-const oneLine = (t: string | undefined) => (t ? t.replace(/```[\s\S]*?```/g, ' ').replace(/`[^`\n]*`/g, ' ').replace(/\s+/g, ' ').trim() : '');
 
 /** Line 2's engine glyph (non-Claude only): 12px, single colour (the line's muted grey), decorative — the tooltip names it. */
 function MetaEngine({ engine }: { engine: EngineKind }) {

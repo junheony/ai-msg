@@ -1365,7 +1365,7 @@ export function App() {
   const loginSeats = reauthWithUsage(reauth, state.usage);
   return (
     <AccountsContext value={accounts}>
-    <div className="app">
+    <div className="app" data-terminal={!hubShown ? 'true' : undefined}>
       <header className="topbar">
         {/* ☰ (phone drawer / tablet sidebar fold) is the terminal's: a hub mode has no sidebar to open, so the mode switch is the first thing top-left. */}
         {phone && !hubShown && <button type="button" className="menu" aria-label="메뉴" aria-expanded={drawer} onClick={() => setDrawer((d) => !d)}>☰</button>}

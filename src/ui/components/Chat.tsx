@@ -11,7 +11,7 @@ import { latestContext } from '../context';
 import { has } from '../features';
 import { latestTodos } from '../todos';
 import { useStickToBottom } from '../stickToBottom';
-import { mergeToolRuns } from '../toolRuns';
+import { presentTranscript } from '../terminalPresentation';
 import { ATTACHMENT_ONLY_TEXT, filesFrom, replaceAttachment, uploadFile, usePasteUploads, type UploadFn } from '../upload';
 import { AgentContext, BackgroundPill, StatusRow, type AgentCtx } from './Activity';
 import { useAccounts } from '../accounts';
@@ -329,7 +329,8 @@ export function Chat(p: ChatProps) {
   const composing = useRef(false);
   // A session switch mid-composition may never deliver its compositionend here: start the next session clean.
   useEffect(() => { composing.current = false; }, [p.sessionId]);
-  const shown = useMemo(() => mergeToolRuns(p.items), [p.items]);
+  const presented = useMemo(() => presentTranscript(p.items), [p.items]);
+  const shown = useMemo(() => presented.map((p) => p.item), [presented]);
   const keys = useMemo(() => messageKeys(shown), [shown]);
   const dividers = useMemo(() => timeDividers(shown), [shown]);
   const todos = useMemo(() => latestTodos(p.items), [p.items]);
@@ -579,7 +580,7 @@ export function Chat(p: ChatProps) {
         grip={p.headGrip} gripTitle={p.headGripTitle} {...(tm?.onRename ? { onRename: tm.onRename } : {})} groups={headGroups} toast={share.done}
         chips={(p.headChips || (p.onPermMode && permSupported && permMode === 'bypassPermissions')) ? <>
           {/* 모두 자동 승인 stays on the head as a warning; the other modes live in the composer's session chip. */}
-          {p.onPermMode && permSupported && permMode === 'bypassPermissions' && <span className="chip perm-badge perm-bypassPermissions" title={`${PERM_MODE_LABEL[permMode]} — ${permModeHint(permMode, effectiveEngine)}`} data-testid="perm-badge"><WarnIcon /><span className="perm-badge-full">{PERM_MODE_LABEL[permMode]}</span></span>}
+          {p.onPermMode && permSupported && permMode === 'bypassPermissions' && <span className="chip perm-badge perm-bypassPermissions" role="img" aria-label={PERM_MODE_LABEL[permMode]} title={`${PERM_MODE_LABEL[permMode]} — ${permModeHint(permMode, effectiveEngine)}`} data-testid="perm-badge"><WarnIcon /><span className="perm-badge-full">{PERM_MODE_LABEL[permMode]}</span></span>}
           {p.headChips}
         </> : null}
         trail={p.headActions} />
@@ -621,7 +622,7 @@ export function Chat(p: ChatProps) {
                 return (
                   <Fragment key={keys[i]}>
                     {at != null && <div className="msg-time" data-testid="msg-time"><time dateTime={new Date(at).toISOString()}>{timeLabel(at)}</time></div>}
-                    <MessageView item={it} cwd={p.cwd} last={i === shown.length - 1} />
+                    <MessageView item={it} cwd={p.cwd} last={i === shown.length - 1} steps={presented[i]!.steps} quietModel={presented[i]!.quietModel} />
                   </Fragment>
                 );
               })}
@@ -667,11 +668,12 @@ export function Chat(p: ChatProps) {
           </div>
         )}
         {p.handoffWriting && <div className="handoff-status" role="status" data-testid="handoff-status">인계 메모 작성 중… 끝나면 새 세션이 열리고 메모가 입력창에 들어갑니다</div>}
-        {!p.busy && <ContextHint info={ctx} onHandoff={p.onHandoff} cold={!pillCold} />}
         {p.composerNote && <div className="pane-notice notice composer-note" role="status" data-testid="composer-note"><span className="pane-notice-text">{p.composerNote}</span></div>}
         {p.onPickCwd && <button type="button" className="btn ghost retry" data-testid="grokbot-handoff-cwd" onClick={p.onPickCwd}>작업 폴더 바꾸기</button>}
         {p.onGrokBotHandoff && <button type="button" className="btn ghost retry" data-testid="grokbot-handoff" onClick={p.onGrokBotHandoff}>MSG Grok 새 세션으로 이어가기</button>}
         <Composer
+          status={!p.busy ? <ContextHint info={ctx} onHandoff={p.onHandoff} cold={!pillCold} /> : null}
+          shortcut={coarse ? null : sendKey === 'mod-enter' ? `${isMacPlatform() ? '⌘Enter' : 'Ctrl+Enter'} 보내기 · Enter 줄바꿈` : 'Enter 보내기 · Shift+Enter 줄바꿈'}
           dragover={drag && !p.readOnly}
           popup={suggest.popup}
           {...(ghost ? { hint: (
@@ -735,7 +737,7 @@ export function Chat(p: ChatProps) {
             // letter, swaps words with autocorrect and underlines code — prompts are not prose.
             autoCorrect="off" autoCapitalize="off" spellCheck={false}
             disabled={!!p.readOnly}
-            placeholder={p.readOnly ? p.readOnly : ghost ? ghost : queueing ? (steering ? (coarse ? '실행 중 · 보내면 다음 도구 실행 뒤 전달' : '실행 중 · Enter 로 보내면 다음 도구 실행 뒤 전달 · Esc 중단') : coarse ? '실행 중 · 보내면 대기열에 추가' : '실행 중 · Enter 로 대기열에 추가 · Esc 중단') : coarse ? '메시지 입력 · @ 파일 · / 명령' : (sendKey === 'mod-enter' ? '메시지 입력 · ⌘Enter 로 보내기 · Enter 줄바꿈' : '메시지 입력 · Enter 로 보내기 · Shift+Enter 줄바꿈')}
+            placeholder={p.readOnly ? p.readOnly : ghost ? ghost : queueing ? (steering ? (coarse ? '실행 중 · 보내면 다음 도구 실행 뒤 전달' : '실행 중 · Enter 로 보내면 다음 도구 실행 뒤 전달 · Esc 중단') : coarse ? '실행 중 · 보내면 대기열에 추가' : '실행 중 · Enter 로 대기열에 추가 · Esc 중단') : coarse ? '메시지 입력 · @ 파일 · / 명령' : '메시지 입력 · @ 파일 · / 명령'}
             aria-label="메시지"
             rows={1}
             // Not a form field: keeps iOS from showing its AutoFill (password/card/address) bar above the keyboard.

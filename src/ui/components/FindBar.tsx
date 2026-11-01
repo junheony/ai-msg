@@ -27,8 +27,12 @@ export function markHits(root: ParentNode, query: string): { marks: HTMLElement[
       const parent = t.parentElement;
       if (!parent || !t.data || parent.closest(SKIP)) continue;
       // Inside a closed disclosure (thinking, tool details): not on screen, so not a place to jump to.
-      const d = parent.closest('details');
-      if (d && !d.open && !parent.closest('summary')) continue;
+      let hidden = false;
+      for (let d = parent.closest('details'); d; d = d.parentElement?.closest('details') ?? null) {
+        const summary = d.querySelector(':scope > summary');
+        if (!d.open && !summary?.contains(parent)) { hidden = true; break; }
+      }
+      if (hidden) continue;
       texts.push(t);
     }
     for (const node of texts) {
