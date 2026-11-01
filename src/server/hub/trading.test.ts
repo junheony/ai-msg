@@ -3,7 +3,7 @@ import type { HubSection } from '../../shared/hub-types';
 import { botUrls } from './__fixtures__/trading-bots';
 import { HUB_URLS, stripSecrets, type HubDeps } from './shared';
 import { SNAPSHOT_FILE } from './tradingRoom';
-import { LANE_DOC, TRADING_DIR, TRADING_STATE_DIR, TRADING_TIMERS, checklistRows, collectTrading, goLiveSteps, laneRows, parseChecks, parseDbOut, parseGitLog, parseLaneDoc, paperRows, text } from './trading';
+import { LANE_DOC, TRADING_DIR, TRADING_STATE_DIR, TRADING_TIMERS, collectTrading, laneRows, parseChecks, parseDbOut, parseGitLog, parseLaneDoc, paperRows, text } from './trading';
 
 const NOW = Date.parse('2026-10-30T13:00:00Z'); // 22:00 KST
 const HOME = '/Users/alice';
@@ -116,28 +116,6 @@ describe('trading helpers', () => {
     expect(text(`~/.config/nexus/trade.env 와 ${HOME}/x`)).toBe('~/.config/nexus/trade.env 와 …');
     expect(text(42)).toBe('');
   });
-  it('goLiveSteps marks done steps from checks/ready flags and the first undone step active', () => {
-    const checks = parseChecks(GL);
-    const steps = goLiveSteps(GL, checks);
-    expect(steps.map((s) => `${s.label}:${s.state}`)).toEqual(['키 입력:active', '키 점검:todo', '소액 실측:todo', '레인 설정:todo', 'T2 섀도 게이트:todo', '자동:todo']);
-    expect(steps[0]!.hint).toBe('1/2 채움');
-    expect(steps[4]!.hint).toContain('순환 107');
-    const allKeys = { ...GL, ready: { ...GL.ready, smoke: true, lane_setup: true, lane_first: false }, checks: CHECKS.map((c) => (c.group === 'keys' ? { ...c, ok: true } : c)) };
-    const s2 = goLiveSteps(allKeys, parseChecks(allKeys));
-    expect(s2.map((s) => s.state)).toEqual(['done', 'done', 'done', 'active', 'todo', 'todo']);
-    expect(s2[3]!.hint).toBe('lane-setup 완료 · 첫 실이송 전');
-    const auto = { ...allKeys, ready: { ...allKeys.ready, lane_first: true, t2: true, auto: true } };
-    expect(goLiveSteps(auto, parseChecks(auto)).every((s) => s.state === 'done')).toBe(true);
-    expect(goLiveSteps(null, []).map((s) => s.state)).toEqual(['todo', 'todo', 'todo', 'todo', 'todo', 'todo']);
-  });
-  it('checklistRows puts failing checks first with Korean group names and scrubbed details', () => {
-    const rows = checklistRows(parseChecks(GL));
-    expect(rows.map((r) => r[2])).toEqual(['실패', '실패', '실패', '통과', '통과', '통과']);
-    expect(rows[0]).toEqual(['키', '바이빗 키', '실패', '… 비어 있음', '~/.config/nexus/trade.env 에 키 입력']);
-    expect(rows[2]![0]).toBe('실측');
-    expect(rows[3]![4]).toBe('—');
-    noHome(rows);
-  });
   it('paperRows lists live-desk overall + modes sorted by median desc, then maker overall/modes and top-3 slices', () => {
     const rows = paperRows(MAKER, DESK);
     expect(rows[0]!.slice(0, 5)).toEqual(['라이브 데스크', '전체', '11,694', '-0.70%', '41%']);
@@ -184,20 +162,17 @@ describe('collectTrading', () => {
     const d = deps(full());
     const m = await collectTrading(d);
     expect(m.state).toBe('ok');
-    expect(m.tag).toBe('PAPER');
-    expect(m.page!.headline).toBe('트레이딩룸 ok · ver2 페이퍼 4북 · 열린 2 · 라이브 전환 미완 · 체크 3/6 통과 · 페이퍼 n=11,694 중앙값 -0.70% (이송 +0.78% 승 88%) · 웨이브 +1,664');
-    expect(m.page!.decision).toBe('~/.config/nexus/trade.env 에 세 거래소 키 입력(값은 대화에 붙이지 말 것) → python3 scripts/go_live.py keys-check (…)');
-    expect(m.page!.kpis.map((k) => k.label)).toEqual(['트레이딩룸 :8830', 'ver2 페이퍼 북', 'ver2 원장 검증', '체크 통과', '페이퍼 승률 · 중앙값', '이송 모드', '웨이브 누적 PnL', '레인 살았다/죽었다/수집중', '마지막 커밋']);
-    expect(m.page!.kpis.slice(0, 3).map((k) => [k.value, k.status])).toEqual([['ok', 'ok'], ['4', 'ok'], ['통과', 'ok']]);
-    expect(m.page!.kpis[3]).toMatchObject({ value: '3/6', status: 'warn' });
-    expect(m.page!.kpis[6]!.value).toBe('+1,664');
-    expect(m.page!.kpis[7]!.value).toContain('2');
-    expect(m.page!.sections.map((s) => s.title)).toEqual(['라이브 전환', '체크리스트', '페이퍼 성적 (모드별)', '드롭 사유 (라이브 데스크)', '호가 탐침 후보', '웨이브 페이퍼 (최근 매도)', '레인 성적표', '최근 커밋', '타이머 · 신선도', '섀도 게이트 · 격리', '헬스 :8830', '펌프 섀도 감지기', '메이커 페이퍼 주의']);
-    const steps = section(m.page!.sections, /^라이브 전환$/)!;
-    expect(steps.kind).toBe('steps');
-    if (steps.kind === 'steps') { expect(steps.open).toBe(true); expect(steps.items[0]).toMatchObject({ label: '키 입력', state: 'active' }); }
-    const checklist = section(m.page!.sections, /^체크리스트$/)!;
-    if (checklist.kind === 'table') { expect(checklist.rows[0]![2]).toBe('실패'); expect(checklist.rows.at(-1)![2]).toBe('통과'); expect(checklist.wrap).toEqual([3, 4]); }
+    expect(m.tag).toBe('PAPER ONLY');
+    expect(m.page!.headline).toMatch(/^ver2 페이퍼 \+\$239\.02 · 승률 73% \(11건\) · 열린 2 · 원장 검증 ✓ · 트레이딩룸 /);
+    expect(m.page!.decision).toBe('조치 없음');
+    expect(`${m.page!.headline} ${m.page!.decision} ${JSON.stringify(m.page!.sections.map((x) => x.title))}`).not.toMatch(/라이브 전환|체크리스트|keys-check|trade\.env|go_live/);
+    expect(m.sourceNote).toBe('라이브 전환 체크 3/6 · 참고용, 페이퍼 전용 운영');
+    expect(m.page!.kpis.map((k) => k.label)).toEqual(['ver2 페이퍼 손익', 'ver2 승률', 'ver2 열린 포지션', 'ver2 원장 검증', '트레이딩룸 :8830', '페이퍼 승률 · 중앙값', '이송 모드', '웨이브 누적 PnL', '레인 살았다/죽었다/수집중']);
+    expect(m.page!.kpis.slice(0, 5).map((k) => k.value)).toEqual(['+$239.02', '73%', '2', '통과', '정상']);
+    expect(m.page!.kpis[7]!.value).toBe('+1,664');
+    expect(m.page!.kpis[8]!.value).toContain('2');
+    expect(m.trading!.scoreboard!.map((r) => [r.id, r.pnl === null, r.win === null, r.open === null, r.updated === null])).toEqual([['room', true, true, true, true], ['ver2', false, false, false, false], ['desk', false, false, false, false], ['wave', false, true, false, false]]);
+    expect(m.page!.sections.map((s) => s.title)).toEqual(['페이퍼 성적 (모드별)', '드롭 사유 (라이브 데스크)', '호가 탐침 후보', '웨이브 페이퍼 (최근 매도)', '레인 성적표', '최근 커밋', '타이머 · 신선도', '헬스 :8830', '펌프 섀도 감지기', '메이커 페이퍼 주의']);
     const wave = section(m.page!.sections, /^웨이브 페이퍼/)!;
     if (wave.kind === 'table') { expect(wave.rows).toHaveLength(2); expect(wave.rows[0]![1]).toBe('BTC'); expect(wave.note).toContain('누적 +1,664'); expect(wave.note).toContain('매도 20'); expect(wave.note).toContain('포지션 3'); }
     const lanes = section(m.page!.sections, /^레인 성적표$/)!;
@@ -208,10 +183,10 @@ describe('collectTrading', () => {
     if (drop.kind === 'kv') expect(drop.rows.some(([k, v]) => k.includes('경로막힘') && v.includes('300'))).toBe(true);
     const fresh = section(m.page!.sections, /^타이머 · 신선도$/)!;
     if (fresh.kind === 'kv') { expect(fresh.rows.length).toBeGreaterThanOrEqual(4); expect(JSON.stringify(fresh.rows)).toContain('+2분'); }
-    expect(m.alerts.map((a) => a.text)).toEqual(expect.arrayContaining([expect.stringContaining('라이브 전환 미완 · 체크 3/6 통과'), expect.stringContaining('T2 섀도 게이트 미통과')]));
+    expect(m.alerts.map((a) => a.text).join(' ')).not.toMatch(/라이브 전환|섀도 게이트/);
     expect(m.alerts.every((a) => a.level === 'info')).toBe(true);
     expect(m.sources.map((s) => s.name)).toEqual(['trading /api/status', 'trading /api/health', 'trading snapshot', 'ver2 paper /api/paper/state', 'ver2 paper /api/health', 'ver2 paper equity/trades', 'ver2 ledger /health', 'ver2 ledger /ledger/stats', 'ver2 ledger /ledger/verify', 'go_live_status.json', 'maker_paper.json', 'live_desk.json', 'wave_paper.db', 'sqlite', 'git log', '레인 성적표', 'systemd']);
-    expect(m.sources.filter((s) => !s.ok).map((s) => s.name)).toEqual(['trading snapshot']); // no snapshot file in this fixture; :8830 answered, so it is not needed
+    expect(m.sources.filter((s) => !s.ok).map((s) => s.name)).toEqual([]); // no snapshot file in this fixture; :8830 answered, so it is not needed
     // read-only: python runs isolated against the two db paths, git only logs; nothing else is executed
     expect(d.calls.map((c) => c[0]).sort()).toEqual(['git', 'python3']);
     expect(d.calls.find((c) => c[0] === 'python3')!.slice(1, 3)).toEqual(['-I', '-c']);
@@ -223,11 +198,11 @@ describe('collectTrading', () => {
     for (const exec of [undefined, null, { python3: null, git: null }]) {
       const m = await collectTrading(deps(full({ exec: exec as Fx['exec'] })));
       expect(m.state).toBe('ok');
-      expect(m.page!.headline).toBe('트레이딩룸 ok · ver2 페이퍼 4북 · 열린 2 · 라이브 전환 미완 · 체크 3/6 통과 · 페이퍼 n=11,694 중앙값 -0.70% (이송 +0.78% 승 88%)');
+      expect(m.page!.headline).toMatch(/^ver2 페이퍼 \+\$239\.02/);
       const wave = section(m.page!.sections, /^웨이브 페이퍼/)!;
-      if (wave.kind === 'table') { expect(wave.rows).toEqual([]); expect(wave.note).toContain('sqlite 조회 불가'); }
-      expect(m.page!.kpis[6]!.value).toBe('—');
-      expect(m.alerts.some((a) => a.level === 'info' && a.text.startsWith('웨이브·펌프 DB'))).toBe(true);
+      if (wave.kind === 'table') { expect(wave.rows).toEqual([]); expect(wave.note).not.toContain('sqlite'); }
+      expect(m.page!.kpis[7]).toMatchObject({ value: '데이터 없음', status: 'info' });
+      expect(m.alerts.some((a) => a.level === 'info' && a.text.startsWith('웨이브·펌프 기록'))).toBe(true);
       expect(m.sources.find((s) => s.name === 'sqlite')).toMatchObject({ ok: false });
       expect(m.sources.find((s) => s.name === 'git log')).toMatchObject({ ok: false });
       const commits = section(m.page!.sections, /^최근 커밋$/)!;
@@ -239,7 +214,7 @@ describe('collectTrading', () => {
     const out = JSON.stringify({ wave: { error: 'OperationalError' }, mmp: { error: 'OperationalError' } });
     const m = await collectTrading(deps(full({ exec: { python3: out, git: GIT_LOG } })));
     const wave = section(m.page!.sections, /^웨이브 페이퍼/)!;
-    if (wave.kind === 'table') expect(wave.note).toBe('sqlite 조회 불가 (OperationalError)');
+    if (wave.kind === 'table') expect(wave.note).toBe('기록을 지금 읽지 못함');
     expect(m.page!.headline).not.toContain('웨이브');
   });
   it('warns when a state file is older than twice its timer period or missing, and when a timer run failed', async () => {
@@ -249,9 +224,10 @@ describe('collectTrading', () => {
     const m = await collectTrading(deps(full({ files, units: timerUnits('exit-code') })));
     expect(m.state).toBe('warn');
     const texts = m.alerts.map((a) => a.text);
-    expect(texts).toEqual(expect.arrayContaining([expect.stringMatching(/^출격 준비 상태 오래됨 · 5분 전/), '메이커 페이퍼 상태 파일 없음 (maker_paper.json)', expect.stringMatching(/^라이브 데스크 마지막 실행 exit-code/)]));
+    expect(texts).toEqual(expect.arrayContaining(['메이커 페이퍼 기록 없음', expect.stringMatching(/^라이브 데스크 마지막 실행 exit-code/)]));
     expect(m.alerts[0]!.level).toBe('warn');
     expect(m.sources.find((s) => s.name === 'maker_paper.json')).toMatchObject({ ok: false, error: '파일 없음' });
+    expect(texts.some((t) => t.includes('출격 준비'))).toBe(false); // the go-live job raises nothing
   });
   it('warns on unknown orders / pauses from go_live_status and passes :8830 alerts through', async () => {
     const gl = { ...GL, unknown_orders: 2, pauses: [{ why: 'x' }] };
@@ -263,25 +239,23 @@ describe('collectTrading', () => {
     expect(m.alerts[0]!.level).toBe('bad');
     expect(m.alerts.find((a) => a.text === '온체인 피드 끊김 …')).toMatchObject({ level: 'bad', at: '2026-10-30T12:00:00.000Z' });
   });
-  it('is unknown when nothing is readable, and warns when only go_live_status is missing', async () => {
+  it('is unknown when nothing is readable, and stays calm when only go_live_status is missing', async () => {
     const empty = await collectTrading(deps({ exec: null }));
     expect(empty.state).toBe('unknown');
-    expect(empty.page!.headline).toBe('트레이딩룸 응답 없음 · ver2 페이퍼 응답 없음 · 출격 상태 미상');
+    expect(empty.page!.headline).toBe('ver2 페이퍼 데이터 없음 · 트레이딩룸 데이터 없음');
     expect(empty.trading!.room.via).toBe('none');
     expect(empty.trading!.ver2.paper.ok).toBe(false);
     expect(empty.trading!.ver2.ledger.ok).toBe(false);
-    expect(empty.alerts.map((a) => a.text)).toEqual(expect.arrayContaining([expect.stringContaining('ver2 페이퍼 엔진 :8771 응답 없음'), expect.stringContaining('ver2 원장 :8793 응답 없음'), expect.stringContaining(':8830 응답 없음')]));
-    expect(empty.page!.decision).toContain('go-live-status 타이머 확인');
-    expect(empty.alerts.some((a) => a.text === 'go_live_status.json 없음 — 체크리스트 확인 불가')).toBe(true);
-    const steps = section(empty.page!.sections, /^라이브 전환$/)!;
-    if (steps.kind === 'steps') expect(steps.items.every((s) => s.state === 'todo')).toBe(true);
+    expect(empty.alerts.map((a) => a.text)).toEqual(expect.arrayContaining([expect.stringContaining('ver2 페이퍼 엔진 응답 없음'), expect.stringContaining('ver2 원장 응답 없음'), expect.stringContaining('트레이딩룸 봇 응답 없음')]));
+    expect(empty.page!.decision).not.toMatch(/go-live|타이머/);
+    expect(empty.alerts.some((a) => a.text.includes('go_live_status'))).toBe(false);
     noHome(empty);
     const files = { ...full().files! };
     delete files[stateFile('go_live_status.json')];
     const m = await collectTrading(deps(full({ files })));
-    expect(m.state).toBe('warn');
-    expect(m.page!.headline).toBe('트레이딩룸 ok · ver2 페이퍼 4북 · 열린 2 · 출격 상태 미상 · 페이퍼 n=11,694 중앙값 -0.70% (이송 +0.78% 승 88%) · 웨이브 +1,664');
-    expect(m.page!.kpis[3]!.value).toBe('—');
+    expect(m.state).toBe('ok');
+    expect(m.sources.find((s) => s.name === 'go_live_status.json')).toMatchObject({ off: true });
+    expect(m.sourceNote).toBeUndefined();
   });
   it('caches the sqlite and git results per deps instance for a minute', async () => {
     const d = deps(full());
@@ -313,14 +287,15 @@ describe('collectTrading', () => {
     expect(fresh.trading!.room.via).toBe('snapshot');
     expect(fresh.trading!.room.stale).toBe(false);
     expect(fresh.trading!.room.workstreams.find((w) => w.id === 'maker')!.rows.map((r) => r.value)).toContain('3 종목');
-    expect(fresh.alerts.find((a) => a.text.startsWith(':8830 응답 없음 — 스냅샷'))).toMatchObject({ level: 'info' });
-    expect(fresh.alerts.find((a) => a.text.startsWith('ver2 페이퍼 엔진 :8771 응답 없음'))).toMatchObject({ level: 'warn' });
+    expect(fresh.alerts.find((a) => a.text.startsWith('트레이딩룸 봇 응답 없음 — 스냅샷'))).toMatchObject({ level: 'info' });
+    expect(fresh.alerts.find((a) => a.text.startsWith('ver2 페이퍼 엔진 응답 없음'))).toMatchObject({ level: 'warn' });
     expect(fresh.trading!.ver2.ledger.ok).toBe(true);
-    expect(fresh.page!.kpis[1]).toMatchObject({ value: '—', status: 'warn' });
+    expect(fresh.page!.kpis[0]).toMatchObject({ value: '데이터 없음', status: 'info' });
+    expect(fresh.trading!.scoreboard!.find((r) => r.id === 'ver2')).toMatchObject({ pnl: null, win: null, open: null });
     const stale = await collectTrading(deps(full({ health: undefined, files, now: Date.parse('2026-11-01T00:00:00Z') })));
     expect(stale.trading!.room.stale).toBe(true);
     expect(stale.state).toBe('warn');
-    expect(stale.alerts.find((a) => a.text.includes('24h 초과'))).toMatchObject({ level: 'warn' });
+    expect(stale.alerts.find((a) => a.text.includes('오래된 스냅샷'))).toMatchObject({ level: 'warn' });
     expect(stale.sources.find((s) => s.name === 'trading snapshot')).toMatchObject({ ok: false, error: '24h 초과' });
     noHome(stale);
   });
@@ -329,7 +304,8 @@ describe('collectTrading', () => {
     const m = await collectTrading(deps(full({ urls })));
     expect(m.state).toBe('warn');
     expect(m.alerts.filter((a) => a.level === 'bad').map((a) => a.text)).toEqual(['ver2 페이퍼 엔진이 LIVE=true 로 응답 — 모의 전용이어야 함', 'ver2 원장 해시 체인 검증 실패 · hash mismatch at seq 7']);
-    expect(m.page!.kpis[2]).toMatchObject({ value: '실패', status: 'bad' });
+    expect(m.page!.kpis[3]).toMatchObject({ value: '실패', status: 'bad' });
+    expect(m.tag).toBe('LIVE');
     expect(m.sources.find((s) => s.name === 'ver2 ledger /ledger/verify')).toMatchObject({ ok: false, error: '검증 실패' });
   });
 });

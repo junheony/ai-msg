@@ -7,6 +7,11 @@
 import type { HubAlert, HubKpi, HubLink, HubMetricValue, HubMode, HubSection, HubSource, HubState, NexusAction, NexusBin, NexusHome, NexusListing, NexusOp, NexusScoreRow, NexusWalletRow } from '../../shared/hub-types';
 import { DEFAULT_LINKS, HUB_TIMEOUTS, HUB_URLS, SLOW_CACHE_MS, STALE_LIMIT_MS, agoFrom, arr, bool, downMode, fmtClock, fmtInt, fmtKst, fmtNum, fmtUsd, isObj, kpi, latestIso, num, objs, page, probe, scrub, sec, slowCache, sortAlerts, str, toIso, type HubDeps, type SlowResult } from './shared';
 
+/** The engine writes `last_scan` as UTC with no zone mark; read as server time (KST) every strategy looked 9 hours stuck. */
+const engineIso = (v: unknown): string | null => toIso(typeof v === 'string' && /T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(v) ? `${v}Z` : v);
+/** Sub-minute scanners run late on a busy box without being stuck: a stall is at least this long. */
+const SCAN_STALL_FLOOR_MS = 5 * 60_000;
+
 const nameOf = (v: unknown): string | null => (typeof v === 'string' ? v : isObj(v) ? str(v.name ?? v.id ?? v.exchange ?? v.chain, 40) : null);
 
 /* ───────── home (:3005 /api/v2/home) ───────── */
@@ -201,7 +206,7 @@ function engineView(data: Record<string, unknown>, now: number): EngineView {
   let lastScan: string | null = null;
   let signals = 0, execs = 0, scans = 0;
   for (const [, s] of strategies) {
-    lastScan = latestIso(lastScan, toIso(s.last_scan));
+    lastScan = latestIso(lastScan, engineIso(s.last_scan));
     signals += num(s.signal_count) ?? 0; execs += num(s.execution_count) ?? 0; scans += num(s.scan_count) ?? 0;
   }
   const risk = isObj(data.risk) ? data.risk : {};
@@ -222,15 +227,15 @@ function engineView(data: Record<string, unknown>, now: number): EngineView {
   const stalled: { name: string; last: string }[] = [];
   for (const [name, s] of strategies) {
     if (s.running !== true) continue;
-    const last = toIso(s.last_scan), iv = num(s.scan_interval);
-    if (last && iv && now - Date.parse(last) > iv * 3 * 1000) stalled.push({ name, last });
+    const last = engineIso(s.last_scan), iv = num(s.scan_interval);
+    if (last && iv && now - Date.parse(last) > Math.max(iv * 3 * 1000, SCAN_STALL_FLOOR_MS)) stalled.push({ name, last });
   }
   if (stalled.length) {
     stalled.sort((a, b) => Date.parse(a.last) - Date.parse(b.last));
     const names = stalled.map((x) => x.name);
     alerts.push({ level: 'warn', text: stalled.length === 1 ? `${names[0]} 스캔 정체 · ${agoFrom(stalled[0]!.last, now)}` : `스캔 정체 ${stalled.length}개 전략 · 최대 ${agoFrom(stalled[0]!.last, now)}`, hint: stalled.length === 1 ? '전략 표에서 마지막 스캔 확인' : `${names.slice(0, 6).join(', ')}${names.length > 6 ? ` 외 ${names.length - 6}` : ''}` });
   }
-  const state: HubState = !running || risk.emergency_stop === true ? 'down' : alerts.length ? 'warn' : 'ok';
+  const state: HubState = !running || risk.emergency_stop === true ? 'down' : alerts.some((a) => a.level !== 'info') ? 'warn' : 'ok';
   const exchanges = (Array.isArray(data.exchanges) ? data.exchanges : []).map(nameOf).filter((x): x is string => x !== null);
   const chains = (Array.isArray(data.chains) ? data.chains : []).map(nameOf).filter((x): x is string => x !== null);
   const metrics: Record<string, HubMetricValue> = { '전략': `${live}/${enabled || strategies.length}`, '거래소': Array.isArray(data.exchanges) ? data.exchanges.length : null };
@@ -313,11 +318,11 @@ export async function collectNexus(deps: HubDeps): Promise<HubMode> {
   const engineMissing: HubAlert = eng.pending ? { level: 'info', text: '엔진 첫 응답을 기다리는 중 (4초+)', hint: '다음 갱신(15초)에 반영' } : { level: 'bad', text: `엔진 응답 없음 · ${eng.source.error ?? '오류'}` };
   const alerts: HubAlert[] = [
     ...(E?.alerts ?? [engineMissing]),
-    ...(E && eng.stale ? [{ level: 'warn' as const, text: `엔진 응답 지연 · ${fmtAgoMs(eng.staleMs)} 전 값 표시`, hint: `${HUB_TIMEOUTS.nexus / 1000}초 안에 답이 없었음 (${eng.source.error ?? '오류'}) — 엔진이 바쁘면 다음 갱신에 반영` }] : []),
+    ...(E && eng.stale ? [{ level: 'info' as const, text: `엔진 응답 지연 · ${fmtAgoMs(eng.staleMs)} 전 값 표시`, hint: `${HUB_TIMEOUTS.nexus / 1000}초 안에 답이 없었음 (${eng.source.error ?? '오류'}) — 엔진이 바쁘면 다음 갱신에 반영` }] : []),
     ...(H?.alerts ?? [home.pending ? { level: 'info' as const, text: '대시보드 첫 응답을 기다리는 중' } : { level: 'warn' as const, text: '대시보드 응답 없음' }]),
-    ...(H && home.stale ? [{ level: 'warn' as const, text: `대시보드 응답 지연 · ${fmtAgoMs(home.staleMs)} 전 값 표시` }] : []),
+    ...(H && home.stale ? [{ level: 'info' as const, text: `대시보드 응답 지연 · ${fmtAgoMs(home.staleMs)} 전 값 표시` }] : []),
   ];
-  const state: HubState = !E ? (eng.pending ? 'unknown' : 'down') : E.state === 'down' ? 'down' : alerts.length ? 'warn' : 'ok';
+  const state: HubState = !E ? (eng.pending ? 'unknown' : 'down') : E.state === 'down' ? 'down' : alerts.some((a) => a.level !== 'info') ? 'warn' : 'ok';
   const headline = E ? `${E.headline}${nexus ? ` · 할 일 ${nexus.actions.length}` : ''}` : `${eng.pending ? '엔진 불러오는 중…' : '엔진 응답 없음'} · 할 일 ${nexus!.actions.length} · 국내갭 최고 ${nexus!.kr.best_net !== null ? sgnPct(nexus!.kr.best_net) : '—'}`;
   const decision = !E ? (eng.pending ? '첫 응답이 느립니다 — 다음 갱신에 반영' : '엔진 응답 없음 — 서비스 가동 여부 확인') : E.running && H && H.nBad ? `할 일 고장·알람 ${H.nBad}건 확인 — ${H.firstBad}` : E.decision;
   // With the home shown (NexusHome), the KPI row stays short: the home's two, then the engine's four that the home does not say.

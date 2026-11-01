@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BOT_HOME, BOT_NOW, LEDGER_HEALTH, LEDGER_RECORDS, LEDGER_STATS, LEDGER_VERIFY, PAPER_EQUITY, PAPER_EVENTS, PAPER_STATE, PAPER_TRADES, botUrls } from './__fixtures__/trading-bots';
 import { EQUITY_POINTS, SPARK_N, buildLedger, buildPaper, collectVer2, equityChart, kstToIso, parseEquity, parseEvents, parseTrades } from './cblabx';
-import { HUB_URLS, stripSecrets, type HubDeps } from './shared';
+import { HUB_URLS, SLOW_ERROR_RETRY_MS, stripSecrets, type HubDeps } from './shared';
 
 const noHome = (v: unknown): void => { const s = JSON.stringify(v); expect(s).not.toContain(BOT_HOME); expect(s).not.toMatch(/\/home\/[a-z]/); };
 
@@ -88,6 +88,18 @@ describe('collectVer2', () => {
     await collectVer2(d);
     expect(d.calls.filter((u) => u === HUB_URLS.paperEquity)).toHaveLength(1);
     expect(d.calls.filter((u) => u === HUB_URLS.paperState)).toHaveLength(2);
+  });
+  it('does not cache a slow bundle nobody answered: the next pass asks again', async () => {
+    const urls = botUrls({ paperTrades: undefined, paperEquity: undefined, paperEvents: undefined, ledgerRecords: undefined });
+    let now = BOT_NOW;
+    const d = { ...deps(urls), now: () => now };
+    const first = await collectVer2(d);
+    expect(first.sources.find((s) => s.name === 'ver2 paper equity/trades')).toMatchObject({ ok: false });
+    Object.assign(urls, botUrls());
+    now += SLOW_ERROR_RETRY_MS + 1; // far short of the one-minute cache a good answer gets
+    const second = await collectVer2(d);
+    expect(d.calls.filter((u) => u === HUB_URLS.paperEquity)).toHaveLength(2);
+    expect(second.sources.find((s) => s.name === 'ver2 paper equity/trades')).toMatchObject({ ok: true });
   });
   it('keeps the ledger when only the paper engine is down, and vice versa', async () => {
     const a = await collectVer2(deps(botUrls({ paperState: undefined, paperHealth: undefined, paperTrades: undefined, paperEquity: undefined, paperEvents: undefined })));

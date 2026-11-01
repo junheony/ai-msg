@@ -63,7 +63,7 @@ describe('hub status aggregator', () => {
     expect(['ok', 'warn']).toContain(by.nexus!.state); // warn when the dashboard home is not answered
     expect(by.nexus).toMatchObject({ tag: 'DRY RUN', lastActivity: '2026-10-30T09:59:00.000Z', metrics: { '전략': '1/2', '거래소': 3, '열린 포지션': 2, '노출': '$1,235' } });
     expect(by.nexus!.links).toEqual([{ label: '대시보드', href: 'http://max-linuxserver.tail88e649.ts.net:3005' }]);
-    expect(by.trading).toMatchObject({ tag: 'PAPER' }); // the work page itself is covered by trading.test.ts
+    expect(by.trading).toMatchObject({ tag: 'PAPER ONLY' }); // the work page itself is covered by trading.test.ts
     expect(['ok', 'warn']).toContain(by.trading!.state);
     expect(by.video).toMatchObject({ state: 'ok', metrics: { '에피소드': 7, '최근 렌더': '1시간 0분 전', '파일': 'draft.mp4' } });
     expect(by.game).toMatchObject({ state: 'ok', lastActivity: '2026-10-28T01:00:00.000Z', metrics: { '마지막 커밋': '2일 9시간 전', '배포': 'Vercel', '배포 검증': '2026-09-08' }, links: [{ label: 'Vercel', href: 'https://acme-app.vercel.app' }] });

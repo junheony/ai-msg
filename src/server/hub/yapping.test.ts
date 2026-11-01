@@ -203,15 +203,17 @@ describe('collectYapping', () => {
     if (news.kind === 'kv') expect(news.rows[0]![1]).toMatch(/^응답 없음/);
     noHome(m);
   });
-  it('is down when the service unit is failed, unknown when nothing answers', async () => {
+  it('is down when the service unit is failed, a calm 꺼짐 when nothing answers', async () => {
     const units = { ...UNITS, [YAPPING_UNITS.service]: { LoadState: 'loaded', ActiveState: 'failed', SubState: 'failed' } };
     const down = await collectYapping(deps({ urls: fixtures(NOON), units, now: NOON }));
     expect(down.state).toBe('down');
     expect(down.alerts[0]).toMatchObject({ level: 'bad', text: '서비스 실패 (failed)' });
     expect(down.page!.decision).toBe('서비스 정지 — 로그 확인 (여기서 재시작하지 않음)');
     const none = await collectYapping(deps({ urls: {}, units: {}, now: NOON }));
-    expect(none.state).toBe('unknown');
-    expect(none.page!.headline).toBe('상태 확인 불가');
+    expect(none).toMatchObject({ state: 'idle', stateLabel: '꺼짐' });
+    expect(none.page!.headline).toBe('야핑봇 꺼짐');
+    expect(none.alerts.every((a) => a.level === 'info')).toBe(true);
+    expect(none.sources.every((x) => x.off)).toBe(true);
     noHome(none);
   });
   it('marks a 402 credit exhaustion in the last day as bad and leads the decision with it', async () => {

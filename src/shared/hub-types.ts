@@ -34,6 +34,8 @@ export interface HubSource {
   ms: number;
   /** A short reason when `ok` is false (시간 초과, HTTP 503, 연결 실패). */
   error?: string;
+  /** Deliberately switched off or not set up here: shown grey, never counted as a failure. */
+  off?: boolean;
 }
 
 /** One KPI tile: label, a short value, an optional unit, a status colour and a one-line hint. */
@@ -111,6 +113,10 @@ export interface HubMode {
   alerts: HubAlert[];
   links: HubLink[];
   sources: HubSource[];
+  /** Replaces the state word when `idle` means something more exact (꺼짐, 미설정). */
+  stateLabel?: string;
+  /** One muted line at the bottom of the collapsed 소스 상태 panel. */
+  sourceNote?: string;
   /** A small badge next to the activity line (DRY RUN, PAPER). */
   tag?: string;
   /** The mode's page (absent from an older server: the card shows metrics only). */
@@ -232,7 +238,9 @@ export interface Ver2Ledger {
   verify: { ok: boolean | null; msg: string; n: number | null; warnings: string[] } | null;
   recent: Ver2LedgerRecord[];
 }
-export interface TradingMerged { room: TradingRoomView; ver2: { paper: Ver2Paper; ledger: Ver2Ledger } }
+/** One bot's line on the Trading scoreboard; null = the bot does not report it (shown as 데이터 없음, never guessed). */
+export interface TradingBotRow { id: string; name: string; pnl: string | null; pnlTone: 'pos' | 'neg' | null; win: string | null; open: string | null; updated: string | null; note: string | null }
+export interface TradingMerged { room: TradingRoomView; ver2: { paper: Ver2Paper; ledger: Ver2Ledger }; scoreboard?: TradingBotRow[] }
 
 export interface HubStatus {
   modes: HubMode[];

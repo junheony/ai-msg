@@ -117,10 +117,16 @@ const slowByDeps = new WeakMap<HubDeps, () => Promise<{ value: SlowBundle | null
 function slowFor(deps: HubDeps): () => Promise<{ value: SlowBundle | null; stale: boolean; error: string | null }> {
   let s = slowByDeps.get(deps);
   if (!s) {
+    // Each list keeps its last good answer; with none of them answering the load fails, so a blip is never cached for a minute as 자료 없음.
+    let prev: SlowBundle | null = null;
     s = slowCache(SLOW_CACHE_MS.ver2, async () => {
-      const get = (url: string): Promise<unknown> => deps.fetchJson(url, HUB_TIMEOUTS.default).catch(() => null);
+      let answered = 0, firstErr: unknown = null;
+      const get = (url: string): Promise<unknown> => deps.fetchJson(url, HUB_TIMEOUTS.default).then((v) => { answered++; return v; }, (err: unknown) => { firstErr ??= err; return null; });
       const [trades, equity, events, records] = await Promise.all([get(HUB_URLS.paperTrades), get(HUB_URLS.paperEquity), get(HUB_URLS.paperEvents), get(HUB_URLS.ledgerRecords)]);
-      return { trades, equity: parseEquity(equity), events, records };
+      if (answered === 0) throw firstErr;
+      const next: SlowBundle = { trades: trades ?? prev?.trades ?? null, equity: equity === null ? (prev?.equity ?? []) : parseEquity(equity), events: events ?? prev?.events ?? null, records: records ?? prev?.records ?? null };
+      prev = next;
+      return next;
     }, deps.now);
     slowByDeps.set(deps, s);
   }
