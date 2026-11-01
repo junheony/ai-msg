@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import type { GameStudio, HubMode, StudioGame, StudioStage } from '../../../shared/hub-types';
+import type { GameStudio, HubMode, StudioAgent, StudioGame, StudioStage } from '../../../shared/hub-types';
 import { HubPage } from '../HubPage';
 import { GameStudioHome, kst } from './GameStudioHome';
 
@@ -24,8 +24,8 @@ const game = (over: Partial<StudioGame>): StudioGame => ({
 const STUDIO: GameStudio = {
   games: [game({}), game({ id: 'neon-2', title: 'Neon 2', status: 'building', reference: 'brawl', referenceTitle: 'Bored Brawl', cover: null, play: null, approvals: [], nextAction: { text: '에셋 라이선스 정리', owner: false }, stages: stages(['done', 'blocked', 'todo', 'todo', 'todo', 'todo', 'todo']) })],
   agents: [
-    { job: 'q', title: '브롤 QA', account: 'b', model: 'opus', state: 'working', alive: true, line: '스크린샷 캡처 중', lineAt: iso(2), reportAt: null, reason: null, game: 'brawl', gameTitle: 'Bored Brawl' },
-    { job: 'art', title: null, account: 'codex', model: null, state: 'blocked', alive: false, line: 'x', lineAt: iso(40), reportAt: iso(39), reason: '라이선스 확인 필요', game: 'neon-2', gameTitle: 'Neon 2' },
+    { job: 'q', title: '브롤 QA', account: 'b', model: 'opus', state: 'working', alive: true, line: '스크린샷 캡처 중', lineAt: iso(2), reportAt: null, reason: null, successor: null, game: 'brawl', gameTitle: 'Bored Brawl' },
+    { job: 'art', title: null, account: 'codex', model: null, state: 'blocked', alive: false, line: 'x', lineAt: iso(40), reportAt: iso(39), reason: '라이선스 확인 필요', successor: null, game: 'neon-2', gameTitle: 'Neon 2' },
   ],
   others: { count: 3, working: 1, names: ['a', 'b', 'c'] },
   loot: [
@@ -48,7 +48,7 @@ describe('GameStudioHome', () => {
     expect(lobby.textContent).toContain('오너 확인 1');
     const agents = screen.getAllByTestId('gs-agent');
     expect(agents).toHaveLength(2);
-    expect(within(agents[0]!).getByRole('button').textContent).toBe('Claude b작업 중');
+    expect(within(agents[0]!).getByRole('button').textContent).toBe('q작업 중 · Bored Brawl');
     // task, line, job and time live in the hover/focus tooltip, linked to the face for screen readers
     const tip = within(agents[1]!).getByRole('tooltip', { hidden: true });
     expect(tip.textContent).toContain('라이선스 확인 필요');
@@ -95,6 +95,57 @@ describe('GameStudioHome', () => {
   it('kst formats Seoul time and reads 기록 없음 for nothing', () => {
     expect(kst('2026-11-01T03:05:00Z')).toBe('11-01 12:05');
     expect(kst(null)).toBe('기록 없음');
+  });
+});
+
+describe('the party strip', () => {
+  const base = STUDIO.agents[0]!;
+  const agent = (over: Partial<StudioAgent>): StudioAgent => ({ ...base, alive: false, state: 'done', line: null, ...over });
+  const strip = (agents: StudioAgent[]) => render(<GameStudioHome studio={{ ...STUDIO, agents }} now={T} />);
+  const AGENTS = [
+    agent({ job: 'live', state: 'working', alive: true }),
+    agent({ job: 'ask', state: 'needs-owner', reason: '오너 결정 필요' }),
+    agent({ job: 'fresh', state: 'blocked', reason: '게이트 미달' }),
+    agent({ job: 'old', state: 'stopped', reason: '라이선스 없음' }),
+    agent({ job: 'web-3', state: 'superseded', successor: 'web-4', reason: '게이트 미달' }),
+    agent({ job: 'ok', state: 'done' }),
+  ];
+
+  it('keeps live, needs-owner and recent 막힘 out, in order, and folds the rest under 지난 작업', () => {
+    strip(AGENTS);
+    expect(screen.getAllByTestId('gs-agent').map((m) => m.querySelector('.gs-member-name')?.textContent)).toEqual(['live', 'ask', 'fresh']);
+    expect(screen.queryByTestId('gs-past')).toBeNull();
+    const toggle = screen.getByRole('button', { name: '지난 작업 (3)' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(within(screen.getByTestId('gs-past')).getAllByTestId('gs-agent').map((m) => m.querySelector('.gs-member-name')?.textContent)).toEqual(['old', 'web-3', 'ok']);
+  });
+
+  it('labels each state; only 승인 필요 carries the red state class', () => {
+    strip(AGENTS);
+    fireEvent.click(screen.getByRole('button', { name: /지난 작업/ }));
+    const labels = Object.fromEntries(screen.getAllByTestId('gs-agent').map((m) => [m.querySelector('.gs-member-name')?.textContent, m.querySelector('.gs-member-state b')?.textContent]));
+    expect(labels).toEqual({ live: '작업 중', ask: '승인 필요', fresh: '막힘', old: '중단됨', 'web-3': '이어받음 → web-4', ok: '완료' });
+    expect(document.querySelectorAll('.gs-member.st-needs-owner')).toHaveLength(1);
+    expect(within(screen.getAllByTestId('gs-agent')[3]!).getByRole('tooltip', { hidden: true }).textContent).toContain('라이선스 없음');
+  });
+
+  it('says nothing is running when all work is past, and an idle job folds only once it has gone quiet', () => {
+    strip([agent({ job: 'ok' })]);
+    expect(screen.getByText('지금 작업 중인 에이전트 없음')).toBeTruthy();
+    cleanup();
+    strip([agent({ job: 'queued', state: 'idle', lineAt: null }), agent({ job: 'quiet', state: 'idle', lineAt: iso(200) })]);
+    expect(screen.getAllByTestId('gs-agent').map((m) => m.querySelector('.gs-member-name')?.textContent)).toEqual(['queued']);
+    expect(screen.getByRole('button', { name: '지난 작업 (1)' })).toBeTruthy();
+  });
+
+  it('calls a card 오너 OK 필요 only when the server says so, and the approval stage waits only then', () => {
+    render(<GameStudioHome studio={{ ...STUDIO, games: [game({ nextAction: { text: '재빌드 후 재측정', owner: false } })] }} now={T} />);
+    const cart = screen.getByTestId('gs-cart');
+    expect(within(cart).getByTestId('gs-next').textContent).toContain('다음 행동');
+    expect(cart.textContent).toContain('승인 요청 전');
+    expect(cart.textContent).not.toContain('오너 승인 기다리는 중');
   });
 });
 

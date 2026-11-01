@@ -1,9 +1,10 @@
 /* 게임 스튜디오 lobby, v2 (calm). MSG's dark base; neutral text and glass, ONE accent — the game hue (lime) — for what is
-   live or needs the owner, and ONE warning colour (red) for blocked. Done reads as a quiet filled neutral.
+   live or needs the owner, red ONLY for 승인 필요, muted amber for 막힘·중단됨. Done and 이어받음 read as a quiet neutral.
    Spacing scale: 4 · 8 · 12 · 16 · 24 · 40 · 56. Crew hues stay only inside the drawn faces. */
 .gs {
   --gs-acc: var(--mode-hue, rgb(143 207 90));
   --gs-bad: var(--danger, #e2675b);
+  --gs-warn: color-mix(in srgb, var(--warn, #d9a441) 78%, var(--muted));
   --gs-face-ink: #14141c;
   --gs-line: var(--glass-line);
   --gs-card: color-mix(in srgb, var(--panel) 70%, transparent);
@@ -27,18 +28,22 @@
 .gs-summary b { margin-left: 6px; font-family: var(--hub-font); font-size: var(--fs-lg); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg); }
 .gs-summary .on b, .gs-summary .owner b { color: var(--gs-acc); }
 .gs-summary .owner { color: var(--fg); }
-.gs-summary .bad b { color: var(--gs-bad); }
+.gs-summary .warn b { color: var(--gs-warn); }
 
 .gs-party { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; }
+.gs-past-btn { align-self: center; }
+.gs-members-past { flex-basis: 100%; }
 .gs-members { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .gs-member { position: relative; }
 .gs-member-btn { display: grid; grid-template-columns: auto auto; grid-template-rows: auto auto; column-gap: 10px; align-items: center; padding: 6px 14px 6px 6px; border: 0; border-radius: 999px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: default; }
 .gs-member-btn:hover, .gs-member-btn:focus-visible { background: var(--glass); }
 .gs-member-btn .gs-ava { grid-row: 1 / 3; }
 .gs-member-name { font-size: var(--fs-xs); font-weight: 600; color: var(--fg); align-self: end; }
-.gs-member-state { font-size: var(--fs-2xs); color: var(--muted); align-self: start; }
-.gs-member.st-working .gs-member-state { color: var(--gs-acc); }
-.gs-member.st-blocked .gs-member-state { color: var(--gs-bad); }
+.gs-member-state { font-size: var(--fs-2xs); color: var(--muted); align-self: start; white-space: nowrap; }
+.gs-member-state b { font-weight: 500; }
+.gs-member.st-working .gs-member-state b { color: var(--gs-acc); }
+.gs-member.st-needs-owner .gs-member-state b { color: var(--gs-bad); font-weight: 600; }
+.gs-member.st-blocked .gs-member-state b, .gs-member.st-stopped .gs-member-state b { color: var(--gs-warn); }
 .gs-tip { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; width: 300px; max-width: 80vw; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--gs-line); background: var(--panel, #16161e); box-shadow: 0 16px 40px rgba(0, 0, 0, .45); display: flex; flex-direction: column; gap: 6px; font-size: var(--fs-xs); line-height: 1.45;
   display: none; }
 .gs-member:hover .gs-tip, .gs-member:focus-within .gs-tip { display: flex; }
@@ -46,12 +51,13 @@
 .gs-tip-game { color: var(--muted); font-size: var(--fs-2xs); }
 .gs-tip-task { color: var(--fg); font-weight: 600; }
 .gs-tip-line { color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.gs-member.st-blocked .gs-tip-line { color: color-mix(in srgb, var(--gs-bad) 75%, var(--fg)); }
+.gs-member.st-needs-owner .gs-tip-line { color: color-mix(in srgb, var(--gs-bad) 75%, var(--fg)); }
+.gs-member.st-blocked .gs-tip-line, .gs-member.st-stopped .gs-tip-line { color: color-mix(in srgb, var(--gs-warn) 75%, var(--fg)); }
 .gs-tip-meta { color: var(--faint, var(--muted)); font-size: var(--fs-2xs); }
 .gs-others { color: var(--muted); font-size: var(--fs-xs); }
 
-/* avatar: the ring is the state — a turning accent arc while working (the only motion on the page), red when blocked,
-   a quiet solid ring when done, dotted when idle */
+/* avatar: the ring is the state — a turning accent arc while working (the only motion on the page), red when the owner is
+   needed, amber when blocked or stopped, a quiet solid ring when finished, dotted when idle */
 .gs-ava { position: relative; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: color-mix(in srgb, currentColor 12%, var(--panel)); color: var(--gs-face, #a78bfa); }
 .gs-ava.acc-a { --gs-face: #a78bfa; }
 .gs-ava.acc-b { --gs-face: #34d3b4; }
@@ -61,10 +67,11 @@
 .gs-ava svg { position: relative; z-index: 1; }
 .gs-ava-ring { position: absolute; inset: -3px; border-radius: 50%; border: 2px solid var(--gs-line); }
 .gs-ava.st-working .gs-ava-ring { border-color: color-mix(in srgb, var(--gs-acc) 22%, transparent); border-top-color: var(--gs-acc); border-right-color: var(--gs-acc); animation: gs-spin 1.6s linear infinite; }
-.gs-ava.st-done .gs-ava-ring { border-color: color-mix(in srgb, var(--fg) 35%, transparent); }
-.gs-ava.st-blocked .gs-ava-ring { border-color: var(--gs-bad); }
+.gs-ava.st-done .gs-ava-ring, .gs-ava.st-superseded .gs-ava-ring { border-color: color-mix(in srgb, var(--fg) 35%, transparent); }
+.gs-ava.st-needs-owner .gs-ava-ring { border-color: var(--gs-bad); }
+.gs-ava.st-blocked .gs-ava-ring, .gs-ava.st-stopped .gs-ava-ring { border-color: var(--gs-warn); }
 .gs-ava.st-idle .gs-ava-ring { border-style: dotted; border-color: var(--faint, #6e6c80); }
-.gs-ava.st-idle svg, .gs-ava.st-done svg { opacity: .7; }
+.gs-ava.st-idle svg, .gs-ava.st-done svg, .gs-ava.st-superseded svg, .gs-ava.st-stopped svg { opacity: .7; }
 @keyframes gs-spin { to { transform: rotate(360deg); } }
 
 /* ── cartridges ── */
@@ -98,11 +105,11 @@
 .gs-dot { width: 8px; height: 8px; border-radius: 50%; background: color-mix(in srgb, var(--fg) 14%, transparent); }
 .gs-dot.done { background: color-mix(in srgb, var(--fg) 55%, transparent); }
 .gs-dot.active { width: 12px; height: 12px; background: var(--gs-acc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--gs-acc) 22%, transparent); }
-.gs-dot.blocked { width: 12px; height: 12px; background: var(--gs-bad); box-shadow: 0 0 0 3px color-mix(in srgb, var(--gs-bad) 25%, transparent); }
+.gs-dot.blocked { width: 12px; height: 12px; background: var(--gs-warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--gs-warn) 25%, transparent); }
 .gs-quest-now { font-size: var(--fs-sm); color: var(--fg); }
 .gs-quest-now b { font-weight: 600; }
 .gs-quest-now span { margin-left: 6px; color: var(--faint, var(--muted)); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
-.gs-quest.bad .gs-quest-now b { color: var(--gs-bad); }
+.gs-quest.warn .gs-quest-now b { color: var(--gs-warn); }
 
 /* the one next move */
 .gs-next { display: flex; gap: 10px; align-items: baseline; min-width: 0; font-size: var(--fs-sm); line-height: 1.45; }
@@ -138,6 +145,7 @@
 .gs-feed li:last-child { border-bottom: 0; }
 .gs-feed-t { flex: 1; min-width: 0; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gs-feed li.bad .gs-feed-t { color: color-mix(in srgb, var(--gs-bad) 80%, var(--fg)); }
+.gs-feed li.warn .gs-feed-t { color: color-mix(in srgb, var(--gs-warn) 80%, var(--fg)); }
 .gs-feed time { flex-shrink: 0; color: var(--faint, var(--muted)); font-size: var(--fs-2xs); font-variant-numeric: tabular-nums; }
 
 .gs-new { display: flex; flex-direction: column; gap: 6px; padding: 20px 24px; border-radius: 14px; border: 1px dashed var(--gs-line); }
@@ -170,12 +178,13 @@
   .gs-summary { gap: 4px 14px; font-size: var(--fs-sm); }
   .gs-summary b { margin-left: 4px; }
   .gs-summary b { font-size: var(--fs-base); }
-  /* one row of faces: the state word under each, the name moves into the tooltip */
+  /* one row of faces: job and state under each; game and who move into the tooltip */
   .gs-members { flex-wrap: nowrap; gap: 0; overflow-x: auto; scrollbar-width: none; margin: 0 -4px; padding: 4px; }
-  .gs-member { position: static; }
-  .gs-member-btn { grid-template-columns: auto; justify-items: center; row-gap: 6px; padding: 4px 3px; border-radius: 12px; }
+  .gs-member { position: static; flex: 0 0 92px; }
+  .gs-member-btn { width: 100%; grid-template-columns: minmax(0, 1fr); justify-items: center; row-gap: 6px; padding: 4px 3px; border-radius: 12px; }
   .gs-member-btn .gs-ava { grid-row: auto; }
-  .gs-member-name { display: none; } /* the face's own label and the tooltip carry the name */
+  .gs-member-name, .gs-member-state { max-width: 100%; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gs-member-game { display: none; }
   .gs-party { position: relative; }
   .gs-tip, .gs-member:nth-last-child(-n+3) .gs-tip { left: 0; right: 0; width: auto; max-width: none; top: 100%; }
   .gs-cart-body { padding: 14px 16px; }
