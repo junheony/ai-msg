@@ -185,10 +185,13 @@ export function engineCaption(d: Pick<SeatData, 'engine'>, label = ''): string {
   return d.engine === 'gpt' ? 'Codex' : d.engine === 'gemini' ? 'agy' : '';
 }
 
-/** Claude A/B/C: main = fullest of 5h/weekly (Fable excluded — "Fable 은 Fable 만 막는다"); Fable only in the secondary row/popover. */
+/**
+ * Claude A/B/C: main = fullest of 5h/weekly (Fable excluded — "Fable 은 Fable 만 막는다"); Fable only in the secondary row/popover.
+ * Claude plans no longer have a 5-hour limit: the 5h row shows only when a reading still carries one, never as an empty "—" bar.
+ */
 function claudeRows(u: AccountUsage, cli: boolean): SeatRow[] {
   return [
-    { key: 'fiveHour', name: WINDOW_NAME.fiveHour, w: u.fiveHour, mainEligible: true },
+    ...(u.fiveHour ? [{ key: 'fiveHour', name: WINDOW_NAME.fiveHour, w: u.fiveHour, mainEligible: true }] : []),
     { key: 'weekly', name: WINDOW_NAME.weekly, w: u.weekly, mainEligible: true },
     { key: 'fable', name: WINDOW_NAME.fable, w: u.fable, mainEligible: false, ...(cli && !u.fable ? { empty: CLI_NO_FABLE } : {}) },
   ];
