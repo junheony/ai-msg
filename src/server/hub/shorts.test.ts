@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { buildCalendar, buildShortsView, collectShorts, kstTomorrow, ledgerStatusOf, normalizeLedgerStatusLabel, parseChannels, parseClaudePick, parseCodex, parseDf, parseHistory, parseLedger, parseStatus, redact } from './shorts';
+import { buildCalendar, buildShortsView, collectShorts, kstTomorrow, ledgerStatusOf, normalizeLedgerStatusLabel, parseChannels, parseClaudePick, parseCodex, parseDf, parseDistribution, parseHistory, parseLedger, parseStatus, redact } from './shorts';
 import { stripSecrets, type HubDeps } from './shared';
-import { CH1, CH2, CH3, CHANNELS, HISTORY, HOME, LEDGER, NOW, NO_PROBES, PLACEHOLDER, PROBES_OK, STATUS } from './__fixtures__/shorts';
+import { CH1, CH2, CH3, CHANNELS, DIST, HISTORY, HOME, LEDGER, NOW, NO_PROBES, PLACEHOLDER, PROBES_OK, STATUS } from './__fixtures__/shorts';
 
 const j = (v: unknown): string => JSON.stringify(v);
 const view = (o: { status?: unknown; channels?: unknown; history?: string | null; probes?: typeof PROBES_OK | typeof NO_PROBES; now?: number } = {}) =>
@@ -301,5 +301,33 @@ describe('Shorts 공장 · 적용 현황 (reference_ledger.json)', () => {
     expect(bad.alerts.find((a) => a.text === 'reference_ledger.json 형식 오류')).toMatchObject({ level: 'warn', hint: 'JSON 해석 실패' });
     expect(JSON.stringify(v)).not.toContain(HOME);
     expect(stripSecrets(v)).toEqual(v);
+  });
+});
+
+describe('distribution (status.json distribution block)', () => {
+  const withDist = (d: unknown) => buildShortsView({ status: j({ ...STATUS, distribution: d }), channels: j(CHANNELS), history: HISTORY, probes: PROBES_OK, probeNote: null }, NOW);
+  it('is null when status.json carries no block or a broken one', () => {
+    expect(view().distribution).toBeNull();
+    expect(parseDistribution('x')).toBeNull();
+    expect(parseDistribution({ platforms: [] })).toBeNull();
+  });
+  it('keeps slug platforms, sanitizes states, urls and secrets', () => {
+    const d = parseDistribution(DIST)!;
+    expect(d.platforms.map((p) => p.id)).toEqual(['youtube', 'tiktok', 'instagram']);
+    const c = d.channels[0]!;
+    expect(c.cells.tiktok!.url).toBeNull();
+    expect(c.cells.tiktok!.accountState).toBe('name_pending');
+    expect(c.cells.instagram!.accountState).toBe('none');
+    expect(c.cells.tiktok!.blockers.join(' ')).not.toContain('abc123secret');
+    expect(d.totals.tiktok).toEqual({ queued: 0, scheduled: 0, posted: 0, failed: 1 });
+    expect(d.shorts.map((s) => s.id)).toEqual(['tk-snow', 'tears', 'boil']);
+    expect(d.shorts[1]!.platforms.tiktok).toMatchObject({ state: 'failed', error: '429 rate limit' });
+  });
+  it('fills YouTube views from channels.json videos by video id', () => {
+    const d = withDist(DIST).distribution!;
+    expect(d.shorts.find((s) => s.id === 'tears')!.platforms.youtube!.views).toBe(545);
+    expect(d.shorts.find((s) => s.id === 'boil')!.platforms.youtube!.views).toBe(2300);
+    expect(d.channels[0]!.cells.youtube!.views).toBe(2845);
+    expect(d.channels[0]!.youtubeChannelId).toBe(CH1);
   });
 });

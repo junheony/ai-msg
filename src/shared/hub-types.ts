@@ -304,6 +304,26 @@ export interface SfLedger {
   /** Entries skipped for lack of an id or title. */
   skipped: number;
 }
+/* ───────── distribution (status.json `distribution`, written by golf-shorts scripts/dist.py) ───────── */
+export type SfAccountState = 'none' | 'created' | 'name_pending' | 'ready';
+export const SF_ACCOUNT_STATES: readonly SfAccountState[] = ['none', 'created', 'name_pending', 'ready'];
+export type SfUploadState = 'queued' | 'scheduled' | 'posted' | 'failed';
+export const SF_UPLOAD_STATES: readonly SfUploadState[] = ['queued', 'scheduled', 'posted', 'failed'];
+export interface SfDistPlatform { id: string; name: string; status: string | null; note: string | null }
+export interface SfDistCell {
+  accountState: SfAccountState; handle: string | null; /** http(s) only. */ url: string | null; blockers: string[];
+  counts: Record<SfUploadState, number>; /** null = not collected (never 0). */ views: number | null;
+}
+export interface SfDistChannel { id: string; name: string; lang: string | null; /** YouTube UC id (= SfChannel.id). */ youtubeChannelId: string | null; publishKst: string | null; cells: Record<string, SfDistCell> }
+export interface SfDistUpload { state: SfUploadState; url: string | null; at: string | null; views: number | null; videoId: string | null; error: string | null; derived: boolean }
+export interface SfDistShort { id: string; channel: string; title: string | null; batch: string | null; platforms: Record<string, SfDistUpload> }
+export interface SfDistribution {
+  platforms: SfDistPlatform[]; channels: SfDistChannel[];
+  totals: Record<string, Record<SfUploadState, number>>;
+  shorts: SfDistShort[]; shortsTotal: number;
+  blockers: { channel: string; platform: string; text: string }[];
+  updatedAt: string | null;
+}
 export interface ShortsFactoryView {
   state: HubState;
   headline: string;
@@ -321,5 +341,7 @@ export interface ShortsFactoryView {
   /** user_reference history points that could not be tied to a channel yet. */
   unmappedReference: { at: string; videoId: string; views: number | null }[];
   ledger: SfLedger;
+  /** Per channel × platform accounts and uploads; null when status.json carries no `distribution` block. */
+  distribution?: SfDistribution | null;
   generatedAt: string;
 }

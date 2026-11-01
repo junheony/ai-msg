@@ -6,15 +6,15 @@
  * Honesty rules: a missing or malformed file is said so; a null count stays null (미공개/미수집), never 0; the bootstrap
  * status.json (placeholder) is never healthy. Nothing here writes, uploads or downloads.
  */
-import type { HubAlert, HubKpi, HubState, SfCalendar, SfCalendarDay, SfCalendarItem, SfChannel, SfClaudeAccount, SfFile, SfFileState, SfLedger, SfLedgerItem, SfLedgerStatus, SfLedgerType, SfPipeline, SfPlatformId, SfPlatformStatus, SfRoutineStatus, SfVideo, ShortsFactoryView } from '../../shared/hub-types';
-import { SF_LEDGER_STATUSES, SF_PLATFORMS } from '../../shared/hub-types';
+import type { HubAlert, HubKpi, HubState, SfCalendar, SfCalendarDay, SfCalendarItem, SfChannel, SfClaudeAccount, SfDistCell, SfDistChannel, SfDistShort, SfDistUpload, SfDistribution, SfUploadState, SfFile, SfFileState, SfLedger, SfLedgerItem, SfLedgerStatus, SfLedgerType, SfPipeline, SfPlatformId, SfPlatformStatus, SfRoutineStatus, SfVideo, ShortsFactoryView } from '../../shared/hub-types';
+import { SF_ACCOUNT_STATES, SF_LEDGER_STATUSES, SF_PLATFORMS, SF_UPLOAD_STATES } from '../../shared/hub-types';
 import { DAY_MS, HOUR_MS, HUB_TIMEOUTS, agoFrom, arr, fmtClock, fmtDate, fmtInt, isObj, kpi, num, objs, scrub, slowCache, sortAlerts, str, toIso, type HubDeps, type SlowResult } from './shared';
 
 export const SF_DIR = 'shorts_status';
 export const SF_PLANNED_TOTAL = 20;
 /** status.json older than 6 h and channels.json older than 8 h (two missed 4-hourly runs) are 오래됨; a `running` routine older than 6 h is stuck. */
 export const SF_STALE_MS = { status: 6 * HOUR_MS, channels: 8 * HOUR_MS, running: 6 * HOUR_MS } as const;
-export const SF_LIMITS = { videos: 10, logLines: 40, lineChars: 200, historyBytes: 512 * 1024, days: 14, sparkPoints: 40, items: 400, channelAlerts: 20 } as const;
+export const SF_LIMITS = { distPlatforms: 12, distShorts: 200, videos: 10, logLines: 40, lineChars: 200, historyBytes: 512 * 1024, days: 14, sparkPoints: 40, items: 400, channelAlerts: 20 } as const;
 /** Host probes once a minute; the first hub answer waits this long for them before saying 확인 중. */
 export const SF_PROBE_MS = 60_000;
 export const SF_PROBE_WAIT_MS = 2_500;
@@ -30,6 +30,7 @@ interface StatusRaw {
   lastRender: { file: string | null; at: string | null };
   /** null = the file does not carry a gate_failures array (nothing is known, not "none"). */
   gateFailures: string[] | null; queueDepth: number | null; scheduled: SchedRow[]; published: SchedRow[]; notes: string[];
+  distribution: SfDistribution | null;
 }
 interface ChannelsRaw { generatedAt: string | null; plannedTotal: number; channels: SfChannel[] }
 interface HistRow { at: string; atMs: number; channelId: string | null; source: 'collector' | 'user_reference'; videos: { id: string; views: number | null }[]; mapping: string | null }
@@ -91,10 +92,71 @@ export function parseStatus(text: string | null, nowMs: number): { raw: StatusRa
     scheduled: schedRows(obj.scheduled),
     published: schedRows(obj.published),
     notes: lines(obj.notes, 20),
+    distribution: parseDistribution(obj.distribution),
   };
   let f = withAge(file, SF_STALE_MS.status, nowMs);
   if (raw.placeholder && f.state !== 'malformed') f = { ...f, state: 'placeholder', note: f.state === 'stale' ? `자리표시자 · ${f.note}` : '자리표시자 · 루틴이 아직 쓰지 않음' };
   return { raw, file: f };
+}
+
+/* ───────── distribution: status.json `distribution` (golf-shorts scripts/dist.py) ───────── */
+
+const ID_RE = /^[a-z0-9][a-z0-9_.-]{0,39}$/i;
+const httpOrNull = (v: unknown): string | null => { const s = str(v, 500); return s && /^https?:\/\/\S+$/i.test(s) ? s : null; };
+const pick = <T extends string>(v: unknown, allowed: readonly T[], dflt: T): T => (typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as T) : dflt);
+const zeroCounts = (): Record<SfUploadState, number> => ({ queued: 0, scheduled: 0, posted: 0, failed: 0 });
+function countsOf(v: unknown): Record<SfUploadState, number> {
+  const o = isObj(v) ? v : {}; const c = zeroCounts();
+  for (const k of SF_UPLOAD_STATES) c[k] = count(o[k]) ?? 0;
+  return c;
+}
+/** Tolerant: anything unexpected is dropped, never thrown. Platform ids are short slugs; text is scrubbed like every other line. */
+export function parseDistribution(v: unknown): SfDistribution | null {
+  if (!isObj(v)) return null;
+  const platforms = objs(v.platforms).map((p) => ({ id: str(p.id, 40), name: line(p.label ?? p.name) ?? str(p.id, 40), status: str(p.status, 20), note: line(p.note) }))
+    .filter((p): p is SfDistribution['platforms'][number] => p.id !== null && ID_RE.test(p.id)).slice(0, SF_LIMITS.distPlatforms);
+  if (!platforms.length) return null;
+  const pids = platforms.map((p) => p.id);
+  const channels: SfDistChannel[] = objs(v.channels).slice(0, 50).flatMap((c) => {
+    const id = str(c.id, 64); const name = line(c.name) ?? id; if (!id || !name) return [];
+    const raw = isObj(c.cells) ? c.cells : {};
+    const cells: Record<string, SfDistCell> = {};
+    for (const pid of pids) {
+      const x = isObj(raw[pid]) ? raw[pid] : {};
+      cells[pid] = { accountState: pick(x.account_state, SF_ACCOUNT_STATES, 'none'), handle: str(x.handle, 80), url: httpOrNull(x.url), blockers: lines(x.blockers, 6), counts: countsOf(x.counts), views: count(x.views) };
+    }
+    return [{ id, name, lang: str(c.lang, 8), youtubeChannelId: str(c.youtube_channel_id, 64), publishKst: str(c.publish_kst, 5), cells }];
+  });
+  const totals: Record<string, Record<SfUploadState, number>> = {};
+  const rawTotals = isObj(v.totals) ? v.totals : {};
+  for (const pid of pids) totals[pid] = countsOf(rawTotals[pid]);
+  const shorts: SfDistShort[] = objs(v.shorts).slice(0, SF_LIMITS.distShorts).flatMap((r) => {
+    const id = str(r.id, 80); const channel = str(r.channel, 64); if (!id || !channel) return [];
+    const raw = isObj(r.platforms) ? r.platforms : {};
+    const platformsOut: Record<string, SfDistUpload> = {};
+    for (const pid of pids) {
+      const x = raw[pid]; if (!isObj(x)) continue;
+      platformsOut[pid] = { state: pick(x.state, SF_UPLOAD_STATES, 'queued'), url: httpOrNull(x.url), at: toIso(x.at), views: count(x.views), videoId: str(x.video_id, 64), error: line(x.error), derived: x.derived === true };
+    }
+    return [{ id, channel, title: line(r.title), batch: str(r.batch, 40), platforms: platformsOut }];
+  });
+  const blockers = objs(v.blockers).slice(0, 60).flatMap((b) => { const text = line(b.text); const platform = str(b.platform, 40); return text && platform ? [{ channel: line(b.channel) ?? '—', platform, text }] : []; });
+  return { platforms, channels, totals, shorts, shortsTotal: count(v.shorts_total) ?? shorts.length, blockers, updatedAt: toIso(v.updated_at) };
+}
+
+/** YouTube views the collector already has (channels.json videos) fill per-short and per-cell views the ledger left null. */
+export function withYoutubeViews(d: SfDistribution | null, channels: SfChannel[]): SfDistribution | null {
+  if (!d || !d.platforms.some((p) => p.id === 'youtube')) return d;
+  const views = new Map<string, number>();
+  for (const c of channels) for (const vid of c.videos) if (vid.views !== null) views.set(vid.id, vid.views);
+  if (!views.size) return d;
+  const shorts = d.shorts.map((s) => { const y = s.platforms.youtube; if (!y || y.views !== null || !y.videoId || !views.has(y.videoId)) return s; return { ...s, platforms: { ...s.platforms, youtube: { ...y, views: views.get(y.videoId)! } } }; });
+  const chans = d.channels.map((c) => {
+    const cell = c.cells.youtube; if (!cell || cell.views !== null) return c;
+    const known = shorts.filter((s) => s.channel === c.id).map((s) => s.platforms.youtube?.views).filter((n): n is number => typeof n === 'number');
+    return known.length ? { ...c, cells: { ...c.cells, youtube: { ...cell, views: known.reduce((a, b) => a + b, 0) } } } : c;
+  });
+  return { ...d, shorts, channels: chans };
 }
 
 function platformsOf(v: unknown): Record<SfPlatformId, SfPlatformStatus> {
@@ -382,7 +444,7 @@ export function buildShortsView(input: { status: string | null; channels: string
   return {
     state, headline, decision, kpis, alerts: sorted,
     files: { status: st.file, channels: ch.file, history: { name: 'history.jsonl', state: input.history === null ? 'missing' : 'fresh', at: hist.rows.at(-1)?.at ?? null, note: input.history === null ? '파일 없음' : null, rows: hist.rows.length, skipped: hist.skipped } },
-    plannedTotal, liveCount, channels, calendar, pipeline, notes: st.raw?.notes ?? [], unmappedReference, ledger, generatedAt: new Date(nowMs).toISOString(),
+    plannedTotal, liveCount, channels, calendar, pipeline, notes: st.raw?.notes ?? [], unmappedReference, ledger, distribution: withYoutubeViews(st.raw?.distribution ?? null, channels), generatedAt: new Date(nowMs).toISOString(),
   };
 }
 

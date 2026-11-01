@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { HubMode } from '../../shared/hub-types';
-import { CH1, CHANNELS, HISTORY, HOME, LEDGER, NOW, NO_PROBES, PLACEHOLDER, PROBES_OK, STATUS } from '../../server/hub/__fixtures__/shorts';
+import { CH1, CHANNELS, DIST, HISTORY, HOME, LEDGER, NOW, NO_PROBES, PLACEHOLDER, PROBES_OK, STATUS } from '../../server/hub/__fixtures__/shorts';
 import { buildShortsView } from '../../server/hub/shorts';
 import { hubStatusFixture } from './__fixtures__/status';
 import { HubPage } from './HubPage';
@@ -256,5 +256,30 @@ describe('ShortsFactoryHome', () => {
     expect(kst('2026-11-01T15:30:00Z')).toBe('11-02 00:30');
     expect(kst(null)).toBe('—');
     expect(kst('nope')).toBe('—');
+  });
+});
+
+describe('플랫폼 배포 매트릭스', () => {
+  const DISTED = buildShortsView({ status: j({ ...STATUS, distribution: DIST }), channels: j(CHANNELS), history: HISTORY, probes: PROBES_OK, probeNote: null }, NOW);
+  it('replaces the old platform table with channel × platform cells, chips, links and counts', () => {
+    render(<ShortsFactoryHome sf={DISTED} now={NOW} />);
+    expect(screen.queryByTestId('sf-platforms')).toBeNull();
+    const yt = screen.getByTestId('sf-dc-gunggeum-1min-youtube');
+    expect(yt.dataset.state).toBe('ready');
+    expect(txt(yt)).toContain('준비됨');
+    expect(within(yt).getByText('@gunggeum_1min').getAttribute('href')).toBe('https://www.youtube.com/@gunggeum_1min');
+    expect(txt(yt)).toContain('조회 2,845');
+    const tk = screen.getByTestId('sf-dc-gunggeum-1min-tiktok');
+    expect(txt(tk)).toContain('이름 대기');
+    expect(txt(tk)).toContain('실패 1');
+    expect(within(tk).getByText('@maxmaxmax858').tagName).toBe('SPAN');
+    expect(txt(screen.getByTestId('sf-dist-blockers'))).toContain('닉네임 변경 잠금');
+    expect(txt(screen.getByTestId('sf-dist-blockers'))).not.toContain('계정 없음');
+    expect(txt(screen.getByTestId('sf-ds-boil'))).toContain('게시*');
+  });
+  it('falls back to the channels.json platform table without a distribution block', () => {
+    render(<ShortsFactoryHome sf={FULL} now={NOW} />);
+    expect(screen.getByTestId('sf-platforms')).toBeTruthy();
+    expect(screen.queryByTestId('sf-dist')).toBeNull();
   });
 });
