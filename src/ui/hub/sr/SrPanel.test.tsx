@@ -39,6 +39,16 @@ const rows = () => within(screen.getByTestId('sr-table')).getAllByRole('row').sl
 
 afterEach(cleanup);
 
+describe('srTick', () => {
+  const AT = Date.parse('2026-10-29T00:00:00Z'); // 09:00 KST
+  it('keeps the full label on a wide chart, only the time or the date on a narrow one', async () => {
+    const { srTick } = await vi.importActual<typeof import('./SrChart')>('./SrChart');
+    expect(srTick(AT, true, false)).toBe('29/10, 09:00');
+    expect(srTick(AT, true, true)).toBe('09:00');
+    expect(srTick(AT, false, true)).toBe('29/10');
+  });
+});
+
 describe('sortRows', () => {
   it('nearest to the last close first, signed by side of price; strongest first when there is no price', () => {
     const btc = ZONES.filter((z) => z.symbol === 'BTCUSDT');
@@ -98,6 +108,19 @@ describe('SrPanel', () => {
     expect(a.klines).toHaveBeenLastCalledWith('ETHUSDT');
     fireEvent.change(screen.getByLabelText('심볼'), { target: { value: 'SOLUSDT' } });
     await waitFor(() => expect(screen.getByText('SOLUSDT: 스냅샷에 구간이 없어요.')).toBeTruthy());
+  });
+
+  it('switching symbols drops the old zones at once, so new candles never meet the previous symbol\'s bands', async () => {
+    let release: (() => void) | null = null;
+    const a = api({ sr: vi.fn(async (s: string | null) => { if (s === 'ETHUSDT') await new Promise<void>((r) => { release = r; }); return snap(s); }) });
+    render(<SrPanel api={a} now={NOW} />);
+    await waitFor(() => expect(screen.getByTestId('sr-table')).toBeTruthy());
+    fireEvent.change(screen.getByLabelText('심볼'), { target: { value: 'ETHUSDT' } });
+    await waitFor(() => expect(screen.getByTestId('sr-chart')).toBeTruthy());
+    expect(screen.getByTestId('sr-chart').dataset.ranges).toBe('');
+    expect(screen.queryByTestId('sr-table')).toBeNull();
+    release!();
+    await waitFor(() => expect(screen.getByTestId('sr-chart').dataset.ranges).toBe('eth'));
   });
 
   it('without candles the table still shows, strongest first, with no distance', async () => {

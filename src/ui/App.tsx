@@ -194,6 +194,13 @@ export function App() {
   const hubPushOn = has('hub');
   const hubShown = hubMode !== 'msg';
   const hubFeed = useHubStatus(hubShown || hubPushOn, hubPush, hubPushOn);
+  // A hidden tab stops the pushes (the server stops probing for it); back in view, `on: true` brings a fresh status at once.
+  // (`has` is read at the event: the feature list arrives with hello, which does not itself re-render.)
+  useEffect(() => {
+    const onVisibility = () => { if (has('hub')) sock.current?.send({ type: 'hub_watch', on: document.visibilityState !== 'hidden' }); };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []);
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     if (!q.has('hub')) return;
@@ -435,7 +442,7 @@ export function App() {
     sock.current = createSocket((msg) => {
       if (msg.type === 'hello') setFeatures(msg.features);
       // MSG Hub: the rail asks for status pushes on every (re)connect; the pushes stay out of the reducer and the catch-up tracker.
-      if (msg.type === 'hello' && has('hub')) sock.current?.send({ type: 'hub_watch', on: true });
+      if (msg.type === 'hello' && has('hub')) sock.current?.send({ type: 'hub_watch', on: document.visibilityState !== 'hidden' });
       if (msg.type === 'hub_status') { setHubPush({ status: msg.status, at: Date.now() }); return; }
       if (msg.type === 'hello' && has('setup') && msg.setup?.needed && !setupAsked.current) { setupAsked.current = true; setSetupOpen(true); }
       // 총사령탑 켜기·끄기 changed what the server does (before the dispatch, so the render that follows sees it).

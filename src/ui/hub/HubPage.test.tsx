@@ -49,6 +49,25 @@ describe('HubPage template', () => {
     expect(screen.getByTestId('hub-sec-table').textContent).toContain('자료 없음');
   });
 
+  it('a section added above does not remount the ones below (an opened or closed section keeps its state)', () => {
+    const ops = mode('ops');
+    const props = { modeKey: 'ops' as never, now: T, error: null, loading: false, onRefresh: () => {}, generatedAt: STATUS.generated_at };
+    const r = render(<HubPage {...props} mode={ops} />);
+    fireEvent.click(screen.getByTestId('hub-sec-table').querySelector('summary')!);
+    expect(screen.getByTestId('hub-sec-table').hasAttribute('open')).toBe(false);
+    const added = { ...ops, page: { ...ops.page!, sections: [{ kind: 'text' as const, title: '새 섹션', open: true, body: 'x' }, ...ops.page!.sections] } };
+    r.rerender(<HubPage {...props} mode={added} />);
+    expect(screen.getByTestId('hub-sec-text')).toBeTruthy();
+    expect(screen.getByTestId('hub-sec-table').hasAttribute('open')).toBe(false);
+  });
+
+  it('KPI tiles carry the full label and value as a tooltip', () => {
+    page('ops');
+    const k = screen.getByTestId('hub-kpis').querySelectorAll('.kpi')[1]!;
+    expect(k.querySelector('.l')!.getAttribute('title')).toBe('큐');
+    expect(k.querySelector('.v')!.getAttribute('title')).toBe('2건');
+  });
+
   it('원본 보기 mounts the sandboxed frame only once opened; the sandbox allows no forms', () => {
     page('quant');
     const raw = screen.getByTestId('hub-sec-raw');

@@ -57,9 +57,12 @@ h2 .count.ok { color: var(--ok); } h2 .count.warn { color: var(--warn); } h2 .co
 .big .lbl { font-size: 12px; color: var(--faint); margin-left: 6px; }
 .ok .num { color: var(--ok); } .warn .num { color: var(--warn); } .danger .num { color: var(--danger); } .none .num { color: var(--faint); }
 .bar { flex: 1; height: 8px; border-radius: 999px; background: rgba(255,255,255,.08); overflow: hidden; }
-.bar i { display: block; height: 100%; border-radius: 999px; background: var(--accent); transition: width .4s ease; }
+.bar i { display: block; width: 0; height: 100%; border-radius: 999px; background: var(--accent); transition: width .4s ease; }
 .bar i.ok { background: var(--ok); } .bar i.warn { background: var(--warn); } .bar i.danger { background: var(--danger); }
-.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 0; }
+/* Two stat columns until a card has room for four whole costs ($123.45), whatever the page layout around it. */
+.session { container-type: inline-size; }
+.stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin: 0; }
+@container (min-width: 460px) { .stats { grid-template-columns: repeat(4, 1fr); } }
 .stats div { display: flex; flex-direction: column; min-width: 0; }
 .stats dt { font-size: 11px; color: var(--faint); }
 .stats dd { margin: 0; font-size: var(--num); font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.1; overflow: hidden; text-overflow: ellipsis; }
@@ -75,6 +78,7 @@ h2 .count.ok { color: var(--ok); } h2 .count.warn { color: var(--warn); } h2 .co
 .seat-cell .num { font-size: var(--num); font-weight: 700; line-height: 1; }
 .seat-cell .unit { font-size: 13px; color: var(--muted); }
 .seat-cell .lbl { flex-basis: 100%; font-size: 11px; color: var(--faint); }
+.vh { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { font-size: 13px; padding: 4px 10px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); color: var(--faint); }
 .chip.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
@@ -85,7 +89,6 @@ h2 .count.ok { color: var(--ok); } h2 .count.warn { color: var(--warn); } h2 .co
 @media (max-width: 380px) {
   :root { --pad: 10px; --big: 36px; --num: 20px; }
   html, body { font-size: 14px; }
-  .stats { grid-template-columns: repeat(2, 1fr); }
   .big .lbl { display: none; }
 }
 @media (max-width: 300px) {
@@ -119,6 +122,7 @@ h2 .count.ok { color: var(--ok); } h2 .count.warn { color: var(--warn); } h2 .co
   :root { --pad: 8px; --big: 32px; --num: 18px; }
   .body { grid-template-columns: 3fr 2fr; }
   .card { padding: 8px 12px; gap: 4px; }
+  .stats { grid-template-columns: repeat(4, 1fr); }
   .prompt { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .bar i { transition: none; } }

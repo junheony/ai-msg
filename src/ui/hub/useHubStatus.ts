@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { HubStatus } from '../../shared/hub-types';
 
 /** Polling cadence (no push, or the push went quiet). */
@@ -70,5 +70,6 @@ export function useHubStatus(enabled: boolean, push: HubPush | null, pushOn: boo
     document.addEventListener('visibilitychange', onVisible);
     return () => { gone = true; clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); inflight.current?.abort(); };
   }, [enabled, tick, pushOn]);
-  return { status, error, fetchedAt, loading, refresh };
+  // One object per change, so a memoized consumer (HubView) skips the renders App does for unrelated reasons.
+  return useMemo(() => ({ status, error, fetchedAt, loading, refresh }), [status, error, fetchedAt, loading, refresh]);
 }

@@ -44,11 +44,11 @@ export function Lead({ state, headline, decision }: { state: HubState; headline:
 export function Kpi({ k }: { k: HubKpi }) {
   // display size fits ~9 digit-width glyphs in the narrowest tile; Hangul/CJK glyphs are ~1.8 digits wide
   const width = Array.from(k.value).reduce((n, ch) => n + (/[\u1100-\u11ff\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(ch) ? 1.8 : 1), 0) + (k.unit?.length ?? 0) * 0.7;
-  const size = width > 11 ? ' xs' : width > 8 ? ' sm' : '';
+  const size = width > 13 ? ' xxs' : width > 11 ? ' xs' : width > 8 ? ' sm' : '';
   return (
     <div className={`kpi ${k.status ?? ''}`}>
-      <span className="l">{k.label}</span>
-      <span className={`v${size}`}>{k.value}{k.unit && <span className="u">{k.unit}</span>}</span>
+      <span className="l" title={k.label}>{k.label}</span>
+      <span className={`v${size}`} title={`${k.value}${k.unit ?? ''}`}>{k.value}{k.unit && <span className="u">{k.unit}</span>}</span>
       {k.hint && <span className={`h ${k.status ?? ''}`}>{k.hint}</span>}
     </div>
   );
@@ -189,6 +189,9 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
   const def = modeDef(modeKey);
   const kpis = mode ? kpisOf(mode) : [];
   const sections = mode?.page?.sections ?? [];
+  // Keyed by title (a suffix only for a repeated title), so a section added above does not remount — and collapse — the rest.
+  const seen = new Map<string, number>();
+  const sectionKeys = sections.map((s) => { const n = seen.get(s.title) ?? 0; seen.set(s.title, n + 1); return n ? `${s.title}#${n}` : s.title; });
   return (
     <div className="hub-page" data-testid={`hub-mode-${modeKey}`} data-mode={modeKey}>
       <header className="ph">
@@ -200,7 +203,7 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
         {mode && mode.sources.length > 0 && <span className="hub-src-list">{mode.sources.map((s) => <span key={s.name} className={`src${s.ok ? '' : ' bad'}`} title={s.ok ? `${s.ms}ms` : s.error ?? '오류'}>{s.name}{s.ok ? '' : ` · ${s.error ?? '오류'}`}</span>)}</span>}
         <span className="ph-end">
           <span className="pill">읽기 전용</span>
-          <button type="button" className="pill btn" onClick={onRefresh} disabled={loading} aria-label="지금 새로고침"><ReloadIcon /> {loading ? '불러오는 중…' : '새로고침'}</button>
+          <button type="button" className="pill btn" onClick={onRefresh} disabled={loading} aria-label="지금 새로고침"><ReloadIcon /> <span className="pill-label">{loading ? '불러오는 중…' : '새로고침'}</span></button>
         </span>
       </header>
       {error && <div className="hub-notice" role="alert">상태를 불러오지 못했어요 · {error}</div>}
@@ -217,7 +220,7 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
       {mode?.id === 'nexus' && mode.nexus && <NexusHome home={mode.nexus} now={now} />}
       {mode?.id === 'trading' && mode.trading && <TradingHome t={mode.trading} now={now} />}
       {modeKey === 'trading' && <SrPanel now={now} />}
-      {mode && sections.map((s, i) => <SectionView key={`${s.title}-${i}`} s={s} name={mode.name} />)}
+      {mode && sections.map((s, i) => <SectionView key={sectionKeys[i]} s={s} name={mode.name} />)}
       {mode && !mode.page && Object.keys(mode.metrics).length > 0 && <SectionView s={{ kind: 'kv', title: '지표', open: true, rows: Object.entries(mode.metrics).map(([k, v]) => [k, metricText(v)]) }} name={mode.name} />}
       {mode && !mode.page && mode.links.filter((l) => !l.embed).map((l) => <SectionView key={l.href} s={{ kind: 'raw', title: l.label, href: l.href }} name={mode.name} />)}
       {modeKey === 'trading' && <ReplayTrainer />}

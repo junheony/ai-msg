@@ -51,12 +51,19 @@
 
 /* workstreams: three cards, never merged */
 .tr-wss { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.tr-ws { position: relative; overflow: hidden; }
+.tr-ws { position: relative; overflow: hidden; container-type: inline-size; }
 .tr-ws::before { content: ""; position: absolute; left: 16px; right: 16px; top: 0; height: 2px; border-radius: 0 0 2px 2px; background: var(--line-strong); }
 .tr-ws.ok::before { background: var(--hub-ok); box-shadow: 0 0 10px var(--hub-ok); }
 .tr-ws.warn::before { background: var(--hub-warn); box-shadow: 0 0 10px var(--hub-warn); }
 .tr-ws.bad::before { background: var(--hub-bad); box-shadow: 0 0 10px var(--hub-bad); }
 .tr-ws .hs-rows dt { min-width: min(100%, 7ch); }
+.tr-ws .hs-rows dd { flex-shrink: 0; max-width: 68%; overflow-wrap: break-word; }
+/* three cards in half a page: too narrow for label and value side by side, so stack them instead of clipping either */
+@container (max-width: 240px) {
+  .tr-ws .hs-rows > div { flex-direction: column; align-items: stretch; gap: 0; }
+  .tr-ws .hs-rows dt { white-space: normal; word-break: keep-all; }
+  .tr-ws .hs-rows dd { max-width: none; text-align: left; }
+}
 .hs-badge.tr-live { background: var(--hub-bad-soft); color: var(--hub-bad); }
 .tr-pnl { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 6px 0; border-top: 1px solid var(--line); font-size: var(--fs-xs); }
 .tr-pnl .k { color: var(--muted); font-weight: 600; white-space: nowrap; }

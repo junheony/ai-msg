@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { HubSection } from '../../shared/hub-types';
 import { SectionView, sectionCount } from './HubPage';
@@ -55,6 +55,40 @@ describe('chart', () => {
     // The x labels include the newest one; the y ticks are nice numbers.
     const xs = Array.from(c.querySelectorAll('text.x')).map((t) => t.textContent);
     expect(xs).toContain('10-03');
+  });
+  it('keeps bars inside the plot from a zero baseline, x labels apart, and legend values rounded', () => {
+    const x = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}:00`);
+    sec({ kind: 'chart', title: 'b', open: true, x, unit: 's', series: [{ name: 'p', values: x.map((_, i) => 200 + i + 0.68), style: 'bar' }] });
+    const c = screen.getByTestId('hub-chart');
+    const W = Number(c.querySelector('svg')!.getAttribute('viewBox')!.split(' ')[2]);
+    for (const r of Array.from(c.querySelectorAll('rect'))) {
+      const x0 = Number(r.getAttribute('x'));
+      expect(x0).toBeGreaterThanOrEqual(44);
+      expect(x0 + Number(r.getAttribute('width'))).toBeLessThanOrEqual(W - 12);
+    }
+    expect(Array.from(c.querySelectorAll('text:not(.x)')).map((t) => t.textContent)).toContain('0');
+    const xs = Array.from(c.querySelectorAll('text.x')).map((t) => Number(t.getAttribute('x')));
+    expect(xs.length).toBeGreaterThan(1);
+    for (let i = 1; i < xs.length; i++) expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(5 * 7);
+    expect(c.querySelector('.hs-leg b')!.textContent).toBe('224s');
+  });
+  it('puts a dollar sign before the number, after the minus', () => {
+    sec({ kind: 'chart', title: 'd', open: true, x: ['a', 'b'], unit: '$', series: [{ name: 'pnl', values: [60_200, -60_200] }] });
+    expect(screen.getByTestId('hub-chart').querySelector('.hs-leg b')!.textContent).toBe('−$60.2K');
+  });
+  it('rounds before picking the number of decimals', () => {
+    sec({ kind: 'chart', title: 'r', open: true, x: ['a'], unit: 's', series: [{ name: 'p', values: [99.96] }, { name: 'q', values: [9.996] }, { name: 'w', values: [999.7] }] });
+    expect(Array.from(screen.getByTestId('hub-chart').querySelectorAll('.hs-leg b')).map((b) => b.textContent)).toEqual(['100s', '10s', '1Ks']);
+  });
+  it('measures its width even when the data arrives after a first empty render', () => {
+    const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 320 } as DOMRect);
+    try {
+      const empty: HubSection = { kind: 'chart', title: 'late', open: true, x: [], series: [] };
+      const r = render(<SectionView s={empty} name="테스트" />);
+      expect(screen.getByText('자료 없음')).toBeTruthy();
+      r.rerender(<SectionView s={{ ...empty, x: ['a', 'b'], series: [{ name: 's', values: [1, 2] }] }} name="테스트" />);
+      expect(screen.getByTestId('hub-chart').querySelector('svg')!.getAttribute('viewBox')).toBe('0 0 320 220');
+    } finally { spy.mockRestore(); }
   });
   it('a null gap breaks the line and an all-empty chart says 자료 없음; a collapsed chart is not drawn', () => {
     sec({ kind: 'chart', title: 'g', open: true, x: ['a', 'b', 'c'], series: [{ name: 's', values: [1, null, 3] }] });

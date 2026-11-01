@@ -39,7 +39,9 @@ describe('usage sheet with any number of accounts', () => {
     expect(cards()).toEqual(['Solo', 'GPT']);
     expect(screen.getByTestId('account-solo').className).toContain('current');
     // No numbers in the snapshot for it: empty values, not a crash.
-    expect(screen.getByTestId('solo-fiveHour').textContent).toContain('—');
+    expect(screen.getByTestId('solo-weekly').textContent).toContain('—');
+    // Claude has no 5-hour limit any more: no reading, no empty 5h row.
+    expect(screen.queryByTestId('solo-fiveHour')).toBeNull();
   });
 
   it('five active accounts: a row each in configured order (the retired one has none) and GPT', () => {
@@ -48,7 +50,8 @@ describe('usage sheet with any number of accounts', () => {
     expect(screen.queryByTestId('account-old')).toBeNull();
     expect(screen.getByTestId('a-fiveHour').textContent).toBe('5h90% 남음');
     expect(screen.getByTestId('d-weekly').textContent).toBe('주간95% 남음');
-    expect(screen.getByTestId('b-fiveHour').textContent).toContain('—');
+    expect(screen.queryByTestId('b-fiveHour')).toBeNull();
+    expect(screen.getByTestId('b-weekly').textContent).toContain('—');
     expect(screen.getByTestId('team-2-weekly').textContent).toContain('—');
     expect(screen.getByTestId('account-d').className).toContain('current');
     expect(document.body.textContent).not.toContain('undefined');

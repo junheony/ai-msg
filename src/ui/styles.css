@@ -2461,6 +2461,9 @@ html[data-concise='on'] .note.concise-note { font-size: var(--fs-xs); color: var
 /* The session chip grows into what the usage strip leaves, never below this (desktop / tablet); UsageStrip's barRoom
    reads this min-width to know the strip's room. */
 @media (min-width: 721px) { .topbar-head:not(:empty) { min-width: min(220px, 26vw); } }
+/* Phone: room for the chip's mark and first chips, so the strip steps down instead of sitting over them; what still
+   does not fit is clipped at the head's edge (sideways only: the chip's tap area reaches above and below). */
+@media (max-width: 720px) { .topbar-head:not(:empty) { min-width: 104px; overflow-x: clip; } }
 .topbar > .usage-strip-wrap { order: 2; }
 .topbar > .topbar-end { order: 3; }
 .pane-head { display: flex; align-items: center; gap: var(--s2); min-width: 0; min-height: 48px; padding: 0 var(--s2) 0 var(--s3); flex-shrink: 0; }
@@ -2853,14 +2856,14 @@ mark.find-hit.current { background: var(--btn-primary-bg); color: var(--btn-prim
   --hub-font: "Barlow Semi Condensed", var(--font);
   --fs-hub-row: calc(20px * var(--font-scale, 1)); --fs-hub-lead: calc(24px * var(--font-scale, 1)); --fs-hub-xl: calc(28px * var(--font-scale, 1)); --fs-hub-2xl: calc(40px * var(--font-scale, 1));
   --glass: rgba(255, 255, 255, .045); --glass-line: rgba(255, 255, 255, .09); --glass-hi: rgba(255, 255, 255, .14); --glass-blur: 16px; --glass-shadow: 0 24px 60px -36px rgba(0, 0, 0, .8);
-  --hub-glow: 22%; --hub-glow-2: 9%; --hub-grain: .045; --hub-ink-mix: 100%; --hub-head-bg: color-mix(in srgb, var(--bg) 74%, transparent);
+  --hub-glow: 22%; --hub-glow-2: 9%; --hub-grain: .045; --hub-ink-mix: 100%; --hub-head-bg: color-mix(in srgb, var(--bg) 94%, transparent);
   --mode-hue: var(--accent); --mode-ink: var(--accent); --mode-soft: var(--accent-soft); }
-:root[data-theme="light"] { --glass: rgba(255, 255, 255, .62); --glass-line: rgba(28, 28, 44, .1); --glass-hi: rgba(255, 255, 255, .95); --glass-shadow: 0 24px 60px -40px rgba(28, 28, 44, .35); --hub-glow: 16%; --hub-glow-2: 7%; --hub-grain: .03; --hub-ink-mix: 58%; --hub-head-bg: color-mix(in srgb, var(--bg) 70%, transparent); }
-@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --glass: rgba(255, 255, 255, .62); --glass-line: rgba(28, 28, 44, .1); --glass-hi: rgba(255, 255, 255, .95); --glass-shadow: 0 24px 60px -40px rgba(28, 28, 44, .35); --hub-glow: 16%; --hub-glow-2: 7%; --hub-grain: .03; --hub-ink-mix: 58%; --hub-head-bg: color-mix(in srgb, var(--bg) 70%, transparent); } }
+:root[data-theme="light"] { --glass: rgba(255, 255, 255, .62); --glass-line: rgba(28, 28, 44, .1); --glass-hi: rgba(255, 255, 255, .95); --glass-shadow: 0 24px 60px -40px rgba(28, 28, 44, .35); --hub-glow: 16%; --hub-glow-2: 7%; --hub-grain: .03; --hub-ink-mix: 58%; --hub-head-bg: color-mix(in srgb, var(--bg) 94%, transparent); }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --glass: rgba(255, 255, 255, .62); --glass-line: rgba(28, 28, 44, .1); --glass-hi: rgba(255, 255, 255, .95); --glass-shadow: 0 24px 60px -40px rgba(28, 28, 44, .35); --hub-glow: 16%; --hub-glow-2: 7%; --hub-grain: .03; --hub-ink-mix: 58%; --hub-head-bg: color-mix(in srgb, var(--bg) 94%, transparent); } }
 
 /* The hub is read from a step back (a control room, a phone on the desk): its small type sits one step above the
    terminal's — a 13 px label here is 14, a 14 px row is 15 — and the user's 글자 크기 still multiplies on top. */
-.hub-overlay, .hub-rail, .hub-menu { --fs-2xs: calc(13px * var(--font-scale, 1)); --fs-xs: calc(14px * var(--font-scale, 1)); --fs-sm: calc(15px * var(--font-scale, 1)); --fs-base: calc(16.5px * var(--font-scale, 1)); --fs-lg: calc(19px * var(--font-scale, 1)); }
+.hub-overlay, .rail, .hub-menu { --fs-2xs: calc(13px * var(--font-scale, 1)); --fs-xs: calc(14px * var(--font-scale, 1)); --fs-sm: calc(15px * var(--font-scale, 1)); --fs-base: calc(16.5px * var(--font-scale, 1)); --fs-lg: calc(19px * var(--font-scale, 1)); }
 
 /* Mode hues: place, not state. Declared on whatever carries data-mode (the main area, a rail button, a board row,
    the switcher) so descendants inherit; --mode-ink is mixed on the same element, darker in the light theme. */
@@ -2882,9 +2885,10 @@ mark.find-hit.current { background: var(--btn-primary-bg); color: var(--btn-prim
 .hub-switch.hub-on { border-color: color-mix(in srgb, var(--mode-hue) 45%, var(--glass-line)); }
 .hub-switch-icon { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 7px; background: var(--mode-soft); color: var(--mode-ink); }
 .hub-switch-label { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
-.hub-menu { position: absolute; top: calc(100% + 8px); left: 0; z-index: 40; width: 292px; padding: 8px; border: 1px solid var(--glass-line); border-radius: 16px; background: color-mix(in srgb, var(--panel) 84%, transparent); -webkit-backdrop-filter: blur(var(--glass-blur)); backdrop-filter: blur(var(--glass-blur)); box-shadow: inset 0 1px 0 var(--glass-hi), var(--elev-3); }
+.hub-menu { position: absolute; top: calc(100% + 8px); left: 0; z-index: 40; width: 292px; max-height: calc(100vh - 72px); max-height: calc(100dvh - 72px); overflow-y: auto; padding: 8px; border: 1px solid var(--glass-line); border-radius: 16px; background: color-mix(in srgb, var(--panel) 84%, transparent); -webkit-backdrop-filter: blur(var(--glass-blur)); backdrop-filter: blur(var(--glass-blur)); box-shadow: inset 0 1px 0 var(--glass-hi), var(--elev-3); }
 .hub-menu-head { padding: 6px 10px 8px; font-size: var(--fs-xs); color: var(--faint); }
 .hub-mi { display: flex; align-items: center; gap: 10px; width: 100%; height: 38px; padding: 0 8px; border: 0; border-radius: 10px; background: transparent; color: var(--fg); font-size: var(--fs-sm); text-align: left; cursor: pointer; }
+@media (max-width: 720px), (pointer: coarse) { .hub-mi { height: var(--phone-tap); } }
 .hub-mi:hover, .hub-mi:focus-visible { background: var(--hover); outline: none; }
 .hub-mi.on { color: var(--fg-strong); background: var(--mode-soft); }
 .hub-mi-icon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 8px; background: var(--pill-bg); color: var(--muted); flex-shrink: 0; }
@@ -2896,28 +2900,28 @@ mark.find-hit.current { background: var(--btn-primary-bg); color: var(--btn-prim
 .hub-menu-foot { margin-top: 6px; padding: 8px 10px 4px; border-top: 1px solid var(--glass-line); font-size: var(--fs-2xs); color: var(--faint); line-height: 1.45; }
 
 /* Summary chips (header) */
-.hub-sum { display: flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: var(--fs-xs); color: var(--muted); }
-.hub-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px 0 8px; border-radius: 999px; border: 1px solid var(--glass-line); background: var(--glass); color: var(--fg); font-family: var(--hub-font); font-size: var(--fs-sm); font-weight: 500; font-variant-numeric: tabular-nums; }
+.hub-sum { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: var(--fs-xs); color: var(--muted); }
+.hub-chip { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; height: 24px; padding: 0 9px 0 8px; border-radius: 999px; border: 1px solid var(--glass-line); background: var(--glass); color: var(--fg); font-family: var(--hub-font); font-size: var(--fs-sm); font-weight: 500; font-variant-numeric: tabular-nums; }
 .hub-chip i, .hub-st i, .hub-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex-shrink: 0; }
 .hub-chip.ok i, .hub-st.ok i, .hub-dot.ok { background: var(--hub-ok); box-shadow: 0 0 6px color-mix(in srgb, var(--hub-ok) 60%, transparent); }
 .hub-chip.warn i, .hub-st.warn i, .hub-dot.warn { background: var(--hub-warn); box-shadow: 0 0 6px color-mix(in srgb, var(--hub-warn) 60%, transparent); }
 .hub-chip.bad i, .hub-st.bad i, .hub-dot.bad { background: var(--hub-bad); box-shadow: 0 0 7px color-mix(in srgb, var(--hub-bad) 70%, transparent); }
 .hub-dot.info { background: var(--hub-info); }
 .hub-dot.none, .hub-dot.idle, .hub-dot.unknown { background: transparent; box-shadow: inset 0 0 0 1px var(--faint); }
-.hub-sync { margin-left: 4px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* Capped: an error string lands here, and it must not take the header from the mode title. */
+.hub-sync { margin-left: 4px; min-width: 0; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 /* Shell: the rail and the main area (the terminal and the hub overlay both live in .shell-main) */
 .rail { display: flex; flex-direction: column; gap: 4px; width: 72px; padding: 10px 6px; border-right: 1px solid var(--line); background: var(--sidebar); flex-shrink: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; position: static; z-index: 21; }
 .rail::-webkit-scrollbar { display: none; }
 .rail-btn { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 9px 2px 7px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font-size: var(--fs-2xs); font-family: inherit; line-height: 1.2; cursor: pointer; }
 .rail-btn:hover { background: var(--hover); color: var(--fg); }
-.rail-btn:focus-visible { outline: var(--focus); outline-offset: -2px; }
 .rail-btn.on { background: var(--mode-soft); color: var(--fg-strong); }
 .rail-btn.on::before { content: ""; position: absolute; left: -6px; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--mode-ink); box-shadow: 0 0 12px color-mix(in srgb, var(--mode-hue) 70%, transparent); }
 .rail-btn.on .rail-ico { color: var(--mode-ink); }
 .rail-ico { position: relative; display: inline-flex; width: 20px; height: 20px; align-items: center; justify-content: center; }
 .rail-ico .hub-dot { position: absolute; right: -5px; top: -3px; width: 6px; height: 6px; box-shadow: 0 0 0 2px var(--sidebar); }
-.rail-label { max-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-label { max-width: 100%; font-family: var(--hub-font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-sp { flex: 1; }
 .rail-foot { padding: 6px 0 2px; text-align: center; font-size: var(--fs-2xs); color: var(--faint); }
 .shell-main { flex: 1; min-width: 0; min-height: 0; position: relative; display: flex; }
@@ -2926,7 +2930,8 @@ mark.find-hit.current { background: var(--btn-primary-bg); color: var(--btn-prim
 .hub-overlay::after { content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none; opacity: var(--hub-grain); background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>"); background-size: 160px 160px; }
 /* the glow stays put while .hub-main scrolls (a scroll container's own background does not travel with its content) */
 .hub-main { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; background: radial-gradient(1100px 560px at 14% -10%, color-mix(in srgb, var(--mode-hue) var(--hub-glow), transparent), transparent 70%), radial-gradient(760px 420px at 100% 108%, color-mix(in srgb, var(--mode-hue) var(--hub-glow-2), transparent), transparent 70%); }
-.hub-page { display: flex; flex-direction: column; gap: var(--s5); padding: 0 32px 40px; max-width: 1320px; width: 100%; box-sizing: border-box; margin: 0 auto; }
+/* keep-all: a Hangul word breaks at its spaces, never mid-word ("장/애"); break-word still saves a word wider than its box */
+.hub-page { word-break: keep-all; overflow-wrap: break-word; display: flex; flex-direction: column; gap: var(--s5); padding: 0 32px 40px; max-width: 1320px; width: 100%; box-sizing: border-box; margin: 0 auto; }
 
 /* One reveal when a page mounts (the page is keyed by mode); refreshes re-render in place and do not replay it. */
 @keyframes hub-in { from { opacity: 0; transform: translateY(10px); } }
@@ -2977,15 +2982,16 @@ mark.find-hit.current { background: var(--btn-primary-bg); color: var(--btn-prim
 .kpi.warn::before { background: var(--hub-warn); }
 .kpi.bad::before { background: var(--hub-bad); box-shadow: 0 0 10px var(--hub-bad); }
 .kpi.info::before { background: var(--hub-info); }
-.kpi .l { font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi .l { font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
 .kpi .v { margin-top: 6px; font-family: var(--hub-font); font-size: var(--kpi-fs, var(--fs-hub-2xl)); line-height: 1; font-weight: 500; color: var(--fg-strong); font-variant-numeric: tabular-nums; letter-spacing: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kpi .v.sm { font-size: var(--fs-display); }
 /* Seven or more tiles share one strip: step the value down so wide numbers stop truncating. */
 .kpi:first-child:nth-last-child(n+7), .kpi:first-child:nth-last-child(n+7) ~ .kpi { --kpi-fs: var(--fs-display); }
 .kpi:first-child:nth-last-child(n+7) .v, .kpi:first-child:nth-last-child(n+7) ~ .kpi .v { white-space: normal; overflow-wrap: anywhere; line-height: 1.05; }
 .kpi .v.xs { font-size: var(--fs-xl); line-height: 1.15; }
+.kpi .v.xxs { font-size: var(--fs-lg); line-height: 1.2; }
 .kpi .v .u { font-family: var(--font); font-size: var(--fs-xs); font-weight: 600; color: var(--muted); margin-left: 4px; }
-.kpi .h { margin-top: auto; padding-top: 6px; font-size: var(--fs-2xs); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi .h { margin-top: auto; padding-top: 6px; font-size: var(--fs-2xs); color: var(--faint); overflow-wrap: anywhere; }
 .kpi .h.warn { color: var(--hub-warn); }
 .kpi .h.bad { color: var(--hub-bad); }
 .kpi .h.ok { color: var(--hub-ok); }
@@ -2995,12 +3001,12 @@ mark.find-hit.current { background: var(--btn-primary-bg); color: var(--btn-prim
 .sec > summary, .sec > .sh { display: flex; align-items: center; gap: 12px; min-height: 50px; padding: 0 2px; list-style: none; font-size: var(--fs-base); font-weight: 600; color: var(--fg-strong); }
 .sec > summary { cursor: pointer; }
 .sec > summary:hover .sec-title { color: var(--mode-ink); }
-.sec > summary:focus-visible { outline: var(--focus); outline-offset: -2px; border-radius: 6px; }
+.sec > summary:focus-visible { border-radius: 6px; }
 .sec > summary::-webkit-details-marker { display: none; }
 .sec > summary::before { content: ""; width: 6px; height: 6px; margin: -3px 4px 0 2px; border-right: 1.5px solid var(--faint); border-bottom: 1.5px solid var(--faint); transform: rotate(45deg); flex-shrink: 0; transition: transform var(--t-fast) var(--ease); }
 .sec:not([open]) > summary::before { transform: rotate(-45deg); margin-top: 0; }
 .sec .sec-title { white-space: nowrap; }
-.sec .n { font-weight: 400; font-size: var(--fs-xs); color: var(--faint); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sec > :where(summary, .sh) .n { font-weight: 400; font-size: var(--fs-xs); color: var(--faint); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sec .cnt { margin-left: auto; font-family: var(--hub-font); font-size: var(--fs-base); color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
 .sec .b { padding: 0 2px 20px; }
 .sec.sec-raw { border-top-style: dashed; }
@@ -3029,6 +3035,15 @@ mark.find-hit.current { background: var(--btn-primary-bg); color: var(--btn-prim
 .kv span { color: var(--muted); white-space: nowrap; }
 .kv b { font-weight: 600; color: var(--fg-strong); font-variant-numeric: tabular-nums; text-align: right; min-width: 0; overflow-wrap: anywhere; }
 .twrap { overflow-x: auto; }
+/* Scroll hint: a side that can still scroll fades out (tables, the phone tab bar). Driven by the box's own scroll
+   timeline, which is inactive — no fade — when nothing overflows. Gated on support: without a scroll timeline the
+   0s animation would fill to its last frame and fade the left edge for good. */
+@property --edge-l { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --edge-r { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@keyframes edge-fade { from { --edge-l: 0px; --edge-r: 28px; } 6%, 94% { --edge-l: 28px; --edge-r: 28px; } to { --edge-l: 28px; --edge-r: 0px; } }
+@supports (animation-timeline: scroll()) {
+.twrap, .tr-tw { -webkit-mask-image: linear-gradient(to right, transparent, black var(--edge-l), black calc(100% - var(--edge-r)), transparent); mask-image: linear-gradient(to right, transparent, black var(--edge-l), black calc(100% - var(--edge-r)), transparent); animation: edge-fade linear both; animation-timeline: scroll(self inline); }
+}
 table.t { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
 .t th { text-align: left; font-size: var(--fs-xs); font-weight: 500; color: var(--faint); padding: 6px 8px; border-bottom: 1px solid var(--line-strong); white-space: nowrap; }
 .t td { padding: 0 8px; height: 34px; border-bottom: 1px solid var(--line); white-space: nowrap; color: var(--fg); }
@@ -3046,7 +3061,7 @@ table.t { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); font-
 .bar .tr i.neg { background: var(--hub-bad); box-shadow: none; }
 .bar .v { text-align: right; color: var(--fg-strong); font-family: var(--hub-font); font-size: var(--fs-base); font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .text { margin: 0; font-family: inherit; font-size: var(--fs-sm); color: var(--fg); white-space: pre-wrap; line-height: 1.55; }
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 40px; align-items: start; }
+.grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 40px; align-items: start; }
 .foot { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: var(--fs-2xs); color: var(--faint); padding-top: 14px; border-top: 1px solid var(--line); }
 
 /* 원본 보기 (raw drill-down): the sandboxed frame, or a new-tab link */
@@ -3088,7 +3103,6 @@ table.t { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); font-
 .card .ft { grid-area: ft; margin: 0; display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 6px; font-size: var(--fs-2xs); color: var(--faint); padding: 0; border: 0; font-variant-numeric: tabular-nums; }
 .card .open { display: inline-flex; align-items: center; gap: 2px; height: 28px; border: 1px solid var(--glass-line); background: transparent; padding: 0 6px 0 12px; border-radius: var(--r-full); color: var(--fg); font-weight: 600; font-size: var(--fs-xs); cursor: pointer; font-family: inherit; transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease); }
 .card .open:hover { background: var(--mode-soft); border-color: color-mix(in srgb, var(--mode-hue) 45%, transparent); color: var(--fg-strong); }
-.card .open:focus-visible { outline: var(--focus); }
 
 @media (prefers-reduced-motion: reduce) {
   .hub-page > * { animation: none; }
@@ -3102,7 +3116,7 @@ table.t { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); font-
   .card { grid-template-columns: minmax(160px, 190px) minmax(0, 1fr) auto; grid-template-areas: "top hl ft" "top al ft" "top ck ck"; column-gap: 18px; }
   .card .ck { justify-content: flex-start; margin-top: 4px; }
   .card .ck div { align-items: flex-start; }
-  .grid2 { grid-template-columns: 1fr; gap: 0; }
+  .grid2 { grid-template-columns: minmax(0, 1fr); gap: 0; }
   .kpis { grid-template-columns: repeat(3, 1fr); }
   .hub-switch-label { max-width: 110px; }
 }
@@ -3113,6 +3127,7 @@ table.t { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); font-
   .rail-btn { flex: 0 0 64px; min-height: var(--phone-tap); height: 48px; padding: 4px 0; justify-content: center; border-radius: 8px; }
   .rail-btn.on::before { left: 16px; right: 16px; top: -4px; bottom: auto; width: auto; height: 3px; border-radius: 0 0 3px 3px; }
   .rail-sp, .rail-foot { display: none; }
+  @supports (animation-timeline: scroll()) { .rail { -webkit-mask-image: linear-gradient(to right, transparent, black var(--edge-l), black calc(100% - var(--edge-r)), transparent); mask-image: linear-gradient(to right, transparent, black var(--edge-l), black calc(100% - var(--edge-r)), transparent); animation: edge-fade linear both; animation-timeline: scroll(self inline); } }
   .shell-main { order: 1; }
   .hub-page { padding: 0 12px 20px; gap: 14px; }
   .ph { margin: 0 -12px; padding: 10px 12px 9px; gap: 6px 8px; }
@@ -3120,6 +3135,12 @@ table.t { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); font-
   .mode-ico { width: 30px; height: 30px; border-radius: 9px; }
   .ph .hub-src-list { display: none; }
   .ph-end .pill:not(.btn) { display: none; }
+  /* 새로고침 stays on the title row as its icon (the button keeps its aria-label); the meta line takes the row under
+     it, whole — squeezed in beside the badges it read "마지…". */
+  .ph-end { order: 1; }
+  .ph .meta { order: 2; flex: 1 0 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ph-end .pill.btn { width: var(--phone-tap); height: var(--phone-tap); padding: 0; justify-content: center; }
+  .ph-end .pill-label { display: none; }
   .lead { padding-left: 16px; }
   .lead .h { font-size: var(--fs-lg); }
   .lead .d { font-size: var(--fs-sm); }
@@ -3129,6 +3150,7 @@ table.t { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); font-
   .kpi .v { font-size: var(--fs-display); margin-top: 4px; }
   .kpi .v.sm { font-size: var(--fs-xl); }
   .kpi .v.xs { font-size: var(--fs-lg); }
+  .kpi .v.xxs { font-size: var(--fs-base); }
   .card { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "top ft" "hl hl" "al al" "ck ck"; column-gap: 10px; row-gap: 4px; padding: 12px 8px 12px 14px; }
   .card .ck { justify-content: flex-start; gap: 22px; margin-top: 2px; }
   .card .ck div { align-items: flex-start; }

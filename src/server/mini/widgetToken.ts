@@ -21,6 +21,7 @@ export function bearerOf(header: string | string[] | undefined): string | null {
 export class WidgetTokenStore {
   private token: string | null = null;
   private loading: Promise<string> | null = null;
+  private rotating: Promise<unknown> = Promise.resolve();
   constructor(private readonly file: string) {}
 
   /** The current token, created on the first call. */
@@ -30,12 +31,18 @@ export class WidgetTokenStore {
     return this.loading;
   }
 
-  /** A fresh random token written over the old one (0600; the old value stops working at once). */
-  async rotate(): Promise<string> {
+  /** A fresh random token written over the old one (0600; the old value stops working at once). Rotations run one at a time. */
+  rotate(): Promise<string> {
+    const run = this.rotating.then(() => this.rotateNow(), () => this.rotateNow());
+    this.rotating = run.catch(() => undefined);
+    return run;
+  }
+
+  private async rotateNow(): Promise<string> {
     await this.current();
     const next = randomBytes(32).toString('hex');
     await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
-    const tmp = `${this.file}.${process.pid}.tmp`;
+    const tmp = `${this.file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
     await fs.writeFile(tmp, next + '\n', { mode: 0o600 });
     await fs.chmod(tmp, 0o600);
     await fs.rename(tmp, this.file);

@@ -77,7 +77,7 @@ export function HubSummary({ status, fetchedAt, error, pushOn }: { status: HubSt
       <span className="hub-chip ok"><i />정상 {n.ok}</span>
       <span className="hub-chip warn"><i />주의 {n.warn}</span>
       <span className="hub-chip bad"><i />장애 {n.down}</span>
-      <span className="hub-sync">{error ? `갱신 실패 · ${error}` : fetchedAt ? `${pushOn ? '푸시' : '동기화'} ${hhmmss(fetchedAt)}` : '불러오는 중…'}</span>
+      <span className="hub-sync" title={error ? `갱신 실패 · ${error}` : undefined}>{error ? `갱신 실패 · ${error}` : fetchedAt ? `${pushOn ? '푸시' : '동기화'} ${hhmmss(fetchedAt)}` : '불러오는 중…'}</span>
     </div>
   );
 }

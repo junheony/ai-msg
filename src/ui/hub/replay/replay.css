@@ -19,7 +19,8 @@
 .rp-label { font-size: var(--fs-2xs); color: var(--faint); font-weight: 600; }
 .rp-hint { font-size: var(--fs-2xs); color: var(--faint); }
 .rp-input { height: 32px; padding: 0 10px; border: 1px solid var(--glass-line); border-radius: 8px; background: var(--bg); color: var(--fg); font: inherit; font-size: var(--fs-sm); min-width: 0; }
-.rp-input.rp-mono { width: 12ch; font-size: var(--fs-base); }
+/* 14ch of text + 22px padding and border + 24px Chrome keeps for the datalist arrow, even while it is hidden */
+.rp-input.rp-mono { width: calc(14ch + 46px); max-width: 100%; font-size: var(--fs-base); }
 .rp-input:disabled { opacity: .6; }
 .rp-input:focus-visible, .rp-seg button:focus-visible, .rp-chip:focus-visible, .rp-btn:focus-visible, .rp-call:focus-visible, .rp-link:focus-visible, .rp-check input:focus-visible { outline: 2px solid var(--mode-ink); outline-offset: 1px; }
 .rp-seg { display: inline-flex; border: 1px solid var(--glass-line); border-radius: 8px; background: var(--bg); overflow: hidden; }

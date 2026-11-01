@@ -15,7 +15,7 @@ export const HUB_TIMEOUTS = {
   firstWait: 4_000,
 } as const;
 /** Slow sources keep their own answer this long (the hub cache is 15 s; ssh/psql/500 KB JSON should not run that often). */
-export const SLOW_CACHE_MS = { ops: 60_000, ssh: 120_000, psql: 60_000, nexus: 20_000, quant: 60_000, /** ver2 equity (~6k rows) and trades/events: once a minute is plenty. */ ver2: 60_000 } as const;
+export const SLOW_CACHE_MS = { ops: 60_000, ssh: 120_000, psql: 60_000, nexus: 20_000, quant: 60_000, /** ver2 equity (~6k rows) and trades/events: once a minute is plenty. */ ver2: 60_000, /** 영상/게임 studios: directory walks, 50 episodes, 10 `git log`s. */ studio: 60_000 } as const;
 /** A slow source's last good answer is still shown this long after it stopped answering (marked 이전 값 사용); older, the source counts as down. */
 export const STALE_LIMIT_MS = { nexus: 5 * 60_000 } as const;
 
@@ -23,13 +23,17 @@ export const STALE_LIMIT_MS = { nexus: 5 * 60_000 } as const;
  * A tiny per-key cache for slow sources: the last good value is kept `ttlMs`; on a miss the loader runs once (callers
  * that race share the promise); a loader failure keeps the previous value (stale) and marks it `stale`.
  */
+/** After a failed load, callers get the failure (and any stale value) without a reload for min(ttl, this). */
+export const SLOW_ERROR_RETRY_MS = 30_000;
 export interface SlowResult<T> { value: T | null; at: number | null; stale: boolean; error: string | null; /** No value yet and the load is still running (only with `waitMs`): the caller shows 불러오는 중, never an error. */ pending: boolean }
 export function slowCache<T>(ttlMs: number, load: () => Promise<T>, clock: () => number = () => Date.now(), opts: { /** With no value yet, answer `pending` after this long instead of holding the whole hub answer (the load keeps running). */ waitMs?: number } = {}): () => Promise<SlowResult<T>> {
-  let value: T | null = null; let at: number | null = null; let error: string | null = null; let inflight: Promise<void> | null = null;
+  let value: T | null = null; let at: number | null = null; let error: string | null = null; let errAt: number | null = null; let inflight: Promise<void> | null = null;
   return async () => {
     const now = clock();
     if (at !== null && now - at < ttlMs && error === null) return { value, at, stale: false, error: null, pending: false };
-    inflight ??= load().then((v) => { value = v; at = clock(); error = null; }, (err: unknown) => { error = errorText(err); if (at === null) at = clock(); }).finally(() => { inflight = null; });
+    // A recent failure is answered from memory too, so a down source is not re-probed on every pass.
+    if (error !== null && errAt !== null && now - errAt < Math.min(ttlMs, SLOW_ERROR_RETRY_MS) && !inflight) return { value, at, stale: true, error, pending: false };
+    inflight ??= load().then((v) => { value = v; at = clock(); error = null; errAt = null; }, (err: unknown) => { error = errorText(err); errAt = clock(); if (at === null) at = clock(); }).finally(() => { inflight = null; });
     if (opts.waitMs !== undefined && value === null) {
       // A failed load on record and still no value: say so at once (the retry runs behind) rather than 불러오는 중 forever.
       if (error !== null) return { value: null, at, stale: true, error, pending: false };

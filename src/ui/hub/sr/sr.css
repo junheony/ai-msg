@@ -40,7 +40,7 @@
 .sr-t td.sr-dist { font-weight: 600; }
 .sr-t td.sr-dist.above { color: var(--hub-bad); }
 .sr-t td.sr-dist.below { color: var(--hub-ok); }
-.sr-tier { font-size: 10px; letter-spacing: 1px; color: var(--faint); white-space: nowrap; }
+.sr-tier { font-size: var(--fs-2xs); letter-spacing: 1px; color: var(--faint); white-space: nowrap; }
 .sr-tier.t4, .sr-tier.t5 { color: var(--fg-strong); }
 .sr-tf { font-family: var(--hub-font); font-size: var(--fs-xs); color: var(--muted); letter-spacing: .3px; white-space: nowrap; }
 

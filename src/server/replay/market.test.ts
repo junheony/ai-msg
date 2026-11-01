@@ -47,6 +47,20 @@ describe('createMarketService().klines', () => {
     await svc.klines(q('symbol=BTCUSDT&interval=1m&limit=2&endTime=120000'));
     expect(calls.length).toBe(2);
   });
+  it('shares one upstream call between identical concurrent requests; a failure is not remembered', async () => {
+    let fail = true;
+    const { calls, fetchImpl } = stub({ [`${BINANCE_FUTURES}/fapi/v1/exchangeInfo`]: () => (fail ? { status: 500, body: {} } : { body: { symbols: [] } }) });
+    const svc = createMarketService(fetchImpl);
+    const both = await Promise.allSettled([svc.symbols(q('market=futures')), svc.symbols(q('market=futures'))]);
+    expect(both.map((r) => r.status)).toEqual(['rejected', 'rejected']);
+    expect(calls.length).toBe(1);
+    fail = false;
+    const [a, b] = await Promise.all([svc.symbols(q('market=futures')), svc.symbols(q('market=futures'))]);
+    expect(a).toBe(b);
+    expect(calls.length).toBe(2);
+    await svc.symbols(q('market=futures'));
+    expect(calls.length).toBe(2);
+  });
   it('routes futures to fapi and clamps the limit', async () => {
     const { calls, fetchImpl } = stub({ [`${BINANCE_FUTURES}/fapi/v1/klines`]: () => ({ body: [] }) });
     await createMarketService(fetchImpl).klines(q('market=futures&symbol=ETHUSDT&interval=4h&limit=5000'));

@@ -9,7 +9,7 @@ import { createRequestHandler, SECURITY_HEADERS } from '../http';
 import { SessionIndex } from '../sessions/SessionIndex';
 import { UsageService } from '../usage/UsageService';
 import { rootsOf, testRegistry } from '../../shared/accounts.testkit';
-import { HUB_PROXY_CSP, parseHubProxyPath, rewriteProxiedText, upstreamPath } from './proxy';
+import { HUB_PROXY_CSP, decodedProxyPath, parseHubProxyPath, rewriteProxiedText, upstreamPath } from './proxy';
 import type { HubStatus } from '../../shared/hub-types';
 
 const TOKEN = 'f'.repeat(64);
@@ -27,6 +27,7 @@ beforeAll(async () => {
     if (req.url === '/ops') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'set-cookie': 'up=1', 'x-frame-options': 'DENY', 'content-security-policy': "default-src 'none'" }); res.end('<html><a href="/ops/strategy">s</a><script>fetch(\'/api/ops\')</script><link href="/css/a.css"><p>x = a/b</p></html>'); return; }
     if (req.url === '/api/snapshot.json') { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"tabs":[]}'); return; }
     if (req.url === '/app.js?v=1') { res.writeHead(200, { 'content-type': 'application/javascript' }); res.end('fetch("/api/snapshot.json", { cache: "no-store" })'); return; }
+    if (req.url === '/big.js') { res.writeHead(200, { 'content-type': 'application/javascript' }); const chunk = 'a'.repeat(1024 * 1024); for (let i = 0; i < 9; i += 1) res.write(chunk); res.end(); return; }
     if (req.url === '/bin') { res.writeHead(200, { 'content-type': 'application/octet-stream' }); res.end(Buffer.from([0, 1, 2, 3])); return; }
     res.writeHead(404, { 'content-type': 'text/plain' }); res.end('nope');
   });
@@ -119,8 +120,21 @@ describe('/hub/p/<id>/ embed proxy', () => {
     for (const p of ['/hub/p/ops/api/risex/oi/opener/key', '/hub/p/ops/api/token', '/hub/p/quant/wallet.json', '/hub/p/ops/login']) {
       expect((await fetch(`${base}${p}`, { headers: COOKIE })).status).toBe(403);
     }
-    expect(seen.some((s) => /key|token|wallet|login/.test(s.url))).toBe(false);
+    // Percent-encoded spellings are decoded before the check; encoded slashes/backslashes are refused outright.
+    for (const p of ['/hub/p/quant/api/%6Bey', '/hub/p/quant/api/%256Bey', '/hub/p/ops/api/to%6Ben', '/hub/p/quant/%57allet.json']) {
+      expect((await fetch(`${base}${p}`, { headers: COOKIE })).status).toBe(403);
+    }
+    for (const p of ['/hub/p/quant/api%2Fkey', '/hub/p/quant/api%5Ckey', '/hub/p/quant/api/%E0%A4%A']) {
+      expect((await fetch(`${base}${p}`, { headers: COOKIE })).status).toBe(400);
+    }
+    expect(seen.some((s) => /key|token|wallet|login|%/i.test(s.url))).toBe(false);
     expect((await fetch(`${base}/hub/p/quant/missing`, { headers: COOKIE })).status).toBe(404);
+  });
+
+  it('answers 502 (not a truncated 200) when an un-sized text body passes the rewrite cap', async () => {
+    const res = await fetch(`${base}/hub/p/quant/big.js`, { headers: COOKIE });
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: '업스트림 응답이 너무 큽니다' });
   });
 
   it('answers 502 when the upstream is down, and the global CSP is untouched for the hub page itself', async () => {
@@ -141,6 +155,16 @@ describe('proxy helpers', () => {
     expect(upstreamPath({ port: 1, root: '/ops' }, '/')).toBe('/ops');
     expect(upstreamPath({ port: 1 }, '/')).toBe('/');
     expect(upstreamPath({ port: 1, root: '/ops' }, '/api/ops')).toBe('/api/ops');
+  });
+  it('decodes each path segment for the deny check and refuses encoded separators', () => {
+    expect(decodedProxyPath('/api/%6Bey')).toBe('/api/key');
+    expect(decodedProxyPath('/api/%256Bey')).toBe('/api/%6Bey\n/api/key');
+    expect(decodedProxyPath('/a%2Fb')).toBeNull();
+    expect(decodedProxyPath('/a%5Cb')).toBeNull();
+    expect(decodedProxyPath('/a%252Fb')).toBeNull();
+    expect(decodedProxyPath('/a\\b')).toBeNull();
+    expect(decodedProxyPath('/%E0%A4%A')).toBeNull();
+    expect(decodedProxyPath('/100%25')).toBe('/100%');
   });
   it('rewrites only known root-absolute prefixes', () => {
     expect(rewriteProxiedText('url(/img/a.png) "/api/x" \'/css/y\' "/" "/other" a/b "/favicon.ico"', '/hub/p/q/')).toBe('url(/hub/p/q/img/a.png) "/hub/p/q/api/x" \'/hub/p/q/css/y\' "/" "/other" a/b "/hub/p/q/favicon.ico"');

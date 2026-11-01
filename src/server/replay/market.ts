@@ -93,6 +93,17 @@ export function createMarketService(fetchImpl: FetchLike = (url, init) => fetch(
     if (clock() - e.at > ttl) { cache.delete(key); return undefined; }
     return e.value as T;
   };
+  /** Concurrent identical requests share one upstream call; only a success is remembered. */
+  const inflight = new Map<string, Promise<unknown>>();
+  const once = <T>(key: string, ttl: number, load: () => Promise<T>): Promise<T> => {
+    const hit = cached<T>(key, ttl);
+    if (hit) return Promise.resolve(hit);
+    const running = inflight.get(key);
+    if (running) return running as Promise<T>;
+    const p = load().then((v) => { remember(key, v); return v; }).finally(() => { inflight.delete(key); });
+    inflight.set(key, p);
+    return p;
+  };
 
   async function getJson(url: string): Promise<unknown> {
     const ctl = new AbortController();
@@ -132,64 +143,51 @@ export function createMarketService(fetchImpl: FetchLike = (url, init) => fetch(
     async klines(p) {
       const m = market(p); const s = symbol(p); const i = interval(p);
       const start = msParam(p, 'startTime'); const end = msParam(p, 'endTime'); const limit = intParam(p, 'limit', MAX_KLINES, 500);
-      const key = `k:${m}:${s}:${i}:${start}:${end}:${limit}`;
-      const hit = cached<ReplayKlines>(key, CACHE_MS.klines);
-      if (hit) return hit;
-      let out: ReplayKlines;
-      try {
-        out = { source: 'binance', market: m, symbol: s, interval: i, candles: await binanceKlines(m, s, i, start, end, limit) };
-      } catch (err) {
-        // A 400 from Binance (unknown symbol) is not retried elsewhere; a block, a limit or a dead link is.
-        if (!(err instanceof ReplayHttpError) || err.status === 400) throw err;
-        try { out = { source: 'bybit', market: m, symbol: s, interval: i, candles: await bybitKlines(m, s, i, start, end, limit) }; } catch { throw err; }
-      }
-      remember(key, out);
-      return out;
+      return once<ReplayKlines>(`k:${m}:${s}:${i}:${start}:${end}:${limit}`, CACHE_MS.klines, async () => {
+        try {
+          return { source: 'binance', market: m, symbol: s, interval: i, candles: await binanceKlines(m, s, i, start, end, limit) };
+        } catch (err) {
+          // A 400 from Binance (unknown symbol) is not retried elsewhere; a block, a limit or a dead link is.
+          if (!(err instanceof ReplayHttpError) || err.status === 400) throw err;
+          try { return { source: 'bybit', market: m, symbol: s, interval: i, candles: await bybitKlines(m, s, i, start, end, limit) }; } catch { throw err; }
+        }
+      });
     },
     async oi(p) {
       const s = symbol(p); const period = p.get('period') ?? '1h';
       if (!OI_PERIODS.has(period)) throw new ReplayHttpError(400, '지원하지 않는 period');
       const start = msParam(p, 'startTime'); const end = msParam(p, 'endTime'); const limit = intParam(p, 'limit', MAX_OI, 500);
-      const key = `oi:${s}:${period}:${start}:${end}:${limit}`;
-      const hit = cached<ReplayOi>(key, CACHE_MS.other);
-      if (hit) return hit;
-      const q = new URLSearchParams({ symbol: s, period, limit: String(limit) });
-      if (start !== null) q.set('startTime', String(start));
-      if (end !== null) q.set('endTime', String(end));
-      const rows = asArr(await getJson(`${BINANCE_FUTURES}/futures/data/openInterestHist?${q}`));
-      const out: ReplayOi = { symbol: s, period, points: rows.map((r) => { const o = r as Record<string, unknown>; return { t: num(o.timestamp), oi: num(o.sumOpenInterest), oiValue: num(o.sumOpenInterestValue) }; }) };
-      remember(key, out);
-      return out;
+      return once<ReplayOi>(`oi:${s}:${period}:${start}:${end}:${limit}`, CACHE_MS.other, async () => {
+        const q = new URLSearchParams({ symbol: s, period, limit: String(limit) });
+        if (start !== null) q.set('startTime', String(start));
+        if (end !== null) q.set('endTime', String(end));
+        const rows = asArr(await getJson(`${BINANCE_FUTURES}/futures/data/openInterestHist?${q}`));
+        return { symbol: s, period, points: rows.map((r) => { const o = r as Record<string, unknown>; return { t: num(o.timestamp), oi: num(o.sumOpenInterest), oiValue: num(o.sumOpenInterestValue) }; }) };
+      });
     },
     async funding(p) {
       const s = symbol(p);
       const start = msParam(p, 'startTime'); const end = msParam(p, 'endTime'); const limit = intParam(p, 'limit', MAX_FUNDING, 1000);
-      const key = `f:${s}:${start}:${end}:${limit}`;
-      const hit = cached<ReplayFunding>(key, CACHE_MS.other);
-      if (hit) return hit;
-      const q = new URLSearchParams({ symbol: s, limit: String(limit) });
-      if (start !== null) q.set('startTime', String(start));
-      if (end !== null) q.set('endTime', String(end));
-      const rows = asArr(await getJson(`${BINANCE_FUTURES}/fapi/v1/fundingRate?${q}`));
-      const out: ReplayFunding = { symbol: s, points: rows.map((r) => { const o = r as Record<string, unknown>; return { t: num(o.fundingTime), rate: num(o.fundingRate) }; }) };
-      remember(key, out);
-      return out;
+      return once<ReplayFunding>(`f:${s}:${start}:${end}:${limit}`, CACHE_MS.other, async () => {
+        const q = new URLSearchParams({ symbol: s, limit: String(limit) });
+        if (start !== null) q.set('startTime', String(start));
+        if (end !== null) q.set('endTime', String(end));
+        const rows = asArr(await getJson(`${BINANCE_FUTURES}/fapi/v1/fundingRate?${q}`));
+        return { symbol: s, points: rows.map((r) => { const o = r as Record<string, unknown>; return { t: num(o.fundingTime), rate: num(o.fundingRate) }; }) };
+      });
     },
     async symbols(p) {
       const m = market(p);
-      const key = `s:${m}`;
-      const hit = cached<ReplaySymbols>(key, CACHE_MS.symbols);
-      if (hit) return hit;
-      const body = await getJson(m === 'spot' ? `${BINANCE_SPOT}/api/v3/exchangeInfo?permissions=SPOT` : `${BINANCE_FUTURES}/fapi/v1/exchangeInfo`);
-      const rows = asArr((body as { symbols?: unknown } | null)?.symbols);
-      const symbols = rows
-        .map((r) => r as Record<string, unknown>)
-        .filter((r) => r.quoteAsset === 'USDT' && r.status === 'TRADING' && (m === 'spot' || r.contractType === 'PERPETUAL') && typeof r.symbol === 'string' && SYMBOL_RE.test(r.symbol))
-        .map((r) => r.symbol as string)
-        .sort();
-      const out: ReplaySymbols = { market: m, symbols };
-      remember(key, out);
-      return out;
+      return once<ReplaySymbols>(`s:${m}`, CACHE_MS.symbols, async () => {
+        const body = await getJson(m === 'spot' ? `${BINANCE_SPOT}/api/v3/exchangeInfo?permissions=SPOT` : `${BINANCE_FUTURES}/fapi/v1/exchangeInfo`);
+        const rows = asArr((body as { symbols?: unknown } | null)?.symbols);
+        const symbols = rows
+          .map((r) => r as Record<string, unknown>)
+          .filter((r) => r.quoteAsset === 'USDT' && r.status === 'TRADING' && (m === 'spot' || r.contractType === 'PERPETUAL') && typeof r.symbol === 'string' && SYMBOL_RE.test(r.symbol))
+          .map((r) => r.symbol as string)
+          .sort();
+        return { market: m, symbols };
+      });
     },
   };
 }

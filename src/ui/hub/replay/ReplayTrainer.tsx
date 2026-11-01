@@ -6,6 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { REPLAY_INTERVALS, type ReplayCandle, type ReplayFundingPoint, type ReplayInterval, type ReplayMarket, type ReplayOiPoint, type ReplaySource } from '../../../shared/replay-types';
+import { hasOpenModal } from '../../autoReload';
 import { FALLBACK_SYMBOLS, liveReplayApi, type ReplayApi } from './api';
 import { appendSession, clearHistory, historyStats, INDICATOR_IDS, readHistory, readReplayPrefs, writeReplayPrefs, type CandleColors, type IndicatorId, type ReplayPrefs, type ReplaySession } from './history';
 import { fmtFull, precisionOf, ReplayChart, type ChartMarker } from './ReplayChart';
@@ -35,6 +36,12 @@ interface Scene {
 }
 type Phase = 'idle' | 'loading' | 'playing' | 'done';
 
+/** The game on screen, kept outside the component: a hub mode switch unmounts the trainer, and round 7 of 10 must survive it. */
+interface KeptGame { phase: 'playing' | 'done'; scene: Scene; visibleEnd: number; rounds: ReplayRound[]; saved: ReplaySession | null }
+let kept: KeptGame | null = null;
+/** Forgets the kept game (for tests). */
+export function resetReplayGame(): void { kept = null; }
+
 const fmtPrice = (p: number): string => p.toLocaleString('en-US', { minimumFractionDigits: precisionOf(p), maximumFractionDigits: precisionOf(p) });
 const fmtWhen = (ms: number): string => fmtFull.format(new Date(ms));
 const pct1 = (v: number | null): string => (v === null ? '—' : `${Math.round(v * 100)}%`);
@@ -52,18 +59,24 @@ export function ReplayTrainer({ api = liveReplayApi, random = Math.random, now =
   const setPrefs = useCallback((patch: Partial<ReplayPrefs>) => setPrefsState((p) => { const n = { ...p, ...patch }; writeReplayPrefs(n); return n; }), []);
   const [symbols, setSymbols] = useState<string[]>(FALLBACK_SYMBOLS);
   const [manualStart, setManualStart] = useState('');
-  const [phase, setPhase] = useState<Phase>('idle');
+  const [phase, setPhase] = useState<Phase>(() => kept?.phase ?? 'idle');
   const [error, setError] = useState<string | null>(null);
-  const [scene, setScene] = useState<Scene | null>(null);
-  const [visibleEnd, setVisibleEnd] = useState(0);
-  const [rounds, setRounds] = useState<ReplayRound[]>([]);
+  const [scene, setScene] = useState<Scene | null>(() => kept?.scene ?? null);
+  const [visibleEnd, setVisibleEnd] = useState(() => kept?.visibleEnd ?? 0);
+  const [rounds, setRounds] = useState<ReplayRound[]>(() => kept?.rounds ?? []);
   const [oi, setOi] = useState<ReplayOiPoint[] | null>(null);
   const [funding, setFunding] = useState<ReplayFundingPoint[] | null>(null);
   const [hover, setHover] = useState<number | null>(null);
   const [history, setHistory] = useState<ReplaySession[]>(() => readHistory());
   const [showHistory, setShowHistory] = useState(false);
-  const [saved, setSaved] = useState<ReplaySession | null>(null);
+  const [saved, setSaved] = useState<ReplaySession | null>(() => kept?.saved ?? null);
   const runId = useRef(0);
+  const nowRef = useRef(now);
+  nowRef.current = now;
+
+  useEffect(() => {
+    kept = scene && (phase === 'playing' || phase === 'done') ? { phase, scene, visibleEnd, rounds, saved } : null;
+  }, [phase, scene, visibleEnd, rounds, saved]);
 
   // The symbol list for the market (the field accepts any symbol either way).
   useEffect(() => {
@@ -97,19 +110,33 @@ export function ReplayTrainer({ api = liveReplayApi, random = Math.random, now =
       if (startIndex === null) throw new Error(`캔들이 ${k.candles.length}개뿐이라 장면이 안 나와요 · 더 이른 날짜를 피하거나 라운드를 줄여 보세요`);
       const sc: Scene = { candles: k.candles, source: k.source, market, symbol: sym, interval, horizon, rounds: planned, hidePrice, hideDate, startIndex, lastExit: k.candles.length - 1 - TAIL };
       setScene(sc); setVisibleEnd(startIndex); setPhase('playing');
-      if (market === 'futures' && prefs.indicators.some((i) => FUTURES_ONLY.includes(i))) {
-        const from = k.candles[0]!.t; const to = k.candles[k.candles.length - 1]!.t;
-        // Binance keeps open-interest history for 30 days and answers 400 to anything older: ask only for the part it has.
-        const oiFrom = Math.max(from, now() - OI_HISTORY_MS);
-        if (prefs.indicators.includes('oi') && to > oiFrom) api.oi(sym, OI_PERIOD[interval], oiFrom, to).then((r) => { if (id === runId.current) setOi(r.points); }, () => { /* OI only covers the last 30 days; the pane stays empty */ });
-        if (prefs.indicators.includes('funding')) api.funding(sym, from, to).then((r) => { if (id === runId.current) setFunding(r.points); }, () => { /* the pane stays empty */ });
-      }
     } catch (err) {
       if (id !== runId.current) return;
       setPhase('idle'); setScene(null);
       setError(err instanceof Error ? err.message : '장면을 불러오지 못했어요');
     }
   }, [api, prefs, manualStart, now, random]);
+
+  // Open interest and funding for a futures scene, fetched whenever its overlay is on — also when it is turned on mid-scene.
+  const wantOi = prefs.indicators.includes('oi');
+  const wantFunding = prefs.indicators.includes('funding');
+  useEffect(() => {
+    setOi(null);
+    if (!scene || scene.market !== 'futures' || !wantOi) return;
+    let alive = true;
+    const from = scene.candles[0]!.t; const to = scene.candles[scene.candles.length - 1]!.t;
+    // Binance keeps open-interest history for 30 days and answers 400 to anything older: ask only for the part it has.
+    const oiFrom = Math.max(from, nowRef.current() - OI_HISTORY_MS);
+    if (to > oiFrom) api.oi(scene.symbol, OI_PERIOD[scene.interval], oiFrom, to).then((r) => { if (alive) setOi(r.points); }, () => { /* OI only covers the last 30 days; the pane stays empty */ });
+    return () => { alive = false; };
+  }, [api, scene, wantOi]);
+  useEffect(() => {
+    setFunding(null);
+    if (!scene || scene.market !== 'futures' || !wantFunding) return;
+    let alive = true;
+    api.funding(scene.symbol, scene.candles[0]!.t, scene.candles[scene.candles.length - 1]!.t).then((r) => { if (alive) setFunding(r.points); }, () => { /* the pane stays empty */ });
+    return () => { alive = false; };
+  }, [api, scene, wantFunding]);
 
   const finish = useCallback((sc: Scene, done: ReplayRound[]) => {
     setPhase('done');
@@ -140,11 +167,11 @@ export function ReplayTrainer({ api = liveReplayApi, random = Math.random, now =
   const endEarly = useCallback(() => { if (scene && phase === 'playing') finish(scene, rounds); }, [scene, phase, rounds, finish]);
   const reset = useCallback(() => { runId.current++; setPhase('idle'); setScene(null); setRounds([]); setSaved(null); setError(null); }, []);
 
-  // L · S · N while a scene is playing (not while typing in a field).
+  // L · S · N while a scene is playing (not while typing in a field, not under a dialog, and one round per press — a held key must not play out the session).
   useEffect(() => {
     if (phase !== 'playing') return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.repeat || e.defaultPrevented || e.isComposing || e.metaKey || e.ctrlKey || e.altKey || hasOpenModal()) return;
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       const k = e.key.toLowerCase();

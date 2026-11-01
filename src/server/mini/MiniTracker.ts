@@ -61,6 +61,8 @@ export class MiniTracker {
   }
 
   observe(msg: ServerMessage): void {
+    // The answer to a card carries only its requestId (the ask brokers hand it to notify along with the broadcast).
+    if (msg.type === 'permission_resolved' || msg.type === 'question_resolved') { this.resolved(msg.requestId); return; }
     if (!('sessionId' in msg) || typeof msg.sessionId !== 'string' || !msg.sessionId) return;
     const t = this.now();
     switch (msg.type) {
@@ -128,7 +130,7 @@ export class MiniTracker {
     }
   }
 
-  /** The permission / question card `requestId` was answered (ws broadcasts permission_resolved / question_resolved). */
+  /** The permission / question card `requestId` was answered (observe() sees permission_resolved / question_resolved). */
   resolved(requestId: string): void {
     for (const s of this.sessions.values()) if (s.waitingOn === requestId) { s.waitingOn = null; s.updatedAt = this.now(); }
   }

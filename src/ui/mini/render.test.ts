@@ -65,13 +65,19 @@ describe('renderStatus', () => {
   });
   it('seats and hub', () => {
     expect(html).toContain('class="seat-cell danger"><span class="num">8</span>');
-    expect(html).toContain('5시간 · 2h 10m');
-    expect(html).toContain('주간 · 2d 2h');
+    expect(html).toMatch(/5시간 · <span data-reset="[^"]+">2h 10m</);
+    expect(html).toMatch(/주간 · <span data-reset="[^"]+">2d 2h</);
     expect(html).toContain('class="seat down"');
-    expect(html).toContain('class="chip danger" title="down">Quant</span>');
-    expect(html).toContain('class="chip ok" title="ok">News</span>');
+    expect(html).toContain('class="chip danger">Quant · 장애</span>');
+    expect(html).toContain('class="chip ok">News<span class="vh"> · 정상</span></span>');
     expect(html).toContain('<span class="count danger">down</span>');
     expect(html).toContain('ok 1 · down 1');
+  });
+  it('bars carry their width as data (the CSP blocks inline style attributes) and have a name', () => {
+    expect(html).not.toContain('style=');
+    expect(html).toContain('<i class="danger" data-pct="87"></i>');
+    expect(html).toContain('<i class="none" data-pct="0"></i>');
+    expect(html).toContain(`role="progressbar" aria-label="${MINI_TEXTS.ctx}"`);
   });
   it('empty state and login', () => {
     const empty = renderStatus({ ...status, running: 0, waiting: 0, sessions: [], seats: [], hub: null }, NOW);

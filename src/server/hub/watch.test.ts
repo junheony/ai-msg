@@ -33,6 +33,24 @@ describe('hub watch (push)', () => {
     expect(calls).toBe(4);
   });
 
+  it('a watcher that joins while a pass is running still gets its first status when that pass ends', async () => {
+    let release: (() => void) | null = null;
+    let calls = 0;
+    const sent: string[] = [];
+    const w = createHubWatch<string>({ status: { status: async () => { calls++; if (calls === 2) await new Promise<void>((r) => { release = r; }); return status('t1'); } }, send: (s) => sent.push(s), intervalMs: 1000 });
+    w.watch('a');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sent).toEqual(['a']);
+    await vi.advanceTimersByTimeAsync(1000); // the interval pass hangs on status()
+    w.watch('b'); // joins mid-pass; generated_at will not change
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sent).toEqual(['a']);
+    release!();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sent).toEqual(['a', 'b']);
+    w.stop();
+  });
+
   it('a failing pass is swallowed and the loop keeps going; stop() drops everyone', async () => {
     let fail = true;
     const sent: string[] = [];
