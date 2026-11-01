@@ -1,8 +1,8 @@
 /**
  * MSG Hub read-only file route: `GET /api/hub/file/<root>/<relative path>` serves media and build outputs from a few
  * named folders (영상 renders, 게임 dist) to the logged-in page. Only an extension allowlist, only files that resolve
- * inside the root after symlinks, never a directory listing. HTML is served under a sandbox CSP so a playable build
- * runs in an opaque origin (no cookies, no same-origin access to the app).
+ * inside the root after symlinks, never a directory listing. Every file is served under a sandbox CSP: a playable HTML
+ * build runs in an opaque origin (no cookies, no same-origin access to the app), and anything else runs no script.
  */
 import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
@@ -62,8 +62,9 @@ export async function serveHubFile(roots: HubFileRoots, pathname: string, range:
     'accept-ranges': 'bytes',
     'referrer-policy': 'no-referrer',
   };
-  // HTML (a playable build) runs sandboxed: scripts allowed, but an opaque origin — no cookies, no app access.
-  if (r.type.startsWith('text/html')) headers['content-security-policy'] = "sandbox allow-scripts allow-pointer-lock allow-popups; frame-ancestors 'self'";
+  // Every file runs sandboxed in an opaque origin (no cookies, no app access). HTML (a playable build) may run scripts;
+  // anything else opened directly (an SVG, a .js/.json) gets no scripts at all.
+  headers['content-security-policy'] = r.type.startsWith('text/html') ? "sandbox allow-scripts allow-pointer-lock allow-popups; frame-ancestors 'self'" : "sandbox; frame-ancestors 'self'";
   let start = 0; let end = r.size - 1; let status = 200;
   const m = range ? /^bytes=(\d*)-(\d*)$/.exec(range) : null;
   if (m && r.size > 0) {

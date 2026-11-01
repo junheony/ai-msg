@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { HubSection } from '../../shared/hub-types';
 import { HUB_URLS, type HubDeps } from './shared';
-import { collectUpdown, parseDatabaseUrl, parsePsqlSections } from './updown';
+import { collectUpdown, parseDatabaseUrl, parsePsqlSections, splitDatabaseUrl } from './updown';
 
 const NOW = Date.parse('2026-10-30T13:00:00Z'); // 22:00 KST → today 2026-10-30, yesterday 10-29
 const HOME = '/Users/alice';
@@ -69,14 +69,15 @@ const section = (secs: HubSection[], title: RegExp): HubSection | undefined => s
 const table = (secs: HubSection[], title: RegExp): Extract<HubSection, { kind: 'table' }> => { const s = section(secs, title); if (!s || s.kind !== 'table') throw new Error(`no table ${title}`); return s; };
 
 describe('collectUpdown · paper record', () => {
-  it('runs ONE read-only psql on stdin (fixed argv, read-only transaction, URL only in argv) and shows the trades table newest first', async () => {
+  it('runs ONE read-only psql on stdin (fixed argv, read-only transaction, password only in env) and shows the trades table newest first', async () => {
     const d = deps({ urls: ALL_OK });
     const m = await collectUpdown(d);
     expect(d.calls).toHaveLength(1);
     const c = d.calls[0]!;
     expect(c.cmd).toBe('psql');
-    expect(c.args).toEqual([DB_URL, '-X', '-A', '-t', '-F', '\t', '-v', 'ON_ERROR_STOP=1']);
-    expect(c.o.env).toEqual({ PGOPTIONS: '-c default_transaction_read_only=on', PGCONNECT_TIMEOUT: '4' });
+    expect(c.args).toEqual(['postgres://labuser@127.0.0.1:15432/bbai_updown_lab', '-X', '-A', '-t', '-F', '\t', '-v', 'ON_ERROR_STOP=1']);
+    expect(c.args.join(' ')).not.toContain('s3cret');
+    expect(c.o.env).toEqual({ PGOPTIONS: '-c default_transaction_read_only=on', PGCONNECT_TIMEOUT: '4', PGPASSWORD: 's3cret' });
     expect(c.o.timeoutMs).toBe(8000);
     expect(c.o.stdin).toMatch(/__SEC_daily[\s\S]*__SEC_trades[\s\S]*__SEC_end/);
     expect(c.o.stdin).not.toMatch(/\b(insert|update|delete|drop|alter|truncate|create)\b/i);
@@ -217,6 +218,13 @@ describe('collectUpdown · paper record', () => {
     expect(deps({ urls: ALL_OK }).calls).toHaveLength(0); // a fresh deps object gets its own cache
   });
 
+  it('splitDatabaseUrl moves a (percent-decoded) password out of the URL and refuses non-URLs', () => {
+    expect(splitDatabaseUrl(DB_URL)).toEqual({ url: 'postgres://labuser@127.0.0.1:15432/bbai_updown_lab', password: 's3cret' });
+    expect(splitDatabaseUrl('postgresql://u:p%40ss%2Fx@h/db?sslmode=require')).toEqual({ url: 'postgresql://u@h/db?sslmode=require', password: 'p@ss/x' });
+    expect(splitDatabaseUrl('postgres://u@h/db')).toEqual({ url: 'postgres://u@h/db', password: null });
+    expect(splitDatabaseUrl('host=h password=x')).toBeNull();
+    expect(splitDatabaseUrl('mysql://u:p@h/db')).toBeNull();
+  });
   it('helpers: parseDatabaseUrl (export, quotes, empty) and parsePsqlSections', () => {
     expect(parseDatabaseUrl(LAB_ENV)).toBe(DB_URL);
     expect(parseDatabaseUrl("DATABASE_URL='x'\n")).toBe('x');

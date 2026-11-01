@@ -130,17 +130,36 @@ export function parseDatabaseUrl(envText: string): string | null {
   return null;
 }
 
+/**
+ * Splits the password out of a `postgres://` URL so it can travel in `PGPASSWORD` (env) rather than argv, where any
+ * local user could read it with `ps`. Null when the value is not a URL.
+ */
+export function splitDatabaseUrl(dbUrl: string): { url: string; password: string | null } | null {
+  let u: URL;
+  try { u = new URL(dbUrl); } catch { return null; }
+  if (u.protocol !== 'postgres:' && u.protocol !== 'postgresql:') return null;
+  if (!u.password) return { url: dbUrl, password: null };
+  let password: string;
+  try { password = decodeURIComponent(u.password); } catch { return null; }
+  u.password = '';
+  return { url: u.toString(), password };
+}
+
 /** Why the last psql load failed, per deps: a fixed, URL-free phrase (slowCache would flatten it to '오류'). */
 const lastReason = new WeakMap<HubDeps, string>();
 const fail = (deps: HubDeps, why: string): never => { lastReason.set(deps, why); throw new Error(why); };
 
-/** One psql run (read-only transaction, fixed argv, SQL on stdin). Throws a fixed, URL-free reason on any failure. */
+/** One psql run (read-only transaction, fixed argv without the password, SQL on stdin). Throws a fixed, URL-free reason on any failure. */
 async function loadDb(deps: HubDeps): Promise<DbRecord> {
   if (!deps.exec) return fail(deps, '실행 불가');
   const env = await deps.readText(`${deps.home}/${LAB_ENV}`);
-  const url = env === null ? null : parseDatabaseUrl(env);
-  if (!url) return fail(deps, '설정 없음');
-  const out = await deps.exec('psql', [url, '-X', '-A', '-t', '-F', '\t', '-v', 'ON_ERROR_STOP=1'], { timeoutMs: HUB_TIMEOUTS.psql, env: { PGOPTIONS: '-c default_transaction_read_only=on', PGCONNECT_TIMEOUT: '4' }, stdin: SQL });
+  const raw = env === null ? null : parseDatabaseUrl(env);
+  if (!raw) return fail(deps, '설정 없음');
+  const db = splitDatabaseUrl(raw);
+  if (!db) return fail(deps, '설정 형식 오류');
+  const pgEnv: Record<string, string> = { PGOPTIONS: '-c default_transaction_read_only=on', PGCONNECT_TIMEOUT: '4' };
+  if (db.password !== null) pgEnv.PGPASSWORD = db.password;
+  const out = await deps.exec('psql', [db.url, '-X', '-A', '-t', '-F', '\t', '-v', 'ON_ERROR_STOP=1'], { timeoutMs: HUB_TIMEOUTS.psql, env: pgEnv, stdin: SQL });
   if (out === null) return fail(deps, '연결 실패');
   let rec: DbRecord;
   try { rec = parseDbRecord(out); } catch { return fail(deps, '응답 형식 오류'); }

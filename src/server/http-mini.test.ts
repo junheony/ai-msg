@@ -96,6 +96,13 @@ describe('widget token routes (session cookie only)', () => {
     expect((await fetch(`${base}/api/mini/widget-token/rotate`, { method: 'GET', headers: cookie })).status).toBe(405);
     expect((await fetch(`${base}/api/mini/widget-token`, { method: 'POST', headers: { ...cookie, origin: base } })).status).toBe(405);
   });
+  it('concurrent rotations run one at a time: the last value is both in memory and on disk', async () => {
+    const [a, b, c] = await Promise.all([widgetToken.rotate(), widgetToken.rotate(), widgetToken.rotate()]);
+    expect(new Set([a, b, c]).size).toBe(3);
+    expect(await widgetToken.current()).toBe(c);
+    expect((await fs.readFile(path.join(dir, 'cfg', 'widget-token'), 'utf8')).trim()).toBe(c);
+    expect((await fs.readdir(path.join(dir, 'cfg'))).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+  });
 });
 
 describe('/mini page', () => {
