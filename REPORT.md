@@ -270,3 +270,51 @@ The frontend-design references and design direction are documented in `docs/term
 No push, merge into `/home/max/ai-msg`, deployment, unit restart, protected-port access or ledger change occurred. No required work remains.
 
 STATUS: DONE
+
+# Usage panel (BRIEF7c)
+
+## Changes
+
+- `UsageStrip.tsx`, `UsageSheet.tsx`, `usageSeats.tsx`, and `styles.css`: shared provider identity and account badges, one thin remaining-capacity bar, aligned weekly/5h/Fable rows, calm exhaustion chips containing relative reset times, exact KST tooltips, and one muted login action per logged-out account. GPT explicitly identifies Codex and the quota shared with Hermes. Fixed the inherited flex-wrap rule that pushed Grok into a clipped second column.
+- `EngineMark.tsx`: local inline Claude, OpenAI, Gemini, and Grok identifiers; published Claude/Grok paths include source attribution and MIT notice in `docs/usage-brand-assets-LICENSE.txt`. No hotlinked image asset or new raster artwork.
+- `codexLiveUsage.ts`, `CodexUsagePoller.ts`, HTTP/server wiring and `App.tsx`: authenticated usage refresh on open/focus, using Codex's non-inference `account/rateLimits/read` before timestamped rollout fallback. Requests coalesce and are throttled; CLI owns authentication. Complete live readings clear absent windows, while malformed readings retain fallback data.
+- `UsageService.ts`, `TurnRunner.ts`, and `engineLimits.ts`: preserve original observation times, prevent older/equal/undated dashboard data from reviving old limits, clear pre-turn exhaustion/cooldown after Codex or Hermes success, persist the success timestamp against restart replay, and preserve measured new limits, credits, and newer concurrent failures. Missing or expired quota remains unknown rather than an invented remaining percentage.
+- Regression tests cover live RPC/auth/timeout, source precedence, missing windows, short-interval reset/success, restart replay, concurrent failures, dynamic account labels/order, KST times, single-bar layout, login actions, and open/focus refresh. Design, implementation, QA and independent-review notes are in `docs/usage-brief7c-*.md`.
+
+## Freshness evidence
+
+The owner crop showed GPT exhausted until November 4. The previous poller read historical rollout records only; successful turns retained a cooldown and could re-date an old record as current. A read-only query through the new helper against the installed Codex CLI succeeded at **2026-11-02 02:48:20 KST**: **weekly used 7%, remaining 93%**. The response contained no five-hour window. This is point-in-time live evidence; no inference turn, login, credit reset, or account mutation was sent. The existing running application was not restarted or deployed, so it will receive the fix only through a later deployment.
+
+## Screenshots and review
+
+`shots-terminal-v2/usage-before-*` and `usage-after-*` contain 18 PNGs per revision plus inspection JSON, covering dark/light desktop popover, desktop sheet and mobile sheet. The same synthetic seven-account fixture and frozen **November 2, 02:00 KST** clock are used throughout; GPT intentionally remains exhausted in these images to compare the exhausted design. These screenshots are visual evidence, separate from the live quota observation above.
+
+Root personally inspected dark/light popovers, the dark phone sheet and the light phone sheet's scrolled lower rows. All six after views pass strict bounds/overflow checks, display all seven accounts, use one bar for each known account and no bar for logged-out accounts, contain exactly two login buttons, and expose Grok after scrolling. No browser/API errors or external image requests were observed. The before desktop popover records the clipped Grok defect; the final layout fixes it. A later account-badge title attribute adds full-name discovery without changing the captured layout.
+
+| View | Before | After |
+|---|---|---|
+| Dark desktop popover | [before](shots-terminal-v2/usage-before-dark-desktop-popover-crop.png) | [after](shots-terminal-v2/usage-after-dark-desktop-popover-crop.png) |
+| Light desktop popover | [before](shots-terminal-v2/usage-before-light-desktop-popover-crop.png) | [after](shots-terminal-v2/usage-after-light-desktop-popover-crop.png) |
+| Dark mobile sheet | [before](shots-terminal-v2/usage-before-dark-mobile-sheet-crop.png) | [after](shots-terminal-v2/usage-after-dark-mobile-sheet-crop.png) |
+| Light mobile lower rows | [before](shots-terminal-v2/usage-before-light-mobile-sheet-bottom.png) | [after](shots-terminal-v2/usage-after-light-mobile-sheet-bottom.png) |
+
+The `frontend-design` skill informed the plan and critique, with [The Seeker](https://ref.theseeker.io/r/5649) and [glass.samasante.com](https://glass.samasante.com/) references. Existing hub typography and surface tokens are retained. External delegation was unavailable (Claude Fable quota, missing GPT/Grok API credentials); native agents handled UI, freshness and QA, followed by independent freshness review. Its source-precedence, malformed-input and concurrent-cooldown findings were fixed and regression-tested.
+
+## Validation
+
+| Check | Result |
+|---|---|
+| `npx vitest run --maxWorkers=2` | 361 files / 4,526 tests passed; 238.81 s |
+| `npm run typecheck` | Passed |
+| `npm run build` | Passed, including bundle check |
+| `npm run build:server` | Passed |
+| `node scripts/contrast-check.mjs` | All dark/light token pairs passed |
+| `node --check scripts/qa/shoot-terminal.mjs` and `node --check scripts/qa/usage-capture.mjs` | Passed |
+| `QA_STATE=/tmp/msg-usage-brief7c-qa-state.json DIST=/home/max/msg-hub-design/repo/dist/ui CAPTURE=usage RDP_PORT=9345 node scripts/qa/shoot-terminal.mjs shots-terminal-v2 usage-after` | Passed, six surfaces / 18 PNGs, no errors |
+| `git diff --check` | Passed |
+
+An initial suite overlapped review edits and was stopped because its transform cache mixed old source with new tests. The subsequent settled-source suite passed 4,525 tests and found one old Grok reset-text expectation missing the now-explicit KST suffix. That expectation now asserts the exact KST timestamp; its focused nine-test suite passed before the final whole-suite run above. Dynamic account tests were also updated for the new badge structure while preserving ordering, custom names and retired-account coverage.
+
+The owned synthetic QA host and browser were stopped after capture. No push, deployment, production restart, protected-service access or modification of `/home/max/ai-msg` occurred. Live quota fallback remains best-effort when Codex is unauthenticated, unsupported or offline; no inference test was run. No required work remains.
+
+STATUS: DONE

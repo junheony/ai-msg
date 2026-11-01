@@ -741,12 +741,47 @@ async function usageWithGpt(gptWeekly: number | null) {
 }
 
 describe('TurnRunner: Codex sessions (D2–D5)', () => {
+  it('a concurrent newer quota failure survives an earlier-started successful Codex turn', async () => {
+    let release!: () => void;
+    let started!: () => void;
+    const waiting = new Promise<void>(r => { release = r; });
+    const began = new Promise<void>(r => { started = r; });
+    const codex: NonNullable<TurnRunnerDeps['codex']> = { async *runTurn(req) {
+      if (req.prompt === 'slow-success') { started(); await waiting; yield* codexOk('slow'); }
+      else { yield { kind: 'init', sessionId: 'limited', model: 'gpt-6-sol' }; yield failResult('usage limit reached', { sessionId: 'limited' }); }
+    } };
+    const c = await ctx(new StubEngine(async () => []), { codex, findRollout: async () => null });
+    const runner = new TurnRunner(c.deps);
+    const slow = runner.run({ turnId: 'slow', cwd: '/w', sessionId: null, text: 'slow-success', engine: 'codex' }, c.sink);
+    await began;
+    await runner.run({ turnId: 'limited', cwd: '/w', sessionId: null, text: 'limited', engine: 'codex' }, c.sink);
+    release(); await slow;
+    expect(runner.gptCooldownUntilMs()).toBe(NOW + 60 * 60_000);
+  });
+
+  it('successful Codex clears a prior cooldown without re-dating/reimporting old exhausted rollout', async () => {
+    let failed = true;
+    const codex = fakeCodex(() => failed ? [{ kind: 'init', sessionId: 'quota-test', model: 'gpt-6-sol' }, failResult('usage limit reached', { sessionId: 'quota-test' })] : codexOk('quota-test'));
+    const u = await usageWithGpt(100);
+    const oldAt = NOW - 60_000;
+    const c = await ctx(new StubEngine(async () => []), { codex: codex.engine, findRollout: async () => '/fake/rollout', readRateLimits: async () => ({ windows: { weekly: { usedPct: 100, resetsAt: null } }, atMs: oldAt }) }, u);
+    const runner = new TurnRunner(c.deps);
+    await runner.run({ turnId: 'failure', cwd: '/w', sessionId: null, text: 'x', engine: 'codex' }, c.sink);
+    expect(runner.gptCooldownUntilMs()).toBe(NOW + 60 * 60_000);
+    failed = false;
+    await runner.run({ turnId: 'success', cwd: '/w', sessionId: null, text: 'x', engine: 'codex' }, c.sink);
+    expect(runner.gptCooldownUntilMs()).toBeNull();
+    expect(u.snapshot().gpt?.weekly).toBeNull();
+    await u.pollOnce();
+    expect(u.snapshot().gpt?.weekly).toBeNull();
+  });
+
   it('engine codex: runs the codex engine sandboxed, stores a codex state with the rollout file, corrects GPT usage, badge says gpt', async () => {
     const codex = fakeCodex(codexOk('tid-1'));
     const c = await ctx(new StubEngine(async () => []), {
       codex: codex.engine,
       findRollout: async (root, tid) => path.join(root, '2026/09/30', `rollout-x-${tid}.jsonl`),
-      readRateLimits: async () => ({ weekly: { usedPct: 40, resetsAt: null } }),
+      readRateLimits: async () => ({ windows: { weekly: { usedPct: 40, resetsAt: null } }, atMs: NOW }),
     }, await usageWithGpt(null));
     await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w', sessionId: null, text: 'hello codex\nsecond line', engine: 'codex', sandbox: 'workspace-write' }, c.sink);
     expect(codex.calls[0]).toMatchObject({ cwd: '/w', resumeThreadId: null, model: 'gpt-6-sol', sandbox: 'workspace-write', prompt: 'hello codex\nsecond line' });

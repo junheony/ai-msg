@@ -12,8 +12,8 @@ describe('ClaudeMark', () => {
     expect(marks).toHaveLength(2);
     expect(container.querySelector('.engine-mark.claude svg.engine-mark-svg')).not.toBeNull();
     for (const m of marks) {
-      expect(m.querySelectorAll('line').length).toBeGreaterThanOrEqual(8);
-      expect(m.querySelector('g')?.getAttribute('stroke')).toBe('#D97757');
+      expect(m.querySelector('path')?.getAttribute('d')?.length).toBeGreaterThan(500);
+      expect(m.querySelector('path')?.getAttribute('fill')).toBe('#D97757');
     }
     expect(container.textContent).toBe('');
   });

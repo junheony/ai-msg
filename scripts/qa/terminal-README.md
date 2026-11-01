@@ -2,6 +2,8 @@
 
 BRIEF7 adds a deterministic, wholly synthetic Hermes fixture. See [terminal-brief7-qa.md](../../docs/terminal-brief7-qa.md) for its provenance and invocation. The default remains the original redacted Claude transcript fixture. Both capture paths now include dedicated `header` and `model-picker` screenshots and picker geometry assertions.
 
+BRIEF7c adds opt-in synthetic quota data (`FIXTURE=hermes USAGE_FIXTURE=brief7c`) and a usage-only capture (`CAPTURE=usage`). See [usage-brief7c-qa.md](../../docs/usage-brief7c-qa.md). It freezes the browser clock, captures dark/light desktop popovers and desktop/mobile sheets with crops, and does not read private transcripts or contact providers. Existing terminal captures retain their default behavior.
+
 Start the localhost-only host (port collision fails; never use an existing server):
 
 ```sh

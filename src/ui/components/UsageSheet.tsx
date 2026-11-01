@@ -5,7 +5,8 @@ import type { UsageSnapshot } from '../../shared/usage-types';
 import { useAccounts } from '../accounts';
 import { Sheet, SheetHead } from './Dialogs';
 import { UsageHistoryView } from './UsageView';
-import { agoText, buildSeats, engineCaption, LEGEND, PopRow, REFRESH_HINT, REFRESH_HINT_POLLED, seatStale, seatTitle, statusLabel, useClock, type RouteNext } from './usageSeats';
+import { agoText, buildSeats, LEGEND, PopRow, REFRESH_HINT, REFRESH_HINT_POLLED, seatStale, seatTitle, statusLabel, useClock, useUsageRefresh, type RouteNext } from './usageSeats';
+import { stripSegs, UsageSeatSummary } from './UsageStrip';
 import { ClockIcon, RefreshIcon } from './icons';
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -25,7 +26,7 @@ function trapTab(e: KeyboardEvent<HTMLDivElement>) {
  * Every account's limits (all windows, resets, credits, hints) plus the token history, in one sheet (design §3.5):
  * a bottom sheet on a phone, a side panel on a desktop. Opened from the usage chip, the palette, settings, the menu.
  */
-export function UsageSheet({ usage, current, next = null, grok = null, initialHistory = false, onClose, now: fixedNow, fetchFn, reauth = [], onReauth }: {
+export function UsageSheet({ usage, current, next = null, grok = null, initialHistory = false, onClose, now: fixedNow, fetchFn, reauth = [], onReauth, onRefresh }: {
   usage: UsageSnapshot | null; current: Seat | null; next?: RouteNext | null; grok?: GrokStatus | null;
   /** Open with the history already expanded (settings / menu "사용량 기록"). */
   initialHistory?: boolean;
@@ -33,12 +34,15 @@ export function UsageSheet({ usage, current, next = null, grok = null, initialHi
   /** Seats whose login probe is `no` (authLogin). */
   reauth?: readonly string[];
   onReauth?: (seat: string) => void;
+  onRefresh?: () => void;
 }) {
   const now = useClock(fixedNow);
+  useUsageRefresh(true, onRefresh);
   const { active, label } = useAccounts();
   const [history, setHistory] = useState(initialHistory);
   const cli = usage?.usageMode === 'cli';
   const seats = usage ? buildSeats(usage, active, grok, now) : [];
+  const segs = stripSegs({ seats, current, next, stale: !!usage && !cli && !usage.deckReachable, now, label });
   return (
     <Sheet className={`usage-sheet${history ? ' with-history' : ''}`} label="사용량" onClose={onClose}>
       <div className="usage-sheet-inner" onKeyDown={trapTab}>
@@ -54,26 +58,21 @@ export function UsageSheet({ usage, current, next = null, grok = null, initialHi
             const ago = old ? agoText(d.fetchedAt ?? null, now) : '';
             const isNext = next?.account === d.seat && (d.seat !== current || !!next.asOpus);
             // The setup probe's list, or the snapshot itself (a Gemini seat without its Google login, Grok after an auth failure).
-            const login = !!onReauth && (reauth.includes(d.seat) || !!d.loginNeeded);
-            const tag = login ? '로그인 필요' : st;
-            const caption = engineCaption(d, label(d.seat));
+            const login = reauth.includes(d.seat) || !!d.loginNeeded;
+            const tag = login ? '' : st;
             return (
               <li key={d.seat} data-testid={`account-${d.seat}`} className={`usage-seat ${d.engine} ${d.status}${d.seat === current ? ' current' : ''}${d.dim ? ' dim' : ''}${old ? ' old' : ''}`} title={seatTitle(d)}>
+                <UsageSeatSummary s={segs.find((s) => s.seat === d.seat)!} d={d} now={now} login={login} {...(onReauth ? { onLogin: () => onReauth(d.seat) } : {})} />
                 <div className="usage-seat-head">
-                  {d.mark}
-                  <b className="usage-seat-name">{label(d.seat)}</b>
-                  {caption && <span className="usage-seat-engine" aria-label={`${caption} CLI`}>{caption}</span>}
                   {d.seat === current && <span className="usage-tag current">현재</span>}
                   {isNext && <span className="usage-tag next" data-testid={`sheet-next-${d.seat}`} title={`다음 턴은 이 계정으로 갑니다: ${next!.reason}`}>{next!.asOpus ? '다음 턴 여기 · Opus' : '다음 턴 여기'}</span>}
-                  {tag && <span className={`usage-tag status ${login ? 'login' : d.status}`} data-testid={`${d.seat}-status`}>{old && !login && <ClockIcon className="usage-icon" />}{tag}</span>}
-                  {login && (
-                    <button type="button" className="text-btn usage-reauth-btn" data-testid={`reauth-${d.seat}`} onClick={() => onReauth!(d.seat)}>로그인</button>
-                  )}
+                  {tag && <span className={`usage-tag status ${d.status}`} data-testid={`${d.seat}-status`}>{old && !login && <ClockIcon className="usage-icon" />}{tag}</span>}
                 </div>
-                {d.hint && d.reasonLine === undefined && <div className="usage-pop-row hint">{d.hint}</div>}
-                {d.reasonLine !== undefined && <div className="usage-pop-row hint" data-testid={`${d.seat}-main`}>{d.reasonLine}</div>}
+                {d.engine === 'gpt' && <div className="usage-shared-note">Hermes와 한도 공유</div>}
+                {!login && d.hint && d.reasonLine === undefined && <div className="usage-pop-row hint">{d.hint}</div>}
+                {!login && d.reasonLine !== undefined && <div className="usage-pop-row hint" data-testid={`${d.seat}-main`}>{d.reasonLine}</div>}
                 {d.observed && <div className="usage-pop-row" data-testid={`${d.seat}-observed`}><span>관측</span><b>{d.observed}</b></div>}
-                {d.rows.map((r) => <PopRow key={r.key} seat={d.seat} name={r.name} k={r.key} w={r.w} now={now} empty={r.empty} stale={old} polled={d.polled} />)}
+                {!login && <div className="usage-pop-rows">{d.rows.map((r) => <PopRow compact key={r.key} seat={d.seat} name={r.name} k={r.key} w={r.w} now={now} empty={r.empty} stale={old} polled={d.polled} />)}</div>}
                 {old && d.rows.some((r) => r.w) && <div className="usage-pop-row usage-refresh-hint" data-testid={`${d.seat}-refresh`}><RefreshIcon className="usage-icon" />{ago ? `${ago} ${d.polled ? '확인한 값' : '마지막 턴 기준 값'} · ` : ''}{d.polled ? REFRESH_HINT_POLLED : REFRESH_HINT}</div>}
                 {d.credits && <div className="usage-pop-row" data-testid={`${d.seat}-credits`}><span>크레딧</span><b>{d.credits}</b></div>}
                 {d.extraPopover}

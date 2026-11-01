@@ -1,0 +1,545 @@
+{
+  "tag": "usage-after",
+  "fixture": "brief7c-synthetic",
+  "clock": "2026-11-01T17:00:00.000Z",
+  "provenance": "Synthetic visual comparison only; does not prove live quota or refresh.",
+  "views": {
+    "dark-desktop-popover": {
+      "x": 1004,
+      "y": 49.5,
+      "width": 340,
+      "height": 648,
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "horizontalOverflow": false,
+      "panelInside": true,
+      "panelHorizontalOverflow": false,
+      "overflowContainers": [],
+      "rows": [
+        {
+          "id": "pop-a",
+          "text": "ClaudeA37%5h100%3시간 후 리셋주간37%1일 22시간 후 리셋Fable소진 · 1일 22시간 후 리셋",
+          "barCount": 1,
+          "x": 1010,
+          "width": 328,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-b",
+          "text": "ClaudeB46%5h100%3시간 후 리셋주간46%4일 후 리셋Fable소진 · 4일 후 리셋",
+          "barCount": 1,
+          "x": 1010,
+          "width": 328,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-c",
+          "text": "ClaudeC38%5h100%3시간 후 리셋주간38%1일 22시간 후 리셋Fable소진 · 1일 22시간 후 리셋",
+          "barCount": 1,
+          "x": 1010,
+          "width": 328,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-gpt",
+          "text": "GPTCodex소진 · 2일 후 리셋Hermes와 한도 공유주간소진 · 2일 후 리셋5h100%3시간 후 리셋",
+          "barCount": 1,
+          "x": 1010,
+          "width": 328,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-g1",
+          "text": "Gemini로그인 필요로그인",
+          "barCount": 0,
+          "x": 1010,
+          "width": 328,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-g2",
+          "text": "Gemini 2로그인 필요로그인",
+          "barCount": 0,
+          "x": 1010,
+          "width": 328,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-x1",
+          "text": "Grok71%주간71%3일 후 리셋",
+          "barCount": 1,
+          "x": 1010,
+          "width": 328,
+          "insideX": true,
+          "horizontalOverflow": false
+        }
+      ],
+      "externalImages": 0,
+      "loginButtons": 2,
+      "lastRowAfterScroll": {
+        "x": 1010,
+        "y": 578.296875,
+        "width": 328,
+        "height": 79.390625,
+        "visible": true
+      },
+      "contentPassed": true
+    },
+    "dark-desktop-sheet": {
+      "x": 1060,
+      "y": 0,
+      "width": 380,
+      "height": 900,
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "horizontalOverflow": false,
+      "panelInside": true,
+      "panelHorizontalOverflow": false,
+      "overflowContainers": [],
+      "rows": [
+        {
+          "id": "account-a",
+          "text": "ClaudeA37%관측마지막 턴 기준 · 방금5h100%3시간 후 리셋주간37%1일 22시간 후 리셋Fable소진 · 1일 22시간 후 리셋",
+          "barCount": 1,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-b",
+          "text": "ClaudeB46%관측마지막 턴 기준 · 방금5h100%3시간 후 리셋주간46%4일 후 리셋Fable소진 · 4일 후 리셋",
+          "barCount": 1,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-c",
+          "text": "ClaudeC38%관측마지막 턴 기준 · 방금5h100%3시간 후 리셋주간38%1일 22시간 후 리셋Fable소진 · 1일 22시간 후 리셋",
+          "barCount": 1,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-gpt",
+          "text": "GPTCodex소진 · 2일 후 리셋Hermes와 한도 공유주간소진 · 2일 후 리셋5h100%3시간 후 리셋",
+          "barCount": 1,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-g1",
+          "text": "Gemini로그인 필요로그인관측확인 · 11/2 02:00 KST",
+          "barCount": 0,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-g2",
+          "text": "Gemini 2로그인 필요로그인관측확인 · 11/2 02:00 KST",
+          "barCount": 0,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-x1",
+          "text": "Grok71%관측확인 · 11/2 02:00 KST주간71%3일 후 리셋구독SuperGrokMSG 오늘2턴 · 입력 1,200 · 출력 800",
+          "barCount": 1,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        }
+      ],
+      "externalImages": 0,
+      "loginButtons": 2,
+      "lastRowAfterScroll": {
+        "x": 1076,
+        "y": 658.5625,
+        "width": 348,
+        "height": 169.859375,
+        "visible": true
+      },
+      "contentPassed": true
+    },
+    "dark-mobile-sheet": {
+      "x": 0,
+      "y": 118.171875,
+      "width": 390,
+      "height": 725.828125,
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "horizontalOverflow": false,
+      "panelInside": true,
+      "panelHorizontalOverflow": false,
+      "overflowContainers": [],
+      "rows": [
+        {
+          "id": "account-a",
+          "text": "ClaudeA37%관측마지막 턴 기준 · 방금5h100%3시간 후 리셋주간37%1일 22시간 후 리셋Fable소진 · 1일 22시간 후 리셋",
+          "barCount": 1,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-b",
+          "text": "ClaudeB46%관측마지막 턴 기준 · 방금5h100%3시간 후 리셋주간46%4일 후 리셋Fable소진 · 4일 후 리셋",
+          "barCount": 1,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-c",
+          "text": "ClaudeC38%관측마지막 턴 기준 · 방금5h100%3시간 후 리셋주간38%1일 22시간 후 리셋Fable소진 · 1일 22시간 후 리셋",
+          "barCount": 1,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-gpt",
+          "text": "GPTCodex소진 · 2일 후 리셋Hermes와 한도 공유주간소진 · 2일 후 리셋5h100%3시간 후 리셋",
+          "barCount": 1,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-g1",
+          "text": "Gemini로그인 필요로그인관측확인 · 11/2 02:00 KST",
+          "barCount": 0,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-g2",
+          "text": "Gemini 2로그인 필요로그인관측확인 · 11/2 02:00 KST",
+          "barCount": 0,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-x1",
+          "text": "Grok71%관측확인 · 11/2 02:00 KST주간71%3일 후 리셋구독SuperGrokMSG 오늘2턴 · 입력 1,200 · 출력 800",
+          "barCount": 1,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        }
+      ],
+      "externalImages": 0,
+      "loginButtons": 2,
+      "lastRowAfterScroll": {
+        "x": 12,
+        "y": 602.734375,
+        "width": 366,
+        "height": 169.859375,
+        "visible": true
+      },
+      "contentPassed": true
+    },
+    "light-desktop-popover": {
+      "x": 1004,
+      "y": 49.5,
+      "width": 340,
+      "height": 648,
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "horizontalOverflow": false,
+      "panelInside": true,
+      "panelHorizontalOverflow": false,
+      "overflowContainers": [],
+      "rows": [
+        {
+          "id": "pop-a",
+          "text": "ClaudeA37%5h100%3시간 후 리셋주간37%1일 22시간 후 리셋Fable소진 · 1일 22시간 후 리셋",
+          "barCount": 1,
+          "x": 1010,
+          "width": 328,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-b",
+          "text": "ClaudeB46%5h100%3시간 후 리셋주간46%4일 후 리셋Fable소진 · 4일 후 리셋",
+          "barCount": 1,
+          "x": 1010,
+          "width": 328,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-c",
+          "text": "ClaudeC38%5h100%3시간 후 리셋주간38%1일 22시간 후 리셋Fable소진 · 1일 22시간 후 리셋",
+          "barCount": 1,
+          "x": 1010,
+          "width": 328,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-gpt",
+          "text": "GPTCodex소진 · 2일 후 리셋Hermes와 한도 공유주간소진 · 2일 후 리셋5h100%3시간 후 리셋",
+          "barCount": 1,
+          "x": 1010,
+          "width": 328,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-g1",
+          "text": "Gemini로그인 필요로그인",
+          "barCount": 0,
+          "x": 1010,
+          "width": 328,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-g2",
+          "text": "Gemini 2로그인 필요로그인",
+          "barCount": 0,
+          "x": 1010,
+          "width": 328,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-x1",
+          "text": "Grok71%주간71%3일 후 리셋",
+          "barCount": 1,
+          "x": 1010,
+          "width": 328,
+          "insideX": true,
+          "horizontalOverflow": false
+        }
+      ],
+      "externalImages": 0,
+      "loginButtons": 2,
+      "lastRowAfterScroll": {
+        "x": 1010,
+        "y": 578.296875,
+        "width": 328,
+        "height": 79.390625,
+        "visible": true
+      },
+      "contentPassed": true
+    },
+    "light-desktop-sheet": {
+      "x": 1060,
+      "y": 0,
+      "width": 380,
+      "height": 900,
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "horizontalOverflow": false,
+      "panelInside": true,
+      "panelHorizontalOverflow": false,
+      "overflowContainers": [],
+      "rows": [
+        {
+          "id": "account-a",
+          "text": "ClaudeA37%관측마지막 턴 기준 · 방금5h100%3시간 후 리셋주간37%1일 22시간 후 리셋Fable소진 · 1일 22시간 후 리셋",
+          "barCount": 1,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-b",
+          "text": "ClaudeB46%관측마지막 턴 기준 · 방금5h100%3시간 후 리셋주간46%4일 후 리셋Fable소진 · 4일 후 리셋",
+          "barCount": 1,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-c",
+          "text": "ClaudeC38%관측마지막 턴 기준 · 방금5h100%3시간 후 리셋주간38%1일 22시간 후 리셋Fable소진 · 1일 22시간 후 리셋",
+          "barCount": 1,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-gpt",
+          "text": "GPTCodex소진 · 2일 후 리셋Hermes와 한도 공유주간소진 · 2일 후 리셋5h100%3시간 후 리셋",
+          "barCount": 1,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-g1",
+          "text": "Gemini로그인 필요로그인관측확인 · 11/2 02:00 KST",
+          "barCount": 0,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-g2",
+          "text": "Gemini 2로그인 필요로그인관측확인 · 11/2 02:00 KST",
+          "barCount": 0,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-x1",
+          "text": "Grok71%관측확인 · 11/2 02:00 KST주간71%3일 후 리셋구독SuperGrokMSG 오늘2턴 · 입력 1,200 · 출력 800",
+          "barCount": 1,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        }
+      ],
+      "externalImages": 0,
+      "loginButtons": 2,
+      "lastRowAfterScroll": {
+        "x": 1076,
+        "y": 658.5625,
+        "width": 348,
+        "height": 169.859375,
+        "visible": true
+      },
+      "contentPassed": true
+    },
+    "light-mobile-sheet": {
+      "x": 0,
+      "y": 118.171875,
+      "width": 390,
+      "height": 725.828125,
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "horizontalOverflow": false,
+      "panelInside": true,
+      "panelHorizontalOverflow": false,
+      "overflowContainers": [],
+      "rows": [
+        {
+          "id": "account-a",
+          "text": "ClaudeA37%관측마지막 턴 기준 · 방금5h100%3시간 후 리셋주간37%1일 22시간 후 리셋Fable소진 · 1일 22시간 후 리셋",
+          "barCount": 1,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-b",
+          "text": "ClaudeB46%관측마지막 턴 기준 · 방금5h100%3시간 후 리셋주간46%4일 후 리셋Fable소진 · 4일 후 리셋",
+          "barCount": 1,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-c",
+          "text": "ClaudeC38%관측마지막 턴 기준 · 방금5h100%3시간 후 리셋주간38%1일 22시간 후 리셋Fable소진 · 1일 22시간 후 리셋",
+          "barCount": 1,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-gpt",
+          "text": "GPTCodex소진 · 2일 후 리셋Hermes와 한도 공유주간소진 · 2일 후 리셋5h100%3시간 후 리셋",
+          "barCount": 1,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-g1",
+          "text": "Gemini로그인 필요로그인관측확인 · 11/2 02:00 KST",
+          "barCount": 0,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-g2",
+          "text": "Gemini 2로그인 필요로그인관측확인 · 11/2 02:00 KST",
+          "barCount": 0,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-x1",
+          "text": "Grok71%관측확인 · 11/2 02:00 KST주간71%3일 후 리셋구독SuperGrokMSG 오늘2턴 · 입력 1,200 · 출력 800",
+          "barCount": 1,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        }
+      ],
+      "externalImages": 0,
+      "loginButtons": 2,
+      "lastRowAfterScroll": {
+        "x": 12,
+        "y": 602.734375,
+        "width": 366,
+        "height": 169.859375,
+        "visible": true
+      },
+      "contentPassed": true
+    }
+  },
+  "errors": [],
+  "strictContentChecks": true,
+  "passed": true
+}

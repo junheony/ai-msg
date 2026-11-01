@@ -88,3 +88,34 @@ describe('CodexUsagePoller (F3)', () => {
     expect(usage.snapshot().gpt).toMatchObject({ fetchedAt: '2026-10-01T02:30:00Z', credits: { hasCredits: true, balance: 49563.320507 } });
   });
 });
+
+describe('BRIEF7c live freshness', () => {
+  it('live reset beats an old exhausted rollout, and failed later reads do not restore it', async () => {
+    let now = Date.parse('2026-11-02T02:00:00Z');
+    const old = { windows: { fiveHour: { usedPct: 100, resetsAt: '2026-11-02T04:00:00Z' }, weekly: { usedPct: 100, resetsAt: '2026-11-04T00:00:00Z' } }, atMs: now - 3600_000 };
+    const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', now: () => new Date(now) });
+    usage.applyTurn('gpt', old.windows, old.atMs);
+    const readLive = vi.fn().mockResolvedValueOnce({ weekly: { usedPct: 3, resetsAt: '2026-11-09T00:00:00Z' } }).mockResolvedValue(null);
+    const p = new CodexUsagePoller({ sessionsRoot: '/unused', usage, now: () => now, read: async () => old, readLive });
+    expect(await p.pollOnce()).toBe(true);
+    expect(usage.snapshot().gpt?.weekly?.usedPct).toBe(3);
+    expect(usage.snapshot().gpt?.fiveHour).toBeNull();
+    now += 60_000;
+    expect(await p.pollOnce()).toBe(false);
+    expect(usage.snapshot().gpt?.weekly?.usedPct).toBe(3);
+    expect(usage.snapshot().gpt?.fetchedAt).toBe('2026-11-02T02:00:00.000Z');
+  });
+
+  it('falls back to timestamped rollout on unavailable live source; concurrent requests share one read', async () => {
+    const usage = { applyTurn: vi.fn() };
+    const readLive = vi.fn(async () => null);
+    const p = new CodexUsagePoller({ sessionsRoot: '/unused', usage, readLive, read: async () => ({ windows: { weekly: { usedPct: 40, resetsAt: null } }, atMs: 10 }) });
+    const a = p.pollOnce(), b = p.pollOnce();
+    expect(a).toBe(b);
+    await Promise.all([a, b]);
+    expect(readLive).toHaveBeenCalledTimes(1);
+    expect(usage.applyTurn).toHaveBeenCalledWith('gpt', { weekly: { usedPct: 40, resetsAt: null } }, 10);
+    await p.pollOnce();
+    expect(readLive).toHaveBeenCalledTimes(1);
+  });
+});

@@ -13,6 +13,7 @@ import { testRegistry } from '../../src/shared/accounts.testkit';
 import { accountInfos, type ServerMessage } from '../../src/shared/protocol';
 import type { ProjectEntry, SessionEntry, TranscriptMessage } from '../../src/shared/session-types';
 import { hermesFixtureId, hermesFixtureMessages, terminalFixtureSessions } from './terminal-fixtures';
+import { usageFixture, usageFixtureClock } from './usage-fixture';
 
 const repo = fileURLToPath(new URL('../../', import.meta.url));
 const uiDir = path.resolve(process.env.DIST ?? path.join(repo, 'dist/ui'));
@@ -20,6 +21,9 @@ const stateFile = process.argv[2] ?? '/tmp/msg-terminal-qa-state.json';
 const serverUrl = 'http://127.0.0.1:9381';
 const root = '/home/max/.claude/projects';
 const synthetic = process.env.FIXTURE === 'hermes';
+const syntheticUsage = process.env.USAGE_FIXTURE === 'brief7c';
+if (process.env.USAGE_FIXTURE && !syntheticUsage) throw new Error('Unknown usage QA fixture');
+if (syntheticUsage && !synthetic) throw new Error('Usage QA requires the synthetic Hermes transcript');
 if (process.env.FIXTURE && !synthetic) throw new Error('Unknown terminal QA fixture');
 const selectedId = synthetic ? hermesFixtureId : '3640bba1-fb7e-4021-aead-07c8953df686';
 const folders = ['-home-max-agentic-harness', '-home-max-msg-hub-design-repo', '-home-max-arbitrage-nexus', '-home-max-msg-mini', '-home-max-feeback'];
@@ -68,7 +72,8 @@ const messages = synthetic ? hermesFixtureMessages : displayMessages(await readT
 histories.set(selectedId, messages);
 if (synthetic) for (const entry of entries.values()) histories.set(entry.sessionId, messages);
 const pins = projects.flatMap((p) => p.sessions.slice(0, 2)).map((s) => s.sessionId);
-const bootstrap = { usage: usage.snapshot(), projects, pins, desktop: [], sessionIcons: {} };
+const usageSnapshot = () => syntheticUsage ? usageFixture : usage.snapshot();
+const bootstrap = { usage: usageSnapshot(), projects, pins, desktop: [], sessionIcons: {} };
 const json = (res: http.ServerResponse, code: number, data: unknown) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(data)); };
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', serverUrl);
@@ -77,10 +82,11 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/diag' && req.method === 'POST') { req.resume(); res.writeHead(204); res.end(); return; }
     if (req.method !== 'GET') { req.resume(); json(res, 405, { error: 'read-only QA host' }); return; }
     if (url.pathname === '/api/me') { json(res, 200, { ok: true }); return; }
+    if (syntheticUsage && url.pathname === '/api/setup') { json(res, 200, { engines: [], claudeProfiles: [], geminiSeats: [], addresses: [], needed: false, supervised: false, restartNeeded: false, accountsFile: true, checkedAt: usageFixtureClock }); return; }
     if (url.pathname === '/api/session-fork') { json(res, 200, { diverged: false }); return; }
     if (url.pathname === '/api/build') { json(res, 200, { build: null }); return; }
     if (url.pathname === '/api/bootstrap' || url.pathname === '/api/sessions') { json(res, 200, bootstrap); return; }
-    if (url.pathname === '/api/usage') { json(res, 200, usage.snapshot()); return; }
+    if (url.pathname === '/api/usage') { json(res, 200, usageSnapshot()); return; }
     if (url.pathname === '/api/hub/status') { json(res, 200, { generatedAt: new Date().toISOString(), modes: [], alerts: [], sources: [] }); return; }
     json(res, 404, { error: 'Not available in terminal QA' }); return;
   }
@@ -95,7 +101,7 @@ server.on('upgrade', (req, socket, head) => {
   if (req.url !== '/ws' || !checkUpgrade(req, token).ok) { socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); return; }
   wss.handleUpgrade(req, socket, head, (ws) => {
     const send = (msg: ServerMessage) => { if (ws.readyState === 1) ws.send(JSON.stringify(msg)); };
-    send({ type: 'hello', ...bootstrap, running: [], activity: [], codex: { available: synthetic }, hermes: { available: synthetic }, features: ['accounts', 'sessionModel'], accounts: accountInfos(registry), build: null });
+    send({ type: 'hello', ...bootstrap, running: [], activity: [], codex: { available: synthetic }, hermes: { available: synthetic }, ...(syntheticUsage ? { grok: { bin: true } } : {}), features: ['accounts', 'sessionModel', ...(syntheticUsage ? ['authLogin'] : [])], accounts: accountInfos(registry), build: null });
     ws.on('error', () => {});
     ws.on('message', async (raw) => {
       let msg; try { msg = JSON.parse(String(raw)); } catch { return; }
@@ -118,6 +124,6 @@ process.once('SIGTERM', () => void close()); process.once('SIGINT', () => void c
 try {
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(9381, '127.0.0.1', resolve); });
   const counts = { messages: messages.length, user: messages.filter((m) => m.kind === 'user').length, assistant: messages.filter((m) => m.kind === 'assistant').length, toolCalls: messages.reduce((n, m) => n + (m.kind === 'assistant' ? m.toolCalls.length : 0), 0), sessions: entries.size };
-  await fs.writeFile(stateFile, JSON.stringify({ server: serverUrl, tokenFile, uiDir, pid: process.pid, selectedId, fixture: synthetic ? 'hermes-synthetic' : 'claude-real-redacted', sourceFile: synthetic ? 'scripts/qa/terminal-fixtures.ts' : selected.file, counts }, null, 2) + '\n', { mode: 0o600, flag: 'wx' }); ownsState = true;
+  await fs.writeFile(stateFile, JSON.stringify({ server: serverUrl, tokenFile, uiDir, pid: process.pid, selectedId, fixture: synthetic ? 'hermes-synthetic' : 'claude-real-redacted', sourceFile: synthetic ? 'scripts/qa/terminal-fixtures.ts' : selected.file, ...(syntheticUsage ? { usageFixture: 'brief7c-synthetic', usageClock: usageFixtureClock } : {}), counts }, null, 2) + '\n', { mode: 0o600, flag: 'wx' }); ownsState = true;
   console.log(JSON.stringify({ ready: true, stateFile, counts }));
 } catch (e) { await close(); throw e; }

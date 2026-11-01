@@ -570,7 +570,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-out { display: inline-flex; align-items: center; gap: 3px; margin-left: 3px; }
 .usage-out-pill { display: inline-flex; align-items: center; gap: 3px; height: 20px; padding: 0 6px; border-radius: var(--r-full); font-size: var(--fs-xs); font-weight: 600; line-height: 1; white-space: nowrap; color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 35%, transparent); }
 .usage-out-pill small { font-size: inherit; font-weight: 500; }
-.usage-out-pill.unknown { color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 40%, transparent); }
+.usage-out-pill.unknown { color: var(--muted); background: var(--pill-bg); box-shadow: inset 0 0 0 1px var(--line); }
 /* One block per seat in the popover: the seat's summary line, then its windows (5h · 주간 · Fable; Gemini buckets; Grok's period) as rows. */
 .usage-pop-seat { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
 .usage-pop-seat:last-of-type { border-bottom: 0; }
@@ -2640,6 +2640,7 @@ body.pane-dragging .head-chip { cursor: grabbing; }
 .usage-strip { background: color-mix(in srgb, var(--fg) 4%, var(--bg)); }
 .usage-strip-pop {
   flex-direction: column;
+  flex-wrap: nowrap;
   align-items: stretch;
   width: min(340px, calc(100vw - 16px));
   max-width: min(340px, calc(100vw - 16px));
@@ -2652,11 +2653,30 @@ body.pane-dragging .head-chip { cursor: grabbing; }
   background: var(--panel);
   box-shadow: var(--elev-2), inset 0 0 0 1px var(--line);
 }
-.usage-strip-pop .usage-seg { width: 100%; height: 32px; padding: 0 8px; border-radius: 10px; box-sizing: border-box; }
-.usage-strip-pop .usage-pop-seat.current > .usage-seg { background: var(--panel); }
-.usage-strip-pop .usage-seg-who { max-width: 7em; overflow: hidden; text-overflow: ellipsis; }
-.usage-strip-pop .usage-seg-bar { width: 72px; }
-.usage-strip-pop .usage-seg-reset { margin-left: auto; }
+/* The popover has one capacity track per account; its subrows are a quiet aligned table. */
+.usage-strip-pop .usage-pop-seat { flex-shrink: 0; padding: var(--s2); gap: 5px; }
+:is(.usage-strip-pop, .usage-sheet) .usage-seg { display: flex; flex-direction: column; align-items: stretch; gap: 7px; width: 100%; height: auto; padding: 0; border-radius: 0; box-sizing: border-box; }
+:is(.usage-strip-pop, .usage-sheet) .usage-seg[data-current] { background: transparent; box-shadow: none; }
+.usage-pop-heading { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 25px; }
+.usage-identity { display: inline-flex; align-items: center; gap: 6px; min-width: 0; margin-right: auto; }
+.usage-identity .usage-mark { width: 18px; height: 18px; }
+.usage-identity .usage-seg-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-account-badge { flex-shrink: 0; max-width: 7em; overflow: hidden; text-overflow: ellipsis; padding: 0 5px; border-radius: var(--r-xs); font-size: var(--fs-2xs); color: var(--muted); background: var(--pill-bg); }
+:is(.usage-strip-pop, .usage-sheet) .usage-seg-num { flex-shrink: 0; color: var(--fg); font-variant-numeric: tabular-nums; font-size: var(--fs-sm); }
+:is(.usage-strip-pop, .usage-sheet) .usage-seg.unknown .usage-seg-num { color: var(--muted); font-size: var(--fs-xs); }
+:is(.usage-strip-pop, .usage-sheet) .usage-seg-bar { width: 100%; height: 3px; }
+:is(.usage-strip-pop, .usage-sheet) .usage-seg-reset { margin-left: auto; color: var(--muted); font-weight: 400; }
+:is(.usage-strip-pop, .usage-sheet) .usage-exhausted, .usage-row .usage-pill { color: var(--warn); background: color-mix(in srgb, var(--warn) 9%, transparent); border-radius: var(--r-xs); padding: 1px 5px; font-size: var(--fs-xs); font-weight: 500; }
+:is(.usage-strip-pop, .usage-sheet) .usage-seg.spent .usage-seg-bar { background: var(--track); }
+.usage-pop-rows { padding: 0; gap: 3px; }
+.usage-pop-rows .usage-row.compact { grid-template-columns: minmax(44px, 1fr) 54px minmax(0, 1.7fr); column-gap: 6px; min-height: 22px; }
+.usage-pop-rows .usage-row.compact .usage-value { font-size: var(--fs-xs); align-self: center; font-weight: 500; color: var(--muted); }
+.usage-row.compact .usage-value small { font-size: inherit; }
+.usage-pop-rows .usage-row.compact .usage-reset { text-align: right; margin-left: 0; font-size: var(--fs-2xs); }
+.usage-row.compact .usage-pill { grid-column: 2 / -1; justify-self: end; height: auto; line-height: 1.3; }
+.usage-shared-note { font-size: var(--fs-2xs); line-height: 1.5; color: var(--muted); }
+:is(.usage-strip-pop, .usage-sheet) .usage-reauth-btn { height: 28px; padding: 0 7px; font-size: var(--fs-xs); color: var(--fg); border-radius: var(--r-xs); box-shadow: inset 0 0 0 1px var(--line-strong); }
+:is(.usage-strip-pop, .usage-sheet) .usage-reauth-btn:focus-visible { outline: none; box-shadow: var(--focus); }
 .usage-strip-pop .usage-strip-more { margin-left: 0; height: 32px; justify-content: center; }
 
 .ctx-sheet {
@@ -3373,3 +3393,5 @@ table.t { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); font-
   .app[data-terminal] .topbar .pane-head-chips > .perm-badge { padding: 0 3px; gap: 3px; }
   .app[data-terminal] .topbar .perm-badge > svg { width: 11px; height: 11px; }
 }
+
+.usage-exhausted-reset { color: var(--muted); font-weight: 400; }

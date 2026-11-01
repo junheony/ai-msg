@@ -45,6 +45,8 @@ function offlinePreloads(source, fileRoot) {
 
 const [outDir = 'shots-terminal', tag = 'before'] = process.argv.slice(2);
 const state = JSON.parse(fs.readFileSync(process.env.QA_STATE || '/tmp/msg-terminal-qa-state.json', 'utf8'));
+const usageCapture = process.env.CAPTURE === 'usage';
+if (usageCapture && (state.fixture !== 'hermes-synthetic' || state.usageFixture !== 'brief7c-synthetic')) throw new Error('Usage capture requires the isolated synthetic usage fixture');
 const DIST = process.env.DIST || state.uiDir;
 const SERVER = state.server;
 if (SERVER !== 'http://127.0.0.1:9381') throw new Error('Only isolated QA port 9381 is allowed');
@@ -104,6 +106,10 @@ cdp.on('message', (d) => { const m = JSON.parse(d); if (VERBOSE) console.log('<-
 const send = (method, params = {}) => new Promise((r) => { const i = ++id; waits.set(i, r); if (VERBOSE) console.log('->', method); cdp.send(JSON.stringify({ id: i, method, params })); });
 const evaluate = async (expression) => { const r = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }); if (r.result?.exceptionDetails) log('eval error', r.result.exceptionDetails.text, expression.slice(0, 80)); return r.result?.result?.value; };
 await send('Page.enable'); await send('Runtime.enable');
+if (usageCapture) {
+  await send('Emulation.setTimezoneOverride', { timezoneId: 'Asia/Seoul' });
+  await send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {const NativeDate=Date; const fixed=${JSON.stringify(Date.parse(state.usageClock))}; window.Date=class extends NativeDate {constructor(...args){super(...(args.length?args:[fixed]));} static now(){return fixed;}};})()` });
+}
 await send('Network.enable'); await send('Network.setBlockedURLs', { urls: ['http://*', 'https://*', 'ws://*', 'wss://*'] });
 await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: process.env.THEME || 'dark' }] });
 await send('Runtime.addBinding', { name: '__proxy' });
@@ -180,6 +186,11 @@ const base = `file://${idx}`;
 const manifest = { tag, fixture: state.fixture || 'claude-real-redacted', source: state.sourceFile, counts: state.counts, dist: DIST, conciseMode: true, headerChecks: process.env.HEADER_CHECKS === '1', sizes: {}, errors };
 const selectedUrl = base + '?hub=msg&session=' + encodeURIComponent(state.selectedId);
 const inspect = `(() => ({ width: innerWidth, documentWidth: document.documentElement.scrollWidth, overflow: document.documentElement.scrollWidth > innerWidth, chat: !!document.querySelector('.chat'), users: document.querySelectorAll('.msg.user').length, answers: document.querySelectorAll('.msg.assistant .markdown').length, steps: document.querySelectorAll('.tool-group,.activity-steps').length, concise: document.documentElement.dataset.concise, login: !!document.querySelector('input[type=password]'), errorToasts: document.querySelectorAll('.toast.error,.error-toast,[role=alert].toast').length, hamburger: !!document.querySelector('button.menu,.sidebar-toggle') }))()`;
+if (usageCapture) {
+  const { captureUsage } = await import('./usage-capture.mjs');
+  await captureUsage({ send, evaluate, nav, sleep, selectedUrl, outDir, tag, state, errors, sizes: SIZES, selectedSizes: SIZES_SEL, settle: SETTLE });
+  closeSockets(); cleanup(); process.exit(errors.length ? 1 : 0);
+}
 for (const sizeName of SIZES_SEL) {
   const size = SIZES[sizeName]; if (!size) throw new Error('Unknown size');
   await send('Emulation.setDeviceMetricsOverride', { width: size.width, height: size.height, deviceScaleFactor: size.scale, mobile: size.mobile });

@@ -17,7 +17,7 @@ import type { GeminiEngine } from '../engine/GeminiEngine';
 import type { HermesEngine } from '../engine/HermesEngine';
 import type { TranscriptMessage } from '../../shared/session-types';
 import type { GrokTurnRequest } from '../engine/GrokEngine';
-import { findRolloutFile, readRolloutRateLimits } from '../engine/codexRollout';
+import { findRolloutFile, readRolloutRateLimitsAt } from '../engine/codexRollout';
 import { ruleString, sessionUpdates, type BgTask, type Engine, type EngineEvent, type EngineResult, type LiveInput, type PermissionRequest, type QuestionRequest, type RateLimitSignal } from '../engine/Engine';
 import { COOLDOWN_MS, classifyFailure, failureLabel, limitResetAtMs, limitResetHint } from '../engine/limitDetect';
 import { fastFailureKind, type FastModeKind } from '../engine/claudeCli/texts';
@@ -148,6 +148,8 @@ export type TurnRunnerDeps = {
   /** deck 메모 (MemoryStore.get): appended to every turn's system prompt except a handoff note's; absent = none. */
   memory?: () => string;
   /** Null = Codex disabled (D11); tests inject a fake with just runTurn. */
+  /** Refreshes live ChatGPT limits after a successful Codex/Hermes turn. */
+  codexUsage?: { pollOnce(): Promise<boolean> };
   hermes?: Pick<HermesEngine, 'runTurn'> | null;
   codex: Pick<CodexEngine, 'runTurn'> | null;
   /** Null = agy not installed. `loggedIn` reads the cached `agy models` probe (only g1 can be logged in). */
@@ -203,7 +205,7 @@ export type TurnRunnerDeps = {
   /** The session list changed on disk (a fork was written): rescan done, tell the clients. */
   onIndexChanged?: () => void;
   findRollout?: typeof findRolloutFile;
-  readRateLimits?: typeof readRolloutRateLimits;
+  readRateLimits?: typeof readRolloutRateLimitsAt;
   now?: () => number;
   maxRetries?: number;
 };
@@ -337,8 +339,9 @@ export class TurnRunner {
   private readonly now: () => number;
   private readonly maxRetries: number;
   private readonly findRollout: typeof findRolloutFile;
-  private readonly readRateLimits: typeof readRolloutRateLimits;
+  private readonly readRateLimits: typeof readRolloutRateLimitsAt;
   private gptCooldownUntil: number | null = null;
+  private gptLimitVersion = 0;
   /** Claude sessions whose process stays open for background work, by session id. */
   private readonly live = new Map<string, LiveSession>();
   /** The engine input handle of each running Claude turn, by its first turn id (per-task stop). */
@@ -397,7 +400,7 @@ export class TurnRunner {
     this.now = deps.now ?? (() => Date.now());
     this.maxRetries = deps.maxRetries ?? 2;
     this.findRollout = deps.findRollout ?? findRolloutFile;
-    this.readRateLimits = deps.readRateLimits ?? readRolloutRateLimits;
+    this.readRateLimits = deps.readRateLimits ?? readRolloutRateLimitsAt;
   }
 
   /**
@@ -1664,7 +1667,9 @@ export class TurnRunner {
     if (notice) sink.emit({ type: 'turn_notice', ...scope(), message: notice });
     let result: EngineResult | null = null;
     const effort = effortFor(model, p.effort);
-    const createdAtMs = state?.createdAtMs ?? this.now();
+    const startedAtMs = this.now();
+    const limitVersion = this.gptLimitVersion;
+    const createdAtMs = state?.createdAtMs ?? startedAtMs;
     const developerInstructions = this.addendum(p, 'codex');
     for await (const ev of deps.codex.runTurn({ cwd, resumeThreadId: state?.sessionId ?? null, model, sandbox, ...(effort ? { effort } : {}), ...(developerInstructions ? { developerInstructions } : {}), prompt: promptWithFiles(p.text, attachments), imagePaths: attachments.filter((a) => a.isImage).map((a) => a.path), signal: sink.signal })) {
       switch (ev.kind) {
@@ -1689,6 +1694,11 @@ export class TurnRunner {
       }
     }
     const res: EngineResult = result ?? { kind: 'result', sessionId, ok: false, text: '', usage: ZERO_USAGE, errorText: '엔진이 결과 없이 종료했습니다', stderr: null, errorKind: null, terminalReason: null };
+    if (res.ok) {
+      if (this.gptLimitVersion === limitVersion) this.gptCooldownUntil = null;
+      deps.usage.noteGptTurnOk(startedAtMs);
+      void deps.codexUsage?.pollOnce();
+    }
     if (sessionId) {
       const rolloutFile = state?.rolloutFile ?? (await this.findRollout(deps.codexSessionsRoot, sessionId).catch(() => null));
       // A sandbox set while this turn ran (setSandbox) is kept for the next one.
@@ -1702,11 +1712,12 @@ export class TurnRunner {
       await deps.store.set(next);
       // D5: the rollout's token_count.rate_limits is the only per-turn GPT usage signal.
       if (rolloutFile) {
-        const w = await this.readRateLimits(rolloutFile).catch(() => null);
-        if (w) deps.usage.applyTurn('gpt', w);
+        const obs = await this.readRateLimits(rolloutFile).catch(() => null);
+        // A historical token_count is never dated as this turn; unknown timestamps cannot prove freshness.
+        if (obs?.atMs !== null && obs?.atMs !== undefined) deps.usage.applyTurn('gpt', obs.windows, obs.atMs);
       }
     }
-    if (!res.ok && classifyFailure({ ok: false, errorText: res.errorText, errorKind: res.errorKind, rateLimitStatus: null }) === 'limit') this.gptCooldownUntil = this.now() + COOLDOWN_MS.limit;
+    if (!res.ok && classifyFailure({ ok: false, errorText: res.errorText, errorKind: res.errorKind, rateLimitStatus: null }) === 'limit') { this.gptCooldownUntil = this.now() + COOLDOWN_MS.limit; this.gptLimitVersion++; }
     sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: res.ok ? null : sink.signal.aborted ? abortedText(sink.signal) : displayError(res.errorText, res.stderr), ...(!res.ok && !sink.signal.aborted && res.errorKind === 'thread_locked' ? { errorCode: 'thread_locked' as const } : {}) });
   }
 
@@ -1725,7 +1736,9 @@ export class TurnRunner {
     const badge = (usage: TurnUsage) => ({ account, model, reason, usage, modelNote: null });
     if (!deps.hermes) { sink.emit({ type: 'turn_result', ...scope(), ok: false, text: '', badge: badge(ZERO_USAGE), errorText: 'Hermes CLI를 찾을 수 없습니다' }); return; }
     const messages: TranscriptMessage[] = [...(state?.messages ?? [])];
-    const createdAtMs = state?.createdAtMs ?? this.now();
+    const startedAtMs = this.now();
+    const limitVersion = this.gptLimitVersion;
+    const createdAtMs = state?.createdAtMs ?? startedAtMs;
     const record = async (ok: boolean) => {
       if (!sessionId) return;
       const current = deps.store.get(sessionId);
@@ -1762,7 +1775,12 @@ export class TurnRunner {
         }
       }
       const res = result ?? { ok: false, text: '', usage: ZERO_USAGE, errorText: 'Hermes가 결과 없이 종료했습니다' };
-      if (res.ok) this.contextDelivered(sessionId, context);
+      if (res.ok) {
+        this.contextDelivered(sessionId, context);
+        if (this.gptLimitVersion === limitVersion) this.gptCooldownUntil = null;
+        deps.usage.noteGptTurnOk(startedAtMs);
+        void deps.codexUsage?.pollOnce();
+      }
       await record(res.ok);
       sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: sink.signal.aborted ? abortedText(sink.signal) : res.errorText });
     } finally { this.modes.delete(p.turnId); }

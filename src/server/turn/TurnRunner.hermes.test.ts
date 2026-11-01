@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { ServerMessage } from '../../shared/protocol';
 import type { HermesTurnRequest } from '../engine/HermesEngine';
-import { StubEngine, okResult } from '../engine/StubEngine';
+import { StubEngine, okResult, failResult } from '../engine/StubEngine';
 import { SessionIndex } from '../sessions/SessionIndex';
 import { UsageService } from '../usage/UsageService';
 import { isHermesState, SessionStateStore } from './SessionState';
@@ -32,6 +32,18 @@ async function setup(over: Partial<TurnRunnerDeps> = {}) {
   return { runner, store, index, calls, messages, sink };
 }
 describe('Hermes routing and persistent sessions', () => {
+  it('Hermes success clears the shared GPT cooldown and old exhausted reading', async () => {
+    const now = Date.now();
+    const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://unused', now: () => new Date(now) });
+    usage.applyTurn('gpt', { weekly: { usedPct: 100, resetsAt: null } }, now - 60_000);
+    const c = await setup({ usage, now: () => now, codex: { async *runTurn() { yield failResult('usage limit reached'); } } });
+    await c.runner.run({ turnId: 'limited', cwd: dir, sessionId: null, text: 'first', engine: 'codex' }, c.sink);
+    expect(c.runner.gptCooldownUntilMs()).not.toBeNull();
+    await c.runner.run({ turnId: 'hermes', cwd: dir, sessionId: null, text: 'next', engine: 'hermes' }, c.sink);
+    expect(c.runner.gptCooldownUntilMs()).toBeNull();
+    expect(usage.snapshot().gpt?.weekly).toBeNull();
+  });
+
   it('creates explicit Hermes with safe default, survives store reload, keeps engine/cwd on resume', async () => {
     const c = await setup();
     await c.runner.run({ turnId: 't1', cwd: dir, sessionId: null, text: 'first', engine: 'hermes', model: 'gpt-6-astra' }, c.sink);

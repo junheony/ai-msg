@@ -104,11 +104,14 @@ export class UsageService {
   private listeners = new Set<(s: UsageSnapshot) => void>();
   /** Per-turn windows and when they were observed; kept until the deck has a newer reading. */
   /** `fiveAt`/`weekAt`: when that window itself was last observed (a partial observation keeps the other's time). */
-  private turnObs = new Map<UsageSeat, { w: TurnWindows; atMs: number; fiveAt?: number; weekAt?: number; by?: 'poll'; pollAt?: number; fable?: { w: UsageWindow; at: number } }>();
+  private turnObs = new Map<UsageSeat, { w: TurnWindows; atMs: number; fiveAt?: number; weekAt?: number; complete?: boolean; by?: 'poll'; pollAt?: number; fable?: { w: UsageWindow; at: number } }>();
   /** usage-deck mode: Claude accounts whose last dashboard card (parsed, not overlaid) was ok; empty while the dashboard is unreachable. */
   private cardOk = new Set<Account>();
   /** Newest GPT credits reading; the usage-deck card has none, so it outlives the window overlay. */
   private gptCredits: { c: GptCredits; atMs: number } | null = null;
+  /** Success invalidates only old exhausted observations, never inventing a new percentage. */
+  private gptSuccessFloor = -Infinity;
+  private readonly gptSuccessFile: string | null;
   /** When deck last completed a turn on each Claude account (see noteTurnOk). */
   private turnOkAt = new Map<Account, number>();
   private readonly url: string;
@@ -141,7 +144,7 @@ export class UsageService {
    * `mode` 'cli' (`DECK_USAGE_SOURCE`, default 'cli' here too; config picks the real default): usage-deck is never
    * asked — Claude accounts carry only what deck's own turns observed (`observedFile`, kept across restarts).
    */
-  constructor(opts: { mode?: UsageMode; observedFile?: string; deckUrl: string; fetchFn?: FetchLike; intervalMs?: number; timeoutMs?: number; now?: () => Date; accounts: AccountNames; usageSourceFile?: string; strict?: boolean | null; deckConfigured?: boolean; log?: (line: string) => void }) {
+  constructor(opts: { mode?: UsageMode; observedFile?: string; gptSuccessFile?: string; deckUrl: string; fetchFn?: FetchLike; intervalMs?: number; timeoutMs?: number; now?: () => Date; accounts: AccountNames; usageSourceFile?: string; strict?: boolean | null; deckConfigured?: boolean; log?: (line: string) => void }) {
     this.url = opts.deckUrl.replace(/\/+$/, '') + '/api/state';
     this.fetchFn = opts.fetchFn ?? ((url, init) => fetch(url, init));
     this.intervalMs = opts.intervalMs ?? 60_000;
@@ -154,6 +157,13 @@ export class UsageService {
     this.log = opts.log ?? (() => {});
     this.mode = opts.mode ?? 'cli';
     this.observedFile = opts.observedFile ?? null;
+    this.gptSuccessFile = opts.gptSuccessFile ?? null;
+    if (this.gptSuccessFile) {
+      try {
+        const saved: unknown = JSON.parse(fs.readFileSync(this.gptSuccessFile, 'utf8')).atMs;
+        if (typeof saved === 'number' && Number.isFinite(saved)) this.gptSuccessFloor = Math.min(saved, this.now().getTime());
+      } catch { /* Missing/invalid metadata does not prevent fresh live quota reads. */ }
+    }
     if (this.mode === 'cli') {
       if (this.observedFile) this.readObserved(this.observedFile);
       this.snap = this.withSource({ ...emptySnapshot(this.now(), this.reg.all()), accounts: this.cliAccounts(), usageMode: 'cli' });
@@ -373,14 +383,15 @@ export class UsageService {
    * `fetchedAt` until a newer deck card wins.
    */
   private overlay(seat: UsageSeat, u: AccountUsage): AccountUsage {
+    if (seat === 'gpt') u = this.filterOldGptLimits(u);
     const obs = this.turnObs.get(seat);
     if (!obs) return u;
     const fetched = u.fetchedAt ? parseIsoUtc(u.fetchedAt) : Number.NaN;
     // A 'down' card (e.g. setup_needed) carries no usable numbers, so it never retires an observation.
     // A card without a usable time (not down) is the card's word: it wins.
-    if (u.status === 'down' || (!Number.isNaN(fetched) && obs.atMs > fetched)) {
+    if (u.status === 'down' || (!Number.isNaN(fetched) && obs.atMs > fetched) || (seat === 'gpt' && obs.complete && (Number.isNaN(fetched) || obs.atMs === fetched))) {
       const { observedBy: _prevBy, ...base } = u;
-      const overridden: AccountUsage = { ...base, fiveHour: obs.w.fiveHour ?? u.fiveHour, weekly: obs.w.weekly ?? u.weekly };
+      const overridden: AccountUsage = { ...base, fiveHour: obs.w.fiveHour ?? (obs.complete ? null : u.fiveHour), weekly: obs.w.weekly ?? (obs.complete ? null : u.weekly) };
       if (seat === 'gpt') return { ...overridden, status: this.obsStatus(obs.w), fetchedAt: new Date(obs.atMs).toISOString() };
       // An account a `/usage` poll has read: its observation (a later turn's too) shows as ok even over a 'down' card, with
       // the polled Fable; 'poll' is said only while the newest observation is the poll's.
@@ -488,9 +499,20 @@ export class UsageService {
    * `status: 'ok'` with `fetchedAt` = the observed time, even if the usage-deck `codex` card is
    * currently `setup_needed` — a newer deck card still wins afterwards (see `overlay`).
    */
-  applyTurn(seat: UsageSeat, w: TurnWindows, observedAtMs: number = this.now().getTime(), by?: 'poll'): void {
+  applyTurn(seat: UsageSeat, w: TurnWindows, observedAtMs: number = this.now().getTime(), by?: 'poll', complete = false): void {
+    if (seat === 'gpt') {
+      // Compare with the displayed card as well as turnObs (a newer card may have retired it).
+      const displayedAt = parseIsoUtc(this.snap.gpt?.fetchedAt ?? '');
+      if (observedAtMs < displayedAt) return;
+      if (observedAtMs < this.gptSuccessFloor) {
+        w = { ...w };
+        if ((w.fiveHour?.usedPct ?? 0) >= 100) delete w.fiveHour;
+        if ((w.weekly?.usedPct ?? 0) >= 100) delete w.weekly;
+        if (!w.fiveHour && !w.weekly) return;
+      }
+    }
     if (this.mode === 'cli' && seat !== 'gpt') return this.applyCliTurn(seat, w, observedAtMs);
-    const prev = this.turnObs.get(seat);
+    let prev = this.turnObs.get(seat);
     // F3: the rollout poller may report a reading older than one a turn already gave; never go back in time.
     // Fable is only ever told by a `/usage` poll (a turn's rate_limit_event has none), kept with its own time and origin.
     const fable = by && w.fable && (!prev?.fable || observedAtMs >= prev.fable.at) ? { w: w.fable, at: observedAtMs } : prev?.fable;
@@ -502,10 +524,16 @@ export class UsageService {
       }
       return;
     }
+    if (seat === 'gpt' && complete) {
+      // RPC is a complete snapshot: an absent 5h window must remove yesterday's exhausted 5h.
+      prev = undefined;
+      this.snap = { ...this.snap, gpt: emptyAccountUsage() };
+      this.gptCredits = null;
+    }
     if (seat === 'gpt' && w.credits && (!this.gptCredits || observedAtMs >= this.gptCredits.atMs)) this.gptCredits = { c: w.credits, atMs: observedAtMs };
     const merged: TurnWindows = { ...prev?.w, ...(w.fiveHour ? { fiveHour: w.fiveHour } : {}), ...(w.weekly ? { weekly: w.weekly } : {}) };
     const atMs = Math.max(observedAtMs, prev?.atMs ?? 0);
-    this.turnObs.set(seat, { w: merged, atMs, fiveAt: w.fiveHour ? observedAtMs : prev?.fiveAt, weekAt: w.weekly ? observedAtMs : prev?.weekAt, ...(by ? { by } : {}), ...(by || prev?.pollAt !== undefined ? { pollAt: Math.max(by ? observedAtMs : 0, prev?.pollAt ?? 0) } : {}), ...(fable ? { fable } : {}) });
+    this.turnObs.set(seat, { w: merged, atMs, fiveAt: w.fiveHour ? observedAtMs : prev?.fiveAt, weekAt: w.weekly ? observedAtMs : prev?.weekAt, ...(complete || prev?.complete ? { complete: true } : {}), ...(by ? { by } : {}), ...(by || prev?.pollAt !== undefined ? { pollAt: Math.max(by ? observedAtMs : 0, prev?.pollAt ?? 0) } : {}), ...(fable ? { fable } : {}) });
     const cur = this.seatOf(this.snap, seat);
     let next: AccountUsage = seat === 'gpt' ? { ...cur, fiveHour: w.fiveHour ?? cur.fiveHour, weekly: w.weekly ?? cur.weekly } : this.overlay(seat, cur);
     if (seat === 'gpt') next = this.withCredits({ ...next, status: this.obsStatus(merged), fetchedAt: new Date(atMs).toISOString() });
@@ -564,5 +592,51 @@ export class UsageService {
   /** deck just completed a turn on `account` (result ok): affects `routingSnapshot` only (see `lift`); nothing is published. */
   noteTurnOk(account: Account, atMs: number = this.now().getTime()): void {
     this.turnOkAt.set(account, Math.max(atMs, this.turnOkAt.get(account) ?? 0));
+  }
+
+  applyGptLive(w: TurnWindows, observedAtMs: number): void {
+    this.applyTurn('gpt', w, observedAtMs, undefined, true);
+  }
+
+  private filterOldGptLimits(u: AccountUsage): AccountUsage {
+    const at = u.fetchedAt ? parseIsoUtc(u.fetchedAt) : NaN;
+    if (Number.isFinite(at) && at >= this.gptSuccessFloor) return u;
+    if (this.gptSuccessFloor === -Infinity) return u;
+    const fiveHour = (u.fiveHour?.usedPct ?? 0) >= 100 ? null : u.fiveHour;
+    const weekly = (u.weekly?.usedPct ?? 0) >= 100 ? null : u.weekly;
+    return { ...u, fiveHour, weekly, status: fiveHour || weekly ? u.status : 'stale' };
+  }
+
+  /** Codex and Hermes share the plan. Success clears old exhaustion, unless known credits can explain it. */
+  noteGptTurnOk(startedAtMs: number): void {
+    const credits = this.gptCredits?.c;
+    if (credits?.hasCredits || credits?.unlimited) return;
+    // A current measurement can still be genuinely exhausted (e.g. the last included call succeeded).
+    const floor = startedAtMs;
+    this.gptSuccessFloor = Math.max(this.gptSuccessFloor, floor);
+    if (this.gptSuccessFile) {
+      const tmp = `${this.gptSuccessFile}.${process.pid}.tmp`;
+      try {
+        fs.mkdirSync(path.dirname(this.gptSuccessFile), { recursive: true });
+        fs.writeFileSync(tmp, JSON.stringify({ atMs: this.gptSuccessFloor }), { mode: 0o600 });
+        fs.renameSync(tmp, this.gptSuccessFile);
+      } catch {
+        fs.rmSync(tmp, { force: true });
+        this.log('deck: GPT success freshness marker could not be saved');
+      }
+    }
+    const obs = this.turnObs.get('gpt');
+    const cur = this.seatOf(this.snap, 'gpt');
+    const at = cur.fetchedAt ? parseIsoUtc(cur.fetchedAt) : -Infinity;
+    const keep = (w: UsageWindow | null, observedAt: number) => observedAt < floor && (w?.usedPct ?? 0) >= 100 ? null : w;
+    const fiveHour = keep(cur.fiveHour, obs?.fiveAt ?? at);
+    const weekly = keep(cur.weekly, obs?.weekAt ?? at);
+    if (obs) {
+      const w = { ...obs.w };
+      if ((obs.fiveAt ?? obs.atMs) < floor && (w.fiveHour?.usedPct ?? 0) >= 100) delete w.fiveHour;
+      if ((obs.weekAt ?? obs.atMs) < floor && (w.weekly?.usedPct ?? 0) >= 100) delete w.weekly;
+      this.turnObs.set('gpt', { ...obs, w });
+    }
+    this.publish({ ...this.snap, generatedAt: this.now().toISOString(), gpt: { ...cur, fiveHour, weekly, status: fiveHour || weekly ? cur.status : 'stale' } });
   }
 }

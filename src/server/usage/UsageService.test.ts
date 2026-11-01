@@ -844,3 +844,65 @@ describe('UsageService · usage-deck 모드의 /usage 폴', () => {
     expect(s.snapshot().accounts.b!.observedBy).toBeUndefined();
   });
 });
+
+describe('BRIEF7c GPT success freshness fence', () => {
+  it('success removes old exhaustion as unknown; old rollout and deck card cannot reimport it, newer real limit can', async () => {
+    const now = Date.parse('2026-11-02T02:00:00Z');
+    const old = now - 60_000;
+    const w = { weekly: { usedPct: 100, resetsAt: '2026-11-04T00:00:00Z' } };
+    const usage = new UsageService({ mode: 'usage-deck', accounts: testRegistry(), deckUrl: 'http://x', now: () => new Date(now), fetchFn: async () => ({ ok: true, json: async () => ({ cards: [{ id: 'codex', status: 'ok', fetchedAt: new Date(old).toISOString(), rows: [{ label: 'Weekly (7d)', used: 100, resetsAt: w.weekly.resetsAt }] }] }) }) });
+    usage.applyTurn('gpt', w, old);
+    usage.noteGptTurnOk(now - 1000);
+    expect(usage.snapshot().gpt?.weekly).toBeNull();
+    usage.applyTurn('gpt', w, old);
+    await usage.pollOnce();
+    expect(usage.snapshot().gpt?.weekly).toBeNull();
+    usage.applyTurn('gpt', w, now);
+    expect(usage.snapshot().gpt?.weekly?.usedPct).toBe(100);
+  });
+
+  it('success retains a fresh exhausted reading or exhausted subscription with paid credits', () => {
+    const now = Date.parse('2026-11-02T02:00:00Z');
+    const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', now: () => new Date(now) });
+    usage.applyTurn('gpt', { weekly: { usedPct: 100, resetsAt: null } }, now - 1000);
+    usage.noteGptTurnOk(now - 2000);
+    expect(usage.snapshot().gpt?.weekly?.usedPct).toBe(100);
+    const paid = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', now: () => new Date(now) });
+    paid.applyTurn('gpt', { weekly: { usedPct: 100, resetsAt: null }, credits: { hasCredits: true, unlimited: false, balance: 12 } }, now - 3600_000);
+    paid.noteGptTurnOk(now);
+    expect(paid.snapshot().gpt?.weekly?.usedPct).toBe(100);
+  });
+
+  it('an old rollout cannot overwrite a newer dashboard reading after the turn overlay retires', async () => {
+    const now = Date.parse('2026-11-02T02:00:00Z');
+    const usage = new UsageService({ mode: 'usage-deck', accounts: testRegistry(), deckUrl: 'http://x', now: () => new Date(now), fetchFn: async () => ({ ok: true, json: async () => ({ cards: [{ id: 'codex', status: 'ok', fetchedAt: new Date(now).toISOString(), rows: [{ label: 'Weekly (7d)', used: 4 }] }] }) }) });
+    usage.applyTurn('gpt', { weekly: { usedPct: 90, resetsAt: null } }, now - 2000);
+    await usage.pollOnce();
+    usage.applyTurn('gpt', { weekly: { usedPct: 100, resetsAt: null } }, now - 1000);
+    expect(usage.snapshot().gpt?.weekly?.usedPct).toBe(4);
+  });
+});
+
+it('BRIEF7c: the GPT success fence survives restart when the live source is unavailable', async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'gpt-success-'));
+  const now = Date.parse('2026-11-02T02:00:00Z');
+  const opts = { gptSuccessFile: path.join(root, 'success.json'), accounts: testRegistry(), deckUrl: 'http://unused', now: () => new Date(now) };
+  try {
+    const first = new UsageService(opts);
+    first.noteGptTurnOk(now);
+    const second = new UsageService(opts);
+    second.applyTurn('gpt', { weekly: { usedPct: 100, resetsAt: '2026-11-04T00:00:00Z' } }, now - 60_000);
+    expect(second.snapshot().gpt?.weekly ?? null).toBeNull();
+    second.applyGptLive({ weekly: { usedPct: 100, resetsAt: '2026-11-09T00:00:00Z' } }, now + 1000);
+    expect(second.snapshot().gpt?.weekly?.usedPct).toBe(100);
+  } finally { await fsp.rm(root, { recursive: true, force: true }); }
+});
+
+
+it.each(['2026-11-02T01:59:00Z', '2026-11-02T02:00:00Z', null, 'invalid'])('BRIEF7c: complete live quota survives older/equal/undated dashboard (%s)', async (fetchedAt) => {
+  const now = Date.parse('2026-11-02T02:00:00Z');
+  const usage = new UsageService({ mode: 'usage-deck', accounts: testRegistry(), deckUrl: 'http://x', now: () => new Date(now), fetchFn: async () => ({ ok: true, json: async () => ({ cards: [{ id: 'codex', status: 'ok', fetchedAt, rows: [{ label: 'Weekly (7d)', used: 100 }, { label: 'Session (5h)', used: 100 }] }] }) }) });
+  usage.applyGptLive({ weekly: { usedPct: 7, resetsAt: null } }, now);
+  await usage.pollOnce();
+  expect(usage.snapshot().gpt).toMatchObject({ weekly: { usedPct: 7 }, fiveHour: null });
+});
