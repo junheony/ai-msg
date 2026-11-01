@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import type { MiniStatus } from '../../shared/mini-types';
 
 const NOW = Date.parse('2026-10-30T12:00:00Z');
@@ -22,7 +24,7 @@ describe('mini page', () => {
   beforeEach(async () => {
     vi.useFakeTimers({ now: NOW });
     vi.resetModules();
-    document.body.innerHTML = '<main id="mini" aria-live="polite"></main>';
+    document.body.innerHTML = '<main id="mini"></main>';
     answer = payload(12);
     vi.stubGlobal('fetch', vi.fn(async () => ({ status: 200, ok: true, json: async () => answer })));
     await import('./main');
@@ -62,7 +64,7 @@ describe('mini page', () => {
     expect(document.querySelector('.head .when')!.textContent).toBe('방금');
   });
 
-  it('is not a live region', () => {
-    expect(document.getElementById('mini')!.hasAttribute('aria-live')).toBe(false);
+  it('is not a live region (every rebuild and moving time text would be read out)', () => {
+    expect(readFileSync(path.resolve(__dirname, '../mini.html'), 'utf8')).not.toContain('aria-live');
   });
 });
