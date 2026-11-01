@@ -10,7 +10,7 @@ const payload = (contextPct: number): MiniStatus => ({
   running: 1,
   waiting: 0,
   sessions: [{ title: 'deck', engine: 'claude', model: 'opus', account: 'a', contextPct, context: 1000, out: 1, cacheRead: 1, costUsd: 1, turns: 1, lastPrompt: '', state: 'idle', updatedAgoMs: 10_000, forMs: 0 }],
-  seats: [{ id: 'a', label: 'A', status: 'ok', left5h: 50, leftWeek: 50, resets5h: new Date(NOW + 130.51 * 60_000).toISOString(), resetsWeek: null }],
+  seats: [{ id: 'a', label: 'A', status: 'ok', left5h: null, leftWeek: 50, resets5h: null, resetsWeek: new Date(NOW + 130.51 * 60_000).toISOString() }],
   hub: null,
   generated_at: new Date(NOW).toISOString(),
 });

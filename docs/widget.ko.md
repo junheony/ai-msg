@@ -39,4 +39,4 @@ MSG → 설정 → **계정** → **위젯 토큰** → **복사**.
 
 ## 응답 필드 (참고)
 
-`running`, `waiting`, `sessions[]` (title, model, account, contextPct, out, cacheRead, costUsd, turns, lastPrompt, state, updatedAgoMs, forMs), `seats[]` (label, left5h, leftWeek, resets5h, resetsWeek), `hub` (modes[], counts, worst), `generated_at`. 경로·비밀값은 서버에서 지우고 보냅니다.
+`running`, `waiting`, `sessions[]` (title, model, account, contextPct, out, cacheRead, costUsd, turns, lastPrompt, state, updatedAgoMs, forMs), `seats[]` (label, left5h, leftWeek, resets5h, resetsWeek — Claude 계정의 `left5h`·`resets5h` 는 항상 null), `hub` (modes[], counts, worst), `generated_at`. 경로·비밀값은 서버에서 지우고 보냅니다.

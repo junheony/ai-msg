@@ -39,7 +39,7 @@ export interface MiniSeat {
   id: string;
   label: string;
   status: 'ok' | 'stale' | 'down';
-  /** Left in the 5-hour window, 0–100; null = unknown. */
+  /** Left in the 5-hour window, 0–100; null = unknown, always null for a Claude account (no such limit any more). */
   left5h: number | null;
   /** Left in the weekly window, 0–100; null = unknown. */
   leftWeek: number | null;

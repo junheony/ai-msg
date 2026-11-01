@@ -186,7 +186,7 @@ export type DeckSettings = { autoApprove: boolean; defaultPermissionMode: PermMo
   taskSoftCap?: number };
 
 /**
- * 자동 account routing: 'balance' (고르게 분산) = the safe account with the lowest 5h usage;
+ * 자동 account routing: 'balance' (고르게 분산) = the safe account with the lowest weekly usage;
  * 'drain' (리셋 임박 먼저 소진) = the account whose weekly quota resets soonest, relative to what is left.
  */
 export const ROUTING_POLICIES = ['balance', 'drain'] as const;

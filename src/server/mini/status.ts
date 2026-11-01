@@ -54,14 +54,15 @@ function wholeLeft(w: UsageWindow | null): number | null {
   return r === null ? null : r > 0 && r < 1 ? 1 : Math.floor(r);
 }
 
-function seatOf(id: string, label: string, u: AccountUsage): MiniSeat {
-  return { id, label, status: u.status, left5h: wholeLeft(u.fiveHour), leftWeek: wholeLeft(u.weekly), resets5h: u.fiveHour?.resetsAt ?? null, resetsWeek: u.weekly?.resetsAt ?? null };
+/** `fiveHour` is false for a Claude account: its plans no longer have a 5-hour limit, so a value still on the card is not said. */
+function seatOf(id: string, label: string, u: AccountUsage, fiveHour: boolean): MiniSeat {
+  return { id, label, status: u.status, left5h: fiveHour ? wholeLeft(u.fiveHour) : null, leftWeek: wholeLeft(u.weekly), resets5h: fiveHour ? u.fiveHour?.resetsAt ?? null : null, resetsWeek: u.weekly?.resetsAt ?? null };
 }
 
 /** The seats line: every active Claude account in configured order, then GPT when the snapshot has it. */
 export function summarizeSeats(snapshot: UsageSnapshot, accounts: Pick<AccountNames, 'list' | 'label'>): MiniSeat[] {
-  const seats = accounts.list().map((id) => seatOf(id, accounts.label(id), usageOf(snapshot, id)));
-  if (snapshot.gpt) seats.push(seatOf('gpt', 'GPT', snapshot.gpt));
+  const seats = accounts.list().map((id) => seatOf(id, accounts.label(id), usageOf(snapshot, id), false));
+  if (snapshot.gpt) seats.push(seatOf('gpt', 'GPT', snapshot.gpt, true));
   return seats;
 }
 

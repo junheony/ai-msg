@@ -228,7 +228,7 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
             {onRoutingPolicy && routingPolicy !== null && (
               <>
                 <Seg<RoutingPolicy> label="자동 계정 선택" value={routingPolicy} onPick={onRoutingPolicy} options={[['balance', '고르게 분산'], ['drain', '리셋 임박 먼저 소진']]} />
-                <Hint short="새 세션·오래 쉰 세션·한도 문턱을 넘을 때 적용됩니다.">고르게 분산: 5시간 사용량이 가장 낮은 계정으로 (비슷하면 주간이 낮은 쪽). 리셋 임박 먼저 소진: 주간 한도가 곧 리셋되는 계정부터. 대화 중인 세션은 캐시 때문에 그대로 두고, 새 세션, 오래 쉰 세션, 한도 문턱(5시간 80% · 주간 85%)을 넘어 옮길 때 적용됩니다.</Hint>
+                <Hint short="새 세션·오래 쉰 세션·한도 문턱을 넘을 때 적용됩니다.">고르게 분산: 주간 사용량이 가장 낮은 계정으로 (비슷하면 곧 리셋되는 쪽). 리셋 임박 먼저 소진: 주간 한도가 곧 리셋되는 계정부터. 대화 중인 세션은 캐시 때문에 그대로 두고, 새 세션, 오래 쉰 세션, 한도 문턱(주간 85%)을 넘어 옮길 때 적용됩니다.</Hint>
               </>
             )}
             {onSameVendorRotation && sameVendorRotation !== null && (
@@ -260,7 +260,7 @@ export function SettingsView({ build, defaultPermMode = null, onDefaultPermMode,
                 {onGrokUnlock && <button type="button" className="btn" onClick={onGrokUnlock}>잠금 해제</button>}
               </div>
             )}
-            <Hint short="계정별 5시간·주간 한도는 상단 사용량 띠를 눌러 시트에서 봅니다." />
+            <Hint short="계정별 주간·Fable 한도는 상단 사용량 띠를 눌러 시트에서 봅니다." />
             <WidgetTokenRow />
           </section>
         </div>

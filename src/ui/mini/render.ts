@@ -86,7 +86,7 @@ function seatRow(seat: MiniSeat, now: number): string {
     `<div class="seat-cell ${leftTone(pct)}"><span class="num">${pct === null ? '—' : pct}</span><span class="unit">%</span><span class="lbl">${label} · <span data-reset="${esc(reset ?? '')}">${esc(countdown(reset, now))}</span></span></div>`;
   return `<div class="seat ${esc(seat.status)}">
   <span class="seat-name">${esc(seat.label)}</span>
-  ${cell(MINI_TEXTS.left5h, seat.left5h, seat.resets5h)}
+  ${seat.id === 'gpt' ? cell(MINI_TEXTS.left5h, seat.left5h, seat.resets5h) : ''}
   ${cell(MINI_TEXTS.leftWeek, seat.leftWeek, seat.resetsWeek)}
 </div>`;
 }

@@ -26,7 +26,7 @@ describe('parseDeckState', () => {
   it('maps cards to accounts, rows by label prefix, missing card → down', () => {
     const acc = parseDeckState(LIVE, testRegistry());
     expect(acc.a!.status).toBe('ok');
-    expect(acc.a!.fiveHour).toEqual({ usedPct: 13, resetsAt: '2026-09-30T15:09:59.684Z' });
+    expect(acc.a!.fiveHour).toBeNull(); // the card still has a Session (5h) row; Claude has no such limit any more
     expect(acc.a!.weekly?.usedPct).toBe(7);
     expect(acc.a!.fable?.usedPct).toBe(0);
     expect(acc.b!.status).toBe('stale');
@@ -39,9 +39,11 @@ describe('parseDeckState', () => {
   it('first label match wins even when its value is missing (claude-pick rows_of)', () => {
     const acc = parseDeckState({ cards: [{ id: 'claude:main', status: 'ok', rows: [
       { label: 'Weekly (7d)', used: null }, { label: 'Weekly (7d) · 2', used: 50 },
-      { label: 'Session (5h)', used: 20 }, { label: 'Session (5h) old', used: 90 } ] }] }, testRegistry());
+      { label: 'Fable (7d)', used: 20 }, { label: 'Fable (7d) old', used: 90 } ] }] }, testRegistry());
     expect(acc.a!.weekly).toBeNull();
-    expect(acc.a!.fiveHour?.usedPct).toBe(20);
+    expect(acc.a!.fable?.usedPct).toBe(20);
+    const gpt = parseDeckCards({ cards: [{ id: 'codex', status: 'ok', rows: [{ label: 'Session (5h)', used: 20 }, { label: 'Session (5h) old', used: 90 }] }] }, testRegistry()).gpt;
+    expect(gpt.fiveHour?.usedPct).toBe(20);
   });
 
   it('tolerates garbage', () => {
@@ -88,35 +90,35 @@ describe('UsageService', () => {
     expect(snap.accounts.a!.weekly?.usedPct).toBe(7);
   });
 
-  it('applyTurn overrides 5h/weekly from the SDK rate_limit_event and notifies', async () => {
+  it('applyTurn overrides weekly from the SDK rate_limit_event and notifies; a Claude 5h value in the event is dropped', async () => {
     const s = svc(async () => ({ ok: true, json: async () => LIVE }));
     await s.pollOnce();
     const seen: number[] = [];
-    s.onChange((snap) => seen.push(snap.accounts.a!.fiveHour?.usedPct ?? -1));
+    s.onChange((snap) => seen.push(snap.accounts.a!.weekly?.usedPct ?? -1));
     s.applyTurn('a', { fiveHour: { usedPct: 20, resetsAt: '2026-09-30T15:09:59.000Z' }, weekly: { usedPct: 8, resetsAt: '2026-10-06T22:59:59.000Z' } });
-    expect(s.snapshot().accounts.a!.fiveHour?.usedPct).toBe(20);
+    expect(s.snapshot().accounts.a!.fiveHour).toBeNull();
     expect(s.snapshot().accounts.a!.weekly?.usedPct).toBe(8);
     expect(s.snapshot().accounts.a!.fable?.usedPct).toBe(0);
-    expect(seen).toEqual([20]);
+    expect(seen).toEqual([8]);
   });
 
   it('a poll keeps per-turn windows observed after the card was fetched, and drops them once the deck is newer', async () => {
     let state: unknown = LIVE; // card a fetchedAt 12:27:01
     const s = svc(async () => ({ ok: true, json: async () => state }));
     await s.pollOnce();
-    s.applyTurn('a', { fiveHour: { usedPct: 20, resetsAt: null } }); // observed 12:30
+    s.applyTurn('a', { weekly: { usedPct: 20, resetsAt: null } }); // observed 12:30
     await s.pollOnce();
-    expect(s.snapshot().accounts.a!.fiveHour?.usedPct).toBe(20);
-    expect(s.snapshot().accounts.a!.weekly?.usedPct).toBe(7);
+    expect(s.snapshot().accounts.a!.weekly?.usedPct).toBe(20);
+    expect(s.snapshot().accounts.a!.fable?.usedPct).toBe(0);
     const newer = structuredClone(LIVE);
     newer.cards[0]!.fetchedAt = '2026-09-30T12:31:00.000Z';
-    newer.cards[0]!.rows[0]!.used = 22;
+    newer.cards[0]!.rows[1]!.used = 22;
     state = newer;
     await s.pollOnce();
-    expect(s.snapshot().accounts.a!.fiveHour?.usedPct).toBe(22);
+    expect(s.snapshot().accounts.a!.weekly?.usedPct).toBe(22);
     state = LIVE; // an older card again must not resurrect the dropped turn values
     await s.pollOnce();
-    expect(s.snapshot().accounts.a!.fiveHour?.usedPct).toBe(13);
+    expect(s.snapshot().accounts.a!.weekly?.usedPct).toBe(7);
   });
 
   it('a card that recovers (setup_needed → ok) gets fresh status and fetchedAt', async () => {
@@ -154,9 +156,9 @@ describe('UsageService', () => {
     expect(s.snapshot().accounts.a!.status).toBe('down');
     // The back-filled rows are now 23 min old and no turn observed them: not lifted (the router keeps excluding it).
     expect(s.routingSnapshot().accounts.a!.status).toBe('down');
-    // A fresh turn observation makes 5h/weekly current again; Fable is never refreshed by a turn → dropped.
+    // A fresh turn observation makes weekly current again; Fable is never refreshed by a turn → dropped.
     s.applyTurn('a', { fiveHour: { usedPct: 20, resetsAt: null }, weekly: { usedPct: 9, resetsAt: null } });
-    expect(s.routingSnapshot().accounts.a).toMatchObject({ status: 'ok', fiveHour: { usedPct: 20 }, weekly: { usedPct: 9 }, fable: null });
+    expect(s.routingSnapshot().accounts.a).toMatchObject({ status: 'ok', fiveHour: null, weekly: { usedPct: 9 }, fable: null });
     expect(s.snapshot().accounts.a!.status).toBe('down');
     expect(seen.every((x) => x === 'down')).toBe(true);
     nowMs += 9 * 60_000; // 29 min after the turn, observation 9 min old
@@ -177,10 +179,10 @@ describe('UsageService', () => {
     s.noteTurnOk('a');
     // No fetchedAt and no observation: nothing fresh to route on, stays down.
     expect(s.routingSnapshot().accounts.a!.status).toBe('down');
-    // An observation with only 5h: lifted, but with no weekly value the router still leaves it out ('주간 사용률 없음').
+    // An observation with only 5h is no observation for Claude: still nothing fresh, still down.
     s.applyTurn('a', { fiveHour: { usedPct: 5, resetsAt: null } });
     expect(s.snapshot().accounts.a!.status).toBe('down');
-    expect(s.routingSnapshot().accounts.a).toMatchObject({ status: 'ok', weekly: null, fable: null });
+    expect(s.routingSnapshot().accounts.a!.status).toBe('down');
   });
 
   it('routing on a lifted card: Fable only from a fresh card (needFable excludes otherwise); nothing fresh → excluded', async () => {
@@ -199,7 +201,7 @@ describe('UsageService', () => {
     expect(rank(true).excluded.a).toBe('Fable 값 없음');
       });
 
-  it('a lift needs each window it would use to be fresh: a fresh 5h-only observation does not vouch for an old weekly', async () => {
+  it('a lift goes by the weekly alone: a fresh 5h-only observation does not vouch for an old weekly, an old 5h row does not hold back a fresh one', async () => {
     const setup = async (nowIso: string) => {
       const nowMs = Date.parse(nowIso);
       const expired = structuredClone(LIVE);
@@ -214,17 +216,18 @@ describe('UsageService', () => {
     one.s.applyTurn('a', { fiveHour: { usedPct: 4, resetsAt: null } }, one.nowMs);
     one.s.noteTurnOk('a');
     expect(one.s.routingSnapshot().accounts.a!.status).toBe('down');
-    // A card 5h value with only a fresh weekly observation is just as old → not lifted either.
+    // The card's Session (5h) row is 3h old, the weekly observation fresh → lifted; the old row is not looked at.
     const half = await setup('2026-09-30T15:30:00Z');
     half.s.applyTurn('a', { weekly: { usedPct: 20, resetsAt: null } }, half.nowMs);
     half.s.noteTurnOk('a');
-    expect(half.s.routingSnapshot().accounts.a!.status).toBe('down');
-    // (2) Fresh weekly and fresh 5h observations (one event or two) → lifted, Fable dropped.
+    expect(half.s.snapshot().accounts.a!.status).toBe('down');
+    expect(half.s.routingSnapshot().accounts.a).toMatchObject({ status: 'ok', fiveHour: null, weekly: { usedPct: 20 }, fable: null });
+    // (2) A fresh weekly, then a 5h-only event that changes nothing → lifted, Fable dropped.
     const two = await setup('2026-09-30T15:30:00Z');
     two.s.applyTurn('a', { weekly: { usedPct: 20, resetsAt: null } }, two.nowMs - 60_000);
     two.s.applyTurn('a', { fiveHour: { usedPct: 4, resetsAt: null } }, two.nowMs);
     two.s.noteTurnOk('a');
-    expect(two.s.routingSnapshot().accounts.a).toMatchObject({ status: 'ok', fiveHour: { usedPct: 4 }, weekly: { usedPct: 20 }, fable: null });
+    expect(two.s.routingSnapshot().accounts.a).toMatchObject({ status: 'ok', fiveHour: null, weekly: { usedPct: 20 }, fable: null });
     // (3) Card itself fresh → lifted as before, even with an old observation on top.
     const three = await setup('2026-09-30T12:30:00Z');
     three.s.applyTurn('a', { weekly: { usedPct: 8, resetsAt: null } }, three.nowMs - 3 * 3_600_000);
@@ -288,6 +291,17 @@ describe('GPT usage (D5)', () => {
     expect(parseDeckCards({ cards: [codexOk] }, testRegistry()).gpt).toEqual({ status: 'ok', fetchedAt: '2026-09-30T12:00:00Z', fiveHour: null, weekly: { usedPct: 40, resetsAt: '2026-10-03T18:10:34.000Z' }, fable: null });
     expect(parseDeckCards({ cards: [codexSetup] }, testRegistry()).gpt).toEqual({ status: 'down', fetchedAt: '2026-09-30T06:14:10.724Z', fiveHour: null, weekly: null, fable: null });
     expect(parseDeckCards({ cards: [] }, testRegistry()).gpt.status).toBe('down');
+  });
+
+  it('BRIEF7d: GPT keeps its 5-hour window in parseDeckCards and applyTurn, in both modes', () => {
+    const fiveHour = { usedPct: 30, resetsAt: '2026-09-30T15:00:00.000Z' };
+    const parsed = parseDeckCards({ cards: [{ id: 'codex', status: 'ok', rows: [{ label: 'Session (5h)', used: 30, resetsAt: fiveHour.resetsAt }, { label: 'Weekly (7d)', used: 40 }] }] }, testRegistry());
+    expect(parsed.gpt).toMatchObject({ status: 'ok', fiveHour, weekly: { usedPct: 40 } });
+    for (const mode of ['usage-deck', 'cli'] as const) {
+      const u = new UsageService({ mode, accounts: testRegistry(), deckUrl: 'http://x', now: () => new Date('2026-09-30T12:30:00Z') });
+      u.applyTurn('gpt', { fiveHour });
+      expect(u.snapshot().gpt).toMatchObject({ status: 'ok', fiveHour });
+    }
   });
 
   it('applyTurn("gpt") corrects the snapshot until the deck card is newer', async () => {
@@ -502,7 +516,7 @@ describe('UsageService · cli mode (DECK_USAGE_SOURCE=cli: no usage-deck)', () =
     expect(s.snapshot()).toMatchObject({ usageMode: 'cli', deckReachable: false });
   });
 
-  it('a never-observed account is unknown (down, no numbers); a rate_limit_event fills 5h/weekly with the observation time', async () => {
+  it('a never-observed account is unknown (down, no numbers); a rate_limit_event fills weekly with the observation time', async () => {
     const clock = { ms: T0 };
     const s = make({ clock });
     expect(usageOf(s.snapshot(), 'a')).toMatchObject({ status: 'down', fetchedAt: null, fiveHour: null, weekly: null, fable: null });
@@ -510,7 +524,7 @@ describe('UsageService · cli mode (DECK_USAGE_SOURCE=cli: no usage-deck)', () =
     s.onChange(seen);
     s.applyTurn('a', { fiveHour: FIVE, weekly: WEEK });
     expect(seen).toHaveBeenCalledTimes(1);
-    expect(usageOf(s.snapshot(), 'a')).toEqual({ status: 'ok', fetchedAt: new Date(T0).toISOString(), trustUntil: FIVE.resetsAt, fiveHour: FIVE, weekly: WEEK, fable: null });
+    expect(usageOf(s.snapshot(), 'a')).toEqual({ status: 'ok', fetchedAt: new Date(T0).toISOString(), trustUntil: new Date(T0 + CLI_TRUST_MAX_MS).toISOString(), fiveHour: null, weekly: WEEK, fable: null });
     expect(usageOf(s.snapshot(), 'b').status).toBe('down');
     expect(usageOf(s.snapshot(), 'b')).not.toHaveProperty('trustUntil');
   });
@@ -521,15 +535,15 @@ describe('UsageService · cli mode (DECK_USAGE_SOURCE=cli: no usage-deck)', () =
     const s = make({ clock, file });
     s.applyTurn('a', { fiveHour: FIVE, weekly: WEEK });
     clock.ms = T0 + 60_000;
-    s.applyTurn('b', { fiveHour: { usedPct: 5, resetsAt: null } });
+    s.applyTurn('b', { weekly: { usedPct: 5, resetsAt: null } });
     expect((await fsp.stat(file)).mode & 0o777).toBe(0o600);
     expect(await fsp.readdir(path.dirname(file))).toEqual(['claude-usage-observed.json']);
     const saved = JSON.parse(await fsp.readFile(file, 'utf8'));
-    expect(saved.accounts.a).toEqual({ fiveHour: { ...FIVE, at: T0 }, weekly: { ...WEEK, at: T0 } });
-    expect(saved.accounts.b).toEqual({ fiveHour: { usedPct: 5, resetsAt: null, at: T0 + 60_000 } });
+    expect(saved.accounts.a).toEqual({ weekly: { ...WEEK, at: T0 } });
+    expect(saved.accounts.b).toEqual({ weekly: { usedPct: 5, resetsAt: null, at: T0 + 60_000 } });
     const again = make({ clock, file });
-    expect(usageOf(again.snapshot(), 'a')).toEqual({ status: 'ok', fetchedAt: new Date(T0).toISOString(), trustUntil: FIVE.resetsAt, fiveHour: FIVE, weekly: WEEK, fable: null });
-    expect(usageOf(again.snapshot(), 'b')).toMatchObject({ fiveHour: { usedPct: 5, resetsAt: null }, weekly: null });
+    expect(usageOf(again.snapshot(), 'a')).toEqual({ status: 'ok', fetchedAt: new Date(T0).toISOString(), trustUntil: new Date(T0 + CLI_TRUST_MAX_MS).toISOString(), fiveHour: null, weekly: WEEK, fable: null });
+    expect(usageOf(again.snapshot(), 'b')).toMatchObject({ fiveHour: null, weekly: { usedPct: 5, resetsAt: null } });
   });
 
   it('applyCliPoll (ClaudeUsagePoller): same path as a turn, marked observedBy poll, kept across a restart; a later turn clears the mark', async () => {
@@ -537,25 +551,25 @@ describe('UsageService · cli mode (DECK_USAGE_SOURCE=cli: no usage-deck)', () =
     const clock = { ms: T0 };
     const s = make({ clock, file });
     s.applyCliPoll('a', { fiveHour: FIVE, weekly: WEEK, fable: { usedPct: 87, resetsAt: WEEK.resetsAt } }, T0);
-    expect(usageOf(s.snapshot(), 'a')).toEqual({ status: 'ok', fetchedAt: new Date(T0).toISOString(), trustUntil: FIVE.resetsAt, fiveHour: FIVE, weekly: WEEK, fable: { usedPct: 87, resetsAt: WEEK.resetsAt }, observedBy: 'poll' });
+    expect(usageOf(s.snapshot(), 'a')).toEqual({ status: 'ok', fetchedAt: new Date(T0).toISOString(), trustUntil: new Date(T0 + CLI_TRUST_MAX_MS).toISOString(), fiveHour: null, weekly: WEEK, fable: { usedPct: 87, resetsAt: WEEK.resetsAt }, observedBy: 'poll' });
     const saved = JSON.parse(await fsp.readFile(file, 'utf8'));
     expect(saved.accounts.a.weekly).toEqual({ ...WEEK, at: T0, by: 'poll' });
     expect(usageOf(make({ clock, file }).snapshot(), 'a').observedBy).toBe('poll');
-    s.applyCliPoll('zz', { fiveHour: FIVE }, T0); // not configured: ignored
+    s.applyCliPoll('zz', { weekly: WEEK }, T0); // not configured: ignored
     expect(s.snapshot().accounts).not.toHaveProperty('zz');
     clock.ms = T0 + 60_000;
     s.applyTurn('a', { fiveHour: FIVE, weekly: WEEK });
     expect(usageOf(s.snapshot(), 'a')).not.toHaveProperty('observedBy');
   });
 
-  it('cliObservedAt: the oldest of 5h/weekly and a polled Fable; a turn-told Fable does not count; a polled Fable goes after CLI_TRUST_MAX_MS', () => {
+  it('cliObservedAt: the older of weekly and a polled Fable; a turn-told Fable does not count; a polled Fable goes after CLI_TRUST_MAX_MS', () => {
     const clock = { ms: T0 };
     const s = make({ clock });
     expect(s.cliObservedAt('a')).toBeNull();
     const fable = { usedPct: 87, resetsAt: new Date(T0 + 6 * 86_400_000).toISOString() };
     s.applyCliPoll('a', { fiveHour: FIVE, weekly: WEEK, fable }, T0);
     clock.ms = T0 + 60_000;
-    s.applyTurn('a', { fiveHour: FIVE, weekly: WEEK }); // turns keep 5h/weekly fresh, never Fable
+    s.applyTurn('a', { fiveHour: FIVE, weekly: WEEK }); // turns keep weekly fresh, never Fable
     expect(s.cliObservedAt('a')).toBe(T0);
     s.applyTurn('b', { fiveHour: FIVE, weekly: WEEK, fable: { usedPct: 100, resetsAt: fable.resetsAt } });
     expect(s.cliObservedAt('b')).toBe(T0 + 60_000);
@@ -569,33 +583,36 @@ describe('UsageService · cli mode (DECK_USAGE_SOURCE=cli: no usage-deck)', () =
   it('applyCliPoll outside cli mode goes in as a turn observation (usage-deck mode)', () => {
     const s = new UsageService({ mode: 'usage-deck', deckUrl: 'http://usage-deck.invalid', fetchFn: vi.fn<FetchLike>(), accounts: testRegistry() });
     s.applyCliPoll('a', { fiveHour: FIVE, weekly: WEEK }, T0);
-    expect(usageOf(s.snapshot(), 'a').fiveHour).toEqual(FIVE);
+    expect(usageOf(s.snapshot(), 'a')).toMatchObject({ fiveHour: null, weekly: WEEK });
   });
 
   it('per window, an older observation never replaces a newer one; a partial event keeps the other window and its time', async () => {
     const clock = { ms: T0 };
     const s = make({ clock });
-    s.applyTurn('a', { fiveHour: FIVE, weekly: WEEK }, T0);
-    s.applyTurn('a', { fiveHour: { usedPct: 99, resetsAt: null } }, T0 - 1000);
-    expect(usageOf(s.snapshot(), 'a').fiveHour).toEqual(FIVE);
+    const fable = { usedPct: 87, resetsAt: WEEK.resetsAt };
+    s.applyTurn('a', { weekly: WEEK }, T0);
+    s.applyTurn('a', { weekly: { usedPct: 99, resetsAt: null } }, T0 - 1000);
+    expect(usageOf(s.snapshot(), 'a').weekly).toEqual(WEEK);
     clock.ms = T0 + 120_000;
-    s.applyTurn('a', { fiveHour: { usedPct: 30, resetsAt: FIVE.resetsAt } });
-    // fetchedAt = the oldest window shown (the weekly from T0).
-    expect(usageOf(s.snapshot(), 'a')).toMatchObject({ fiveHour: { usedPct: 30 }, weekly: WEEK, fetchedAt: new Date(T0).toISOString() });
+    s.applyTurn('a', { fable });
+    // fetchedAt = the weekly's time: a Fable-only event does not move it.
+    expect(usageOf(s.snapshot(), 'a')).toMatchObject({ fable, weekly: WEEK, fetchedAt: new Date(T0).toISOString() });
+    s.applyTurn('a', { weekly: { usedPct: 70, resetsAt: WEEK.resetsAt } });
+    expect(usageOf(s.snapshot(), 'a')).toMatchObject({ fable, weekly: { usedPct: 70 }, fetchedAt: new Date(T0 + 120_000).toISOString() });
   });
 
   it('a window whose resetsAt has passed reads 0 % and estimated (on a poll, after a restart, and for routing)', async () => {
     const file = await tmpFile();
     const clock = { ms: T0 };
     const s = make({ clock, file });
-    s.applyTurn('a', { fiveHour: { usedPct: 97, resetsAt: new Date(T0 + 5 * 60_000).toISOString() }, weekly: WEEK });
-    expect(usageOf(s.snapshot(), 'a').fiveHour).toEqual({ usedPct: 97, resetsAt: new Date(T0 + 5 * 60_000).toISOString() });
-    clock.ms = T0 + 6 * 60_000; // past the 5h reset, still within STALE_MAX_MS of the observation
+    const resetsAt = new Date(T0 + 5 * 60_000).toISOString();
+    s.applyTurn('a', { weekly: { usedPct: 97, resetsAt } });
+    expect(usageOf(s.snapshot(), 'a').weekly).toEqual({ usedPct: 97, resetsAt });
+    clock.ms = T0 + 6 * 60_000; // past the weekly reset, still within STALE_MAX_MS of the observation
     await s.pollOnce();
-    expect(usageOf(s.snapshot(), 'a').fiveHour).toEqual({ usedPct: 0, resetsAt: new Date(T0 + 5 * 60_000).toISOString(), estimated: true });
-    expect(usageOf(s.snapshot(), 'a').weekly).toEqual(WEEK);
+    expect(usageOf(s.snapshot(), 'a').weekly).toEqual({ usedPct: 0, resetsAt, estimated: true });
     expect(rank(s, clock.ms).candidates.map((c) => c.account)).toEqual(['a']);
-    expect(usageOf(make({ clock, file }).snapshot(), 'a').fiveHour).toMatchObject({ usedPct: 0, estimated: true });
+    expect(usageOf(make({ clock, file }).snapshot(), 'a').weekly).toMatchObject({ usedPct: 0, estimated: true });
   });
 
   it('without a reset time the plain stale rule holds: ok within STALE_MAX_MS of the observation, then out of the candidates (unknown)', async () => {
@@ -619,14 +636,15 @@ describe('UsageService · cli mode (DECK_USAGE_SOURCE=cli: no usage-deck)', () =
   it('MED-1: an old observation stays a (stale) candidate as a lower bound until the earliest reset, then unknown', async () => {
     const clock = { ms: T0 };
     const s = make({ clock });
-    s.applyTurn('a', { fiveHour: FIVE, weekly: WEEK });
-    clock.ms = T0 + 30 * 60_000; // well past STALE_MAX_MS, before the 5h reset (T0 + 2h)
+    const week = { usedPct: 66, resetsAt: new Date(T0 + 2 * 3_600_000).toISOString() };
+    s.applyTurn('a', { weekly: week });
+    clock.ms = T0 + 30 * 60_000; // well past STALE_MAX_MS, before the weekly reset (T0 + 2h)
     await s.pollOnce();
-    expect(usageOf(s.snapshot(), 'a')).toMatchObject({ status: 'stale', trustUntil: FIVE.resetsAt, fiveHour: FIVE });
+    expect(usageOf(s.snapshot(), 'a')).toMatchObject({ status: 'stale', trustUntil: week.resetsAt, fiveHour: null, weekly: week });
     const r = rank(s, clock.ms);
-    expect(r.candidates).toMatchObject([{ account: 'a', stale: true, fiveHourPct: 20, weeklyPct: 66 }]);
+    expect(r.candidates).toMatchObject([{ account: 'a', stale: true, weeklyPct: 66 }]);
     expect(r.unknown).toEqual(expect.not.arrayContaining(['a']));
-    clock.ms = T0 + 2 * 3_600_000 + 1000; // past the 5h reset: no longer a promise
+    clock.ms = T0 + 2 * 3_600_000 + 1000; // past the weekly reset: no longer a promise
     const after = rank(s, clock.ms);
     expect(after.candidates).toEqual([]);
     expect(after.excluded.a).toMatch(/^stale 자료/);
@@ -700,8 +718,8 @@ describe('UsageService · cli mode (DECK_USAGE_SOURCE=cli: no usage-deck)', () =
     await s.pollOnce();
     expect(usageOf(s.snapshot(), 'a').status).toBe('stale');
     // A new turn (later than the clamped time) replaces it.
-    s.applyTurn('a', { fiveHour: { usedPct: 7, resetsAt: null } });
-    expect(usageOf(s.snapshot(), 'a').fiveHour).toEqual({ usedPct: 7, resetsAt: null });
+    s.applyTurn('a', { weekly: { usedPct: 7, resetsAt: null } });
+    expect(usageOf(s.snapshot(), 'a').weekly).toEqual({ usedPct: 7, resetsAt: null });
   });
 
   it('MED-4: a kept observation from the future (the clock went back while running) never blocks a new value', () => {
@@ -709,11 +727,11 @@ describe('UsageService · cli mode (DECK_USAGE_SOURCE=cli: no usage-deck)', () =
     const s = make({ clock });
     s.applyTurn('a', { fiveHour: FIVE, weekly: WEEK });
     clock.ms = T0; // the clock goes back a day
-    s.applyTurn('a', { fiveHour: { usedPct: 41, resetsAt: FIVE.resetsAt } });
-    expect(usageOf(s.snapshot(), 'a').fiveHour).toEqual({ usedPct: 41, resetsAt: FIVE.resetsAt });
+    s.applyTurn('a', { weekly: { usedPct: 41, resetsAt: WEEK.resetsAt } });
+    expect(usageOf(s.snapshot(), 'a').weekly).toEqual({ usedPct: 41, resetsAt: WEEK.resetsAt });
     // An older reading than a kept one that is not in the future is still refused.
-    s.applyTurn('a', { fiveHour: { usedPct: 99, resetsAt: null } }, T0 - 1000);
-    expect(usageOf(s.snapshot(), 'a').fiveHour).toEqual({ usedPct: 41, resetsAt: FIVE.resetsAt });
+    s.applyTurn('a', { weekly: { usedPct: 99, resetsAt: null } }, T0 - 1000);
+    expect(usageOf(s.snapshot(), 'a').weekly).toEqual({ usedPct: 41, resetsAt: WEEK.resetsAt });
   });
 
   it('Fable is never known: usageSource none (lax — unknown Fable does not force Opus) unless DECK_USAGE_STRICT=1', () => {
@@ -744,11 +762,67 @@ describe('UsageService · cli mode (DECK_USAGE_SOURCE=cli: no usage-deck)', () =
     const clock = { ms: T0 };
     expect(usageOf(make({ clock, file, log: (l) => logs.push(l) }).snapshot(), 'a').status).toBe('down');
     expect(logs).toHaveLength(1);
-    await fsp.writeFile(file, JSON.stringify({ version: 1, accounts: { zz: { fiveHour: { usedPct: 1, resetsAt: null, at: T0 } }, a: { fiveHour: { usedPct: 'x', at: T0 } }, b: { weekly: { usedPct: 3, resetsAt: null, at: T0 } } } }));
+    await fsp.writeFile(file, JSON.stringify({ version: 1, accounts: { zz: { weekly: { usedPct: 1, resetsAt: null, at: T0 } }, a: { weekly: { usedPct: 'x', at: T0 } }, b: { weekly: { usedPct: 3, resetsAt: null, at: T0 } } } }));
     const s = make({ clock, file });
     expect(s.snapshot().accounts).not.toHaveProperty('zz');
     expect(usageOf(s.snapshot(), 'a').status).toBe('down');
     expect(usageOf(s.snapshot(), 'b').weekly).toEqual({ usedPct: 3, resetsAt: null });
+  });
+
+  it('BRIEF7d: a legacy file with an old 5h and a fresh weekly reads ok, trusted by the weekly; the next write has no 5h left', async () => {
+    const file = await tmpFile();
+    const at = T0 - 60_000;
+    const oldFive = { usedPct: 95, resetsAt: new Date(T0 - 6 * 3_600_000).toISOString(), at: T0 - 8 * 3_600_000 };
+    await fsp.writeFile(file, JSON.stringify({ version: 1, accounts: { a: { fiveHour: oldFive, weekly: { ...WEEK, at } }, b: { fiveHour: oldFive } } }));
+    const clock = { ms: T0 };
+    const s = make({ clock, file });
+    expect(usageOf(s.snapshot(), 'a')).toEqual({ status: 'ok', fetchedAt: new Date(at).toISOString(), trustUntil: new Date(at + CLI_TRUST_MAX_MS).toISOString(), fiveHour: null, weekly: WEEK, fable: null });
+    expect(rank(s, T0).candidates).toMatchObject([{ account: 'a', stale: false, weeklyPct: 66 }]);
+    expect(usageOf(s.snapshot(), 'b')).toMatchObject({ status: 'down', fiveHour: null, weekly: null }); // nothing but the 5h: as never observed
+    expect(s.cliObservedAt('b')).toBeNull();
+    s.applyTurn('a', { weekly: { ...WEEK, usedPct: 67 } });
+    const saved = JSON.parse(await fsp.readFile(file, 'utf8'));
+    expect(saved.accounts).toEqual({ a: { weekly: { ...WEEK, usedPct: 67, at: T0 } } });
+  });
+
+  it('BRIEF7d: a Claude 5h-only turn or poll changes nothing: no publish, no write, no new status', async () => {
+    const file = await tmpFile();
+    const clock = { ms: T0 };
+    const s = make({ clock, file });
+    const seen = vi.fn();
+    s.onChange(seen);
+    s.applyTurn('a', { fiveHour: FIVE });
+    s.applyCliPoll('a', { fiveHour: FIVE }, T0);
+    expect(seen).not.toHaveBeenCalled();
+    await expect(fsp.stat(file)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(usageOf(s.snapshot(), 'a')).toMatchObject({ status: 'down', fetchedAt: null, fiveHour: null, weekly: null });
+    // On an account with a weekly: the weekly, its time and the file stay as they were.
+    s.applyTurn('a', { weekly: WEEK });
+    const before = usageOf(s.snapshot(), 'a');
+    const body = await fsp.readFile(file, 'utf8');
+    seen.mockClear();
+    clock.ms = T0 + 60_000;
+    s.applyTurn('a', { fiveHour: FIVE });
+    s.applyCliPoll('a', { fiveHour: FIVE }, clock.ms);
+    expect(seen).not.toHaveBeenCalled();
+    expect(usageOf(s.snapshot(), 'a')).toEqual(before);
+    expect(await fsp.readFile(file, 'utf8')).toBe(body);
+  });
+
+  it('BRIEF7d: cliObservedAt ignores 5h: a newer or older one in the file, and a 5h-only poll', async () => {
+    const file = await tmpFile();
+    await fsp.writeFile(file, JSON.stringify({ version: 1, accounts: {
+      a: { fiveHour: { usedPct: 1, resetsAt: null, at: T0 - 3_600_000 }, weekly: { usedPct: 2, resetsAt: null, at: T0 - 1000 } },
+      b: { fiveHour: { usedPct: 1, resetsAt: null, at: T0 }, weekly: { usedPct: 2, resetsAt: null, at: T0 - 2000 } },
+      c: { fiveHour: { usedPct: 1, resetsAt: null, at: T0 } },
+    } }));
+    const clock = { ms: T0 };
+    const s = make({ clock, file });
+    expect(s.cliObservedAt('a')).toBe(T0 - 1000);
+    expect(s.cliObservedAt('b')).toBe(T0 - 2000);
+    expect(s.cliObservedAt('c')).toBeNull();
+    s.applyCliPoll('c', { fiveHour: FIVE }, T0);
+    expect(s.cliObservedAt('c')).toBeNull();
   });
 });
 
@@ -776,7 +850,7 @@ describe('UsageService · usage-deck 모드의 /usage 폴', () => {
     await s.pollOnce();
     expect(s.snapshot().accounts.c!.status).toBe('down');
     s.applyCliPoll('c', POLLED, nowMs - 5_000);
-    expect(s.snapshot().accounts.c).toMatchObject({ status: 'ok', observedBy: 'poll', fiveHour: { usedPct: 30 }, weekly: { usedPct: 40 }, fable: { usedPct: 12 } });
+    expect(s.snapshot().accounts.c).toMatchObject({ status: 'ok', observedBy: 'poll', fiveHour: null, weekly: { usedPct: 40 }, fable: { usedPct: 12 } });
     expect(s.cliObservedAt('c')).toBe(nowMs - 5_000);
     await s.pollOnce(); // the card is still down: the observation stays on top
     expect(s.snapshot().accounts.c).toMatchObject({ status: 'ok', observedBy: 'poll', fable: { usedPct: 12 } });
@@ -784,7 +858,7 @@ describe('UsageService · usage-deck 모드의 /usage 폴', () => {
     state = { cards: [{ id: 'claude:third', status: 'ok', fetchedAt: new Date(nowMs).toISOString(), rows: [{ label: 'Session (5h)', used: 50, cap: 100, unit: '%', resetsAt: null }, { label: 'Weekly (7d)', used: 60, cap: 100, unit: '%', resetsAt: null }] }] };
     await s.pollOnce();
     const c = s.snapshot().accounts.c!;
-    expect(c).toMatchObject({ status: 'ok', fiveHour: { usedPct: 50 }, weekly: { usedPct: 60 } });
+    expect(c).toMatchObject({ status: 'ok', fiveHour: null, weekly: { usedPct: 60 } });
     expect(c.observedBy).toBeUndefined();
     expect(s.cliObservedAt('c')).toBe(nowMs); // ok card: not due
   });
@@ -793,7 +867,7 @@ describe('UsageService · usage-deck 모드의 /usage 폴', () => {
     let nowMs = Date.parse('2026-09-30T12:30:00Z');
     const s = svc(async () => ({ ok: true, json: async () => ({ cards: [] }) }), () => new Date(nowMs));
     await s.pollOnce();
-    s.applyCliPoll('c', { fiveHour: POLLED.fiveHour }, nowMs);
+    s.applyCliPoll('c', { weekly: POLLED.weekly }, nowMs);
     expect(s.snapshot().accounts.c).toMatchObject({ status: 'ok', observedBy: 'poll' });
     nowMs += STALE_MAX_MS + 60_000;
     await s.pollOnce();
@@ -805,43 +879,64 @@ describe('UsageService · usage-deck 모드의 /usage 폴', () => {
     const s = svc(async () => ({ ok: true, json: async () => ({ cards: [{ id: 'claude:third', status: 'setup_needed', rows: [] }] }) }), () => new Date(nowMs));
     await s.pollOnce();
     s.applyCliPoll('c', POLLED, nowMs - 60_000);
-    s.applyTurn('c', { fiveHour: { usedPct: 35, resetsAt: POLLED.fiveHour.resetsAt } });
-    expect(s.snapshot().accounts.c).toMatchObject({ status: 'ok', fiveHour: { usedPct: 35 }, weekly: { usedPct: 40 }, fable: { usedPct: 12 } });
+    s.applyTurn('c', { weekly: { usedPct: 45, resetsAt: POLLED.weekly.resetsAt } });
+    expect(s.snapshot().accounts.c).toMatchObject({ status: 'ok', fiveHour: null, weekly: { usedPct: 45 }, fable: { usedPct: 12 } });
     expect(s.snapshot().accounts.c!.observedBy).toBeUndefined();
     await s.pollOnce();
     expect(s.snapshot().accounts.c).toMatchObject({ status: 'ok', fable: { usedPct: 12 } });
-    expect(s.cliObservedAt('c')).toBe(nowMs - 60_000); // 5h turn is newer, weekly and Fable are the poll's
+    expect(s.cliObservedAt('c')).toBe(nowMs - 60_000); // the weekly turn is newer, Fable is the poll's
     nowMs += 30_000;
-    s.applyCliPoll('c', { fiveHour: POLLED.fiveHour }, nowMs);
+    s.applyCliPoll('c', { weekly: POLLED.weekly }, nowMs);
     expect(s.snapshot().accounts.c).toMatchObject({ status: 'ok', observedBy: 'poll' });
   });
 
-  it('턴보다 먼저 시작해 늦게 끝난 폴: 5h/주간은 턴이 이기고 Fable 은 들어간다', async () => {
+  it('턴보다 먼저 시작해 늦게 끝난 폴: 주간은 턴이 이기고 Fable 은 들어간다', async () => {
     const nowMs = Date.parse('2026-09-30T12:30:00Z');
     const s = svc(async () => ({ ok: true, json: async () => ({ cards: [{ id: 'claude:third', status: 'setup_needed', rows: [] }] }) }), () => new Date(nowMs));
     await s.pollOnce();
-    s.applyTurn('c', { fiveHour: { usedPct: 35, resetsAt: null } }, nowMs - 1_000);
+    s.applyTurn('c', { weekly: { usedPct: 35, resetsAt: null } }, nowMs - 1_000);
     s.applyCliPoll('c', POLLED, nowMs - 10_000);
-    expect(s.snapshot().accounts.c).toMatchObject({ fiveHour: { usedPct: 35 }, fable: { usedPct: 12 }, status: 'ok' });
-    expect(s.snapshot().accounts.c!.weekly).toBeNull();
+    expect(s.snapshot().accounts.c).toMatchObject({ fiveHour: null, weekly: { usedPct: 35 }, fable: { usedPct: 12 }, status: 'ok' });
   });
 
-  it('부분 폴(5h 만): cliObservedAt 은 그 시각; ok 카드는 fetchedAt 이 오래됐거나 없어도 폴하지 않는다', async () => {
+  it('부분 폴(주간만): cliObservedAt 은 그 시각; ok 카드는 fetchedAt 이 오래됐거나 없어도 폴하지 않는다', async () => {
     const nowMs = Date.parse('2026-09-30T12:30:00Z');
     const state = { cards: [
-      { id: 'claude:main', status: 'ok', fetchedAt: '2026-09-30T12:00:00.000Z', rows: [{ label: 'Session (5h)', used: 1, cap: 100, unit: '%', resetsAt: null }] },
-      { id: 'claude:second', status: 'ok', rows: [{ label: 'Session (5h)', used: 2, cap: 100, unit: '%', resetsAt: null }] },
+      { id: 'claude:main', status: 'ok', fetchedAt: '2026-09-30T12:00:00.000Z', rows: [{ label: 'Weekly (7d)', used: 1, cap: 100, unit: '%', resetsAt: null }] },
+      { id: 'claude:second', status: 'ok', rows: [{ label: 'Weekly (7d)', used: 2, cap: 100, unit: '%', resetsAt: null }] },
       { id: 'claude:third', status: 'setup_needed', rows: [] },
     ] };
     const s = svc(async () => ({ ok: true, json: async () => state }), () => new Date(nowMs));
     await s.pollOnce();
-    s.applyCliPoll('c', { fiveHour: POLLED.fiveHour }, nowMs - 3_000);
+    s.applyCliPoll('c', { weekly: POLLED.weekly }, nowMs - 3_000);
     expect(s.cliObservedAt('c')).toBe(nowMs - 3_000);
     expect(s.cliObservedAt('a')).toBe(nowMs); // old card time, still ok: not polled
     expect(s.cliObservedAt('b')).toBe(nowMs); // no card time: the card's word, not polled
     s.applyCliPoll('b', POLLED, nowMs);
-    expect(s.snapshot().accounts.b).toMatchObject({ fiveHour: { usedPct: 2 } }); // the card wins
+    expect(s.snapshot().accounts.b).toMatchObject({ weekly: { usedPct: 2 } }); // the card wins
     expect(s.snapshot().accounts.b!.observedBy).toBeUndefined();
+  });
+
+  it('BRIEF7d: a Claude 5h-only turn or poll changes nothing: no publish, no status, and cliObservedAt ignores it', async () => {
+    const nowMs = Date.parse('2026-09-30T12:30:00Z');
+    const s = svc(async () => ({ ok: true, json: async () => ({ cards: [{ id: 'claude:third', status: 'setup_needed', rows: [] }] }) }), () => new Date(nowMs));
+    await s.pollOnce();
+    const seen = vi.fn();
+    s.onChange(seen);
+    s.applyTurn('c', { fiveHour: POLLED.fiveHour });
+    s.applyCliPoll('c', { fiveHour: POLLED.fiveHour }, nowMs);
+    expect(seen).not.toHaveBeenCalled();
+    expect(s.snapshot().accounts.c).toMatchObject({ status: 'down', fiveHour: null, weekly: null });
+    expect(s.snapshot().accounts.c!.observedBy).toBeUndefined();
+    expect(s.cliObservedAt('c')).toBeNull();
+    // After a weekly reading a newer 5h-only one moves neither the numbers nor the time.
+    s.applyCliPoll('c', { weekly: POLLED.weekly }, nowMs - 5_000);
+    const before = s.snapshot().accounts.c;
+    seen.mockClear();
+    s.applyCliPoll('c', { fiveHour: POLLED.fiveHour }, nowMs);
+    expect(seen).not.toHaveBeenCalled();
+    expect(s.snapshot().accounts.c).toEqual(before);
+    expect(s.cliObservedAt('c')).toBe(nowMs - 5_000);
   });
 });
 

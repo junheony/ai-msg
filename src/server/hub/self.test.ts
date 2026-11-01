@@ -49,7 +49,7 @@ describe('seatsOf', () => {
       grokSeats: { x1: { status: 'down', lastTurnAt: null, lastError: 'auth', cooldownUntil: null, today: { inputTokens: 0, outputTokens: 0, turns: 2, day: '2026-10-30' }, billing: { usedPct: 7.2, windowStart: null, windowEnd: '2026-11-03T00:00:00Z', tier: 'SuperGrok', fetchedAt: 'x' } } },
     }), accounts);
     expect(seats.map((s) => [s.id, s.label, s.status, s.fiveHour, s.weekly, s.fable])).toEqual([
-      ['a', 'Claude A', 'ok', 12, 40, 3], ['b', 'Claude B', 'down', null, null, null], ['gpt', 'GPT', 'stale', 0, 100, null],
+      ['a', 'Claude A', 'ok', null, 40, 3], ['b', 'Claude B', 'down', null, null, null], ['gpt', 'GPT', 'stale', 0, 100, null],
       ['g1', 'Gemini', 'login', null, null, null], ['g2', 'Gemini 2', 'ok', null, 43, null], ['x1', 'Grok', 'login', null, 7, null],
     ]);
     expect(seats[2]!.note).toBe('크레딧 12');
@@ -57,6 +57,11 @@ describe('seatsOf', () => {
     expect(seats[4]!.note).toBe('pro 43% · flash 3%');
     expect(seats[4]!.weeklyResetsAt).toBe('2026-10-31T00:00:00Z');
     expect(seats[5]!.note).toBe('인증 실패 — 재로그인 · SuperGrok · 오늘 2턴');
+  });
+  it('a Claude seat has no 5-hour value or reset even with residual data; GPT keeps its own', () => {
+    const seats = seatsOf(snap({ gpt: { status: 'ok', fetchedAt: null, fiveHour: win(30, '2026-10-30T14:00:00Z'), weekly: win(50), fable: null } }), accounts);
+    expect(seats[0]).toMatchObject({ id: 'a', fiveHour: null, resetsAt: null, weekly: 40 });
+    expect(seats[2]).toMatchObject({ id: 'gpt', fiveHour: 30, resetsAt: '2026-10-30T14:00:00Z', weekly: 50 });
   });
   it('leaves out seats the snapshot does not carry', () => {
     expect(seatsOf(snap(), accounts).map((s) => s.id)).toEqual(['a', 'b']);

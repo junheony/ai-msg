@@ -15,15 +15,15 @@ function usage(): UsageSnapshot {
   const u = emptySnapshot(new Date('2026-10-02T00:00:00Z'), ['a', 'b', 'c']);
   const w = (usedPct: number) => ({ usedPct, resetsAt: null });
   u.accounts.a = { ...u.accounts.a!, status: 'ok', fiveHour: w(12), weekly: w(70), fable: w(85) };
-  // B's 5h reset is long past (read before it): 리셋됨, not the old 40 %.
-  u.accounts.b = { ...u.accounts.b!, status: 'ok', fiveHour: { usedPct: 40, resetsAt: '2020-01-01T00:00:00Z' }, weekly: w(60) };
+  // B's weekly reset is long past (read before it): 리셋됨, not the old 40 %.
+  u.accounts.b = { ...u.accounts.b!, status: 'ok', fiveHour: null, weekly: { usedPct: 60, resetsAt: '2020-01-01T00:00:00Z' } };
   return u;
 }
 
 describe('AccountPicker', () => {
   afterEach(cleanup);
 
-  it('shows 자동 · current letter, lists 자동 / A (Desktop) / B / C with their 5h and weekly %, reports the pick', () => {
+  it('shows 자동 · current letter, lists 자동 / A (Desktop) / B / C with their weekly and Fable %, reports the pick', () => {
     const onPin = vi.fn();
     render(<><AccountChipName pin={null} current="b" /><AccountMenu pin={null} usage={usage()} onPin={onPin} /></>);
     expect(screen.getByTestId('account-picker').textContent).toContain('자동 · B');
@@ -31,10 +31,12 @@ describe('AccountPicker', () => {
     const items = within(screen.getByTestId('account-menu')).getAllByRole('menuitemradio');
     expect(items.map((b) => b.querySelector('.mp-name')?.textContent)).toEqual(['자동', 'A (Desktop)', 'B', 'C']);
     expect(items[0]!.getAttribute('aria-checked')).toBe('true');
-    expect(items[1]!.textContent).toContain('5h 88% 남음 · 주간 30% 남음 · Fable 15% 남음');
-    expect(items[2]!.textContent).toContain('5h 리셋됨 · 주간 40% 남음');
+    expect(items[1]!.textContent).toContain('주간 30% 남음 · Fable 15% 남음');
+    // A's snapshot still carries a 5h reading: Claude has no such limit any more, so it is not said.
+    expect(items[1]!.textContent).not.toContain('5h');
+    expect(items[2]!.textContent).toContain('주간 리셋됨');
     expect(items[2]!.textContent).not.toContain('Fable');
-    // No known window: no desc line at all (not "5h —% · 주간 —% · Fable —%").
+    // No known window: no desc line at all (not "주간 —% · Fable —%").
     expect(items[3]!.textContent).not.toContain('—');
     expect(items[3]!.querySelector('.mp-desc')).toBeNull();
     fireEvent.click(items[2]!);

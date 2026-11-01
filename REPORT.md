@@ -318,3 +318,40 @@ An initial suite overlapped review edits and was stopped because its transform c
 The owned synthetic QA host and browser were stopped after capture. No push, deployment, production restart, protected-service access or modification of `/home/max/ai-msg` occurred. Live quota fallback remains best-effort when Codex is unauthenticated, unsupported or offline; no inference test was run. No required work remains.
 
 STATUS: DONE
+
+
+## BRIEF7d
+
+Claude's 5-hour window is gone from every display and routing decision. Claude shows Weekly (7d) and Fable when known; Codex/GPT, Grok and Antigravity keep their own displays, including GPT's 5h row.
+
+### Changed files
+
+- Usage intake: `src/server/usage/UsageService.ts` (single chokepoint — Claude `fiveHour` is dropped from deck cards, CLI reads and turn events, persisted values are ignored and removed on the next write; lift/stale no longer need 5h), `src/server/usage/ClaudeUsagePoller.ts` (comment).
+- Routing: `src/server/routing/AccountRouter.ts`, `src/server/routing/AutoModel.ts` (comment).
+- Other surfaces: `src/server/hub/self.ts`, `src/server/mini/status.ts`, `src/shared/mini-types.ts`, `src/shared/protocol.ts`, `src/ui/components/usageSeats.tsx`, `src/ui/components/AccountPicker.tsx`, `src/ui/components/SettingsView.tsx`, `src/ui/mini/render.ts`, `src/ui/styles.css` (comment), `scripts/widget/msg-widget.js`.
+- Docs: `README.md`, `README.ko.md`, `docs/widget.ko.md`.
+- Tests: `src/server/routing/{AccountRouter,AutoModel,AutoRoute}.test.ts`, `src/server/usage/{UsageService,ClaudeUsagePoller}.test.ts`, `src/server/hub/self.test.ts`, `src/server/mini/status.test.ts`, `src/server/ws.status.test.ts`, `src/server/turn/TurnRunner{,.accounts,.pin}.test.ts`, `src/ui/App.test.tsx`, `src/ui/mini/{main,render}.test.ts`, `src/ui/components/{UsageStrip,usageSeats,AccountPicker,Accounts}.test.tsx`.
+
+### Behaviour that changes as a result
+
+- Balance routing: lowest weekly use first. Within 5 points, the protected account goes last, then the drain score decides.
+- A cold session moves only for a weekly gap of 25 points or more, so B 22 vs C 0 now stays. Previously a cold session could also move on a 5h difference; with no 5h data it never moved.
+- Residual Claude 5h data is ignored everywhere in the router, not only in balance ordering: exclude, force-move, pin at limit, stale at-limit and the drain policy's safety check. Real rejections still go through the existing cooldown path.
+- A down card with a fresh weekly observation now lifts to ok even when its old 5h row is present, so such an account becomes routable sooner.
+- The hub seat table keeps its 5시간 column for GPT; Claude rows show "—". The mini API keeps `left5h` / `resets5h`, null for Claude.
+
+### Validation
+
+| Check | Result |
+|---|---|
+| `npx vitest run --maxWorkers=2` | 361 files / 4,550 tests passed |
+| `npm run typecheck` | Passed |
+| `npm run build` | Passed |
+| `npm run build:server` | Passed |
+| `git diff --check` | Passed |
+
+Screenshot: `shots-terminal-v2/usage-no5h-desktop.png` (usage popover, dark desktop, synthetic `USAGE_FIXTURE=brief7c` data that still carries a Claude 5h value, showing it is not displayed). Inspected: Claude rows 주간/Fable only, GPT 주간/5h intact, no layout gap.
+
+Not verified: `scripts/widget/msg-widget.js` was edited and its mini-render counterpart tested, but the widget was not run on a Scriptable device. Not changed: mockups under `scripts/render/` and `scripts/qa/usage-fixture.ts`. No live quota was read. No push, merge, deployment or restart occurred.
+
+STATUS: DONE

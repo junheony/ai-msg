@@ -120,7 +120,7 @@ function accessoryRectangular(s) {
   } else {
     text(w, '실행 중인 세션 없음', 12, C.muted);
     const a = (s.seats || [])[0];
-    if (a) text(w, `${a.label} 5h ${pct(a.left5h)} · 주 ${pct(a.leftWeek)}`, 11, C.muted);
+    if (a) text(w, `${a.label} ${a.id === 'gpt' ? `5h ${pct(a.left5h)} · ` : ''}주 ${pct(a.leftWeek)}`, 11, C.muted);
   }
   return w;
 }
@@ -191,9 +191,11 @@ function homeWidget(s, family) {
       text(st, a.label, 10, C.faint);
       const l = st.addStack();
       l.bottomAlignContent();
-      text(l, pct(a.left5h), 15, toneOfLeft(a.left5h), { bold: true });
-      l.addSpacer(3);
-      text(l, `/ ${pct(a.leftWeek)}`, 10, C.muted);
+      if (a.id === 'gpt') {
+        text(l, pct(a.left5h), 15, toneOfLeft(a.left5h), { bold: true });
+        l.addSpacer(3);
+        text(l, `/ ${pct(a.leftWeek)}`, 10, C.muted);
+      } else text(l, pct(a.leftWeek), 15, toneOfLeft(a.leftWeek), { bold: true });
       seats.addSpacer();
     }
   }

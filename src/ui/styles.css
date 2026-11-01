@@ -571,7 +571,7 @@ details[open] > summary > .tool-caret { transform: rotate(90deg); }
 .usage-out-pill { display: inline-flex; align-items: center; gap: 3px; height: 20px; padding: 0 6px; border-radius: var(--r-full); font-size: var(--fs-xs); font-weight: 600; line-height: 1; white-space: nowrap; color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 35%, transparent); }
 .usage-out-pill small { font-size: inherit; font-weight: 500; }
 .usage-out-pill.unknown { color: var(--muted); background: var(--pill-bg); box-shadow: inset 0 0 0 1px var(--line); }
-/* One block per seat in the popover: the seat's summary line, then its windows (5h · 주간 · Fable; Gemini buckets; Grok's period) as rows. */
+/* One block per seat in the popover: the seat's summary line, then its windows (주간 · Fable; GPT's 5h; Gemini buckets; Grok's period) as rows. */
 .usage-pop-seat { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
 .usage-pop-seat:last-of-type { border-bottom: 0; }
 .usage-pop-rows { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 0 8px 2px; }

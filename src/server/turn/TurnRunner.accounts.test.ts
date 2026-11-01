@@ -203,9 +203,9 @@ describe('TurnRunner · 이유 문구와 실행 모델 (최종 리뷰)', () => {
   const rows = (s: number, w: number, f: number) => [{ label: 'Session (5h)', used: s, resetsAt: null }, { label: 'Weekly (7d)', used: w, resetsAt: null }, { label: 'Fable (7d)', used: f, resetsAt: null }];
   const deck = (cards: unknown[]): FetchLike => async () => ({ ok: true, json: async () => ({ cards }) });
 
-  it('every account at its 5h limit while Fable has room (with usage-deck): the turn runs on Fable and the reason does not say "→ Opus"', async () => {
+  it('every account at its weekly limit while Fable has room (with usage-deck): the turn runs on Fable and the reason does not say "→ Opus"', async () => {
     const fetchedAt = new Date(NOW - 10_000).toISOString();
-    const c = await setup([{ id: 'a' }, { id: 'b' }, { id: 'c' }], null, { fetchFn: deck(['claude:main', 'claude:second', 'claude:third'].map((id) => ({ id, status: 'ok', fetchedAt, rows: rows(96, 10, 10) }))) });
+    const c = await setup([{ id: 'a' }, { id: 'b' }, { id: 'c' }], null, { fetchFn: deck(['claude:main', 'claude:second', 'claude:third'].map((id) => ({ id, status: 'ok', fetchedAt, rows: rows(0, 96, 10) }))) });
     await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: null, text: 'go', model: 'fable' }, c.sink);
     const badge = of(c.msgs, 'turn_result').at(-1)?.badge;
     expect(c.engine.calls.map((x) => x.model)).toEqual(['fable']);
@@ -216,9 +216,9 @@ describe('TurnRunner · 이유 문구와 실행 모델 (최종 리뷰)', () => {
 
   it('a reason that says "→ Opus" runs on Opus even when the card still shows an old Fable value with room', async () => {
     // usage-deck's own token for A expired (setup_needed, last-good rows an hour old), deck's turns on A work: routing
-    // trusts the turn's 5h/weekly and no Fable value — the router says "→ Opus", and the runner must not read the old 10%.
+    // trusts the turn's weekly and no Fable value — the router says "→ Opus", and the runner must not read the old 10%.
     const c = await setup([{ id: 'a' }], null, { fetchFn: deck([{ id: 'claude:main', status: 'setup_needed', fetchedAt: new Date(NOW - 3_600_000).toISOString(), rows: rows(20, 30, 10) }]) });
-    c.usage.applyTurn('a', { fiveHour: { usedPct: 20, resetsAt: null }, weekly: { usedPct: 30, resetsAt: null } }, NOW);
+    c.usage.applyTurn('a', { weekly: { usedPct: 30, resetsAt: null } }, NOW);
     c.usage.noteTurnOk('a', NOW);
     expect(c.usage.snapshot().accounts.a?.fable?.usedPct).toBe(10);
     expect(c.usage.routingSnapshot().accounts.a).toMatchObject({ status: 'ok', fable: null });
@@ -253,7 +253,7 @@ describe('TurnRunner.previewRoute · 다음 턴 미리보기', () => {
     await c.runner.run({ turnId: 't1', cwd: '/w/one', sessionId: SID, text: 'go' }, c.sink);
     expect(stay).toMatchObject({ account: of(c.msgs, 'turn_started')[0]!.account, reason: of(c.msgs, 'turn_started')[0]!.reason });
 
-    const d = await setup(accounts, null, { fetchFn: deck([[99, 20, 10], [10, 20, 10], [40, 30, 10]]) });
+    const d = await setup(accounts, null, { fetchFn: deck([[10, 99, 10], [10, 20, 10], [40, 30, 10]]) });
     await d.seed('a', d.rootOf('a'));
     const moved = d.runner.previewRoute(SID);
     expect(d.store.get(SID)).toMatchObject({ account: 'a' }); // the preview moves nothing

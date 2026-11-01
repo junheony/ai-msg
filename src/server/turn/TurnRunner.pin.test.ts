@@ -91,7 +91,7 @@ describe('TurnRunner · 고정 계정 (이 세션은 B 써)', () => {
 
   it('pinned account at its limit: the router picks for this turn, a notice says so, the pin stays', async () => {
     const eng = new StubEngine(() => ok(SID));
-    const c = await setup(eng, await usageWith([13, 7], [2, 96], [0, 40]));
+    const c = await setup(eng, await usageWith([13, 60], [2, 96], [0, 40]));
     const dir = await c.seed('b');
     await c.store.set({ sessionId: SID, cwd: '/w/one', account: 'b', projectDir: dir, lastTurnAtMs: NOW - 60_000, justCompacted: false, defaultModel: 'opus', accountPin: 'b' });
     await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/one', sessionId: SID, text: 'go' }, c.sink);

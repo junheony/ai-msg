@@ -98,25 +98,25 @@ describe('TurnRunner', () => {
     const res = msgsOf(c, 'turn_result')[0];
     expect(res).toMatchObject({ type: 'turn_result', ok: true, sessionId: 'new1', text: 'ok', badge: { account: 'b', model: 'fable', usage: { outputTokens: 4 } } });
     expect(c.deps.store.get('new1')).toMatchObject({ account: 'b', cwd: '/w/new', lastTurnAtMs: NOW, projectDir: path.join(c.roots.b!, '-w-new') });
-    expect(c.deps.usage.snapshot().accounts.b!.fiveHour?.usedPct).toBe(9);
+    expect(c.deps.usage.snapshot().accounts.b).toMatchObject({ fiveHour: null, weekly: { usedPct: 4 } }); // Claude has no 5h limit: the turn's value is dropped
   });
 
   it('자동 routing policy: balance by default, drain from the setting; one route log line; a good turn lifts a down card', async () => {
-    // a (protected, a normal candidate): 5h 13 / weekly 7; b: 5h 20 / weekly 3 (resets in 84h); c: 5h 0 / weekly 70
-    // (resets in 36h) → balance picks c (runner-up a), drain picks b.
-    const usage = await usageWith([13, 7, 0], [20, 3, 4], [0, 70, 27]);
+    // a (protected, a normal candidate): weekly 30; b: weekly 7 (resets in 84h); c: weekly 40 (resets in 36h)
+    // → balance picks b (runner-up a), drain picks c, whose reset comes first. The 5h values on the cards count for nothing.
+    const usage = await usageWith([13, 30, 0], [20, 7, 4], [0, 40, 27]);
     const lines: string[] = [];
     const eng = new StubEngine(() => ok('new1'));
     const c = await ctx(eng, { routeLog: (l) => lines.push(l) }, usage);
     await new TurnRunner(c.deps).run({ turnId: 't1', cwd: '/w/new', sessionId: null, text: 'hi' }, c.sink);
-    expect(eng.calls[0]).toMatchObject({ account: 'c' });
-    expect(msgsOf(c, 'turn_started')[0]).toMatchObject({ reason: '새 세션 · 분산: 5h C 100% 남음 > A 87% 남음' });
+    expect(eng.calls[0]).toMatchObject({ account: 'b' });
+    expect(msgsOf(c, 'turn_started')[0]).toMatchObject({ reason: '새 세션 · 분산: 주간 B 93% 남음 > A 70% 남음' });
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatch(/^deck: route 새 세션 → C \(새 세션 · 분산: 5h C 100% 남음 > A 87% 남음\) · 후보 /);
+    expect(lines[0]).toMatch(/^deck: route 새 세션 → B \(새 세션 · 분산: 주간 B 93% 남음 > A 70% 남음\) · 후보 /);
     const eng2 = new StubEngine(() => ok('new2'));
     const d = await ctx(eng2, { routingPolicy: () => 'drain' }, usage);
     await new TurnRunner(d.deps).run({ turnId: 't2', cwd: '/w/new', sessionId: null, text: 'hi' }, d.sink);
-    expect(eng2.calls[0]).toMatchObject({ account: 'b' });
+    expect(eng2.calls[0]).toMatchObject({ account: 'c' });
     // setup_needed card for b (down) — deck's own successful turn on b lifts it for routing.
     const down = new UsageService({ mode: 'usage-deck', accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [card('claude:main', 13, 7, 0, 154), { ...card('claude:second', 2, 3, 4, 84), status: 'setup_needed' }, card('claude:third', 0, 91, 27, 36)] }) }), now: () => new Date(NOW) });
     await down.pollOnce();
@@ -128,7 +128,7 @@ describe('TurnRunner', () => {
     // Routing now takes b; the UI still shows b's real setup_needed (down) status.
     expect(down.routingSnapshot().accounts.b).toMatchObject({ status: 'ok', weekly: { usedPct: 3 } });
     expect(down.snapshot().accounts.b!.status).toBe('down');
-    // An unpinned new session now routes to b (lowest 5h among safe: a 13 protected, b 2, c weekly 91 ≥ 85).
+    // An unpinned new session now routes to b (lowest weekly among safe: a 7 protected, b 3, c weekly 91 ≥ 85).
     const eng4 = new StubEngine(() => ok('new4'));
     const f = await ctx(eng4, {}, down);
     await new TurnRunner(f.deps).run({ turnId: 't4', cwd: '/w/new', sessionId: null, text: 'hi' }, f.sink);
@@ -194,7 +194,7 @@ describe('TurnRunner', () => {
 
   it('imported session on a (cold) moves to b, then resumes there', async () => {
     const eng = new StubEngine(() => ok(SID));
-    const c = await ctx(eng);
+    const c = await ctx(eng, {}, await usageWith([13, 40, 0], [2, 3, 4], [0, 91, 27])); // weekly a 40 vs b 3: past the 25-point gap
     const srcDir = await seedSession(c, 'a');
     await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/one', sessionId: SID, text: 'go' }, c.sink);
     expect(c.moves).toEqual([{ sessionId: SID, sourceProjectDir: srcDir, targetProjectsRoot: c.roots.b }]);
@@ -205,7 +205,7 @@ describe('TurnRunner', () => {
 
   it('warm session stays; a failed move cancels the switch', async () => {
     const eng = new StubEngine(() => ok(SID));
-    const c = await ctx(eng);
+    const c = await ctx(eng, {}, await usageWith([13, 40, 0], [2, 3, 4], [0, 91, 27]));
     const srcDir = await seedSession(c, 'a');
     await c.deps.store.set({ sessionId: SID, cwd: '/w/one', account: 'a', projectDir: srcDir, lastTurnAtMs: NOW - 60_000, justCompacted: false, defaultModel: 'opus' });
     await new TurnRunner(c.deps).run({ turnId: 't', cwd: '/w/one', sessionId: SID, text: 'go' }, c.sink);
@@ -213,7 +213,7 @@ describe('TurnRunner', () => {
     expect(eng.calls[0]?.account).toBe('a');
 
     const eng2 = new StubEngine(() => ok(SID));
-    const c2 = await ctx(eng2, { move: async () => ({ ok: false, error: 'disk full' }) });
+    const c2 = await ctx(eng2, { move: async () => ({ ok: false, error: 'disk full' }) }, await usageWith([13, 40, 0], [2, 3, 4], [0, 91, 27]));
     const src2 = await seedSession(c2, 'a');
     await c2.deps.store.set({ sessionId: SID, cwd: '/w/one', account: 'a', projectDir: src2, lastTurnAtMs: null, justCompacted: false, defaultModel: 'opus' });
     await new TurnRunner(c2.deps).run({ turnId: 't', cwd: '/w/one', sessionId: SID, text: 'go' }, c2.sink);

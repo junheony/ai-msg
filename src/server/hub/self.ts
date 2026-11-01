@@ -37,7 +37,7 @@ export function seatsOf(snap: UsageSnapshot, accounts: Pick<AccountNames, 'list'
   const seats: HubSelfSeat[] = [];
   for (const id of accounts.list()) {
     const u = usageOf(snap, id);
-    seats.push({ id, label: accounts.label(id), status: u.status, fiveHour: pct(u.fiveHour), weekly: pct(u.weekly), fable: pct(u.fable), resetsAt: u.fiveHour?.resetsAt ?? null, weeklyResetsAt: u.weekly?.resetsAt ?? null });
+    seats.push({ id, label: accounts.label(id), status: u.status, fiveHour: null, weekly: pct(u.weekly), fable: pct(u.fable), resetsAt: null, weeklyResetsAt: u.weekly?.resetsAt ?? null });
   }
   if (snap.gpt) {
     const u = snap.gpt;

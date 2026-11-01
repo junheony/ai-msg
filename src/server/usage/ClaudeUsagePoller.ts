@@ -84,6 +84,7 @@ export function parseClaudeReset(s: string, nowMs: number): string | null {
  * The `/usage` text → windows: `Current session` → fiveHour, `Current week (all models)` → weekly, a
  * `Current week (<model>)` naming Opus or Fable → fable (as stream.ts fableSpentOf: Fable shares the Opus family's
  * limit). null when no line reads (not a subscription, logged out, another text): nothing should change then.
+ * UsageService drops a Claude fiveHour: this parser only reads what the CLI prints.
  */
 export function parseClaudeUsageText(text: string, nowMs: number): TurnWindows | null {
   const out: TurnWindows = {};

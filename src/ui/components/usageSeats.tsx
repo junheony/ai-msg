@@ -92,7 +92,7 @@ export function agoText(iso: string | null, now: number): string {
  * turn (`observedBy: 'poll'`): "12분 전 확인" / "추정 · 12분 전 확인".
  */
 export function observedText(u: AccountUsage, now: number): string {
-  const ago = u.fiveHour || u.weekly ? agoText(u.fetchedAt, now) : '';
+  const ago = u.weekly ? agoText(u.fetchedAt, now) : '';
   if (!ago) return '아직 관측 없음';
   const kept = u.status === 'stale' && trusted(u, now);
   if (u.observedBy === 'poll') return kept ? `추정 · ${ago} 확인` : `${ago} 확인`;
@@ -194,12 +194,11 @@ export function engineCaption(d: Pick<SeatData, 'engine'>, label = ''): string {
 }
 
 /**
- * Claude A/B/C: main = fullest of 5h/weekly (Fable excluded — "Fable 은 Fable 만 막는다"); Fable only in the secondary row/popover.
- * Claude plans no longer have a 5-hour limit: the 5h row shows only when a reading still carries one, never as an empty "—" bar.
+ * Claude A/B/C: main = weekly (Fable excluded — "Fable 은 Fable 만 막는다"); Fable only in the secondary row/popover.
+ * Claude plans no longer have a 5-hour limit: no 5h row, even when a reading still carries one.
  */
 function claudeRows(u: AccountUsage, cli: boolean): SeatRow[] {
   return [
-    ...(u.fiveHour ? [{ key: 'fiveHour', name: WINDOW_NAME.fiveHour, w: u.fiveHour, mainEligible: true }] : []),
     { key: 'weekly', name: WINDOW_NAME.weekly, w: u.weekly, mainEligible: true },
     { key: 'fable', name: WINDOW_NAME.fable, w: u.fable, mainEligible: false, ...(cli && !u.fable ? { empty: CLI_NO_FABLE } : {}) },
   ];

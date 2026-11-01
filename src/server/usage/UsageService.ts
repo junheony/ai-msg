@@ -60,7 +60,8 @@ export function parseDeckCards(json: unknown, reg: AccountNames): { accounts: Re
     const card = byId.get(reg.cardId(account));
     if (!card) continue;
     const status = card.status === 'ok' ? 'ok' : card.status === 'stale' ? 'stale' : 'down';
-    accounts[account] = { status, fetchedAt: str(card.fetchedAt), ...rowsOf(card) };
+    // Claude has no 5-hour limit any more: a "Session (5h)" row usage-deck still sends is dropped here.
+    accounts[account] = { status, fetchedAt: str(card.fetchedAt), ...rowsOf(card), fiveHour: null };
   }
   // D5: the codex card's rows are only trusted when the card is ok/stale; setup_needed keeps stale numbers ("limit reached" at 100 % while the real value was 40 %).
   let gpt = emptyAccountUsage();
@@ -78,8 +79,8 @@ export function parseDeckState(json: unknown, reg: AccountNames): Record<Account
 
 /** One window as last observed from a deck turn's `rate_limit_event` (`cli` mode), with when; `by: 'poll'` = read by ClaudeUsagePoller (`/usage`). */
 type CliWindowObs = { w: UsageWindow; at: number; by?: 'poll' };
-type CliAccountObs = { fiveHour?: CliWindowObs; weekly?: CliWindowObs; /** Only when the CLI told one (spent = 100 %, or a warning's utilization). */ fable?: CliWindowObs };
-const CLI_WINDOWS = ['fiveHour', 'weekly', 'fable'] as const;
+type CliAccountObs = { weekly?: CliWindowObs; /** Only when the CLI told one (spent = 100 %, or a warning's utilization). */ fable?: CliWindowObs };
+const CLI_WINDOWS = ['weekly', 'fable'] as const;
 
 /** `cli` mode: past STALE_MAX_MS an observation still counts as a lower bound until its window resets, but never past this. */
 export const CLI_TRUST_MAX_MS = 24 * 3_600_000;
@@ -132,7 +133,7 @@ export class UsageService {
   private readonly mode: UsageMode;
   /** `cli` mode: `<configDir>/claude-usage-observed.json`; null = kept in memory only. */
   private readonly observedFile: string | null;
-  /** `cli` mode: per Claude account, the last observed 5h/weekly windows (loaded from `observedFile`). */
+  /** `cli` mode: per Claude account, the last observed weekly window (loaded from `observedFile`). */
   private cliObs = new Map<Account, CliAccountObs>();
 
   /**
@@ -188,7 +189,7 @@ export class UsageService {
       if (!this.reg.has(a) || !v || typeof v !== 'object') continue;
       const o: CliAccountObs = {};
       for (const k of CLI_WINDOWS) { const x = windowObsOf((v as Record<string, unknown>)[k], nowMs); if (x) o[k] = x; }
-      if (o.fiveHour || o.weekly || o.fable) this.cliObs.set(a, o);
+      if (o.weekly || o.fable) this.cliObs.set(a, o);
     }
   }
 
@@ -214,11 +215,12 @@ export class UsageService {
 
   /**
    * `cli` mode: an account as its last observation reads now. Never observed → 'down' (unknown). A window whose
-   * `resetsAt` has passed reads 0 % with `estimated` (estimateWindow). `fetchedAt` is the oldest observation among the
-   * 5h/weekly windows shown, and past STALE_MAX_MS the account is 'stale'. Usage within a window never goes down, so
-   * the numbers stay a lower bound until the window resets: `trustUntil` = the earliest `resetsAt` of the windows shown
-   * (a window without one: its observation + STALE_MAX_MS, i.e. the plain stale rule), at most CLI_TRUST_MAX_MS after
-   * the oldest observation. The router keeps a stale account as a candidate until then, and only then treats it as unknown.
+   * `resetsAt` has passed reads 0 % with `estimated` (estimateWindow). `fetchedAt` is when the weekly window was
+   * observed, and past STALE_MAX_MS the account is 'stale'. Usage within a window never goes down, so the number stays
+   * a lower bound until the window resets: `trustUntil` = its `resetsAt` (without one: its observation + STALE_MAX_MS,
+   * i.e. the plain stale rule), at most CLI_TRUST_MAX_MS after the observation. The router keeps a stale account as a
+   * candidate until then, and only then treats it as unknown. A 5h value is never kept (Claude has no such limit any
+   * more), so an old saved one cannot age the card.
    * Fable: rate_limit_event carries no Fable window (only five_hour / seven_day in every captured event), so it is
    * null — see `source()` for how unknown Fable is then treated — unless the CLI told a Fable/Opus value (spent = 100 %,
    * or a warning's utilization; kept until its reset, without a reset time for STALE_MAX_MS).
@@ -228,15 +230,14 @@ export class UsageService {
     // A polled Fable value (with its reset, usually days away) still goes once CLI_TRUST_MAX_MS old, as any observation would.
     const fableAge = o?.fable ? nowMs - o.fable.at : Infinity;
     const fable = o?.fable && (o.fable.w.resetsAt !== null || fableAge <= STALE_MAX_MS) && (o.fable.by !== 'poll' || fableAge <= CLI_TRUST_MAX_MS) ? estimateWindow(o.fable.w, nowMs) : null;
-    if (!o || (!o.fiveHour && !o.weekly)) return { ...emptyAccountUsage(), fable };
-    const shown = [o.fiveHour, o.weekly].filter((x): x is CliWindowObs => x !== undefined);
-    const oldest = Math.min(...shown.map((x) => x.at));
-    const polled = shown.find((x) => x.at === oldest)?.by === 'poll';
-    const until = (x: CliWindowObs) => { const r = x.w.resetsAt === null ? Number.NaN : parseIsoUtc(x.w.resetsAt); return Number.isNaN(r) ? x.at + STALE_MAX_MS : r; };
-    const trustUntil = Math.min(...shown.map(until), oldest + CLI_TRUST_MAX_MS);
+    if (!o?.weekly) return { ...emptyAccountUsage(), fable };
+    const { w: weekly, at, by } = o.weekly;
+    const polled = by === 'poll';
+    const resetMs = weekly.resetsAt === null ? Number.NaN : parseIsoUtc(weekly.resetsAt);
+    const trustUntil = Math.min(Number.isNaN(resetMs) ? at + STALE_MAX_MS : resetMs, at + CLI_TRUST_MAX_MS);
     return {
-      status: nowMs - oldest > STALE_MAX_MS ? 'stale' : 'ok', fetchedAt: new Date(oldest).toISOString(), trustUntil: new Date(trustUntil).toISOString(),
-      fiveHour: o.fiveHour ? estimateWindow(o.fiveHour.w, nowMs) : null, weekly: o.weekly ? estimateWindow(o.weekly.w, nowMs) : null, fable,
+      status: nowMs - at > STALE_MAX_MS ? 'stale' : 'ok', fetchedAt: new Date(at).toISOString(), trustUntil: new Date(trustUntil).toISOString(),
+      fiveHour: null, weekly: estimateWindow(weekly, nowMs), fable,
       ...(polled ? { observedBy: 'poll' as const } : {}),
     };
   }
@@ -409,13 +410,11 @@ export class UsageService {
    * A `down` Claude card (usage-deck's own token expired: setup_needed) while deck itself completed a turn on that
    * account within TURN_OK_TRUST_MS: the account works, so it is not 'down' for routing (routingSnapshot only).
    * Numbers are not invented, and old ones are not trusted: usage-deck back-fills setup_needed cards with the
-   * last-good rows indefinitely, and 'ok' skips the router's stale gate. So the lift needs every 5h/weekly number
-   * the lifted card would carry to be fresh — the card's own fetchedAt, or that window's own turn observation, within
-   * STALE_MAX_MS (a fresh 5h-only observation does not vouch for a days-old weekly). A missing window is fine: no
-   * weekly value still keeps it out of routing. Fable (never refreshed by a turn) is kept only when the card is fresh.
-   * How often this fires: Claude's rate_limit_event arrives every turn and normally carries both unifiedWindows
-   * (five_hour and seven_day; see the deck-core plan's live capture), so a successful turn usually lifts the card for
-   * ~STALE_MAX_MS. An event with only five_hour would not lift it (conservative).
+   * last-good rows indefinitely, and 'ok' skips the router's stale gate. So the lift needs the weekly number to be
+   * fresh — the card's own fetchedAt, or the weekly window's own turn observation, within STALE_MAX_MS. No 5h value is
+   * needed: Claude has no such limit any more. Fable (never refreshed by a turn) is kept only when the card is fresh.
+   * How often this fires: Claude's rate_limit_event arrives every turn and normally carries seven_day, so a successful
+   * turn usually lifts the card for ~STALE_MAX_MS. An event without seven_day would not lift it (conservative).
    */
   private lift(account: Account, u: AccountUsage): AccountUsage {
     const at = this.turnOkAt.get(account);
@@ -426,11 +425,8 @@ export class UsageService {
     const cardFresh = fresh(u.fetchedAt ? parseIsoUtc(u.fetchedAt) : Number.NaN);
     if (!cardFresh) {
       const obs = this.turnObs.get(account);
-      // `u` is already overlaid: a window present in the observation is the value the lifted card uses.
-      const ok = (v: unknown, fromObs: boolean, at: number | undefined) => (fromObs ? at !== undefined && fresh(at) : v === null);
-      const fiveObs = !!obs?.w.fiveHour, weekObs = !!obs?.w.weekly;
-      if (!fiveObs && !weekObs) return u; // nothing fresh at all
-      if (!ok(u.fiveHour, fiveObs, obs?.fiveAt) || !ok(u.weekly, weekObs, obs?.weekAt)) return u;
+      // `u` is already overlaid: a weekly window in the observation is the value the lifted card uses.
+      if (!obs?.w.weekly || obs.weekAt === undefined || !fresh(obs.weekAt)) return u;
     }
     return { ...u, status: 'ok', fable: cardFresh ? u.fable : null };
   }
@@ -500,6 +496,12 @@ export class UsageService {
    * currently `setup_needed` — a newer deck card still wins afterwards (see `overlay`).
    */
   applyTurn(seat: UsageSeat, w: TurnWindows, observedAtMs: number = this.now().getTime(), by?: 'poll', complete = false): void {
+    if (seat !== 'gpt' && w.fiveHour) {
+      // Claude has no 5-hour limit any more: a five_hour the CLI still reports is no observation at all.
+      const { fiveHour: _dropped, ...rest } = w;
+      if (!rest.weekly && !rest.fable) return;
+      w = rest;
+    }
     if (seat === 'gpt') {
       // Compare with the displayed card as well as turnObs (a newer card may have retired it).
       const displayedAt = parseIsoUtc(this.snap.gpt?.fetchedAt ?? '');
@@ -547,7 +549,7 @@ export class UsageService {
    * A kept time in the future (the clock went back) never blocks a new value.
    */
   private applyCliTurn(account: Account, w: TurnWindows, observedAtMs: number, by?: 'poll'): void {
-    if (!w.fiveHour && !w.weekly && !w.fable) return;
+    if (!w.weekly && !w.fable) return;
     const prev = this.cliObs.get(account) ?? {};
     const next: CliAccountObs = { ...prev };
     const nowMs = this.now().getTime();
@@ -572,20 +574,20 @@ export class UsageService {
   }
 
   /**
-   * ClaudeUsagePoller's "is it time": when the account was last observed — the oldest of its 5h/weekly windows and of a
-   * polled Fable value (turns keep 5h/weekly fresh but never tell Fable, so only a poll does). null = never.
+   * ClaudeUsagePoller's "is it time": when the account was last observed — the older of its weekly window and of a
+   * polled Fable value (turns keep weekly fresh but never tell Fable, so only a poll does). null = never.
    */
   cliObservedAt(account: Account): number | null {
     if (this.mode !== 'cli') {
       // usage-deck: a card from the dashboard that is ok needs no poll (overlay or not); anything else is judged by the observation.
       if (this.snap.deckReachable && this.cardOk.has(account)) return this.now().getTime();
       const t = this.turnObs.get(account);
-      const ats = t ? [t.fiveAt, t.weekAt, t.fable?.at].filter((x): x is number => x !== undefined) : [];
+      const ats = t ? [t.weekAt, t.fable?.at].filter((x): x is number => x !== undefined) : [];
       return ats.length ? Math.min(...ats) : null;
     }
     const o = this.cliObs.get(account);
-    if (!o || (!o.fiveHour && !o.weekly)) return null;
-    const ats = [o.fiveHour, o.weekly, o.fable?.by === 'poll' ? o.fable : undefined].filter((x): x is CliWindowObs => x !== undefined).map((x) => x.at);
+    if (!o?.weekly) return null;
+    const ats = [o.weekly, o.fable?.by === 'poll' ? o.fable : undefined].filter((x): x is CliWindowObs => x !== undefined).map((x) => x.at);
     return Math.min(...ats);
   }
 
