@@ -219,9 +219,9 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
         <span className="mode-ico"><HubIcon name={def.icon} size={18} /></span>
         <h1>{mode?.name ?? def.label}</h1>
         {mode && <StatePill state={mode.state} />}
-        {mode?.tag && <span className="hub-tag">{mode.tag}</span>}
+        {mode?.tag && !studio && <span className="hub-tag">{mode.tag}</span>}
         <span className="meta">마지막 활동 {relTime(mode?.lastActivity, now)}</span>
-        {mode && mode.sources.length > 0 && <span className="hub-src-list">{mode.sources.map((s) => <span key={s.name} className={`src${s.ok ? '' : ' bad'}`} title={s.ok ? `${s.ms}ms` : s.error ?? '오류'}>{s.name}{s.ok ? '' : ` · ${s.error ?? '오류'}`}</span>)}</span>}
+        {mode && !studio && mode.sources.length > 0 && <span className="hub-src-list">{mode.sources.map((s) => <span key={s.name} className={`src${s.ok ? '' : ' bad'}`} title={s.ok ? `${s.ms}ms` : s.error ?? '오류'}>{s.name}{s.ok ? '' : ` · ${s.error ?? '오류'}`}</span>)}</span>}
         <span className="ph-end">
           <span className="pill">읽기 전용</span>
           <button type="button" className="pill btn" onClick={onRefresh} disabled={loading} aria-label="지금 새로고침"><ReloadIcon /> <span className="pill-label">{loading ? '불러오는 중…' : '새로고침'}</span></button>
