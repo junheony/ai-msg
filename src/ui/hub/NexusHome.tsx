@@ -307,17 +307,49 @@ function Ops({ ops, now }: { ops: NexusOp[]; now: number }) {
 
 /* ───────── the view ───────── */
 
+/** Pages that live only on the Nexus dashboard — the hub keeps the headline numbers and links out (no second copy of the cards). */
+const DASH_PAGES: [string, string, string][] = [
+  ['/basket', '바스켓 분석', '종목별 크라임·SR·매매 카드·온체인'],
+  ['/smallcap', '소형캡 판독', '상시 감시 + 크라임 판독기 v2'],
+  ['/crime', '크라임', '단계·근거·과거 같은 패턴 결과'],
+  ['/paper-pnl', '모의 손익', 'DRY_RUN 가상 매매 성적'],
+  ['/', '지금', '할 일 카드·오늘 12시간·상장·지갑 흐름'],
+];
+
+function DashLinks({ home }: { home: NexusHomeData }) {
+  let origin = '';
+  try { origin = new URL(home.tabs[0]?.href ?? '').origin; } catch { origin = ''; }
+  const open = home.actions.filter((a) => a.fold !== 'fix').length;
+  const fix = home.actions.filter((a) => a.fold === 'fix').length;
+  return (
+    <Sec title="대시보드에서 보기" testid="nx-links" note={`할 일 카드 ${open}${fix ? ` · 고칠 것 ${fix}` : ''} · 원본은 Nexus 대시보드`}>
+      <div className="nx-coins">
+        {DASH_PAGES.map(([path, label]) => (
+          origin ? <Ext key={path} href={`${origin}${path}`}>{label}</Ext> : <span key={path}>{label}</span>
+        ))}
+      </div>
+      <div className="nx-dim">{DASH_PAGES.map(([, label, hint]) => `${label}: ${hint}`).join(' · ')}</div>
+      <div className="nx-dim">예전 전체 화면은 주소 끝에 ?full=1</div>
+    </Sec>
+  );
+}
+
 export function NexusHome({ home, now }: { home: NexusHomeData; now: number }) {
+  const full = typeof location !== 'undefined' && new URLSearchParams(location.search).get('full') === '1';
   return (
     <div className="nx" data-testid="nexus-home">
       <Tabs home={home} now={now} />
       <Market home={home} />
-      <Todo home={home} />
-      <Band home={home} now={now} />
-      <Listing home={home} now={now} />
-      <Flows home={home} now={now} />
-      <Score home={home} />
-      <Ops ops={home.ops} now={now} />
+      {full ? (
+        <>
+          <Todo home={home} />
+          <Band home={home} now={now} />
+          <Listing home={home} now={now} />
+          <Flows home={home} now={now} />
+          <Score home={home} />
+          <Ops ops={home.ops} now={now} />
+        </>
+      ) : <DashLinks home={home} />}
     </div>
   );
 }

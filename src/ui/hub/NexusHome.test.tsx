@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import type { NexusHome as NexusHomeData } from '../../shared/hub-types';
 import { ageOf, kstDay, NexusHome, sgn, usd } from './NexusHome';
@@ -38,6 +38,19 @@ function fixture(over: Partial<NexusHomeData> = {}): NexusHomeData {
 const empty = (): NexusHomeData => fixture({ actions: [], near: [], ops: [], listing: { ok: true, age_s: 30, n_seen: 0, upcoming: 0, pending: 0, recent: [] }, flows: { ok: true, kol_ok: true, kol_age_s: 1, persons24: null, usd24: null, feed: [], coins: [], deposits_hidden_n: 0, deposits_min_usd: null }, score: { ok: true, age_s: 1, rows: [] }, today: { real: [], armed_n: 0, day_start: null }, band: { t0: iso(-36_000_000), t1: iso(7_200_000), now: iso(0), bin_s: 600, bins: [], bins_age_s: null } });
 
 afterEach(cleanup);
+/* The sections below are the ?full=1 view; the default is the slim one (see 'slim default'). */
+beforeEach(() => { window.history.pushState({}, '', '/?full=1'); });
+
+describe('NexusHome slim default', () => {
+  it('keeps tabs + 시장 and links out instead of repeating the dashboard sections', () => {
+    window.history.pushState({}, '', '/');
+    render(<NexusHome home={fixture()} now={T} />);
+    expect(screen.getByTestId('nx-market')).toBeTruthy();
+    expect(screen.getByTestId('nx-links').textContent).toContain('바스켓 분석');
+    expect(screen.queryByTestId('nx-todo')).toBeNull();
+    expect(screen.queryByTestId('nx-band')).toBeNull();
+  });
+});
 
 describe('NexusHome', () => {
   it('shows the tab strip: 지금 active, the other four as outside links in a new tab', () => {
