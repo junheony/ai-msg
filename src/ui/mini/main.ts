@@ -11,8 +11,6 @@ head.className = 'head';
 const body = document.createElement('div');
 body.className = 'body';
 root.append(head, body);
-// A live region would read the page out on every rebuild and every moving time text.
-root.removeAttribute('aria-live');
 
 let status: MiniStatus | null = null;
 let fetchedAt: number | null = null;
