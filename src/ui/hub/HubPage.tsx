@@ -4,6 +4,7 @@ import { ExternalIcon, HubIcon, ReloadIcon } from './HubIcons';
 import { Cards, Chart, Images, KvGrid, Steps } from './HubSections';
 import { NexusHome } from './NexusHome';
 import { TradingHome } from './TradingHome';
+import { GameStudioHome } from './gamestudio/GameStudioHome';
 import { modeDef, STATE_LABEL, stateClass } from './modes';
 import { relTime } from './time';
 import { ReplayTrainer } from './replay/ReplayTrainer';
@@ -191,6 +192,27 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
   // Keyed by title (a suffix only for a repeated title), so a section added above does not remount — and collapse — the rest.
   const seen = new Map<string, number>();
   const sectionKeys = sections.map((s) => { const n = seen.get(s.title) ?? 0; seen.set(s.title, n + 1); return n ? `${s.title}#${n}` : s.title; });
+  // 게임 mode with the studio collector on: the lobby leads and the old ops view folds under 상세 기록.
+  const studio = mode?.id === 'game' ? mode.studio : undefined;
+  const ops = (
+    <>
+        {mode && <Lead state={mode.state} headline={headlineOf(mode)} decision={decisionOf(mode)} />}
+        {kpis.length > 0 && <div className="kpis" data-testid="hub-kpis">{kpis.map((k, i) => <Kpi key={i} k={k} />)}</div>}
+        {mode && (
+          <section className="sec open-static" aria-label="주의">
+            <div className="sh"><span className="sec-title">주의</span><span className="cnt">{mode.alerts.length}</span></div>
+            <Attention alerts={mode.alerts} now={now} />
+          </section>
+        )}
+        {mode?.id === 'nexus' && mode.nexus && <NexusHome home={mode.nexus} now={now} />}
+        {mode?.id === 'trading' && mode.trading && <TradingHome t={mode.trading} now={now} />}
+        {modeKey === 'trading' && <SrPanel now={now} />}
+        {mode && sections.map((s, i) => <SectionView key={sectionKeys[i]} s={s} name={mode.name} />)}
+        {mode && !mode.page && Object.keys(mode.metrics).length > 0 && <SectionView s={{ kind: 'kv', title: '지표', open: true, rows: Object.entries(mode.metrics).map(([k, v]) => [k, metricText(v)]) }} name={mode.name} />}
+        {mode && !mode.page && mode.links.filter((l) => !l.embed).map((l) => <SectionView key={l.href} s={{ kind: 'raw', title: l.label, href: l.href }} name={mode.name} />)}
+        {modeKey === 'trading' && <ReplayTrainer />}
+    </>
+  );
   return (
     <div className="hub-page" data-testid={`hub-mode-${modeKey}`} data-mode={modeKey}>
       <header className="ph">
@@ -207,21 +229,13 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
       </header>
       {error && <div className="hub-notice" role="alert">상태를 불러오지 못했어요 · {error}</div>}
       {!mode && !error && <div className="hub-notice muted">상태를 불러오는 중…</div>}
-      {mode && <Lead state={mode.state} headline={headlineOf(mode)} decision={decisionOf(mode)} />}
-      {kpis.length > 0 && <div className="kpis" data-testid="hub-kpis">{kpis.map((k, i) => <Kpi key={i} k={k} />)}</div>}
-      {mode && (
-        <section className="sec open-static" aria-label="주의">
-          <div className="sh"><span className="sec-title">주의</span><span className="cnt">{mode.alerts.length}</span></div>
-          <Attention alerts={mode.alerts} now={now} />
-        </section>
-      )}
-      {mode?.id === 'nexus' && mode.nexus && <NexusHome home={mode.nexus} now={now} />}
-      {mode?.id === 'trading' && mode.trading && <TradingHome t={mode.trading} now={now} />}
-      {modeKey === 'trading' && <SrPanel now={now} />}
-      {mode && sections.map((s, i) => <SectionView key={sectionKeys[i]} s={s} name={mode.name} />)}
-      {mode && !mode.page && Object.keys(mode.metrics).length > 0 && <SectionView s={{ kind: 'kv', title: '지표', open: true, rows: Object.entries(mode.metrics).map(([k, v]) => [k, metricText(v)]) }} name={mode.name} />}
-      {mode && !mode.page && mode.links.filter((l) => !l.embed).map((l) => <SectionView key={l.href} s={{ kind: 'raw', title: l.label, href: l.href }} name={mode.name} />)}
-      {modeKey === 'trading' && <ReplayTrainer />}
+      {studio && <GameStudioHome studio={studio} now={now} />}
+      {studio ? (
+        <details className="gs-detail" data-testid="gs-detail">
+          <summary>상세 기록</summary>
+          <div className="gs-detail-in">{ops}</div>
+        </details>
+      ) : ops}
       {mode && (
         <footer className="foot">
           <span>소스 {mode.sources.filter((s) => s.ok).length}/{mode.sources.length}{mode.sources.length ? ` · ${mode.sources.map((s) => `${s.name} ${s.ok ? `${s.ms}ms` : '실패'}`).join(' · ')}` : ''}</span>
