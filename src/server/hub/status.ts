@@ -17,6 +17,7 @@ import {
   DAY_MS, DEFAULT_LINKS, HOUR_MS, HUB_CACHE_MS, HUB_TIMEOUTS, HUB_URLS, SECRET_FIELD_RE, STALLED_S, SYSTEMD_PROPS, agoFrom, bool, downMode, errorText, fmtAgo, fmtClock, fmtDuration, fmtInt, fmtKst, fmtNum, fmtUsd,
   isObj, kpi, latestIso, num, objs, page, probe, scrub, sec, sortAlerts, str, stripSecrets, toIso, type HubDeps, type HubSelf, type HubSelfSeat,
 } from './shared';
+import { collectGameStudioCached } from './gameStudio';
 import { collectStudioCached } from './studios';
 import { collectYapping } from './yapping';
 
@@ -85,6 +86,12 @@ function collectMsg(deps: HubDeps): HubMode {
   return { id: 'msg', name: 'MSG 터미널', state, lastActivity: new Date(now).toISOString(), metrics, alerts: sortAlerts(alerts), links: [], sources, page: page(headline, decision, kpis, sections) };
 }
 
+/** 게임 스튜디오: the ops page (~/games facts) plus, with a studio folder, the gamified view built from the manifests. */
+export async function collectGameMode(deps: HubDeps): Promise<HubMode> {
+  const [mode, studio] = await Promise.all([collectStudioCached(deps, 'game'), deps.studioDir ? collectGameStudioCached(deps, { studioDir: deps.studioDir }) : Promise.resolve(null)]);
+  return studio ? { ...mode, studio } : mode;
+}
+
 /* ───────── aggregate + cache ───────── */
 
 const ORDER: HubModeId[] = [...HUB_MODE_IDS];
@@ -94,7 +101,7 @@ const NAMES: Record<HubModeId, string> = { msg: 'MSG 터미널', nexus: 'NEXUS',
 export async function collectHubStatus(deps: HubDeps): Promise<HubStatus> {
   const runs: Record<HubModeId, () => Promise<HubMode> | HubMode> = {
     msg: () => collectMsg(deps), nexus: () => collectNexus(deps), trading: () => collectTrading(deps), video: () => collectStudioCached(deps, 'video'),
-    game: () => collectStudioCached(deps, 'game'), ops: () => collectOps(deps), updown: () => collectUpdown(deps), quant: () => collectQuant(deps), yapping: () => collectYapping(deps),
+    game: () => collectGameMode(deps), ops: () => collectOps(deps), updown: () => collectUpdown(deps), quant: () => collectQuant(deps), yapping: () => collectYapping(deps),
   };
   const settled = await Promise.allSettled(ORDER.map(async (id) => runs[id]()));
   const modes = settled.map((r, i): HubMode => {
@@ -222,7 +229,7 @@ export async function readTailOf(file: string, maxBytes: number): Promise<string
 }
 
 /** Everything a live server needs; tests build their own `HubDeps`. */
-export function liveHubDeps(opts: { home: string; host: string; self: () => HubSelf; links?: HubDeps['links'] }): HubDeps {
+export function liveHubDeps(opts: { home: string; host: string; self: () => HubSelf; links?: HubDeps['links']; studioDir?: string }): HubDeps {
   return {
     fetchJson: fetchJsonWithTimeout,
     latestRender: (dir) => latestRenderIn(dir),
@@ -239,6 +246,7 @@ export function liveHubDeps(opts: { home: string; host: string; self: () => HubS
     host: opts.host,
     home: opts.home,
     ...(opts.links ? { links: opts.links } : {}),
+    ...(opts.studioDir ? { studioDir: opts.studioDir } : {}),
   };
 }
 

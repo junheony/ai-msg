@@ -31,6 +31,7 @@ import { execFile } from 'node:child_process';
 import { createRequestHandler, type ServerUpdateDeps } from './http';
 import { hubSelfOf } from './hub/self';
 import { createSrService } from './hub/sr';
+import { studioFileRoots } from './hub/gameStudio';
 import { createHubStatus, fetchJsonWithTimeout, liveHubDeps } from './hub/status';
 import { AuthLoginHub } from './authLogin/hub';
 import { openAuthPty } from './authLogin/pty';
@@ -370,11 +371,14 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
         if (seat === 'g1' || seat === 'g2') geminiUsage?.bump();
       },
     });
+    // 게임 스튜디오 (gamified view): the repo's studio/ manifests; DECK_GAME_STUDIO=0 keeps the plain ops page.
+    const gameStudioDir = process.env.DECK_GAME_STUDIO === '0' ? null : path.join(cfg.repoRoot, 'studio');
     // MSG Hub: localhost-only, GET-only status reads; the WS handle below is bound by the time a request arrives.
     const hub = {
-      status: createHubStatus(liveHubDeps({ home: cfg.home, host: os.hostname(), self: () => hubSelfOf({ startedAt, sessions: () => index.sessions(), running: () => ws.running(), activeTurns: () => ws.activeTurns(), usage: () => usage.snapshot(), accounts }) })),
+      status: createHubStatus(liveHubDeps({ home: cfg.home, host: os.hostname(), ...(gameStudioDir ? { studioDir: gameStudioDir } : {}), self: () => hubSelfOf({ startedAt, sessions: () => index.sessions(), running: () => ws.running(), activeTurns: () => ws.activeTurns(), usage: () => usage.snapshot(), accounts }) })),
       // Read-only media the hub pages show (영상 renders, 게임 builds); see hub/files.ts for the allowlist.
-      fileRoots: { video: path.join(cfg.home, 'engineering-shorts'), game: path.join(cfg.home, 'games') },
+      fileRoots: { video: path.join(cfg.home, 'engineering-shorts'), game: path.join(cfg.home, 'games'), ...(gameStudioDir ? studioFileRoots(cfg.home) : {}) },
+      ...(gameStudioDir ? { pipelineDoc: path.join(cfg.repoRoot, 'docs', 'GAME_PIPELINE.md') } : {}),
       // Trading room SR zones (:8830 /api/sr), read once a minute, filtered per symbol server-side.
       sr: createSrService({ fetchJson: fetchJsonWithTimeout }),
     };
