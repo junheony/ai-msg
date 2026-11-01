@@ -43,7 +43,7 @@ export function Lead({ state, headline, decision }: { state: HubState; headline:
 export function Kpi({ k }: { k: HubKpi }) {
   // display size fits ~9 digit-width glyphs in the narrowest tile; Hangul/CJK glyphs are ~1.8 digits wide
   const width = Array.from(k.value).reduce((n, ch) => n + (/[\u1100-\u11ff\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(ch) ? 1.8 : 1), 0) + (k.unit?.length ?? 0) * 0.7;
-  const size = width > 11 ? ' xs' : width > 8 ? ' sm' : '';
+  const size = width > 13 ? ' xxs' : width > 11 ? ' xs' : width > 8 ? ' sm' : '';
   return (
     <div className={`kpi ${k.status ?? ''}`}>
       <span className="l" title={k.label}>{k.label}</span>
@@ -202,7 +202,7 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
         {mode && mode.sources.length > 0 && <span className="hub-src-list">{mode.sources.map((s) => <span key={s.name} className={`src${s.ok ? '' : ' bad'}`} title={s.ok ? `${s.ms}ms` : s.error ?? '오류'}>{s.name}{s.ok ? '' : ` · ${s.error ?? '오류'}`}</span>)}</span>}
         <span className="ph-end">
           <span className="pill">읽기 전용</span>
-          <button type="button" className="pill btn" onClick={onRefresh} disabled={loading} aria-label="지금 새로고침"><ReloadIcon /> {loading ? '불러오는 중…' : '새로고침'}</button>
+          <button type="button" className="pill btn" onClick={onRefresh} disabled={loading} aria-label="지금 새로고침"><ReloadIcon /> <span className="pill-label">{loading ? '불러오는 중…' : '새로고침'}</span></button>
         </span>
       </header>
       {error && <div className="hub-notice" role="alert">상태를 불러오지 못했어요 · {error}</div>}
