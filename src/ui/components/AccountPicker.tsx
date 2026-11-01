@@ -30,7 +30,7 @@ function pct(u: AccountUsage | undefined, now: number): string {
  */
 export function useAccountWords(pin: Account | null, current: Seat | null) {
   const names = useAccounts();
-  const cur = current !== null && current !== 'gpt' && !isGeminiAccount(current) && !isGrokAccount(current) ? names.label(current) : null;
+  const cur = current !== null && current !== 'gpt' && current !== 'hermes' && !isGeminiAccount(current) && !isGrokAccount(current) ? names.label(current) : null;
   // An account that left the configuration shows its id, grey; a retired one its label, dimmed.
   const shown = pin ?? (cur !== null ? current : null);
   const look = shown !== null ? names.look(shown).kind : 'active';

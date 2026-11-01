@@ -7,7 +7,7 @@ import { groupByDate } from '../dateGroups';
 import { groupBranches, linksOf, type BranchGroup } from '../../shared/branches';
 import { searchTranscripts, type SearchHit } from '../sessionApi';
 import { FolderPicker } from './FolderPicker';
-import { EngineMark, GeminiMark, GrokMark, OpenAIMark, engineOf } from './EngineMark';
+import { EngineMark, GeminiMark, GrokMark, HermesMark, OpenAIMark, engineOf } from './EngineMark';
 import { usePinReorder } from '../pinOrder';
 import { BlockedDeleteItem, MenuList, deleteBlockedReason, isGrokBotEntry } from './SessionMenu';
 import { openInNewTab } from './ShareMenu';
@@ -366,7 +366,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     // the folder when line 2 shows it, the tag, and the statuses the end mark's label names.
     const spoken = facts.filter((f): f is string => !!f && !(f === slug && !preview) && f !== rowTag(s) && f !== '답장 대기');
     return (
-      <li key={s.sessionId} {...rowProps(key)} className={rowClass(current)} title={`${target.title}\n${facts.filter(Boolean).join(' · ')}`}
+      <li key={s.sessionId} {...rowProps(key)} className={rowClass(current)} data-engine={engine} title={`${target.title}\n${facts.filter(Boolean).join(' · ')}`}
         onContextMenu={canEdit ? (e) => { e.preventDefault(); setMenu(key); } : undefined}>
         {edit ? (
           // Renaming: an input cannot sit inside a button, so the row is plain for the while.
@@ -413,7 +413,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
             {onTogglePin && <button type="button" role="menuitem" onClick={() => { setMenu(null); onTogglePin(s.sessionId, !on); }}>{on ? '고정 해제' : '맨 위에 고정'}</button>}
             {/* Archived in Codex: only the Codex app can unarchive it. */}
             {onArchive && !target.codexArchived && <button type="button" role="menuitem" onClick={() => { setMenu(null); onArchive(target.sessionId, !target.archived); }}>{target.archived ? '보관 해제' : '보관'}</button>}
-            {onSetCwd && (target.engine ?? 'claude') !== 'gemini' && target.engine !== 'grok' && <button type="button" role="menuitem" onClick={() => { setMenu(null); onSetCwd(target); }}>작업 폴더 바꾸기</button>}
+            {onSetCwd && (target.engine ?? 'claude') !== 'gemini' && target.engine !== 'grok' && target.engine !== 'hermes' && <button type="button" role="menuitem" onClick={() => { setMenu(null); onSetCwd(target); }}>작업 폴더 바꾸기</button>}
             {onDuplicate && !isGrokBotEntry(target) && <button type="button" role="menuitem" onClick={() => { setMenu(null); onDuplicate(target.sessionId); }}>복제</button>}
             {/* GPT / Gemini / Codex-app sessions: shown disabled with the reason, so it is clear why they stay. */}
             {onDelete && (deleteBlockedReason(target)
@@ -692,7 +692,7 @@ export function importTitle(s: SessionEntry): string {
 }
 
 /** A non-Claude engine's name, for the row's tooltip. */
-const ENGINE_NAME: Partial<Record<EngineKind, string>> = { codex: 'Codex (GPT)', grok: 'Grok', gemini: 'Gemini' };
+const ENGINE_NAME: Partial<Record<EngineKind, string>> = { codex: 'Codex (GPT)', grok: 'Grok', hermes: 'Hermes', gemini: 'Gemini' };
 
 /** The one-word tag a row deck cannot continue carries on its second line (the tooltip says why). */
 export function rowTag(s: SessionEntry): string | null {
@@ -707,7 +707,7 @@ export function rowTag(s: SessionEntry): string | null {
 /** Line 2's engine glyph (non-Claude only): 12px, single colour (the line's muted grey), decorative — the tooltip names it. */
 function MetaEngine({ engine }: { engine: EngineKind }) {
   const cls = 'meta-engine-svg';
-  const mark = engine === 'codex' ? <OpenAIMark className={cls} /> : engine === 'grok' ? <GrokMark className={cls} /> : engine === 'gemini' ? <GeminiMark className={cls} /> : null;
+  const mark = engine === 'codex' ? <OpenAIMark className={cls} /> : engine === 'grok' ? <GrokMark className={cls} /> : engine === 'hermes' ? <HermesMark className={cls} /> : engine === 'gemini' ? <GeminiMark className={cls} /> : null;
   if (!mark) return null;
   return <span className={`meta-engine ${engine}`} aria-hidden="true">{mark}</span>;
 }

@@ -9,7 +9,7 @@ export type MiniSessionState = 'running' | 'idle' | 'waiting';
 export interface MiniSession {
   /** The session's title (the first prompt, or the deck title); never a path. */
   title: string;
-  engine: 'claude' | 'codex' | 'gemini' | 'grok' | null;
+  engine: 'claude' | 'codex' | 'gemini' | 'grok' | 'hermes' | null;
   /** Deck model id (opus, fable, gpt-5…) or wire id; null = unknown. */
   model: string | null;
   /** The seat the last turn ran on (a, b, c, gpt…); null = unknown. */

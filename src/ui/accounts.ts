@@ -38,6 +38,7 @@ export function sameAccountList(a: readonly AccountInfo[], b: readonly AccountIn
 
 /** A seat's label: GPT, a Gemini account's, a configured Claude account's — and the id itself for one that is not configured. */
 export function seatLabel(list: readonly AccountInfo[], seat: Seat): string {
+  if (seat === 'hermes') return 'Hermes';
   if (seat === 'gpt') return 'GPT';
   // Spelled out on screen ("G1"/"X1" did not say which vendor); the short ids stay in server reason lines.
   if (isGeminiAccount(seat)) return seat === 'g1' ? 'Gemini' : `Gemini ${GEMINI_LABEL[seat].slice(1)}`;
@@ -74,7 +75,7 @@ export function uiAccounts(list: readonly AccountInfo[]): UiAccounts {
     return i === undefined ? null : i % ACCOUNT_PALETTE_SIZE;
   };
   const look: UiAccounts['look'] = (seat) => {
-    if (seat === 'gpt' || isGeminiAccount(seat) || isGrokAccount(seat)) return { slot: null, kind: 'other' };
+    if (seat === 'hermes' || seat === 'gpt' || isGeminiAccount(seat) || isGrokAccount(seat)) return { slot: null, kind: 'other' };
     const a = get(seat);
     return { slot: slot(seat), kind: !a ? 'unknown' : a.retired ? 'retired' : 'active' };
   };

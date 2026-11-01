@@ -80,4 +80,6 @@ const bin = path.join(outdir, 'bin.js');
 const src = fs.readFileSync(bin, 'utf8');
 if (!src.startsWith('#!/usr/bin/env node\n')) fs.writeFileSync(bin, '#!/usr/bin/env node\n' + src);
 fs.chmodSync(bin, 0o755);
+// Hermes ACP's guarded Python entry point resolves relative to app.js after bundling.
+fs.copyFileSync(path.join(root, 'src/server/engine/hermesAcpBootstrap.py'), path.join(outdir, 'hermesAcpBootstrap.py'));
 console.log(`build-server: ${outdir}`);

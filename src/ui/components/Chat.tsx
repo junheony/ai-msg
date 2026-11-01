@@ -1,7 +1,7 @@
 import { loadDraft, saveDraft } from '../autoReload';
 import { Fragment, useContext, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { timeDividers, timeLabel } from '../dateGroups';
-import { CLAUDE_MODELS, CODEX_MODELS, DEFAULT_SANDBOX, GEMINI_MODELS, GROK_MODELS, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../../shared/models';
+import { CLAUDE_MODELS, CODEX_MODELS, DEFAULT_SANDBOX, GEMINI_MODELS, GROK_MODELS, HERMES_MODELS, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../../shared/models';
 import type { Account, Seat } from '../../shared/accounts';
 import type { GeminiStatus, GrokStatus } from '../../shared/protocol';
 import type { UsageSnapshot } from '../../shared/usage-types';
@@ -79,6 +79,7 @@ export type ChatProps = {
   sessionSandbox: CodexSandbox | null;
   isNew: boolean;
   codexAvailable: boolean;
+  hermesAvailable?: boolean;
   /** null = no gemini-cli: no Gemini option. Not logged in: the option is shown disabled with 로그인 필요. */
   gemini?: GeminiStatus | null;
   /** hello.grok; null = an older server that knows no Grok: no Grok option. Known but no CLI: shown disabled (설치 필요). */
@@ -197,7 +198,7 @@ const HANDOFF_COMMANDS: CommandItem[] = [{ name: HANDOFF_COMMAND, description: '
 
 /** The model picker's choices for an engine (자동 offered for Claude and the engine 자동; Gemini / Grok only when picked). */
 export function modelChoices(engine: EngineChoice): readonly ModelChoice[] {
-  return engine === 'gemini' ? GEMINI_MODELS : engine === 'grok' ? GROK_MODELS : engine === 'codex' ? CODEX_MODELS : engine === 'claude' ? ['auto', ...CLAUDE_MODELS] : ['auto', ...CLAUDE_MODELS, ...CODEX_MODELS];
+  return engine === 'hermes' ? HERMES_MODELS : engine === 'gemini' ? GEMINI_MODELS : engine === 'grok' ? GROK_MODELS : engine === 'codex' ? CODEX_MODELS : engine === 'claude' ? ['auto', ...CLAUDE_MODELS] : ['auto', ...CLAUDE_MODELS, ...CODEX_MODELS];
 }
 
 /** Enter inserts a newline on touch screens (send with the button), as on Desktop's mobile apps. */
@@ -352,7 +353,7 @@ export function Chat(p: ChatProps) {
   // Gemini is explicit only: its models appear only when the Gemini engine is picked (never under 자동).
   const models = modelChoices(effectiveEngine);
   // A new session's sandbox row follows its engine picker (shown only when another engine than Claude is available).
-  const engineSelect = p.isNew && (p.codexAvailable || !!p.gemini?.available || has('grok'));
+  const engineSelect = p.isNew && (p.codexAvailable || p.hermesAvailable || !!p.gemini?.available || has('grok'));
   const hasDraft = (text.trim().length > 0 || p.attachments.length > 0) && uploading === 0;
   const queueing = p.busy && !!p.onQueue;
   /** A running Claude / Grok turn takes a message mid-turn (Codex / Gemini: after the turn). */
@@ -403,7 +404,7 @@ export function Chat(p: ChatProps) {
     };
   }, [paneRegen, scroll.attach]);
   // GPT/Gemini have no per-call approvals: their sandbox decides, so the mode picker is shown disabled. Grok has approval cards.
-  const permSupported = effectiveEngine === 'claude' || effectiveEngine === 'auto' || effectiveEngine === 'grok';
+  const permSupported = effectiveEngine === 'claude' || effectiveEngine === 'auto' || effectiveEngine === 'grok' || effectiveEngine === 'hermes';
   const permMode: PermMode = p.permMode ?? 'default';
   const folder = p.cwd ? (p.cwd.split('/').filter(Boolean).pop() ?? p.cwd) : null;
 
@@ -446,7 +447,7 @@ export function Chat(p: ChatProps) {
   const phone = useIsPhone();
   // The share actions close the menu themselves once done (a copy is async): the open menu's closer, kept here.
   const closeMenu = useRef<() => void>(() => {});
-  const share = useShareActions({ title: p.title, items: p.items, ...(p.cwd ? { cwd: p.cwd } : {}), sessionId: p.sessionId ?? null, assistant: p.sessionEngine === 'codex' ? 'GPT' : p.sessionEngine === 'gemini' ? 'Gemini' : p.sessionEngine === 'grok' ? 'Grok' : 'Claude' }, () => closeMenu.current());
+  const share = useShareActions({ title: p.title, items: p.items, ...(p.cwd ? { cwd: p.cwd } : {}), sessionId: p.sessionId ?? null, assistant: p.sessionEngine === 'codex' ? 'GPT' : p.sessionEngine === 'gemini' ? 'Gemini' : p.sessionEngine === 'grok' ? 'Grok' : p.sessionEngine === 'hermes' ? 'Hermes' : 'Claude' }, () => closeMenu.current());
   const shareActions = p.isNew ? [] : share.actions;
   // 대화에서 찾기 (⌘F / Ctrl+F in the pane, the ⋯ menu, or a 대화 내용 검색 jump with its term); a new key refocuses an open bar.
   const [find, setFind] = useState<{ query: string; anchor: Element | null; key: number } | null>(null);
@@ -572,7 +573,7 @@ export function Chat(p: ChatProps) {
     if (files.length) void addFiles(files);
   };
   return (
-    <main ref={mainRef} className="chat" onKeyDown={(e) => {
+    <main ref={mainRef} className="chat" data-engine={effectiveEngine} onKeyDown={(e) => {
       if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f' && canFind) { e.preventDefault(); openFind(); }
     }} onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
       {drag && <div className={`drop-overlay ${p.readOnly ? 'blocked' : ''}`} data-testid="drop-overlay"><span>{p.readOnly || '여기에 파일을 놓으세요'}</span></div>}
@@ -651,7 +652,7 @@ export function Chat(p: ChatProps) {
       </div>
       {scroll.detached && (
         <div className="jump-anchor">
-          <button type="button" className={`jump-bottom ${scroll.unread ? 'unread' : ''}`} onClick={scroll.attach} title="맨 아래로" data-testid="jump-bottom">
+          <button type="button" className={`jump-bottom ${scroll.unread ? 'unread' : ''}`} onClick={() => scroll.attach(true)} title="맨 아래로" data-testid="jump-bottom">
             <span aria-hidden="true">↓</span>{scroll.unread ? ' 새 메시지' : <span className="sr-only">맨 아래로</span>}
           </button>
         </div>
@@ -687,7 +688,7 @@ export function Chat(p: ChatProps) {
               isNew={p.isNew}
               folder={folder}
               engine={effectiveEngine}
-              engines={p.isNew ? { codexAvailable: p.codexAvailable, gemini: p.gemini ?? null, grok: p.grok ?? null, onEngine: p.onEngine } : null}
+              engines={p.isNew ? { codexAvailable: p.codexAvailable, hermesAvailable: p.hermesAvailable, gemini: p.gemini ?? null, grok: p.grok ?? null, onEngine: p.onEngine } : null}
               sandbox={p.isNew
                 ? (engineSelect ? { value: p.sandbox, onChange: p.onSandbox } : null)
                 : p.sessionEngine === 'codex' ? { value: p.sessionSandbox ?? DEFAULT_SANDBOX, ...(p.onSessionSandbox ? { onChange: p.onSessionSandbox, existing: true } : {}) }

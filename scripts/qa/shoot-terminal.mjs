@@ -176,7 +176,7 @@ const nav = async (url) => {
 
 // 5. Deterministic real-turn framing. The anchor is a text hash, never raw transcript data.
 const base = `file://${idx}`;
-const manifest = { tag, source: state.sourceFile, counts: state.counts, dist: DIST, conciseMode: true, sizes: {}, errors };
+const manifest = { tag, fixture: state.fixture || 'claude-real-redacted', source: state.sourceFile, counts: state.counts, dist: DIST, conciseMode: true, sizes: {}, errors };
 const selectedUrl = base + '?hub=msg&session=' + encodeURIComponent(state.selectedId);
 const inspect = `(() => ({ width: innerWidth, documentWidth: document.documentElement.scrollWidth, overflow: document.documentElement.scrollWidth > innerWidth, chat: !!document.querySelector('.chat'), users: document.querySelectorAll('.msg.user').length, answers: document.querySelectorAll('.msg.assistant .markdown').length, steps: document.querySelectorAll('.tool-group,.activity-steps').length, concise: document.documentElement.dataset.concise, login: !!document.querySelector('input[type=password]'), errorToasts: document.querySelectorAll('.toast.error,.error-toast,[role=alert].toast').length, hamburger: !!document.querySelector('button.menu,.sidebar-toggle') }))()`;
 for (const sizeName of SIZES_SEL) {
@@ -200,25 +200,46 @@ for (const sizeName of SIZES_SEL) {
     answer.scrollIntoView({block:'start'});
     return { answerHash: hash(answer.textContent), answerChars: answer.textContent.length, user: !!user, toolGroups: document.querySelectorAll('.tool-group,.activity-steps').length };
   })()`);
-  if (!frame) { log('diagnostic', JSON.stringify(await evaluate(inspect)), JSON.stringify(errors)); const shot = await send('Page.captureScreenshot', {format:'png'}); if(shot.result?.data) fs.writeFileSync('/tmp/terminal-qa-failure.png',Buffer.from(shot.result.data,'base64')); throw new Error('No real answer rendered'); }
+  if (!frame) { log('diagnostic', JSON.stringify(await evaluate(inspect)), JSON.stringify(errors)); const shot = await send('Page.captureScreenshot', {format:'png'}); if(shot.result?.data) fs.writeFileSync('/tmp/terminal-qa-failure.png',Buffer.from(shot.result.data,'base64')); throw new Error('No fixture answer rendered'); }
   if (!state.answerHash) { state.answerHash = frame.answerHash; fs.writeFileSync(process.env.QA_STATE || '/tmp/msg-terminal-qa-state.json', JSON.stringify(state, null, 2) + '\n', {mode:0o600}); }
   const shots = [];
-  const capture = async (name) => {
+  const capture = async (name, scope = 'transcript') => {
     await sleep(350);
     const metrics = await evaluate(inspect);
     const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
     if (!shot.result?.data) throw new Error('Screenshot failed');
     const file = path.join(outDir, `${tag}-${sizeName}-${name}.png`);
     fs.writeFileSync(file, Buffer.from(shot.result.data, 'base64'));
-    shots.push({ file, ...metrics }); log(file, JSON.stringify(metrics));
+    shots.push({ file, scope, ...metrics }); log(file, JSON.stringify(metrics));
   };
   await evaluate(`window.__qaUser?.scrollIntoView({block:'start'}); true`); await capture('turn');
   await evaluate(`window.__qaAnswer.closest('.msg.assistant').scrollIntoView({block:'start'}); true`); await capture('answer-top');
   await evaluate(`window.__qaAnswer.scrollIntoView({block:'end'}); true`); await capture('answer-bottom');
   const interactions = {};
+  interactions.header = await evaluate(`(() => {
+    const h=document.querySelector('[data-pane-head]'); if(!h)return null;
+    const r=h.getBoundingClientRect();
+    return {visible:r.width>0&&r.height>0,inside:r.left>=0&&r.right<=innerWidth+1,
+      identityMarks:h.querySelectorAll('.head-avatar,.engine-mark').length,
+      hermes:!!h.querySelector('[data-engine="hermes"],.engine-mark.hermes')||/hermes/i.test(h.textContent),
+      autoApprove:!!document.querySelector('[data-testid="perm-badge"]'),
+      statuses:[...document.querySelectorAll('[data-testid="turn-status"]')].map(e=>e.textContent.trim()).filter(s=>/^(SUCCESS|PARTIAL|BLOCKED)$/.test(s))};
+  })()`);
+  interactions.composer = await evaluate(`(() => {
+    const t=document.querySelector('.chat textarea'),n=document.querySelector('[data-testid="composer-note"]');
+    return {editable:!!t&&!t.disabled&&!t.readOnly,blockedAccount:/설정에 없는 계정|뺀 계정의 세션/.test(n?.textContent||'')};
+  })()`);
+  await capture('header');
   interactions.options = await evaluate(`(() => { const b=document.querySelector('button.session-chip'); if(!b)return null; b.click(); return true; })()`);
   await sleep(150);
   interactions.modelMenu = await evaluate(`!!document.querySelector('[data-testid=\"model-menu\"]')`);
+  interactions.picker = await evaluate(`(() => {
+    const m=document.querySelector('[data-testid="model-menu"]'),s=document.querySelector('.session-sheet');
+    const r=m?.getBoundingClientRect(),q=s?.getBoundingClientRect();
+    const content=s?.textContent||m?.textContent||'';
+    return {reachable:!!r&&r.width>0&&r.height>0&&r.left>=0&&r.right<=innerWidth+1&&(!q||q.bottom<=innerHeight+1),hermes:/hermes/i.test(content),astra:/gpt[ -]?6[ -]?astra|gpt[ -]?astra/i.test(content)};
+  })()`);
+  await capture('model-picker');
   await send('Input.dispatchKeyEvent', {type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
   await send('Input.dispatchKeyEvent', {type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
   await evaluate(`document.querySelector('button.usage-strip')?.click(); true`); await sleep(150);
@@ -256,6 +277,26 @@ for (const sizeName of SIZES_SEL) {
     if(shot.result?.data)fs.writeFileSync(path.join(outDir,`${tag}-${sizeName}-xlarge-layout.png`),Buffer.from(shot.result.data,'base64'));
     await evaluate('localStorage.clear(); true'); // Keep stress-test split state out of the next viewport.
   }
+  if (state.fixture === 'hermes-synthetic') {
+    await nav(selectedUrl); await sleep(SETTLE);
+    await evaluate(`window.dispatchEvent(new KeyboardEvent('keydown',{key:'n',code:'KeyN',ctrlKey:true,bubbles:true,cancelable:true})); true`);
+    await sleep(300);
+    interactions.newSession = await evaluate(`!!document.querySelector('[aria-label="첫 메시지"]')`);
+    await capture('empty-state', 'new');
+    await evaluate(`document.querySelector('button.session-chip')?.click(); true`); await sleep(150);
+    interactions.newHermes = await evaluate(`(() => {
+      const s=document.querySelector('[data-testid="engine-select"]');
+      if(!s||![...s.options].some(o=>o.value==='hermes'&&!o.disabled))return {available:false};
+      s.value='hermes';s.dispatchEvent(new Event('change',{bubbles:true}));return {available:true};
+    })()`);
+    await sleep(250);
+    interactions.newHermes = {...interactions.newHermes,...await evaluate(`(() => {
+      const s=document.querySelector('[data-testid="engine-select"]'),m=document.querySelector('[data-testid="model-menu"]');
+      const r=m?.getBoundingClientRect(),q=document.querySelector('.session-sheet')?.getBoundingClientRect();
+      return {selected:s?.value==='hermes',astra:/gpt[ -]?6[ -]?astra|gpt[ -]?astra/i.test(m?.textContent||''),reachable:!!r&&r.width>0&&r.left>=0&&r.right<=innerWidth+1&&!!q&&q.bottom<=innerHeight+1};
+    })()`)};
+    await capture('new-hermes-picker', 'new');
+  }
   await nav(base+'?hub=home'); await sleep(500); interactions.homeHasHamburger = await evaluate(`!!document.querySelector('button.menu,.sidebar-toggle')`);
   manifest.sizes[sizeName] = { frame, shots, interactions };
 }
@@ -263,8 +304,9 @@ const layoutPassed = (layout) => !!layout && !layout.error && layout.buttons?.le
   && layout.buttons.every((button) => button.inside) && !layout.documentOverflow
   && !layout.chatOverflow && !layout.composerOverflow && layout.modelMenuReachable;
 manifest.passed = errors.length === 0 && Object.values(manifest.sizes).every(({ shots, interactions }) =>
-  shots.every((m) => m.chat && m.users > 0 && m.answers > 0 && m.steps > 0 && !m.overflow && !m.login && m.errorToasts === 0)
-  && interactions.options && interactions.modelMenu && interactions.usageMenu && interactions.expandStep
+  shots.every((m) => (m.scope === 'new' || m.chat && m.users > 0 && m.answers > 0 && m.steps > 0) && !m.overflow && !m.login && m.errorToasts === 0)
+  && interactions.options && interactions.modelMenu && interactions.picker?.reachable && interactions.header?.visible && interactions.header?.inside && interactions.usageMenu && interactions.expandStep
+  && (state.fixture !== 'hermes-synthetic' || interactions.picker?.hermes && interactions.picker?.astra && interactions.header?.hermes && interactions.composer?.editable && !interactions.composer?.blockedAccount && interactions.newSession && interactions.newHermes?.available && interactions.newHermes?.selected && interactions.newHermes?.astra && interactions.newHermes?.reachable)
   && !interactions.homeHasHamburger && (!process.env.LAYOUT_CHECKS || layoutPassed(interactions.layout)));
 
 fs.writeFileSync(path.join(outDir, `${tag}-inspection.json`), JSON.stringify(manifest, null, 2) + '\n');

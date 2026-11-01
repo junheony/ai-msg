@@ -12,13 +12,16 @@ import { UsageService } from '../../src/server/usage/UsageService';
 import { testRegistry } from '../../src/shared/accounts.testkit';
 import { accountInfos, type ServerMessage } from '../../src/shared/protocol';
 import type { ProjectEntry, SessionEntry, TranscriptMessage } from '../../src/shared/session-types';
+import { hermesFixtureId, hermesFixtureMessages, terminalFixtureSessions } from './terminal-fixtures';
 
 const repo = fileURLToPath(new URL('../../', import.meta.url));
 const uiDir = path.resolve(process.env.DIST ?? path.join(repo, 'dist/ui'));
 const stateFile = process.argv[2] ?? '/tmp/msg-terminal-qa-state.json';
 const serverUrl = 'http://127.0.0.1:9381';
 const root = '/home/max/.claude/projects';
-const selectedId = '3640bba1-fb7e-4021-aead-07c8953df686';
+const synthetic = process.env.FIXTURE === 'hermes';
+if (process.env.FIXTURE && !synthetic) throw new Error('Unknown terminal QA fixture');
+const selectedId = synthetic ? hermesFixtureId : '3640bba1-fb7e-4021-aead-07c8953df686';
 const folders = ['-home-max-agentic-harness', '-home-max-msg-hub-design-repo', '-home-max-arbitrage-nexus', '-home-max-msg-mini', '-home-max-feeback'];
 await fs.access(path.join(uiDir, 'index.html'));
 const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'msg-terminal-qa-'));
@@ -27,10 +30,10 @@ const tokenFile = path.join(dir, 'token');
 const token = await loadOrCreateToken(tokenFile);
 const registry = testRegistry(dir);
 const usage = new UsageService({ accounts: registry, mode: 'cli', deckUrl: serverUrl, fetchFn: async () => { throw new Error('QA network disabled'); } });
-const metadata = await fs.readFile('/home/max/.config/deck/session-meta.json', 'utf8').then((s) => JSON.parse(s) as { titles?: Record<string, string> }).catch(() => ({} as { titles?: Record<string, string> }));
+const metadata = synthetic ? {} : await fs.readFile('/home/max/.config/deck/session-meta.json', 'utf8').then((s) => JSON.parse(s) as { titles?: Record<string, string> }).catch(() => ({} as { titles?: Record<string, string> }));
 const projects: ProjectEntry[] = [];
 const entries = new Map<string, SessionEntry>();
-for (const folder of folders) {
+for (const folder of synthetic ? [] : folders) {
   const projectDir = path.join(root, folder);
   const names = await fs.readdir(projectDir).catch(() => []);
   const files = (await Promise.all(names.filter((n) => /^[0-9a-f-]{36}\.jsonl$/.test(n)).map(async (name) => ({ file: path.join(projectDir, name), stat: await fs.stat(path.join(projectDir, name)) })))).sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs).slice(0, 6);
@@ -43,8 +46,13 @@ for (const folder of folders) {
   }
   if (sessions.length) projects.push({ cwd: sessions[0]!.cwd, name: path.basename(sessions[0]!.cwd), pinned: false, sessions });
 }
+if (synthetic) {
+  const sessions = terminalFixtureSessions();
+  for (const entry of sessions) entries.set(entry.sessionId, entry);
+  projects.push({ cwd: sessions[0]!.cwd, name: 'Agentic Harness', pinned: false, sessions });
+}
 const selected = entries.get(selectedId);
-if (!selected) throw new Error('Required real QA session missing');
+if (!selected) throw new Error('Required QA session missing');
 // Preserve parser message ordering, text, thinking and call metadata; redact visible strings.
 // Tool input and result payloads are withheld in this display-only host; call names/ids and result flags remain.
 const safeString = (s: string) => redactSecrets(s);
@@ -56,8 +64,9 @@ function displayMessages(messages: TranscriptMessage[]): TranscriptMessage[] {
   });
 }
 const histories = new Map<string, TranscriptMessage[]>();
-const messages = displayMessages(await readTranscriptUncached(selected.file, { maxMessages: 1000, maxToolResultChars: 0 }));
+const messages = synthetic ? hermesFixtureMessages : displayMessages(await readTranscriptUncached(selected.file, { maxMessages: 1000, maxToolResultChars: 0 }));
 histories.set(selectedId, messages);
+if (synthetic) for (const entry of entries.values()) histories.set(entry.sessionId, messages);
 const pins = projects.flatMap((p) => p.sessions.slice(0, 2)).map((s) => s.sessionId);
 const bootstrap = { usage: usage.snapshot(), projects, pins, desktop: [], sessionIcons: {} };
 const json = (res: http.ServerResponse, code: number, data: unknown) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(data)); };
@@ -86,7 +95,7 @@ server.on('upgrade', (req, socket, head) => {
   if (req.url !== '/ws' || !checkUpgrade(req, token).ok) { socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); return; }
   wss.handleUpgrade(req, socket, head, (ws) => {
     const send = (msg: ServerMessage) => { if (ws.readyState === 1) ws.send(JSON.stringify(msg)); };
-    send({ type: 'hello', ...bootstrap, running: [], activity: [], codex: { available: false }, features: ['accounts', 'sessionModel'], accounts: accountInfos(registry), build: null });
+    send({ type: 'hello', ...bootstrap, running: [], activity: [], codex: { available: synthetic }, hermes: { available: synthetic }, features: ['accounts', 'sessionModel'], accounts: accountInfos(registry), build: null });
     ws.on('error', () => {});
     ws.on('message', async (raw) => {
       let msg; try { msg = JSON.parse(String(raw)); } catch { return; }
@@ -98,7 +107,7 @@ server.on('upgrade', (req, socket, head) => {
       try {
         let history = histories.get(entry.sessionId);
         if (!history) { history = displayMessages(await readTranscriptUncached(entry.file, { maxMessages: 1000, maxToolResultChars: 0 })); histories.set(entry.sessionId, history); }
-        send({ type: 'history', sessionId: entry.sessionId, cwd: entry.cwd, account: 'a', engine: 'claude', sandbox: null, accountPin: null, permissionMode: 'bypassPermissions', sessionModel: 'opus', messages: history, runningTurnId: null });
+        send({ type: 'history', sessionId: entry.sessionId, cwd: entry.cwd, account: entry.account, engine: entry.engine, sandbox: null, accountPin: null, permissionMode: 'bypassPermissions', sessionModel: synthetic ? 'gpt-6-astra' : 'opus', messages: history, runningTurnId: null });
       } catch { send({ type: 'error', message: 'Transcript unavailable' }); }
     });
   });
@@ -109,6 +118,6 @@ process.once('SIGTERM', () => void close()); process.once('SIGINT', () => void c
 try {
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(9381, '127.0.0.1', resolve); });
   const counts = { messages: messages.length, user: messages.filter((m) => m.kind === 'user').length, assistant: messages.filter((m) => m.kind === 'assistant').length, toolCalls: messages.reduce((n, m) => n + (m.kind === 'assistant' ? m.toolCalls.length : 0), 0), sessions: entries.size };
-  await fs.writeFile(stateFile, JSON.stringify({ server: serverUrl, tokenFile, uiDir, pid: process.pid, selectedId, sourceFile: selected.file, counts }, null, 2) + '\n', { mode: 0o600, flag: 'wx' }); ownsState = true;
+  await fs.writeFile(stateFile, JSON.stringify({ server: serverUrl, tokenFile, uiDir, pid: process.pid, selectedId, fixture: synthetic ? 'hermes-synthetic' : 'claude-real-redacted', sourceFile: synthetic ? 'scripts/qa/terminal-fixtures.ts' : selected.file, counts }, null, 2) + '\n', { mode: 0o600, flag: 'wx' }); ownsState = true;
   console.log(JSON.stringify({ ready: true, stateFile, counts }));
 } catch (e) { await close(); throw e; }

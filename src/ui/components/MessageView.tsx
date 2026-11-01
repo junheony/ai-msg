@@ -65,7 +65,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
           {previewable && <button type="button" className="code-copy" onClick={() => open({ kind: 'html', title: `${lang.toUpperCase()} 미리보기`, html: text })}>미리보기</button>}
           <button type="button" className="code-tool code-wrap-toggle" aria-pressed={wrap} title="긴 줄 접기 (모든 코드 블록)" onClick={() => setWrap(!wrap)}>줄바꿈</button>
           <button type="button" className="code-tool code-save" title="파일로 저장" onClick={() => saveCode(text, lang)}>저장</button>
-          <CopyButton text={text} label="코드 복사" />
+          <CopyButton text={text} label="코드 복사" compact />
         </span>
       </div>
       <pre className={wrap ? 'code-wrap' : undefined}>{children}</pre>
@@ -691,7 +691,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false, 
       )}
       {split ? split.live && <Answer text={split.live} /> : shownText && <Answer text={shownText} />}
       {choices && !item.streaming && <ChoiceCards choices={choices} onPick={reply} />}
-      {item.streaming && (!split || !!split.live) && <span className="cursor">▍</span>}
+      {item.streaming && (!split || !!split.live) && <span className="cursor" aria-label="응답 작성 중" />}
       {item.error && !(!item.streaming && isAbortError(item.error, !!item.interrupted)) && <div className="error">오류: {item.error}</div>}
       {(item.badge || item.model || item.toolCalls.length > 0 || steps?.some((step) => step.toolCalls.length > 0) || hasActions) && (
         <div className="turn-foot">

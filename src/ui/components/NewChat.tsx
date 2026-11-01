@@ -8,7 +8,7 @@ import { ATTACHMENT_ONLY_TEXT, filesFrom, replaceAttachment, uploadFile, usePast
 import { AttachmentBar } from './AttachmentBar';
 import { Composer } from './Composer';
 import { SessionChip } from './SessionChip';
-import { ClaudeMark, EngineMark, engineOf } from './EngineMark';
+import { EngineMark, engineOf } from './EngineMark';
 import { has } from '../features';
 import { modelChoices, touchEnterIsNewline } from './Chat';
 import { PinIcon } from './icons';
@@ -57,7 +57,7 @@ export type NewChatOptions = { engine: EngineChoice; sandbox: CodexSandbox };
  * above the auto-growing text; [+] · mic · ↑ in its bottom row), the pinned sessions (pin order) and the latest others as compact cards. Everything is reachable here, so the phone does not need
  * the drawer to start or resume. Attachments upload as soon as they are picked and ride the first message.
  */
-export function NewChat({ projects, pins = [], sessionIcons = {}, defaultCwd, onStart, onStartSplit, onOpenSession, now, uploadFn, models, model = 'auto', effort = null, onModel, onEffort, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, gemini = null, grok = null, onEngine, onSandbox, defaultPerm = null }: {
+export function NewChat({ projects, pins = [], sessionIcons = {}, defaultCwd, onStart, onStartSplit, onOpenSession, now, uploadFn, models, model = 'auto', effort = null, onModel, onEffort, draftKey = 'new', engine: engineProp = 'claude', sandbox: sandboxProp = DEFAULT_SANDBOX, codexAvailable = false, hermesAvailable = false, gemini = null, grok = null, onEngine, onSandbox, defaultPerm = null }: {
   projects: ProjectEntry[];
   /** The server's default permission mode for a new session (the chip's read-only tail; null = unknown, no tail). */
   defaultPerm?: PermMode | null;
@@ -87,6 +87,7 @@ export function NewChat({ projects, pins = [], sessionIcons = {}, defaultCwd, on
   sandbox?: CodexSandbox;
   /** The engine picker appears only when another engine than Claude is available (same rule as Chat). */
   codexAvailable?: boolean;
+  hermesAvailable?: boolean;
   gemini?: GeminiStatus | null;
   /** hello.grok; null = an older server that knows no Grok: no Grok option. Known but no CLI: shown disabled (설치 필요). */
   grok?: GrokStatus | null;
@@ -155,7 +156,7 @@ export function NewChat({ projects, pins = [], sessionIcons = {}, defaultCwd, on
   };
   const edit = (v: string) => { setText(v); saveDraft(draftKey, v); };
   // The sandbox row follows the engine picker (shown only when another engine than Claude is available).
-  const engineSelect = codexAvailable || !!gemini?.available || has('grok');
+  const engineSelect = codexAvailable || hermesAvailable || !!gemini?.available || has('grok');
   const remove = (id: string) => setAttachments((all) => {
     const url = all.find((a) => a.id === id)?.previewUrl;
     if (url) URL.revokeObjectURL(url);
@@ -183,9 +184,10 @@ export function NewChat({ projects, pins = [], sessionIcons = {}, defaultCwd, on
   const sendLabel = hasDraft ? '보내기 — 새 대화로 시작 (Enter)' : '빈 새 대화 열기';
 
   return (
-    <div className="newchat">
+    <div className="newchat" data-engine={engine}>
       <div className="newchat-inner">
-        <h1 className="newchat-greeting"><ClaudeMark className="spark" />{greeting(new Date(t).getHours())}</h1>
+        <h1 className="newchat-greeting"><EngineMark engine={engine === 'auto' ? 'claude' : engine} decorative />{greeting(new Date(t).getHours())}</h1>
+        <p className="newchat-invitation">작업할 폴더와 엔진을 고르고, 다음 할 일을 알려주세요.</p>
         {projects.length === 0 ? (
           <p className="muted">프로젝트가 없습니다. 사이드바의 폴더 열기로 시작하거나 ~/.config/deck/projects.json 에 고정 프로젝트를 적어두세요.</p>
         ) : (
@@ -209,7 +211,7 @@ export function NewChat({ projects, pins = [], sessionIcons = {}, defaultCwd, on
                     </label>
                   )}
                   engine={engine}
-                  engines={{ codexAvailable, gemini, grok, onEngine: (v) => { setEngine(v); onEngine?.(v); } }}
+                  engines={{ codexAvailable, hermesAvailable, gemini, grok, onEngine: (v) => { setEngine(v); onEngine?.(v); } }}
                   sandbox={engineSelect ? { value: sandbox, onChange: (v) => { setSandbox(v); onSandbox?.(v); } } : null}
                   models={models ?? modelChoices(engine)} model={model} effort={effort} onModel={(m) => onModel?.(m)} onEffort={(e) => onEffort?.(e)}
                 />

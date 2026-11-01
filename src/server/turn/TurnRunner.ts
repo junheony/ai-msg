@@ -14,6 +14,8 @@ import { ZERO_USAGE, type BgTaskInfo, type PermissionDecision, type QuestionAnsw
 import { appendAudit, hashInput, recordAudit, type ToolAuditEntry } from '../audit';
 import type { CodexEngine } from '../engine/CodexEngine';
 import type { GeminiEngine } from '../engine/GeminiEngine';
+import type { HermesEngine } from '../engine/HermesEngine';
+import type { TranscriptMessage } from '../../shared/session-types';
 import type { GrokTurnRequest } from '../engine/GrokEngine';
 import { findRolloutFile, readRolloutRateLimits } from '../engine/codexRollout';
 import { ruleString, sessionUpdates, type BgTask, type Engine, type EngineEvent, type EngineResult, type LiveInput, type PermissionRequest, type QuestionRequest, type RateLimitSignal } from '../engine/Engine';
@@ -42,7 +44,7 @@ import { moveToTrash, restoreFromTrash } from '../sessions/SessionTrash';
 import { projectSlug } from '../sessions/slug';
 import type { UsageService } from '../usage/UsageService';
 import { usageOf, type GrokBilling } from '../../shared/usage-types';
-import { isCodexState, isGeminiState, isGrokState, isOtherEngineState, type ClaudeSessionState, type CodexSessionState, type GeminiSessionState, type GrokSessionState, type SessionState, type SessionStateStore } from './SessionState';
+import { isCodexState, isGeminiState, isGrokState, isHermesState, type HermesSessionState, isOtherEngineState, type ClaudeSessionState, type CodexSessionState, type GeminiSessionState, type GrokSessionState, type SessionState, type SessionStateStore } from './SessionState';
 
 export type TurnSink = {
   emit(msg: ServerMessage): void;
@@ -112,7 +114,7 @@ export type TurnParams = {
 /** 자동 분배 settings (DeckSettings autoEngines / autoConsent / grokFast). */
 export type AutoRouteSettings = { autoEngines: readonly EngineKind[]; autoConsent: readonly EngineKind[]; grokFast: boolean };
 const DEFAULT_AUTO_ROUTE: AutoRouteSettings = { autoEngines: ['claude', 'codex', 'gemini', 'grok'], autoConsent: [], grokFast: false };
-const ROUTE_ENGINE_LABEL: Record<EngineKind, string> = { claude: 'Claude', codex: 'GPT', gemini: 'Gemini', grok: 'Grok' };
+const ROUTE_ENGINE_LABEL: Record<EngineKind, string> = { claude: 'Claude', codex: 'GPT', gemini: 'Gemini', grok: 'Grok', hermes: 'Hermes' };
 
 /** ⚡ 빠르게 applies to this turn: only a person's turn (never a handoff note, 총사령탑 hop, cap continuation or automatic retry). */
 export function fastTurn(p: Pick<TurnParams, 'fast' | 'handoff' | 'commanderHop' | 'bgCapHop' | 'retryHop'>): boolean {
@@ -146,6 +148,7 @@ export type TurnRunnerDeps = {
   /** deck 메모 (MemoryStore.get): appended to every turn's system prompt except a handoff note's; absent = none. */
   memory?: () => string;
   /** Null = Codex disabled (D11); tests inject a fake with just runTurn. */
+  hermes?: Pick<HermesEngine, 'runTurn'> | null;
   codex: Pick<CodexEngine, 'runTurn'> | null;
   /** Null = agy not installed. `loggedIn` reads the cached `agy models` probe (only g1 can be logged in). */
   gemini?: { engine: Pick<GeminiEngine, 'runTurn'>; loggedIn: (account: GeminiAccount) => boolean } | null;
@@ -833,6 +836,7 @@ export class TurnRunner {
     return this.serialize(sessionId, async () => {
       const st = store.get(sessionId);
       if (st && isGeminiState(st)) return { ok: false as const, error: 'Gemini 세션은 작업 폴더를 바꿀 수 없어요.' };
+      if (st && isHermesState(st)) return { ok: false as const, error: 'Hermes 세션은 작업 폴더를 바꿀 수 없어요.' };
       if (st && isGrokState(st)) return { ok: false as const, error: 'Grok 세션은 작업 폴더를 바꿀 수 없어요.' };
       if (st && isCodexState(st)) {
         if (st.cwd !== cwd) await store.set({ ...st, cwd });
@@ -888,7 +892,7 @@ export class TurnRunner {
   permissionModeOf(sessionId: string): PermMode {
     for (const m of this.modes.values()) if (m.sessionId() === sessionId) return m.ref.mode;
     const st = this.deps.store.get(sessionId);
-    return (st && isGrokState(st) ? st.permissionMode : st && !isOtherEngineState(st) ? st.mode : undefined) ?? this.defaultMode();
+    return (st && (isGrokState(st) || isHermesState(st)) ? st.permissionMode : st && !isOtherEngineState(st) ? st.mode : undefined) ?? this.defaultMode();
   }
 
   /**
@@ -906,7 +910,7 @@ export class TurnRunner {
         if (!e || e.account === 'gpt' || isGeminiAccount(e.account) || isGrokAccount(e.account)) return false;
         await store.set({ sessionId, cwd: e.cwd, account: e.account, projectDir: e.projectDir, lastTurnAtMs: null, justCompacted: false, defaultModel: IMPORTED_DEFAULT_MODEL, mode });
       }
-    } else if (isGrokState(st)) {
+    } else if (isGrokState(st) || isHermesState(st)) {
       // Grok: deck answers the permission requests, reading the mode per request — a change applies at once (§14.1-3).
       // Plan mode is not offered for Grok (§14.2).
       if (mode === 'plan') return false;
@@ -1560,6 +1564,7 @@ export class TurnRunner {
       const fit = turnFits(engine, classifyTask(p.text, { images: attachments.filter((a) => a.isImage).length }), { cwdInsideHome: await insideHome(state.cwd) });
       if (!fit.ok) { sink.emit({ type: 'route_fit', turnId: p.turnId, sessionId: state.sessionId, engine, need: fit.need }); return; }
     }
+    if (state && isHermesState(state)) return this.runHermes(p, state, sink, attachments);
     if (state && isGeminiState(state)) return this.runGemini(p, state, sink, `Gemini 세션 · ${GEMINI_LABEL[state.account]}`, attachments, notice);
     if (state && isGrokState(state)) return this.runGrok(p, state, sink, `Grok 세션 · ${GROK_LABEL[state.account]}`, attachments, notice);
     // 자동 분배 (chooseRoute): engine 자동, or an engine other than Claude with model 자동. Claude / no engine keeps chooseEngine below.
@@ -1568,6 +1573,7 @@ export class TurnRunner {
       return this.runRouted(p, sink, attachments);
     }
     // An explicit Gemini / Grok model: that engine as is.
+    if (!state && p.engine === 'hermes') return this.runHermes(p, null, sink, attachments);
     if (!state && p.engine === 'gemini') return this.runGemini(p, null, sink, 'Gemini 지정', attachments);
     if (!state && p.engine === 'grok') return this.runGrok(p, null, sink, 'Grok 지정', attachments);
     if (!state) {
@@ -1617,7 +1623,7 @@ export class TurnRunner {
     });
     if (d.kind === 'no_route') {
       deps.routeLog?.(`deck route ${p.turnId}: no route — ${Object.entries(d.reasons).map(([e, r]) => `${e}: ${r}`).join(' | ')}`);
-      const parts = (Object.keys(ROUTE_ENGINE_LABEL) as EngineKind[]).map((e) => `${ROUTE_ENGINE_LABEL[e]}: ${d.reasons[e]}`);
+      const parts = (Object.keys(d.reasons) as EngineKind[]).map((e) => `${ROUTE_ENGINE_LABEL[e]}: ${d.reasons[e]}`);
       sink.emit({ type: 'error', turnId: p.turnId, message: `자동 분배: 쓸 수 있는 엔진 없음 — ${parts.join(', ')}` });
       return;
     }
@@ -1635,6 +1641,7 @@ export class TurnRunner {
       case 'codex': return this.runCodex(routed, null, sink, d.reason, attachments);
       case 'gemini': return this.runGemini(routed, null, sink, d.reason, attachments);
       case 'grok': return this.runGrok(routed, null, sink, d.reason, attachments);
+      case 'hermes': return this.runHermes(routed, null, sink, attachments);
       case 'claude': return this.runClaude(routed, null, sink, d.reason, attachments, isClaudeModel(d.model) ? d.model : undefined);
     }
   }
@@ -1704,6 +1711,63 @@ export class TurnRunner {
   }
 
   /** Explicit Gemini: a new session takes the first logged-in, non-cooled account (g1, then g2) and stays on it. */
+  private async runHermes(p: TurnParams, state: HermesSessionState | null, sink: TurnSink, attachments: Attachment[]): Promise<void> {
+    if (p.commanderHop !== undefined) { sink.emit({ type: 'error', turnId: p.turnId, message: COMMANDER_ENGINE_REFUSED }); return; }
+    const { deps } = this;
+    const cwd = state?.cwd ?? p.cwd;
+    const model = 'gpt-6-astra' as const;
+    const account = 'hermes';
+    const reason = state ? 'Hermes 세션' : 'Hermes 지정';
+    // Only an explicit choice enables bypass; an unrelated global default must not grant it.
+    const modeRef: ModeRef = { mode: state?.permissionMode ?? p.permissionMode ?? 'default' };
+    let sessionId = state?.sessionId ?? null;
+    const scope = () => ({ turnId: p.turnId, sessionId, cwd });
+    const badge = (usage: TurnUsage) => ({ account, model, reason, usage, modelNote: null });
+    if (!deps.hermes) { sink.emit({ type: 'turn_result', ...scope(), ok: false, text: '', badge: badge(ZERO_USAGE), errorText: 'Hermes CLI를 찾을 수 없습니다' }); return; }
+    const messages: TranscriptMessage[] = [...(state?.messages ?? [])];
+    const createdAtMs = state?.createdAtMs ?? this.now();
+    const record = async (ok: boolean) => {
+      if (!sessionId) return;
+      const current = deps.store.get(sessionId);
+      await deps.store.set({ engine: 'hermes', account, sessionId, cwd, defaultModel: model, permissionMode: current && isHermesState(current) ? current.permissionMode : modeRef.mode, createdAtMs, lastTurnAtMs: ok ? this.now() : state?.lastTurnAtMs ?? null, justCompacted: false, title: state?.title ?? titleOf(p.text), messages: messages.slice(-200) });
+    };
+    sink.emit({ type: 'turn_started', ...scope(), account, model, reason, attempt: 0, engine: 'hermes' });
+    this.modes.set(p.turnId, { ref: modeRef, sessionId: () => sessionId, notice: (message) => sink.emit({ type: 'turn_notice', ...scope(), message }) });
+    let result: EngineResult | null = null;
+    let assistant: Extract<TranscriptMessage, { kind: 'assistant' }> | null = null;
+    const response = () => {
+      if (!assistant) { assistant = { kind: 'assistant', text: '', model, toolCalls: [], ts: new Date(this.now()).toISOString() }; messages.push(assistant); }
+      return assistant;
+    };
+    const context = this.contextFor(state?.sessionId ?? null, this.addendum(p, 'hermes'));
+    const prompt = promptWithFiles(p.text, attachments);
+    try {
+      for await (const ev of deps.hermes.runTurn({ cwd, resumeSessionId: state?.sessionId ?? null, attachments, prompt: context ? `${systemReminder(context)}\n\n${prompt}` : prompt, signal: sink.signal, permissionMode: modeRef.mode, autoApprove: () => modeRef.mode === 'bypassPermissions', editAuto: () => modeRef.mode === 'acceptEdits',
+        onPermission: async (pr) => {
+          const decision = await sink.askPermission({ ...pr, ...scope() });
+          await appendAudit(deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: p.turnId, sessionId, toolName: pr.toolName, decision, source: 'user', inputSha256: hashInput(pr.input) });
+          return decision;
+        },
+        onAutoApproved: async (pr) => { await appendAudit(deps.auditFile, { ts: new Date(this.now()).toISOString(), turnId: p.turnId, sessionId, toolName: pr.toolName, decision: 'auto', source: 'auto', inputSha256: hashInput(pr.input) }); },
+        onSessionId: async (id) => { if (id !== sessionId) sink.sessionKnown?.(id); sessionId = id; messages.push({ kind: 'user', text: p.text, ts: new Date(this.now()).toISOString() }); await record(false); },
+      })) {
+        switch (ev.kind) {
+          case 'init': if (ev.sessionId !== sessionId) sink.sessionKnown?.(ev.sessionId); sessionId = ev.sessionId; break;
+          case 'delta': response().text += ev.text; sink.emit({ type: 'delta', ...scope(), text: ev.text }); break;
+          case 'thinking': response().thinking = (response().thinking ?? '') + ev.text; sink.emit({ type: 'thinking', ...scope(), text: ev.text }); break;
+          case 'tool_call': response().toolCalls.push({ id: ev.toolUseId, name: ev.name, input: ev.input }); sink.emit({ type: 'tool_call', ...scope(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input }); break;
+          case 'tool_result': messages.push({ ...ev, kind: 'tool_result', ts: new Date(this.now()).toISOString() }); assistant = null; sink.emit({ type: 'tool_result', ...scope(), toolUseId: ev.toolUseId, content: ev.content, isError: ev.isError }); break;
+          case 'result': result = ev; break;
+          default: break;
+        }
+      }
+      const res = result ?? { ok: false, text: '', usage: ZERO_USAGE, errorText: 'Hermes가 결과 없이 종료했습니다' };
+      if (res.ok) this.contextDelivered(sessionId, context);
+      await record(res.ok);
+      sink.emit({ type: 'turn_result', ...scope(), ok: res.ok, text: res.text, badge: badge(res.usage), errorText: sink.signal.aborted ? abortedText(sink.signal) : res.errorText });
+    } finally { this.modes.delete(p.turnId); }
+  }
+
   private async runGemini(p: TurnParams, state: GeminiSessionState | null, sink: TurnSink, reason: string, attachments: Attachment[], notice: string | null = null): Promise<void> {
     const { deps } = this;
     const cwd = state?.cwd ?? p.cwd;

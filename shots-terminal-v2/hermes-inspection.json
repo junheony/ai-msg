@@ -1,0 +1,340 @@
+{
+  "tag": "hermes",
+  "fixture": "hermes-synthetic",
+  "source": "scripts/qa/terminal-fixtures.ts",
+  "counts": {
+    "messages": 6,
+    "user": 1,
+    "assistant": 3,
+    "toolCalls": 2,
+    "sessions": 5
+  },
+  "dist": "/tmp/msg-brief7-before-header/ui",
+  "conciseMode": true,
+  "sizes": {
+    "desktop": {
+      "frame": {
+        "answerHash": "ac864f79",
+        "answerChars": 387,
+        "user": true,
+        "toolGroups": 1
+      },
+      "shots": [
+        {
+          "file": "shots-terminal-v2/hermes-desktop-turn.png",
+          "scope": "transcript",
+          "width": 1440,
+          "documentWidth": 1440,
+          "overflow": false,
+          "chat": true,
+          "users": 1,
+          "answers": 3,
+          "steps": 1,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        },
+        {
+          "file": "shots-terminal-v2/hermes-desktop-answer-top.png",
+          "scope": "transcript",
+          "width": 1440,
+          "documentWidth": 1440,
+          "overflow": false,
+          "chat": true,
+          "users": 1,
+          "answers": 3,
+          "steps": 1,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        },
+        {
+          "file": "shots-terminal-v2/hermes-desktop-answer-bottom.png",
+          "scope": "transcript",
+          "width": 1440,
+          "documentWidth": 1440,
+          "overflow": false,
+          "chat": true,
+          "users": 1,
+          "answers": 3,
+          "steps": 1,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        },
+        {
+          "file": "shots-terminal-v2/hermes-desktop-header.png",
+          "scope": "transcript",
+          "width": 1440,
+          "documentWidth": 1440,
+          "overflow": false,
+          "chat": true,
+          "users": 1,
+          "answers": 3,
+          "steps": 1,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        },
+        {
+          "file": "shots-terminal-v2/hermes-desktop-model-picker.png",
+          "scope": "transcript",
+          "width": 1440,
+          "documentWidth": 1440,
+          "overflow": false,
+          "chat": true,
+          "users": 1,
+          "answers": 3,
+          "steps": 1,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        },
+        {
+          "file": "shots-terminal-v2/hermes-desktop-list.png",
+          "scope": "transcript",
+          "width": 1440,
+          "documentWidth": 1440,
+          "overflow": false,
+          "chat": true,
+          "users": 1,
+          "answers": 3,
+          "steps": 1,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        },
+        {
+          "file": "shots-terminal-v2/hermes-desktop-empty-state.png",
+          "scope": "new",
+          "width": 1440,
+          "documentWidth": 1440,
+          "overflow": false,
+          "chat": false,
+          "users": 0,
+          "answers": 0,
+          "steps": 0,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        },
+        {
+          "file": "shots-terminal-v2/hermes-desktop-new-hermes-picker.png",
+          "scope": "new",
+          "width": 1440,
+          "documentWidth": 1440,
+          "overflow": false,
+          "chat": false,
+          "users": 0,
+          "answers": 0,
+          "steps": 0,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        }
+      ],
+      "interactions": {
+        "header": {
+          "visible": true,
+          "inside": true,
+          "identityMarks": 2,
+          "hermes": true,
+          "autoApprove": true,
+          "statuses": []
+        },
+        "composer": {
+          "editable": true,
+          "blockedAccount": false
+        },
+        "options": true,
+        "modelMenu": true,
+        "picker": {
+          "reachable": true,
+          "hermes": true,
+          "astra": true
+        },
+        "usageMenu": true,
+        "expandStep": true,
+        "newSession": true,
+        "newHermes": {
+          "available": true,
+          "selected": true,
+          "astra": true,
+          "reachable": true
+        },
+        "homeHasHamburger": false
+      }
+    },
+    "mobile": {
+      "frame": {
+        "answerHash": "ac864f79",
+        "answerChars": 387,
+        "user": true,
+        "toolGroups": 1
+      },
+      "shots": [
+        {
+          "file": "shots-terminal-v2/hermes-mobile-turn.png",
+          "scope": "transcript",
+          "width": 390,
+          "documentWidth": 390,
+          "overflow": false,
+          "chat": true,
+          "users": 1,
+          "answers": 3,
+          "steps": 1,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        },
+        {
+          "file": "shots-terminal-v2/hermes-mobile-answer-top.png",
+          "scope": "transcript",
+          "width": 390,
+          "documentWidth": 390,
+          "overflow": false,
+          "chat": true,
+          "users": 1,
+          "answers": 3,
+          "steps": 1,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        },
+        {
+          "file": "shots-terminal-v2/hermes-mobile-answer-bottom.png",
+          "scope": "transcript",
+          "width": 390,
+          "documentWidth": 390,
+          "overflow": false,
+          "chat": true,
+          "users": 1,
+          "answers": 3,
+          "steps": 1,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        },
+        {
+          "file": "shots-terminal-v2/hermes-mobile-header.png",
+          "scope": "transcript",
+          "width": 390,
+          "documentWidth": 390,
+          "overflow": false,
+          "chat": true,
+          "users": 1,
+          "answers": 3,
+          "steps": 1,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        },
+        {
+          "file": "shots-terminal-v2/hermes-mobile-model-picker.png",
+          "scope": "transcript",
+          "width": 390,
+          "documentWidth": 390,
+          "overflow": false,
+          "chat": true,
+          "users": 1,
+          "answers": 3,
+          "steps": 1,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        },
+        {
+          "file": "shots-terminal-v2/hermes-mobile-drawer.png",
+          "scope": "transcript",
+          "width": 390,
+          "documentWidth": 390,
+          "overflow": false,
+          "chat": true,
+          "users": 1,
+          "answers": 3,
+          "steps": 1,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        },
+        {
+          "file": "shots-terminal-v2/hermes-mobile-empty-state.png",
+          "scope": "new",
+          "width": 390,
+          "documentWidth": 390,
+          "overflow": false,
+          "chat": false,
+          "users": 0,
+          "answers": 0,
+          "steps": 0,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        },
+        {
+          "file": "shots-terminal-v2/hermes-mobile-new-hermes-picker.png",
+          "scope": "new",
+          "width": 390,
+          "documentWidth": 390,
+          "overflow": false,
+          "chat": false,
+          "users": 0,
+          "answers": 0,
+          "steps": 0,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        }
+      ],
+      "interactions": {
+        "header": {
+          "visible": true,
+          "inside": true,
+          "identityMarks": 2,
+          "hermes": true,
+          "autoApprove": true,
+          "statuses": []
+        },
+        "composer": {
+          "editable": true,
+          "blockedAccount": false
+        },
+        "options": true,
+        "modelMenu": true,
+        "picker": {
+          "reachable": true,
+          "hermes": true,
+          "astra": true
+        },
+        "usageMenu": true,
+        "expandStep": true,
+        "newSession": true,
+        "newHermes": {
+          "available": true,
+          "selected": true,
+          "astra": true,
+          "reachable": true
+        },
+        "homeHasHamburger": false
+      }
+    }
+  },
+  "errors": [],
+  "passed": true
+}

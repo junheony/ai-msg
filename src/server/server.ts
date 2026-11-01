@@ -21,6 +21,7 @@ import { CodexEngine } from './engine/CodexEngine';
 import { SlashCommandCache } from './engine/slashCommands';
 import { FileLister } from './files';
 import { GeminiEngine, GeminiLogin } from './engine/GeminiEngine';
+import { HermesEngine } from './engine/HermesEngine';
 import { grokEngineLock, runGrokTurn } from './engine/GrokEngine';
 import { runGrokInspect } from './engine/grokInspect';
 import { probeGrokBilling } from './engine/grokBilling';
@@ -231,6 +232,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     };
     // Grok (Grok Build CLI over ACP): explicit engine only. Login is not checked up front (design §5): a logged-out turn ends
     // with "Grok 로그인 필요". x1's GROK_HOME is the real path of ~/.grok, never the shell's GROK_HOME.
+    const hermes = cfg.hermesBin ? new HermesEngine({ bin: cfg.hermesBin }) : null;
     const grokBin = cfg.grokBin;
     // Each turn gets a fresh shadow HOME under here (§14.9-1); folders a crashed server left behind go at start — awaited,
     // so the sweep is over before any Grok turn can make its folder.
@@ -274,6 +276,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
       gemini,
       geminiUsage,
       grok,
+      hermes,
       grokUsage,
       attachments,
       codexSessionsRoot: cfg.codexSessionsRoot,
@@ -391,7 +394,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
       widgetToken: new WidgetTokenStore(path.join(cfg.configDir, 'widget-token')),
     };
     const realHandler = createRequestHandler({ hub, mini, token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), version: packageVersion(), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, sessionIcons, memory, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate, setup, authLogin });
-    const ws = attachWebSocket(servers, { holders, grokHome: cfg.grokBin ? cfg.grokHome : null, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, sessionIcons, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); miniTracker.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json'), tasks, pushTask: (p) => { void push.sendAll(p); }, setup: { needed: () => setupStore.needed() }, hub: hub.status });
+    const ws = attachWebSocket(servers, { holders, grokHome: cfg.grokBin ? cfg.grokHome : null, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, hermesAvailable: hermes !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, sessionIcons, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); miniTracker.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json'), tasks, pushTask: (p) => { void push.sendAll(p); }, setup: { needed: () => setupStore.needed() }, hub: hub.status });
     cleanup.push(() => ws.close());
     notifyIndex = () => ws.broadcastIndex();
     submitRetry = (r) => ws.submitRetry(r);

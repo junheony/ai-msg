@@ -4,6 +4,7 @@
    Type scale (--fs-*, --font-scale) is unchanged. */
 :root {
   color-scheme: dark;
+  --engine-claude: #d97757; --engine-codex: #75c9b5; --engine-hermes: #e1b965; --engine-gemini: #7da8f4; --engine-grok: #c4a4dc;
   --bg: #14141c;
   --bg-raised: #1c1c26;
   --sidebar: #101018;
@@ -89,6 +90,7 @@
 }
 :root[data-theme="light"] {
   color-scheme: light;
+  --engine-codex: #287764; --engine-hermes: #91651b; --engine-gemini: #356bb9; --engine-grok: #8558a1;
   --bg: #f4f4f8;
   --bg-raised: #ececf2;
   --sidebar: #e8e8f0;
@@ -125,6 +127,7 @@
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     color-scheme: light;
+    --engine-codex: #287764; --engine-hermes: #91651b; --engine-gemini: #356bb9; --engine-grok: #8558a1;
     --bg: #f4f4f8;
     --bg-raised: #ececf2;
     --sidebar: #e8e8f0;
@@ -3291,3 +3294,51 @@ table.t { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); font-
   .app[data-terminal] .topbar .usage-out-count { display: none; }
   .app[data-terminal] .topbar .pane-head-chips > .perm-badge { padding: 0 3px; }
 }
+
+/* BRIEF7: engine identity is a small, functional accent, never a wash over the answer. */
+[data-engine='claude'], .engine-mark.claude { --engine-ink: var(--engine-claude); }
+[data-engine='codex'], .engine-mark.codex { --engine-ink: var(--engine-codex); }
+[data-engine='hermes'], .engine-mark.hermes { --engine-ink: var(--engine-hermes); }
+[data-engine='gemini'], .engine-mark.gemini { --engine-ink: var(--engine-gemini); }
+[data-engine='grok'], .engine-mark.grok { --engine-ink: var(--engine-grok); }
+.engine-mark:is(.claude, .codex, .hermes, .gemini, .grok) { color: var(--engine-ink); }
+.meta-engine.hermes { color: var(--engine-hermes); }
+.session-chip > .engine-mark { width: 16px; height: 16px; margin: 0 3px 0 0; flex-shrink: 0; }
+.app[data-terminal] .sidebar li.session-item:has(.engine-mark.hermes) { --accent: var(--engine-hermes); }
+.app[data-terminal] .sidebar li.session-item:has(.engine-mark.codex) { --accent: var(--engine-codex); }
+.app[data-terminal] .sidebar li.session-item:has(.engine-mark.claude) { --accent: var(--engine-claude); }
+.app[data-terminal] .sidebar li.session-item:has(.engine-mark.gemini) { --accent: var(--engine-gemini); }
+.app[data-terminal] .sidebar li.session-item:has(.engine-mark.grok) { --accent: var(--engine-grok); }
+.chat .composer:focus-within { border-color: color-mix(in srgb, var(--engine-ink, var(--accent)) 55%, var(--line)); }
+.chat .cursor { display: inline-block; width: 5px; height: 16px; border-radius: 2px; background: var(--engine-ink, var(--accent)); animation: terminal-caret 1.25s ease-in-out infinite; }
+@keyframes terminal-caret { 0%, 100% { opacity: .9; } 50% { opacity: .28; } }
+.activity-steps.live :is(.activity-title, .activity-caret) { color: var(--engine-ink, var(--accent)); }
+.activity-caret { transition: transform 180ms ease; }
+.activity-steps[open] > .activity-steps-body { animation: terminal-expand 180ms ease-out; }
+@keyframes terminal-expand { from { opacity: .25; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
+.chat .code-block { border-radius: 10px; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.chat .code-head { padding: 7px 12px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--bg-raised) 75%, var(--code-bg)); }
+.chat .code-lang { color: var(--muted); font-size: var(--fs-xs); }
+.chat .code-actions { gap: 6px; }
+.chat .code-copy { padding: 4px 7px; border-radius: 5px; }
+.chat .code-copy[data-state='ok'] { color: var(--ok); }
+.chat .code-copy:hover { background: var(--hover); }
+.chat .code-block pre { padding: 15px 18px 17px; line-height: 1.7; tab-size: 2; }
+.chat :is(.code-copy, .code-tool, .jump-bottom, .session-chip):focus-visible,
+.newchat :is(.newchat-quick-btn, .session-chip):focus-visible { outline: 2px solid var(--engine-ink, var(--accent)); outline-offset: 3px; }
+.chat .jump-bottom { min-height: 36px; border-radius: 10px; background: var(--panel); }
+.chat .jump-bottom:hover { background: var(--bg-raised); }
+.newchat .newchat-greeting { gap: 14px; align-items: center; margin-bottom: 0; }
+.newchat .newchat-greeting .engine-mark { width: 27px; height: 27px; margin: 0; }
+.newchat-invitation { margin: -2px 0 8px; color: var(--muted); font-size: var(--fs-sm); line-height: 1.65; }
+.newchat .newchat-quick-btn { padding: 8px 12px; border-radius: 8px; }
+@media (prefers-reduced-motion: reduce) {
+  .chat .cursor { animation: none; opacity: .8; }
+  .activity-caret { transition: none; }
+  .activity-steps[open] > .activity-steps-body { animation: none; }
+}
+
+.app[data-terminal] .sidebar li.session-item[data-engine] { --accent: var(--engine-ink); }
+.meta-engine.codex { color: var(--engine-codex); }
+.meta-engine.gemini { color: var(--engine-gemini); }
+.meta-engine.grok { color: var(--engine-grok); }

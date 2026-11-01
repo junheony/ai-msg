@@ -1,5 +1,7 @@
 # BRIEF6 isolated Terminal capture
 
+BRIEF7 adds a deterministic, wholly synthetic Hermes fixture. See [terminal-brief7-qa.md](../../docs/terminal-brief7-qa.md) for its provenance and invocation. The default remains the original redacted Claude transcript fixture. Both capture paths now include dedicated `header` and `model-picker` screenshots and picker geometry assertions.
+
 Start the localhost-only host (port collision fails; never use an existing server):
 
 ```sh

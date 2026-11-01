@@ -510,16 +510,18 @@ describe('Sidebar engine marks', () => {
     expect(screen.getByText('claude chat').closest('li')!.querySelector('.row-open > .row-status.running')).not.toBeNull();
   });
 
-  it('marks 대화 내용 search hits by engine; Gemini gets none', async () => {
-    const hit = (id: string, engine: 'claude' | 'codex' | 'gemini') => ({ sessionId: id, title: `hit ${id}`, cwd: '/w', account: 'a', engine, lastModified: Date.now(), role: 'assistant' as const, snippet: 'abc', matchStart: 0, matchLength: 2 });
-    const searchFn = vi.fn(async () => ({ hits: [hit('h1', 'claude'), hit('h2', 'codex'), hit('h3', 'gemini')], truncated: false }));
+  it('marks 대화 내용 search hits for every engine including Gemini and Hermes', async () => {
+    const hit = (id: string, engine: 'claude' | 'codex' | 'gemini' | 'hermes' | 'grok') => ({ sessionId: id, title: `hit ${id}`, cwd: '/w', account: 'a', engine, lastModified: Date.now(), role: 'assistant' as const, snippet: 'abc', matchStart: 0, matchLength: 2 });
+    const searchFn = vi.fn(async () => ({ hits: [hit('h1', 'claude'), hit('h2', 'codex'), hit('h3', 'gemini'), hit('h4', 'hermes'), hit('h5', 'grok')], truncated: false }));
     render(<Sidebar projects={[]} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onOpenHit={noop} searchFn={searchFn} />);
     openSearch();
     fireEvent.change(screen.getByLabelText('세션 검색'), { target: { value: 'ab' } });
     await waitFor(() => expect(screen.getByText('hit h2')).toBeTruthy());
     expect(screen.getByText('hit h1').querySelector('.engine-mark')?.getAttribute('title')).toBe('Claude');
     expect(screen.getByText('hit h2').querySelector('.engine-mark')?.getAttribute('title')).toBe('Codex (GPT)');
-    expect(screen.getByText('hit h3').querySelector('.engine-mark')).toBeNull();
+    expect(screen.getByText('hit h3').querySelector('.engine-mark')?.getAttribute('title')).toBe('Gemini');
+    expect(screen.getByText('hit h4').querySelector('.engine-mark')?.getAttribute('title')).toBe('Hermes');
+    expect(screen.getByText('hit h5').querySelector('.engine-mark')?.getAttribute('title')).toBe('Grok');
   });
 });
 

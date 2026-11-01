@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { promisify } from 'node:util';
+import { HERMES_BOOTSTRAP } from './engine/HermesEngine';
 
 const root = path.resolve(__dirname, '..', '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')) as Record<string, any>;
@@ -27,11 +30,22 @@ describe('package metadata', () => {
     expect(pkg.scripts.prepack).toBe('npm run build && npm run build:server');
   });
 
-  it('import.meta / __dirname users are the reviewed set (Task 3 table; update both when adding one)', () => {
+  it('ships the Hermes Python bootstrap beside the bundle and resolves it from the source tree', async () => {
+    expect(HERMES_BOOTSTRAP).toBe(path.join(root, 'src/server/engine/hermesAcpBootstrap.py'));
+    const outdir = fs.mkdtempSync(path.join(os.tmpdir(), 'msg-package-'));
+    try {
+      await promisify(execFile)(process.execPath, [path.join(root, 'scripts/build-server.mjs'), '--outdir', outdir], { cwd: root, timeout: 20_000 });
+      expect(fs.readFileSync(path.join(outdir, 'hermesAcpBootstrap.py'), 'utf8')).toBe(fs.readFileSync(HERMES_BOOTSTRAP, 'utf8'));
+      expect(fs.readFileSync(path.join(outdir, 'app.js'), 'utf8')).toMatch(/new URL\(["']\.\/hermesAcpBootstrap\.py["'], import\.meta\.url\)/);
+    } finally { fs.rmSync(outdir, { recursive: true, force: true }); }
+  }, 25_000);
+
+  it('import.meta / __dirname users are the reviewed set (docs/packaging.md table; update both when adding one)', () => {
     expect(filesUsingImportMetaOrDirname()).toEqual([
       'src/server/cli/app.ts',
       'src/server/cli/bin.ts',
       'src/server/config.ts',
+      'src/server/engine/HermesEngine.ts',
       'src/server/engine/claudeCli/childScripts.ts',
       'src/server/engine/claudeCli/fixtures/capture.ts',
       'src/server/engine/claudeCli/fixtures/scrub.ts',

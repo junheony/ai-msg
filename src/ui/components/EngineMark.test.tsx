@@ -29,3 +29,15 @@ describe('Grok mark', () => {
     expect(engineOf({ engine: 'grok', account: 'a' })).toBe('grok');
   });
 });
+
+
+describe('Hermes and Gemini identities', () => {
+  it('gives each engine its own accessible inline mark and respects an explicit Hermes engine', () => {
+    const { container } = render(<><EngineMark engine="hermes" /><EngineMark engine="gemini" /></>);
+    expect(container.querySelector('.engine-mark.hermes svg.hermes-mark')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Hermes"]')).not.toBeNull();
+    expect(container.querySelector('.engine-mark.gemini svg.gemini-mark')).not.toBeNull();
+    expect(engineOf({ engine: 'hermes', account: 'gpt' })).toBe('hermes');
+    expect(engineOf({ account: 'hermes' })).toBe('hermes');
+  });
+});

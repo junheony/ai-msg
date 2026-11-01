@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { Account, GeminiAccount, GrokAccount } from '../../shared/accounts';
 import type { ClaudeModel, CodexModel, CodexSandbox, Effort, GeminiModel, GrokModel } from '../../shared/models';
 import type { PermMode } from '../../shared/permission';
-import type { SessionEntry } from '../../shared/session-types';
+import type { SessionEntry, TranscriptMessage } from '../../shared/session-types';
 import { isCommanderState, type CommanderState } from '../commander/types';
 
 type SessionBase = {
@@ -110,7 +110,18 @@ export type GrokSessionState = SessionBase & {
   createdAtMs: number;
 };
 
-export type SessionState = ClaudeSessionState | CodexSessionState | GeminiSessionState | GrokSessionState;
+export type HermesSessionState = SessionBase & {
+  engine: 'hermes';
+  account: 'hermes';
+  defaultModel: 'gpt-6-astra';
+  permissionMode: PermMode;
+  createdAtMs: number;
+  /** MSG's bounded transcript snapshot; Hermes owns the full model history. */
+  messages: TranscriptMessage[];
+};
+export function isHermesState(s: SessionState): s is HermesSessionState { return s.engine === 'hermes'; }
+
+export type SessionState = ClaudeSessionState | CodexSessionState | GeminiSessionState | GrokSessionState | HermesSessionState;
 
 export function isCodexState(s: SessionState): s is CodexSessionState {
   return s.engine === 'codex';
@@ -125,8 +136,8 @@ export function isGrokState(s: SessionState): s is GrokSessionState {
 }
 
 /** Codex, Gemini or Grok: a session that is not Claude's (no account pin, no jsonl, no moves). */
-export function isOtherEngineState(s: SessionState): s is CodexSessionState | GeminiSessionState | GrokSessionState {
-  return s.engine === 'codex' || s.engine === 'gemini' || s.engine === 'grok';
+export function isOtherEngineState(s: SessionState): s is CodexSessionState | GeminiSessionState | GrokSessionState | HermesSessionState {
+  return s.engine === 'codex' || s.engine === 'gemini' || s.engine === 'grok' || s.engine === 'hermes';
 }
 
 let tmpCounter = 0;
@@ -188,9 +199,9 @@ export class SessionStateStore {
         });
         continue;
       }
-      if (isGrokState(s)) {
+      if (isGrokState(s) || isHermesState(s)) {
         out.push({
-          sessionId: s.sessionId, account: s.account, engine: 'grok', cwd: s.cwd, projectDir: '', file: '',
+          sessionId: s.sessionId, account: s.account, engine: s.engine, cwd: s.cwd, projectDir: '', file: '',
           title: s.title ?? '(제목 없음)', lastModified: s.lastTurnAtMs ?? s.createdAtMs, sizeBytes: 0,
         });
         continue;

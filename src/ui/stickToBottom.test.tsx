@@ -98,6 +98,61 @@ describe('Chat scroll lock', () => {
     expect(box.top).toBe(1100);
   });
 
+  it.each([false, true])('explicit jump respects reduced motion (%s) and resumes following', (reduced) => {
+    const { view, body, box } = setup([user('q'), answer('a', true)]);
+    const scrollTo = vi.fn();
+    body.scrollTo = scrollTo;
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: reduced })));
+    try {
+      fireEvent.wheel(body, { deltaY: -40 });
+      box.top = 200;
+      fireEvent.scroll(body);
+      fireEvent.click(screen.getByTestId('jump-bottom'));
+      if (reduced) {
+        expect(scrollTo).not.toHaveBeenCalled();
+        expect(box.top).toBe(600);
+      } else {
+        expect(scrollTo).toHaveBeenCalledWith({ top: 1000, behavior: 'smooth' });
+        box.top = 400;
+        fireEvent.scroll(body);
+        box.height = 1200;
+        view.rerender(<Chat {...props([user('q'), answer('more', true)])} />);
+        expect(box.top).toBe(400);
+        fireEvent(body, new Event('scrollend'));
+        expect(box.top).toBe(800);
+      }
+      expect(screen.queryByTestId('jump-bottom')).toBeNull();
+      box.height = 1400;
+      view.rerender(<Chat {...props([user('q'), answer('done')])} />);
+      expect(box.top).toBe(1000);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('finishes a smooth jump without scrollend support, and upward intent cancels animation', () => {
+    vi.useFakeTimers();
+    try {
+      const { view, body, box } = setup([user('q'), answer('a', true)]);
+      body.scrollTo = vi.fn();
+      fireEvent.wheel(body, { deltaY: -20 });
+      box.top = 200;
+      fireEvent.scroll(body);
+      fireEvent.click(screen.getByTestId('jump-bottom'));
+      box.height = 1200;
+      view.rerender(<Chat {...props([user('q'), answer('more', true)])} />);
+      act(() => vi.advanceTimersByTime(800));
+      expect(box.top).toBe(800);
+      fireEvent.wheel(body, { deltaY: -20 });
+      box.top = 300;
+      fireEvent.scroll(body);
+      fireEvent.click(screen.getByTestId('jump-bottom'));
+      fireEvent.wheel(body, { deltaY: -20 });
+      expect(body.scrollTo).toHaveBeenLastCalledWith({ top: 300, behavior: 'instant' });
+      act(() => vi.advanceTimersByTime(800));
+      expect(box.top).toBe(300);
+      expect(screen.getByTestId('jump-bottom')).toBeTruthy();
+    } finally { vi.useRealTimers(); }
+  });
+
   it('a scrollbar drag (no wheel) up detaches; scrolling back to the bottom re-attaches', () => {
     const { view, body, box } = setup([user('q'), answer('a', true)]);
     box.top = 300;

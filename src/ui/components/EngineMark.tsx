@@ -47,23 +47,28 @@ export function GrokMark({ className }: { className: string }) {
   );
 }
 
+/** Hermes wing: a compact directional mark distinct from provider logos. */
+export function HermesMark({ className }: { className: string }) {
+  return <svg className={`hermes-mark ${className}`} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path d="M3 5h15l-4 4H6l-3-4Zm3 7h10l-4 4H8l-2-4Zm4 7h4l7-14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" />
+  </svg>;
+}
+
 /** Which engine a session runs on: its own field, else what its seat implies. */
 export function engineOf(s: { engine?: EngineKind | null; account?: Seat }): EngineKind {
-  return s.engine ?? (s.account === 'gpt' ? 'codex' : isGeminiAccount(s.account) ? 'gemini' : isGrokAccount(s.account) ? 'grok' : 'claude');
+  return s.engine ?? (s.account === 'hermes' ? 'hermes' : s.account === 'gpt' ? 'codex' : isGeminiAccount(s.account) ? 'gemini' : isGrokAccount(s.account) ? 'grok' : 'claude');
 }
 
 /**
  * The engine mark before a session's title (the usage cards' marks): the Claude star, the OpenAI blossom for Codex, the
- * Grok mark. No text content (all SVG), so the title's text and truncation stay as they were. Gemini (or anything
- * else) has no mark. `decorative`: dense lists whose row already says what it is — hidden from assistive tech, tooltip kept.
+ * Grok slash, Gemini spark and Hermes wing. Inline SVG preserves title truncation. `decorative`: dense lists whose row already says what it is — hidden from assistive tech, tooltip kept.
  */
 export function EngineMark({ engine, decorative = false }: { engine: EngineKind; decorative?: boolean }) {
-  if (engine !== 'codex' && engine !== 'claude' && engine !== 'grok') return null;
-  const label = engine === 'codex' ? 'Codex (GPT)' : engine === 'grok' ? 'Grok' : 'Claude';
+  const label = engine === 'codex' ? 'Codex (GPT)' : engine === 'grok' ? 'Grok' : engine === 'hermes' ? 'Hermes' : engine === 'gemini' ? 'Gemini' : 'Claude';
   const a11y = decorative ? { 'aria-hidden': true } : { role: 'img', 'aria-label': label };
   return (
     <span className={`engine-mark ${engine}`} title={label} {...a11y}>
-      {engine === 'codex' ? <OpenAIMark className="engine-mark-svg" /> : engine === 'grok' ? <GrokMark className="engine-mark-svg" /> : <ClaudeMark className="engine-mark-svg" />}
+      {engine === 'codex' ? <OpenAIMark className="engine-mark-svg" /> : engine === 'grok' ? <GrokMark className="engine-mark-svg" /> : engine === 'hermes' ? <HermesMark className="engine-mark-svg" /> : engine === 'gemini' ? <GeminiMark className="engine-mark-svg" /> : <ClaudeMark className="engine-mark-svg" />}
     </span>
   );
 }

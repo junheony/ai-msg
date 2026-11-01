@@ -183,3 +183,51 @@ The `frontend-design` skill was applied, with calibration from [The Seeker](http
 No push, merge into main, deployment, unit restart, protected-service access or ledger change occurred. No required work remains blocked.
 
 STATUS: DONE
+
+# Terminal Hermes + polish (BRIEF7)
+
+## Changes
+
+- `HermesEngine.ts`, `hermesAcpBootstrap.py`, `TurnRunner.ts`, `SessionState.ts`, and `ws.ts`: Hermes is a peer engine with explicit new-session selection, ACP streaming, tool/thought events, native session resume, persisted model/title/permission mode and a bounded display transcript. The model picker shows `gpt-6-astra`; automatic routing does not silently select Hermes.
+- Installed Hermes 0.18.2 reloads dotenv and had native approval bypass enabled. The version-guarded bootstrap forces manual native requests inside the child process, preserving native auth/history and modifying no global configuration. MSG resolves each permission using the current user-selected mode; default does not use YOLO, explicit auto-approve permits once, edit-only checks paths, and unsupported plan/commander modes refuse safely. No secret values or raw native stderr reach the client.
+- `ModelPicker.tsx`, `NewChat.tsx`, `Pane.tsx`, `SessionChip.tsx`, `EngineMark.tsx`, and sidebar/state files: complete Hermes account identity, model selection and session reopening; five-engine accents, restrained empty-state treatment and keyboard/focus affordances. Unsupported effort/cwd actions are hidden for Hermes.
+- `Chat.tsx`, `MessageView.tsx`, `stickToBottom.ts`, and `styles.css`: streaming caret, process disclosure motion, user-controlled smooth bottom scrolling with upward-scroll cancellation, code-block treatment/copy affordances and reduced-motion support. Existing theme tokens and type-scale invariants remain intact.
+- CLI mocks, permission-policy fixtures, runner/socket integration tests and packaging tests cover streaming, resume, images, cancellation, live permission changes, secret-safe errors and the bundled Python resource. `scripts/qa/*` adds an isolated read-only synthetic Hermes fixture; design, runtime and independent-review notes are in `docs/terminal-brief7-*.md` and `docs/terminal-hermes-engine.md`.
+
+## Validation
+
+| Check | Result |
+|---|---|
+| `npx vitest run --maxWorkers=2` | 360 files / 4,497 tests passed; 365.01 s |
+| `npm run typecheck` | Passed |
+| `npm run build` | Passed, including bundle checks |
+| `npm run build:server` | Passed, including Python bootstrap resource |
+| `node scripts/contrast-check.mjs` | All dark/light pairs passed |
+| Installed Python `-I src/server/engine/hermesAcpBootstrap.py --check-policy` | `{"msgPolicySafe": true}`; no provider turn |
+| `DIST=/tmp/msg-brief7-before-header/ui node scripts/qa/shoot-terminal.mjs shots-terminal-v2 hermes` | 16 captures, desktop/mobile interaction checks passed |
+| `git diff --check` | Passed |
+
+An earlier full run exposed theme-token placement, an outdated engine-icon expectation and the packaging path allowlist; these were fixed with existing invariants retained. An unchanged Grok termination timing assertion exceeded its wall-time budget under host load; its isolated 74-test suite passed, followed by the final complete run above.
+
+## Screenshots and review
+
+Desktop is 1440×900, mobile 390×844. `shots-terminal-v2/hermes-inspection.json` records zero horizontal overflow, browser errors and error toasts, an editable Hermes composer, and reachable model/engine selection. Personally inspected final desktop/mobile captures and iterated after the first browser run revealed an unknown-account banner for the new Hermes seat; the account classification and regression test were corrected before final capture.
+
+| View | Desktop | Mobile |
+|---|---|---|
+| Hermes session/header | [desktop](shots-terminal-v2/hermes-desktop-header.png) | [mobile](shots-terminal-v2/hermes-mobile-header.png) |
+| Existing-session model picker | [desktop](shots-terminal-v2/hermes-desktop-model-picker.png) | [mobile](shots-terminal-v2/hermes-mobile-model-picker.png) |
+| New-session Hermes selection | [desktop](shots-terminal-v2/hermes-desktop-new-hermes-picker.png) | [mobile](shots-terminal-v2/hermes-mobile-new-hermes-picker.png) |
+| Empty state | [desktop](shots-terminal-v2/hermes-desktop-empty-state.png) | [mobile](shots-terminal-v2/hermes-mobile-empty-state.png) |
+
+The fixture is synthetic and cannot execute turns. `header-before-*` captures retain the BRIEF6 real-session comparison. The double identity, red approval chip and misleading SUCCESS marker are retained here specifically for the separately requested BRIEF7b follow-up.
+
+The `frontend-design` skill was applied with [The Seeker dashboard](https://ref.theseeker.io/?category=dashboard), [Refero](https://styles.refero.design/), [glass.samasante.com](https://glass.samasante.com/) and [Scrolltide](https://www.scrolltide.co/) references. No new image asset was needed. External delegation was unavailable because of quota/credentials; native delegated implementation and review completed the work.
+
+## Limits
+
+No paid/live provider turn was run: adapter behavior is verified with CLI mocks, installed-runtime offline policy checks, and synthetic browser evidence. The policy bridge intentionally supports Hermes 0.18.2 only; a Hermes upgrade requires a reviewed adapter update. MSG retains the last 200 display records while Hermes keeps its native full conversation. Existing non-ACP CLI sessions are not imported.
+
+No push, deployment, unit restart, protected-port access, ledger change or modification of `/home/max/ai-msg` occurred.
+
+STATUS: DONE

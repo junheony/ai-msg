@@ -10,6 +10,7 @@ import { AccountChipName, AccountMenu, useAccountWords } from './AccountPicker';
 import { ContextRing, ContextSheet, HandoffButton, contextLevel } from './ContextGauge';
 import { Sheet, SheetHead } from './Dialogs';
 import { ModelMenu, modelLabel } from './ModelPicker';
+import { EngineMark } from './EngineMark';
 import { menuStep } from './SessionMenu';
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -40,7 +41,7 @@ function trapTab(e: KeyboardEvent<HTMLDivElement>) {
 
 /** The chip's compact permission wording. */
 export const PERM_MODE_SHORT: Record<PermMode, string> = { default: '묻기', acceptEdits: '편집 승인', plan: '계획', bypassPermissions: '자동 승인' };
-const ENGINE_NAME: Record<EngineChoice, string> = { claude: 'Claude', codex: 'GPT', gemini: 'Gemini', grok: 'Grok', auto: '자동' };
+const ENGINE_NAME: Record<EngineChoice, string> = { claude: 'Claude', codex: 'GPT', gemini: 'Gemini', grok: 'Grok', hermes: 'Hermes', auto: '자동' };
 /** On the chip an auto engine must not read as a permission mode. */
 const ENGINE_CHIP: Record<EngineChoice, string> = { ...ENGINE_NAME, auto: '엔진 자동' };
 
@@ -73,7 +74,7 @@ export type SessionChipProps = {
   /** The engine the session runs (or will run) on. */
   engine: EngineChoice;
   /** The engine picker (a new session); shown only when another engine than Claude is available. */
-  engines?: { codexAvailable: boolean; gemini?: GeminiStatus | null; grok?: GrokStatus | null; onEngine: (e: EngineChoice) => void } | null;
+  engines?: { codexAvailable: boolean; hermesAvailable?: boolean; gemini?: GeminiStatus | null; grok?: GrokStatus | null; onEngine: (e: EngineChoice) => void } | null;
   /** GPT/Gemini sandbox: `onChange` absent = a read-only tag; `existing` = an open GPT session's picker (next turn). */
   sandbox?: { value: CodexSandbox; onChange?: (s: CodexSandbox) => void; existing?: boolean } | null;
   models: readonly ModelChoice[];
@@ -120,12 +121,12 @@ export function SessionChip(p: SessionChipProps) {
   const geminiReady = !!gemini && (gemini.loggedIn.g1 || gemini.loggedIn.g2);
   const grokReady = has('grok');
   const grokShown = grokReady || !!p.engines?.grok;
-  const engineSelect = !!p.engines && (p.engines.codexAvailable || !!gemini?.available || grokReady);
+  const engineSelect = !!p.engines && (p.engines.codexAvailable || p.engines.hermesAvailable || !!gemini?.available || grokReady);
   const sandboxLabel = engine === 'gemini' ? GEMINI_SANDBOX_LABEL : SANDBOX_LABEL;
-  const sb = p.sandbox && engine !== 'claude' && engine !== 'grok' ? p.sandbox : null;
+  const sb = p.sandbox && engine !== 'claude' && engine !== 'grok' && engine !== 'hermes' ? p.sandbox : null;
   const perm = p.perm;
   const permShown: PermMode = perm?.supported ? perm.mode : 'default';
-  const m = modelLabel(p.model, p.effort);
+  const m = modelLabel(p.model, p.effort, engine);
   const modelText = m.effort ? `${m.name} ${m.effort}` : m.name;
   const measured = p.ctx ? p.ctx.measured !== false : false;
   const ctx = p.ctx && measured ? { ...contextLevel(p.ctx), label: contextLabel(p.ctx) } : null;
@@ -151,7 +152,7 @@ export function SessionChip(p: SessionChipProps) {
   ].flat().filter(Boolean).join(' · ');
 
   return (
-    <span className="session-chip-wrap">
+    <span className="session-chip-wrap" data-engine={engine}>
       {p.ctx && measured && ctx && (
         <button type="button" className="ctx-sheet-btn" data-testid="context-sheet-btn" aria-label={`컨텍스트 ${ctx.pct}%`} title={ctx.label} onClick={() => setCtxOpen(true)}>
           <ContextRing info={p.ctx} />
@@ -171,6 +172,7 @@ export function SessionChip(p: SessionChipProps) {
         disabled={p.disabled}
         onClick={() => setOpen(true)}
       >
+        {engine !== 'auto' && <EngineMark engine={engine} decorative />}
         <span className="sc-label">
           {parts.map((x, i) => <span key={i} className="sc-seg">{i > 0 && <span className="sc-dot" aria-hidden="true">·</span>}{x}</span>)}
         </span>
@@ -202,6 +204,7 @@ export function SessionChip(p: SessionChipProps) {
                   <Pick label={ENGINE_NAME[engine]} value={engine} onChange={(e) => p.engines?.onEngine(e.target.value as EngineChoice)} title="이 세션의 엔진 (세션 생성 후 변경 불가)" aria-label="엔진" data-testid="engine-select">
                     <option value="claude">Claude</option>
                     {p.engines.codexAvailable && <option value="codex">GPT</option>}
+                    {p.engines.hermesAvailable && <option value="hermes">Hermes</option>}
                     {gemini?.available && <option value="gemini" disabled={!geminiReady} title={geminiReady ? undefined : 'docs/gemini-spike.md 의 로그인 명령을 먼저 실행하세요'}>{geminiReady ? 'Gemini' : 'Gemini · 로그인 필요'}</option>}
                     {grokShown && <option value="grok" disabled={!grokReady} title={grokReady ? undefined : 'grok CLI 가 없습니다 — README 의 설치 명령 후 grok login'}>{grokReady ? 'Grok' : 'Grok · 설치 필요'}</option>}
                     {p.engines.codexAvailable && <option value="auto">자동</option>}
@@ -219,7 +222,7 @@ export function SessionChip(p: SessionChipProps) {
             )}
             <section className="ss-section" aria-label="모델">
               <h3 className="ss-head">모델</h3>
-              <ModelMenu models={p.models} model={p.model} effort={p.effort} onModel={p.onModel} onEffort={p.onEffort} />
+              <ModelMenu engine={engine} models={p.models} model={p.model} effort={p.effort} onModel={p.onModel} onEffort={p.onEffort} />
             </section>
             {p.account && (
               <section className="ss-section" aria-label="계정">

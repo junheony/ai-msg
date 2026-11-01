@@ -278,6 +278,7 @@ export function engineState(engine: EngineKind, model: AnyModel, limits: EngineL
     case 'codex': return gptState(limits.codex, nowMs);
     case 'gemini': return geminiState(limits.gemini, model, nowMs);
     case 'grok': return grokState(limits.grok, nowMs);
+    case 'hermes': return cap('blocked', 'Hermes는 직접 선택해 사용합니다');
   }
 }
 
@@ -330,7 +331,7 @@ const ROUTE_LABEL: Record<AnyModel, string> = {
   'gemini-pro': 'Gemini Pro', 'gemini-flash': 'Gemini Flash', 'grok-4.7': 'Grok 4.7', 'grok-4.7-build-fast': 'Grok 4.7 Fast',
   'grok-4.6': 'Grok 4.6', 'grok-4.5': 'Grok 4.5',
 };
-const ENGINE_LABEL: Record<EngineKind, string> = { claude: 'Claude', codex: 'GPT', gemini: 'Gemini', grok: 'Grok' };
+const ENGINE_LABEL: Record<EngineKind, string> = { claude: 'Claude', codex: 'GPT', gemini: 'Gemini', grok: 'Grok', hermes: 'Hermes' };
 
 /**
  * §4 with §10-1/3: the cell's candidates in preference order. Claude's entry is claudeAutoModel's model (the existing
@@ -363,6 +364,7 @@ function engineDefault(engine: EngineKind, d: TaskDifficulty, grok: GrokModel): 
     case 'codex': return d === 'hard' ? 'gpt-6-astra' : 'gpt-6-sol';
     case 'gemini': return d === 'easy' ? 'gemini-flash' : 'gemini-pro';
     case 'grok': return grok;
+    case 'hermes': return 'gpt-6-astra';
   }
 }
 
@@ -483,7 +485,7 @@ export function chooseRoute(i: RouteInput): RouteDecision {
   const claude = claudeAuto();
   if (claude.notes.length) why.push(`Claude 모델: ${claude.notes.join(' · ')} → ${ROUTE_LABEL[claude.model]}`);
   const cell = cellOf(task, grok, claude);
-  const blockedWhy: Record<EngineKind, string[]> = { claude: [], codex: [], gemini: [], grok: [] };
+  const blockedWhy: Record<EngineKind, string[]> = { claude: [], codex: [], gemini: [], grok: [], hermes: ['Hermes는 직접 선택해 사용합니다'] };
   const out = (engine: EngineKind, r: string) => { if (!blockedWhy[engine].includes(r)) blockedWhy[engine].push(r); };
   const cands: Cand[] = [];
   for (const c of cell) {

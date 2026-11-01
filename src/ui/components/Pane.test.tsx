@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { useReducer } from 'react';
 import { Pane, startTaskFromPane, useQueueRunner } from './Pane';
+import { setFeatures } from '../features';
 import type { ClientMessage, ServerMessage } from '../../shared/protocol';
 import { initialState, newPane, reducer, type Action, type AppState, type PaneState } from '../state';
 
@@ -12,6 +13,20 @@ Element.prototype.scrollIntoView = () => {};
 
 describe('Pane (D6)', () => {
   afterEach(cleanup);
+
+  it('a Hermes seat remains writable with accounts enabled and sends no unsupported effort', () => {
+    setFeatures(['accounts']);
+    try {
+      const pane: PaneState = { ...newPane('p1'), model: 'gpt-6-astra', engine: 'hermes', session: { sessionId: 'hermes-session', cwd: '/w', account: 'hermes', title: 'Hermes 작업', engine: 'hermes', sandbox: null } };
+      const send = vi.fn();
+      render(<Pane pane={pane} app={{ pending: [], questions: [], codexAvailable: true, hermesAvailable: true }} active closable={false} dispatch={vi.fn()} send={send} onClose={vi.fn()} />);
+      expect(screen.queryByText(/설정에 없는 계정/)).toBeNull();
+      fireEvent.change(screen.getByPlaceholderText(/메시지/), { target: { value: '계속해 줘' } });
+      fireEvent.click(screen.getByText('보내기'));
+      expect(send).toHaveBeenCalledWith(expect.objectContaining({ type: 'send', sessionId: 'hermes-session', model: 'gpt-6-astra', text: '계속해 줘' }));
+      expect(send.mock.calls[0]![0]).not.toHaveProperty('effort');
+    } finally { setFeatures(undefined); }
+  });
 
   it('a new GPT session sends engine, sandbox, model and attachment ids; dispatches sent with names; close button only when closable', () => {
     const pane: PaneState = { ...newPane('p1'), session: { sessionId: null, cwd: '/w', account: null, title: '새 세션', engine: 'codex', sandbox: null }, engine: 'codex', sandbox: 'workspace-write', model: 'gpt-6-astra', attachments: [{ id: 'a1', name: 'shot.png', size: 1, isImage: true }] };
@@ -305,6 +320,19 @@ describe('Pane: Esc stops the running turn from anywhere in the pane', () => {
 
 describe('Pane: chat title menu uses the sidebar actions', () => {
   afterEach(cleanup);
+  it('Hermes title menu hides unsupported folder changes while retaining duplication', () => {
+    const entry = { sessionId: 'h1', account: 'hermes', engine: 'hermes' as const, cwd: '/w', projectDir: '/p', file: '/f', title: 'Hermes 작업', lastModified: 1, sizeBytes: 1 };
+    const actions = { pins: [], onRename: vi.fn(), onTogglePin: vi.fn(), onArchive: vi.fn(), onDelete: vi.fn(), onSetCwd: vi.fn(), onDuplicate: vi.fn() };
+    const pane: PaneState = { ...newPane('p1'), engine: 'hermes', model: 'gpt-6-astra', session: { sessionId: 'h1', cwd: '/w', account: 'hermes', title: entry.title, engine: 'hermes', sandbox: null } };
+    const app = { pending: [], questions: [], codexAvailable: false, projects: [{ cwd: '/w', name: 'w', pinned: false, sessions: [entry] }] };
+    render(<Pane pane={pane} app={app} active closable={false} dispatch={vi.fn()} send={vi.fn()} onClose={vi.fn()} sessionActions={actions} />);
+    fireEvent.click(screen.getByTestId('session-chip-head'));
+    expect(screen.queryByRole('menuitem', { name: '작업 폴더 바꾸기' })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: '삭제…' }).getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(screen.getByRole('menuitem', { name: '복제' }));
+    expect(actions.onDuplicate).toHaveBeenCalledWith('h1');
+  });
+
   it('acts on the listed session; a GPT one gets 삭제 disabled', () => {
     const entry = { sessionId: 's1', account: 'b' as const, cwd: '/w', projectDir: '/p', file: '/f', title: 't', lastModified: 1, sizeBytes: 1 };
     const actions = { pins: ['s1'], onRename: vi.fn(), onTogglePin: vi.fn(), onArchive: vi.fn(), onDelete: vi.fn() };

@@ -18,7 +18,7 @@ export const ROTATION_CONSENT = '본인이 결제하는 본인 계정에만 씁�
 /** What letting 자동 분배 pick Gemini / Grok asks the user to agree to (auto-route design §10-3). */
 export const AUTO_CONSENT_TEXT = '자동 세션의 코드·대화가 Google(Gemini)/xAI(Grok)로 갈 수 있습니다';
 export type AutoRouteView = { autoEngines: EngineKind[]; autoConsent: EngineKind[]; grokFast: boolean };
-const AUTO_ENGINE_LABEL: Record<EngineKind, string> = { claude: 'Claude', codex: 'GPT', gemini: 'Gemini', grok: 'Grok' };
+const AUTO_ENGINE_LABEL: Record<EngineKind, string> = { claude: 'Claude', codex: 'GPT', gemini: 'Gemini', grok: 'Grok', hermes: 'Hermes' };
 const needsConsent = (e: EngineKind) => e === 'gemini' || e === 'grok';
 
 /** Segmented buttons for up to 3 choices; 4 or more become a select (a row of 4 does not fit a phone's line). */

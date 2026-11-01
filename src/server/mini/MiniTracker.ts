@@ -8,7 +8,7 @@ import { MINI_PROMPT_CHARS } from '../../shared/mini-types';
  */
 export type TrackedSession = {
   sessionId: string;
-  engine: 'claude' | 'codex' | 'gemini' | 'grok' | null;
+  engine: 'claude' | 'codex' | 'gemini' | 'grok' | 'hermes' | null;
   model: string | null;
   account: string | null;
   /** The last turn_started's prompt, cut to MINI_PROMPT_CHARS. */

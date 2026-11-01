@@ -7,6 +7,7 @@ import type { UsageMode } from '../shared/usage-types';
 import { loadAccountRegistry } from './accounts';
 import { resolveCodexBin } from './engine/CodexEngine';
 import { resolveClaudeBin, type ClaudeBin } from './engine/claudeCli/version';
+import { resolveHermesBin } from './engine/HermesEngine';
 import { resolveGeminiBin } from './engine/GeminiEngine';
 import { legacyIntegrations } from './integrations';
 import { resolveConfigDir } from './paths';
@@ -39,6 +40,7 @@ export type DeckConfig = {
   geminiBin: string | null;
   /** null = Grok disabled (no `grok` Grok Build CLI found). Grok keeps its own login under GROK_HOME; deck never logs in. */
   grokBin: string | null;
+  hermesBin: string | null;
   /** Seat x1's GROK_HOME: the real path of `<home>/.grok` (the shell's GROK_HOME is never used, design §5). */
   grokHome: string;
   /** agy's g1 state dir: `<home>/.gemini/antigravity-cli`. g2 is `<home>/.agy-g2/.gemini/antigravity-cli`. Copied, never opened in place. */
@@ -240,6 +242,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = 
     claudeBin: resolveClaudeBin(env, home),
     codexBin: resolveCodexBin(env, home),
     geminiBin: resolveGeminiBin(env, home),
+    hermesBin: resolveHermesBin(env, home, isExecutable),
     grokBin: resolveGrokBin(env, home, isExecutable, log),
     grokHome: realOr(path.join(home, '.grok')),
     geminiStateDir: agyStateDir('g1', home),
