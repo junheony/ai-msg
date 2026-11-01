@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { HubSection } from '../../shared/hub-types';
 import { collectNexus, hrefOf, mapNexusHome, NEXUS_LIMITS } from './nexus';
-import { HUB_URLS, SECRET_FIELD_RE, stripSecrets, type HubDeps } from './shared';
+import { HUB_TIMEOUTS, HUB_URLS, SECRET_FIELD_RE, SLOW_CACHE_MS, stripSecrets, type HubDeps } from './shared';
 
 const NOW = Date.parse('2026-10-30T13:00:00Z'); // 22:00 KST
 const S = NOW / 1000;
@@ -136,6 +136,7 @@ describe('mapNexusHome', () => {
 });
 
 describe('collectNexus', () => {
+  afterEach(() => { vi.useRealTimers(); });
   it('puts the home on mode.nexus with both sources, no 요약 kv (the home says it) and the engine sections collapsed', async () => {
     const m = await collectNexus(deps({ nexus: ENGINE, nexusHome: home() }, { nexus: 'http://dash.example:3005/' }));
     expect(m.state).toBe('warn');
@@ -183,6 +184,80 @@ describe('collectNexus', () => {
     expect(m.nexus).toBeUndefined();
     expect(m.sources.length).toBe(2);
     expect(m.alerts.map((a) => a.text)).toContain('대시보드 응답 없음');
+  });
+  it('gives both probes the nexus budget (the engine is a busy process: 0.4–2.4 s per answer, more under load), not the 3 s default', async () => {
+    const d = deps({ nexus: ENGINE, nexusHome: home() });
+    const budgets = new Map<string, number>();
+    const inner = d.fetchJson;
+    d.fetchJson = async (url, t) => { budgets.set(url, t); return inner(url, t); };
+    await collectNexus(d);
+    expect(HUB_TIMEOUTS.nexus).toBeGreaterThanOrEqual(8_000);
+    expect(budgets.get(HUB_URLS.nexus)).toBe(HUB_TIMEOUTS.nexus);
+    expect(budgets.get(HUB_URLS.nexusHome)).toBe(HUB_TIMEOUTS.nexus);
+  });
+  it('keeps the last good engine answer when a later probe times out: 주의 with 이전 값 사용, never 장애 while the value is fresh', async () => {
+    let now = NOW; let fail = false;
+    const d = deps({ nexus: ENGINE, nexusHome: home() });
+    d.now = () => now;
+    const inner = d.fetchJson;
+    d.fetchJson = async (url, t) => { if (fail) throw new Error('시간 초과'); return inner(url, t); };
+    const first = await collectNexus(d);
+    expect(first.state).toBe('warn');
+    now += SLOW_CACHE_MS.nexus + 1; fail = true;
+    const m = await collectNexus(d);
+    expect(m.state).toBe('warn');
+    expect(m.tag).toBe('DRY RUN');
+    expect(m.nexus).toBeDefined();
+    expect(m.page!.headline).toContain('DRY RUN');
+    expect(m.sources[0]).toMatchObject({ name: 'engine /api/status', ok: false, error: '시간 초과 · 이전 값 사용' });
+    expect(m.sources[1]).toMatchObject({ name: 'dashboard /api/v2/home', ok: false, error: '시간 초과 · 이전 값 사용' });
+    expect(m.alerts.some((a) => a.level === 'warn' && /엔진 응답 지연/.test(a.text))).toBe(true);
+    expect(m.alerts.some((a) => /대시보드 응답 지연/.test(a.text))).toBe(true);
+    // A value older than the stale limit is no longer trusted: the engine counts as down again.
+    now += 10 * 60_000;
+    const old = await collectNexus(d);
+    expect(old.state).toBe('down');
+    expect(old.nexus).toBeUndefined();
+    expect(old.alerts[0]).toMatchObject({ level: 'bad', text: '응답 없음 · 시간 초과' });
+  });
+  it('does not cache a failed dashboard probe as a good answer: the next collect asks again', async () => {
+    let n = 0; let ok = false;
+    const d = deps({ nexus: ENGINE, nexusHome: home() });
+    const inner = d.fetchJson;
+    d.fetchJson = async (url, t) => { if (url === HUB_URLS.nexusHome) { n += 1; if (!ok) throw new Error('연결 실패'); } return inner(url, t); };
+    const a = await collectNexus(d);
+    expect(a.nexus).toBeUndefined();
+    ok = true;
+    const b = await collectNexus(d);
+    expect(n).toBe(2); // asked again (the retry runs behind; this answer still says the failure)
+    expect(b.nexus).toBeUndefined();
+    expect(b.sources[1]).toMatchObject({ ok: false, error: '연결 실패' });
+    await new Promise((r) => setTimeout(r, 0));
+    const c = await collectNexus(d);
+    expect(c.nexus).toBeDefined();
+    expect(c.sources[1]).toMatchObject({ ok: true });
+  });
+  it('a first engine answer slower than firstWait → 불러오는 중 (미확인), not 장애; the load goes on and the next collect has it', async () => {
+    vi.useFakeTimers();
+    try {
+      let release: (() => void) | null = null;
+      const d = deps({ nexus: ENGINE, nexusHome: home() });
+      const inner = d.fetchJson;
+      d.fetchJson = (url, t) => (url === HUB_URLS.nexus ? new Promise<unknown>((r) => { release = () => r(inner(url, t)); }) : inner(url, t));
+      const p = collectNexus(d);
+      await vi.advanceTimersByTimeAsync(HUB_TIMEOUTS.firstWait + 1);
+      const m = await p;
+      expect(m.state).toBe('unknown');
+      expect(m.nexus).toBeDefined();
+      expect(m.sources[0]).toMatchObject({ name: 'engine /api/status', ok: false, error: '불러오는 중' });
+      expect(m.page!.headline).toContain('엔진 불러오는 중');
+      expect(m.alerts.some((a) => a.level === 'bad')).toBe(false);
+      release!();
+      await vi.advanceTimersByTimeAsync(1);
+      const m2 = await collectNexus(d);
+      expect(m2.state).toBe('warn');
+      expect(m2.tag).toBe('DRY RUN');
+    } finally { vi.useRealTimers(); }
   });
   it('caches the home per deps for 20 s (one fetch for two collects)', async () => {
     let n = 0;

@@ -69,7 +69,7 @@ describe('GET /api/mini/status', () => {
 
   it('the widget token is refused on every other route (cookie routes, the hub, the token routes themselves)', async () => {
     const wt = await widgetToken.current();
-    for (const p of ['/api/me', '/api/build', '/api/hub/status', '/api/usage', '/api/sessions', '/api/mini/widget-token', '/api/mini', '/api/mini/']) {
+    for (const p of ['/api/me', '/api/build', '/api/hub/status', '/api/hub/sr', '/api/usage', '/api/sessions', '/api/mini/widget-token', '/api/mini', '/api/mini/']) {
       expect((await fetch(`${base}${p}`, { headers: bearer(wt) })).status, p).toBe(401);
     }
     expect((await fetch(`${base}/api/mini/widget-token/rotate`, { method: 'POST', headers: { ...bearer(wt), origin: base } })).status).toBe(401);

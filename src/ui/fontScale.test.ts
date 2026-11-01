@@ -65,7 +65,7 @@ const decls = fontSizes(stripped);
 describe('type scale', () => {
   it('defines each step as calc(Npx * var(--font-scale)) and keeps the old names as aliases', () => {
     const root = stripped.match(/:root\s*\{([\s\S]*?)\}/)?.[1] ?? '';
-    for (const [name, px] of [['2xs', 11], ['xs', 12], ['sm', 13], ['md', 14], ['base', 15], ['lg', 17], ['xl', 22], ['display', 28]] as const) {
+    for (const [name, px] of [['2xs', 12], ['xs', 13], ['sm', 14], ['md', 15], ['base', 16], ['lg', 18], ['xl', 23], ['display', 30]] as const) {
       expect(root).toContain(`--fs-${name}: calc(${px}px * var(--font-scale, 1))`);
     }
     expect(root).toContain('--fs-title: var(--fs-lg)');

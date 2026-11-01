@@ -242,7 +242,8 @@ export function App() {
   const sidebarWrap = useRef<HTMLDivElement>(null);
   /** Closed by Esc / a click while the pointer still rests on it: no reopening until the pointer has left. */
   const peekLatch = useRef(false);
-  const tucked = !phone && sidebarHidden;
+  // The sidebar belongs to the terminal: in a hub mode it sits inert under the overlay, so no ☰ and no hover peek there.
+  const tucked = !phone && sidebarHidden && !hubShown;
   // Hover only means something with a mouse / trackpad: a touch screen keeps ☰ / ⌘\ to show it.
   const peekable = tucked && finePointer() && window.matchMedia('(hover: hover)').matches;
   const clearPeekTimer = () => { if (peekTimer.current) { clearTimeout(peekTimer.current); peekTimer.current = null; } };
@@ -1359,9 +1360,10 @@ export function App() {
     <AccountsContext value={accounts}>
     <div className="app">
       <header className="topbar">
-        {phone && <button type="button" className="menu" aria-label="메뉴" aria-expanded={drawer} onClick={() => setDrawer((d) => !d)}>☰</button>}
+        {/* ☰ (phone drawer / tablet sidebar fold) is the terminal's: a hub mode has no sidebar to open, so the mode switch is the first thing top-left. */}
+        {phone && !hubShown && <button type="button" className="menu" aria-label="메뉴" aria-expanded={drawer} onClick={() => setDrawer((d) => !d)}>☰</button>}
         {/* Tablet / unfolded (721–1100px, CSS only shows it there): a visible way to fold the sidebar away without ⌘\. */}
-        {!phone && <button type="button" className="icon-btn sidebar-toggle" aria-label={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} title={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} aria-pressed={!sidebarHidden} onClick={toggleSidebar} onMouseEnter={peekable && !peek ? armPeek : undefined} onMouseLeave={peekable ? () => { unlatchPeek(); leavePeek(); } : undefined}>☰</button>}
+        {!phone && !hubShown && <button type="button" className="icon-btn sidebar-toggle" aria-label={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} title={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} aria-pressed={!sidebarHidden} onClick={toggleSidebar} onMouseEnter={peekable && !peek ? armPeek : undefined} onMouseLeave={peekable ? () => { unlatchPeek(); leavePeek(); } : undefined}>☰</button>}
         {/* The session chip of the one pane (desktop) / the shown pane (phone) renders here (Pane → Chat, a portal). */}
         <ModeSwitcher mode={hubMode} onChange={setHubMode} mac={MAC} phone={phone} onOpenChange={(o) => { hubMenuOpen.current = o; }} />
         {!phone && hubShown && <HubSummary status={hubFeed.status} fetchedAt={hubFeed.fetchedAt} error={hubFeed.error} pushOn={hubPushOn} />}

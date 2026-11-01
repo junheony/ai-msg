@@ -117,6 +117,25 @@ describe('MSG hub shell', () => {
     expect(sock.frames.some((f) => f.type === 'hub_watch')).toBe(false);
   });
 
+  it('the top-left ☰ (sidebar fold, hover peek) belongs to the terminal: gone in every hub mode, back on return', async () => {
+    localStorage.setItem('deck.sidebarHidden', '1');
+    window.matchMedia = ((query: string) => ({ matches: query.includes('pointer: fine') || query.includes('hover: hover'), media: query, onchange: null, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false })) as unknown as typeof window.matchMedia;
+    try {
+      await boot();
+      expect(screen.getByRole('button', { name: '사이드바 보이기' })).toBeTruthy();
+      expect(screen.getByTestId('sidebar-hotzone')).toBeTruthy();
+      expect(document.querySelector('.topbar')!.firstElementChild!.classList.contains('sidebar-toggle')).toBe(true);
+      fireEvent.click(railButtons()[2]!); // Ctrl+digit keeps its pinned-row meaning in the terminal: the rail switches
+      await screen.findByTestId('hub-mode-nexus');
+      expect(screen.queryByRole('button', { name: /사이드바/ })).toBeNull();
+      expect(screen.queryByTestId('sidebar-hotzone')).toBeNull();
+      expect(document.querySelector('.topbar')!.firstElementChild!.classList.contains('hub-switch-wrap')).toBe(true);
+      press('Digit2');
+      await waitFor(() => expect(screen.queryByTestId('hub-overlay')).toBeNull());
+      expect(screen.getByRole('button', { name: '사이드바 보이기' })).toBeTruthy();
+      expect(screen.getByTestId('sidebar-hotzone')).toBeTruthy();
+    } finally { (window as { matchMedia?: unknown }).matchMedia = undefined; }
+  });
   it('restores the last mode on reload; Ctrl+digit (and Ctrl+0) switch modes outside the terminal; 원본 보기 frames only on demand', async () => {
     localStorage.setItem('deck.hubMode', 'quant');
     await boot();
