@@ -76,6 +76,10 @@ describe('chart', () => {
     sec({ kind: 'chart', title: 'd', open: true, x: ['a', 'b'], unit: '$', series: [{ name: 'pnl', values: [60_200, -60_200] }] });
     expect(screen.getByTestId('hub-chart').querySelector('.hs-leg b')!.textContent).toBe('−$60.2K');
   });
+  it('rounds before picking the number of decimals', () => {
+    sec({ kind: 'chart', title: 'r', open: true, x: ['a'], unit: 's', series: [{ name: 'p', values: [99.96] }, { name: 'q', values: [9.996] }, { name: 'w', values: [999.7] }] });
+    expect(Array.from(screen.getByTestId('hub-chart').querySelectorAll('.hs-leg b')).map((b) => b.textContent)).toEqual(['100s', '10s', '1Ks']);
+  });
   it('measures its width even when the data arrives after a first empty render', () => {
     const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 320 } as DOMRect);
     try {

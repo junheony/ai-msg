@@ -18,7 +18,7 @@ export interface SrChartProps { candles: readonly ReplayCandle[]; ranges: readon
 const KST = 'Asia/Seoul';
 const fmtTick = new Intl.DateTimeFormat('en-GB', { timeZone: KST, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 const fmtFull = new Intl.DateTimeFormat('en-GB', { timeZone: KST, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-const fmtDay = new Intl.DateTimeFormat('en-US', { timeZone: KST, month: '2-digit', day: '2-digit' });
+const fmtDay = new Intl.DateTimeFormat('en-GB', { timeZone: KST, month: '2-digit', day: '2-digit' });
 const fmtTime = new Intl.DateTimeFormat('en-GB', { timeZone: KST, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 const SIDE_KO = { support: '지지', resistance: '저항' } as const;
 /** Below this chart width a tick is only its date or only its time: the full `29/10, 09:00` does not fit. */
@@ -50,12 +50,14 @@ export function SrChart({ candles, ranges, candleColors, height = 360 }: SrChart
     const { createChart, CandlestickSeries, ColorType, CrosshairMode, TickMarkType } = lwc;
     const last = candles[candles.length - 1]!.c;
     const precision = precisionOf(last);
+    let narrow = host.clientWidth < NARROW_PX;
+    const tickMarkFormatter = (t: Time, type: import('lightweight-charts').TickMarkType) => srTick((t as number) * 1000, type === TickMarkType.Time || type === TickMarkType.TimeWithSeconds, narrow);
     const chart = createChart(host, {
       autoSize: true,
       layout: { background: { type: ColorType.Solid, color: theme.bg }, textColor: theme.muted, ...chartText(theme), attributionLogo: false },
       grid: { vertLines: { color: theme.grid }, horzLines: { color: theme.grid } },
       rightPriceScale: { borderColor: theme.border, scaleMargins: { top: 0.1, bottom: 0.1 } },
-      timeScale: { borderColor: theme.border, timeVisible: true, secondsVisible: false, rightOffset: 10, barSpacing: 6, minBarSpacing: 2, tickMarkMaxCharacterLength: 12, tickMarkFormatter: (t: Time, type: import('lightweight-charts').TickMarkType) => srTick((t as number) * 1000, type === TickMarkType.Time || type === TickMarkType.TimeWithSeconds, host.clientWidth < NARROW_PX) },
+      timeScale: { borderColor: theme.border, timeVisible: true, secondsVisible: false, rightOffset: 10, barSpacing: 6, minBarSpacing: 2, tickMarkMaxCharacterLength: 12, tickMarkFormatter },
       localization: { timeFormatter: (t: Time) => fmtFull.format(new Date((t as number) * 1000)), locale: 'ko-KR' },
       crosshair: { mode: CrosshairMode.Normal },
       // The bands are placed from the price scale: keep that scale automatic so a scroll is the only thing that moves them.
@@ -102,7 +104,12 @@ export function SrChart({ candles, ranges, candleColors, height = 360 }: SrChart
     const raf = requestAnimationFrame(place);
     chart.timeScale().subscribeVisibleLogicalRangeChange(place);
     let roRaf = 0;
-    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { cancelAnimationFrame(roRaf); roRaf = requestAnimationFrame(place); }) : null;
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => {
+      // the chart caches each tick's label: crossing NARROW_PX re-applies the formatter so the whole axis switches together
+      const n = host.clientWidth < NARROW_PX;
+      if (n !== narrow) { narrow = n; chart.applyOptions({ timeScale: { tickMarkFormatter } }); }
+      cancelAnimationFrame(roRaf); roRaf = requestAnimationFrame(place);
+    }) : null;
     ro?.observe(host);
     return () => {
       alive = false;

@@ -45,7 +45,7 @@ describe('srTick', () => {
     const { srTick } = await vi.importActual<typeof import('./SrChart')>('./SrChart');
     expect(srTick(AT, true, false)).toBe('29/10, 09:00');
     expect(srTick(AT, true, true)).toBe('09:00');
-    expect(srTick(AT, false, true)).toBe('10/29');
+    expect(srTick(AT, false, true)).toBe('29/10');
   });
 });
 

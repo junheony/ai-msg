@@ -21,9 +21,11 @@ const trim = (n: number): string => (n >= 100 ? String(Math.round(n)) : n >= 10 
 /** The value at a point, for the legend and the hover readout. */
 function val(v: number | null | undefined, unit?: string): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return '—';
-  const a = Math.abs(v);
-  // three significant digits or so: 233.68s → 234s, 14.62% → 14.6%, 0.0012% stays visible
-  const t = a >= 1000 ? tick(v) : (Number.isInteger(v) ? String(v) : a >= 100 ? String(Math.round(v)) : a >= 10 ? v.toFixed(1) : a >= 0.01 ? v.toFixed(2) : v.toPrecision(2)).replace('-', '−');
+  // three significant digits or so: 233.68s → 234s, 14.62% → 14.6%, 0.0012% stays visible; the branch is picked from
+  // the rounded value, so 99.96 reads 100 (not 100.0) and 999.7 reads 1K like 1000 does
+  const r = Number.isInteger(v) || Math.abs(v) < 0.01 ? v : Number(v.toPrecision(3));
+  const a = Math.abs(r);
+  const t = a >= 1000 ? tick(r) : (Number.isInteger(r) ? String(r) : a >= 100 ? String(Math.round(r)) : a >= 10 ? r.toFixed(1) : a >= 0.01 ? r.toFixed(2) : r.toPrecision(2)).replace('-', '−');
   // a currency sign leads the number (−$60.2K, not −60.2K$); a word unit follows it
   if (unit === '$') return t.startsWith('−') ? `−$${t.slice(1)}` : `$${t}`;
   return unit ? `${t}${unit}` : t;
