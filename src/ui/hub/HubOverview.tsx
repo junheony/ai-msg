@@ -18,7 +18,7 @@ export function HubCard({ mode, now, onOpenMode }: { mode: HubMode; now: number;
         <span className="ico"><HubIcon name={def.icon} /></span>
         <h3>{mode.name}</h3>
         {mode.tag && <span className="hub-tag">{mode.tag}</span>}
-        <StatePill state={mode.state} />
+        <StatePill state={mode.state} label={mode.stateLabel} />
       </div>
       <p className="hl">{headlineOf(mode)}</p>
       {kpis.length > 0 && (
@@ -43,9 +43,10 @@ export function HubOverview({ status, error, loading, fetchedAt, now, pushOn, on
   const attention = modes.flatMap((m) => m.alerts.filter((a) => a.level !== 'info').map((a) => ({ ...a, who: m.name, onWho: () => onOpenMode(m.id) })));
   attention.sort((a, b) => (a.level === b.level ? 0 : a.level === 'bad' ? -1 : 1));
   const first = attention[0];
-  const sources = modes.reduce((s, m) => s + m.sources.length, 0);
-  const sourcesOk = modes.reduce((s, m) => s + m.sources.filter((x) => x.ok).length, 0);
-  const headline = `장애 ${n.down} · 주의 ${n.warn} · 정상 ${n.ok}${n.idle ? ` · 대기 ${n.idle}` : ''}${n.unknown ? ` · 미확인 ${n.unknown}` : ''}`;
+  const sources = modes.reduce((s, m) => s + m.sources.filter((x) => !x.off).length, 0);
+  const sourcesOk = modes.reduce((s, m) => s + m.sources.filter((x) => x.ok && !x.off).length, 0);
+  const off = modes.filter((m) => m.state === 'idle' && m.stateLabel).length;
+  const headline = `장애 ${n.down} · 주의 ${n.warn} · 정상 ${n.ok}${n.idle - off ? ` · 대기 ${n.idle - off}` : ''}${off ? ` · 꺼짐 ${off}` : ''}${n.unknown ? ` · 미확인 ${n.unknown}` : ''}`;
   const decision = first ? `${first.who} — ${first.text}${first.hint ? ` → ${first.hint}` : ''}` : '지금 결정할 것 없음';
   return (
     <div className="hub-page" data-testid="hub-overview">

@@ -187,7 +187,7 @@ describe('QUANT collector (work environment)', () => {
     expect(units[2]!.rows).toEqual([{ label: '역할', value: 'v9mk4 paper arm M3 (maker_v2 perp_pull 실험, … config/v9mk4_M3.json)' }]);
     expect(units[3]!.note).toContain('로그 확인');
     expect(m.alerts).toEqual([
-      { level: 'bad', text: 'v9pp-ex 실패 (exit-code) · 10-15 00:43', hint: '로그 확인 후 재시작/폐기 결정', at: '2026-10-14T15:43:32.000Z' },
+      { level: 'warn', text: 'v9pp-ex 실패 (exit-code) · 10-15 00:43', hint: '로그 확인 후 재시작/폐기 결정', at: '2026-10-14T15:43:32.000Z' },
       { level: 'warn', text: '계정 수집 지연: 빗썸2 🔴 수집 3시간전 · 디스크 57%(잔여 21G)', hint: 'infra watch 2026-10-30' },
       { level: 'info', text: '페이퍼 A/B 유닛 2개 정지 19일 (10-11 13:01) — 재개/폐기 미결', at: '2026-10-11T04:01:43.998Z' },
       { level: 'info', text: '범수동생계정3 어제 순익 -25만원', hint: '상위 심볼: DOGE -20만원' },

@@ -34,13 +34,12 @@ describe('header while Shorts 공장 is selected', () => {
     expect(txt(header)).not.toContain('studio-src');
     expect(txt(header)).toContain('파일 갱신');
     expect(txt(header)).not.toContain('61일 전');
-    expect(within(screen.getByTestId('sf-src-list')).getAllByText(/\.json|\.jsonl/).map((e) => e.textContent)).toEqual(['status.json', 'channels.json', 'history.jsonl']);
-    expect(txt(screen.getByTestId('hub-mode-video').querySelector('footer.foot')!)).toContain('파일 3/3 최신');
+    expect(within(screen.getByTestId('hub-sources')).getAllByText(/\.json|\.jsonl/).map((e) => e.textContent)).toEqual(['status.json', 'channels.json', 'history.jsonl']);
     cleanup();
     page({ ...video(EMPTY), state: 'ok' });
     const h2 = screen.getByTestId('hub-mode-video').querySelector('header.ph')!;
-    expect(txt(h2)).toContain('status.json · 없음');
-    expect(txt(screen.getByTestId('hub-mode-video').querySelector('footer.foot')!)).toContain('파일 0/3 최신');
+    expect(txt(h2)).toContain('status.json');
+    expect(txt(h2)).toContain('없음');
   });
 });
 

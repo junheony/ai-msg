@@ -160,3 +160,21 @@
 @media (max-width: 600px) {
   .hub-page[data-mode="trading"] .kpis { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ── the scoreboard: one line per bot ── */
+.tr-sb .hub-tag { margin-left: 2px; }
+.tr-sb-rows { display: flex; flex-direction: column; }
+.tr-sb-row { display: grid; grid-template-columns: minmax(0, 2.4fr) minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, .8fr) minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 10px 16px; border-top: 1px solid var(--glass-line); font-variant-numeric: tabular-nums; }
+.tr-sb-head { padding-block: 6px; border-top: 0; font-size: var(--fs-2xs); color: var(--faint); }
+.tr-sb-name strong { display: block; font-weight: 500; color: var(--fg-strong); }
+.tr-sb-name small { display: block; margin-top: 2px; font-size: var(--fs-2xs); color: var(--faint); }
+.tr-sb-row b { font-family: var(--hub-font); font-weight: 500; color: var(--fg-strong); overflow-wrap: anywhere; }
+.tr-sb-row b.pos { color: var(--hub-ok); }
+.tr-sb-row b.neg { color: var(--hub-bad); }
+.tr-sb-none { font-size: var(--fs-xs); color: var(--faint); }
+@media (max-width: 720px) {
+  .tr-sb-head { display: none; }
+  .tr-sb-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; padding: 10px 12px; }
+  .tr-sb-name { grid-column: 1 / -1; }
+  .tr-sb-row [data-k]::before { content: attr(data-k); display: block; font-size: var(--fs-2xs); color: var(--faint); }
+}

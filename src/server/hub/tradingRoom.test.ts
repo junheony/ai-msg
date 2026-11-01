@@ -24,7 +24,7 @@ describe('buildRoom', () => {
     expect(v.workstreams.map((w) => w.pnl)).toEqual([null, null, null]);
     expect(JSON.stringify(v)).not.toMatch(/total_pnl|pnl_sum|합계/);
     expect(v.alerts).toEqual([{ level: 'warn', text: '스냅샷 오래됨 …', at: '2026-10-31T06:16:06.000Z' }]);
-    expect(v.kpis.map((k) => [k.label, k.value, k.status])).toEqual([['트레이딩룸 :8830', 'ok', 'ok'], ['워크스트림', '3/3 정상', 'ok'], ['온체인 알림', '1,113', 'info']]);
+    expect(v.kpis.map((k) => [k.label, k.value, k.status])).toEqual([['트레이딩룸 :8830', '주의', 'warn'], ['워크스트림', '3/3 정상', 'ok'], ['온체인 알림', '1,113', 'info']]);
     noHome(v);
   });
   it('warns on a stalled shadow heartbeat and on adaptive_live=true, and badges an unknown taker when the heartbeat is missing', () => {
@@ -44,7 +44,7 @@ describe('buildRoom', () => {
     expect(fresh.error).toBe('연결 실패');
     expect(fresh.ageH).toBe(2);
     expect(fresh.stale).toBe(false);
-    expect(fresh.alerts[0]).toMatchObject({ level: 'info', text: ':8830 응답 없음 — 스냅샷으로 대체 표시 · 2h 경과', at: '2026-10-30T06:44:35.000Z' });
+    expect(fresh.alerts[0]).toMatchObject({ level: 'info', text: '트레이딩룸 봇 응답 없음 — 스냅샷 표시 · 2시간 전', at: '2026-10-30T06:44:35.000Z' });
     expect(fresh.workstreams[0]!.rows).toEqual([{ label: '테이커 지표', value: '스냅샷에 없음', status: 'info' }]);
     expect(fresh.workstreams[0]!.state).toBe('unknown');
     expect(fresh.workstreams[1]!.rows.map((r) => r.value)).toEqual(['켜짐 · paper', '아니오', '3 종목', '10-28 03:18', '25행 · 승격 아니오', 'graft-v1']);
@@ -54,7 +54,7 @@ describe('buildRoom', () => {
     const stale = buildRoom({ status: null, snapshot: SNAPSHOT_8830, statusError: '시간 초과' }, at + (SNAP_STALE_H + 0.5) * H);
     expect(stale.stale).toBe(true);
     expect(stale.ageH).toBe(24.5);
-    expect(stale.alerts[0]).toMatchObject({ level: 'warn', text: ':8830 응답 없음 — 스냅샷으로 대체 표시 · 24.5h 경과 (24h 초과, 오래됨)' });
+    expect(stale.alerts[0]).toMatchObject({ level: 'warn', text: '트레이딩룸 봇 응답 없음 — 오래된 스냅샷 표시 · 24.5시간 전' });
     expect(stale.kpis[0]).toMatchObject({ value: '스냅샷', status: 'warn' });
     noHome(fresh); noHome(stale);
   });
@@ -62,8 +62,8 @@ describe('buildRoom', () => {
     const v = buildRoom({ status: null, snapshot: null, statusError: '연결 실패' }, BOT_NOW);
     expect(v.via).toBe('none');
     expect(v.workstreams.map((w) => [w.label, w.state])).toEqual([['테이커', 'unknown'], ['메이커', 'unknown'], ['어댑티브', 'unknown']]);
-    expect(v.alerts[0]).toMatchObject({ level: 'warn', text: ':8830 응답 없음 · 연결 실패 — 스냅샷 파일도 없음' });
-    expect(v.kpis[0]).toMatchObject({ value: '응답 없음', status: 'bad' });
+    expect(v.alerts[0]).toMatchObject({ level: 'warn', text: '트레이딩룸 봇 응답 없음 · 연결 실패' });
+    expect(v.kpis[0]).toMatchObject({ value: '데이터 없음', status: 'info' });
   });
 });
 
@@ -80,7 +80,9 @@ describe('collectRoom', () => {
     expect(r.status).toBe(STATUS_8830);
     expect(r.sources.map((s) => [s.name, s.ok])).toEqual([['trading /api/status', true], ['trading /api/health', true], ['trading snapshot', true]]); // snapshot is 23.5h old at BOT_NOW: still fresh
     const later = await collectRoom({ ...deps({ [HUB_URLS.trading]: STATUS_8830 }, { [SNAPSHOT_FILE]: JSON.stringify(SNAPSHOT_8830) }), now: () => BOT_NOW + 3 * H });
-    expect(later.sources[2]).toMatchObject({ name: 'trading snapshot', ok: false, error: '24h 초과' });
+    expect(later.sources[2]).toMatchObject({ name: 'trading snapshot', ok: true }); // an old backup file is no fault while the bot itself answers
+    const silent = await collectRoom({ ...deps({}, { [SNAPSHOT_FILE]: JSON.stringify(SNAPSHOT_8830) }), now: () => BOT_NOW + 3 * H });
+    expect(silent.sources[2]).toMatchObject({ name: 'trading snapshot', ok: false, error: '24h 초과' });
   });
   it('marks health ok=false and a broken snapshot file as source errors', async () => {
     const r = await collectRoom(deps({ [HUB_URLS.tradingHealth]: { ok: false } }, { [SNAPSHOT_FILE]: '{not json' }));

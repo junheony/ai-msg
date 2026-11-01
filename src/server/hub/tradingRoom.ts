@@ -14,6 +14,8 @@ export const SNAP_STALE_H = 24;
 /** The pump-shadow heartbeat is written every poll; this long without one is a stall. */
 const HEARTBEAT_WARN_S = 600;
 const NO_PNL = 'PnL 미보고 · 워크스트림별 개별 표시, 합산 안 함';
+/** The bot's note about its backup snapshot file: while the bot itself answers, that backup is not in use and not a problem. */
+const FALLBACK_NOTE_RE = /snapshot stale/i;
 
 const yes = (v: unknown): string => (v === true ? '예' : v === false ? '아니오' : '—');
 const onOff = (v: unknown): string => (v === true ? '켜짐' : v === false ? '꺼짐' : '—');
@@ -96,23 +98,23 @@ export function buildRoom(input: RoomInput, nowMs: number): TradingRoomView {
   const m = status && isObj(status.metrics) ? status.metrics : {};
   if (status) {
     for (const a of arr(status.alerts).slice(0, 8)) {
-      if (typeof a === 'string') alerts.push({ level: 'warn', text: scrub(a) });
-      else if (isObj(a)) { const t = str(a.text) ?? str(a.msg); if (t) alerts.push({ level: a.level === 'error' || a.level === 'bad' ? 'bad' : a.level === 'info' ? 'info' : 'warn', text: scrub(t), at: toIso(a.at ?? a.ts) }); }
+      if (typeof a === 'string') { if (!FALLBACK_NOTE_RE.test(a)) alerts.push({ level: 'warn', text: scrub(a) }); }
+      else if (isObj(a)) { const t = str(a.text) ?? str(a.msg); if (t && !FALLBACK_NOTE_RE.test(t)) alerts.push({ level: a.level === 'error' || a.level === 'bad' ? 'bad' : a.level === 'info' ? 'info' : 'warn', text: scrub(t), at: toIso(a.at ?? a.ts) }); }
     }
   }
   const via: TradingRoomView['via'] = status ? 'live' : snapshot ? 'snapshot' : 'none';
   const generatedAt = status ? toIso(status.generated_at) : snapshot ? toIso(snapshot.snapshot_generated_at) : null;
   const ageH = generatedAt ? Math.max(0, nowMs - Date.parse(generatedAt)) / HOUR_MS : null;
   const stale = via === 'snapshot' && (ageH === null || ageH > SNAP_STALE_H);
-  if (via === 'snapshot') alerts.unshift({ level: stale ? 'warn' : 'info', text: stale ? `:8830 응답 없음 — 스냅샷으로 대체 표시 · ${ageH === null ? '생성 시각 미상' : `${fmtNum(ageH, 1)}h 경과`} (${SNAP_STALE_H}h 초과, 오래됨)` : `:8830 응답 없음 — 스냅샷으로 대체 표시 · ${fmtNum(ageH ?? 0, 1)}h 경과`, at: generatedAt, hint: 'trading-status.service 응답 확인 (여기서는 읽기만)' });
-  if (via === 'none') alerts.unshift({ level: 'warn', text: `:8830 응답 없음 · ${input.statusError ?? '오류'} — 스냅샷 파일도 없음`, hint: 'trading-status.service 와 스냅샷 경로 확인' });
+  if (via === 'snapshot') alerts.unshift({ level: stale ? 'warn' : 'info', text: stale ? `트레이딩룸 봇 응답 없음 — 오래된 스냅샷 표시 · ${ageH === null ? '생성 시각 미상' : `${fmtNum(ageH, 1)}시간 전`}` : `트레이딩룸 봇 응답 없음 — 스냅샷 표시 · ${fmtNum(ageH ?? 0, 1)}시간 전`, at: generatedAt });
+  if (via === 'none') alerts.unshift({ level: 'warn', text: `트레이딩룸 봇 응답 없음 · ${input.statusError ?? '오류'}` });
   const botSnapshotAgeH = num(m.snapshot_age_h);
   const workstreams: TradingWorkstream[] = via === 'none'
     ? (['taker', 'maker', 'adaptive'] as const).map((id) => ({ id, label: id === 'taker' ? '테이커' : id === 'maker' ? '메이커' : '어댑티브', badge: '—', state: 'unknown' as HubState, rows: [{ label: '상태', value: '자료 없음', status: 'info' as const }], pnl: null, pnlNote: NO_PNL, note: ':8830 도 스냅샷도 없음' }))
     : [taker(m, via === 'live'), maker(m, snapshot), adaptive(m, snapshot)];
   const stateStr = status ? str(status.state, 10) : null;
   const kpis: HubKpi[] = [
-    kpi('트레이딩룸 :8830', via === 'live' ? (stateStr ?? 'ok') : via === 'snapshot' ? '스냅샷' : '응답 없음', { status: via === 'live' ? (stateStr === 'ok' ? 'ok' : stateStr === 'down' ? 'bad' : 'warn') : via === 'snapshot' ? (stale ? 'warn' : 'info') : 'bad', hint: generatedAt ? `${via === 'live' ? '생성' : '스냅샷'} ${agoFrom(generatedAt, nowMs)}` : (input.statusError ?? '') }),
+    kpi('트레이딩룸 :8830', via === 'live' ? (stateStr === 'down' ? '멈춤' : alerts.some((a) => a.level !== 'info') ? '주의' : '정상') : via === 'snapshot' ? '스냅샷' : '데이터 없음', { status: via === 'live' ? (stateStr === 'down' ? 'bad' : alerts.some((a) => a.level !== 'info') ? 'warn' : 'ok') : via === 'snapshot' ? (stale ? 'warn' : 'info') : 'info', hint: generatedAt ? `${via === 'live' ? '생성' : '스냅샷'} ${agoFrom(generatedAt, nowMs)}` : (input.statusError ?? '') }),
     kpi('워크스트림', `${workstreams.filter((w) => w.state === 'ok').length}/3 정상`, { status: workstreams.some((w) => w.state === 'warn') ? 'warn' : workstreams.every((w) => w.state === 'unknown') ? 'info' : 'ok', hint: '테이커 · 메이커 · 어댑티브 개별' }),
     kpi('온체인 알림', count(m.onchain_alerts_count ?? (snapshot && isObj(snapshot.onchain_sell_alerts) ? snapshot.onchain_sell_alerts.count : null)), { status: 'info', hint: `마지막 ${when(m.last_onchain_alert_ts ?? (snapshot && isObj(snapshot.onchain_sell_alerts) ? snapshot.onchain_sell_alerts.last_ts : null))}` }),
   ];
@@ -137,11 +139,11 @@ export async function collectRoom(deps: HubDeps): Promise<RoomResult> {
   const healthOk = isObj(health.data) && health.data.ok === true;
   // the file's own age, whether or not it was needed this round, so a rotting fallback shows up while :8830 is still fine
   const snapAt = snapshot ? toIso(snapshot.snapshot_generated_at) : null;
-  const snapStale = snapAt !== null && deps.now() - Date.parse(snapAt) > SNAP_STALE_H * HOUR_MS;
+  const snapStale = view.via !== 'live' && snapAt !== null && deps.now() - Date.parse(snapAt) > SNAP_STALE_H * HOUR_MS;
   const sources: HubSource[] = [
     st.source,
     { ...health.source, ok: health.source.ok && healthOk, ...(health.source.ok && !healthOk ? { error: 'ok=false' } : {}) },
-    { name: 'trading snapshot', ok: snapshot !== null && !snapStale, ms: 0, ...(snapshot === null ? { error: '파일 없음' } : snapStale ? { error: `${SNAP_STALE_H}h 초과` } : {}) },
+    { name: 'trading snapshot', ok: view.via === 'live' || (snapshot !== null && !snapStale), ms: 0, ...(view.via !== 'live' ? (snapshot === null ? { error: '파일 없음' } : snapStale ? { error: `${SNAP_STALE_H}h 초과` } : {}) : {}) },
   ];
   return { view, status, sources };
 }

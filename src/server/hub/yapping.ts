@@ -90,10 +90,10 @@ export async function collectYapping(deps: HubDeps): Promise<HubMode> {
   const yp = isObj(yap_.data) ? yap_.data : null;
   const todoD = isObj(todo_.data) ? todo_.data : null, doneD = isObj(done_.data) ? done_.data : null;
   const scan = scanLogs(logs, now);
-  const sources: HubSource[] = [status.source, metrics_.source, posts_.source, news_.source, yap_.source, todo_.source, done_.source, { name: 'systemd', ok: svc.active !== 'missing', ms: 0, ...(svc.active === 'missing' ? { error: '유닛 없음' } : {}) }, { name: '로그', ok: logs.some((l) => l !== null), ms: 0, ...(logs.every((l) => l === null) ? { error: '파일 없음' } : {}) }];
+  const sources: HubSource[] = [status.source, metrics_.source, posts_.source, news_.source, yap_.source, todo_.source, done_.source, { name: 'systemd', ok: svc.active !== 'missing', ms: 0, ...(svc.active === 'missing' ? { off: true, error: '미설정' } : {}) }, { name: '로그', ok: logs.some((l) => l !== null), ms: 0, ...(logs.every((l) => l === null) ? { error: '파일 없음' } : {}) }];
   const links = [{ label: 'x.com/cblabx', href: 'https://x.com/cblabx' }];
   if (st === null && me === null && po === null && svc.active === 'missing') {
-    return { id: 'yapping', name: '야핑봇', state: 'unknown', lastActivity: null, metrics: {}, alerts: [{ level: 'warn', text: '서비스·API·systemd 모두 응답 없음' }], links, sources, page: page('상태 확인 불가', '야핑봇 서비스 가동 여부 확인 (읽기 전용)', [], []) };
+    return { id: 'yapping', name: '야핑봇', state: 'idle', stateLabel: '꺼짐', lastActivity: null, metrics: {}, alerts: [{ level: 'info', text: '야핑봇 꺼짐 · 서비스·API 응답 없음' }], links, sources: sources.map((x) => (x.ok ? x : { ...x, off: true })), page: page('야핑봇 꺼짐', '조치 없음', [], []) };
   }
 
   // ── facts: posts / drafts ──
@@ -155,9 +155,9 @@ export async function collectYapping(deps: HubDeps): Promise<HubMode> {
   if (svc.active !== 'missing' && !serviceUp) alerts.push({ level: 'bad', text: `서비스 ${UNIT_STATE_KO[svc.active]}${svc.sub ? ` (${svc.sub})` : ''}${svc.since ? ` · ${agoFrom(svc.since, now)}` : ''}` });
   if (llm === false) alerts.push({ level: 'bad', text: 'LLM 백엔드 사용 불가' });
   for (const p of [status, posts_, news_, yap_]) if (!p.source.ok) alerts.push({ level: 'warn', text: `${p.source.name} 응답 없음 · ${p.source.error ?? '오류'}` });
-  if (oldDrafts.length) alerts.push({ level: 'warn', text: `초안 ${oldDrafts.length}건 ${DRAFT_OLD_DAYS}일 이상 대기 · 최고 ${fmtKst(oldestDraft)}`, at: oldestDraft, hint: '대기 초안에서 고르거나 버리기' });
-  for (const l of unsubmitted.slice(0, 5)) alerts.push({ level: 'warn', text: `${str(l.project, 30) ?? '?'} yap 링크 미제출 · 게시 ${fmtKst(toIso(l.posted_at))}`, at: toIso(l.posted_at), hint: scrub(l.url, 120) });
-  for (const s of missed) alerts.push({ level: 'warn', text: `${s.label} 슬롯 지남 · 게시 없음` });
+  if (oldDrafts.length) alerts.push({ level: 'info', text: `초안 ${oldDrafts.length}건 ${DRAFT_OLD_DAYS}일 이상 대기 · 최고 ${fmtKst(oldestDraft)}`, at: oldestDraft, hint: '대기 초안에서 고르거나 버리기' });
+  for (const l of unsubmitted.slice(0, 5)) alerts.push({ level: 'info', text: `${str(l.project, 30) ?? '?'} yap 링크 미제출 · 게시 ${fmtKst(toIso(l.posted_at))}`, at: toIso(l.posted_at), hint: scrub(l.url, 120) });
+  for (const s of missed) alerts.push({ level: 'info', text: `${s.label} 슬롯 지남 · 게시 없음` });
   for (const t of timers) {
     if (t.u.active === 'missing') continue;
     if (t.u.active !== 'active') alerts.push({ level: 'warn', text: `타이머 ${t.label} ${UNIT_STATE_KO[t.u.active]}` });

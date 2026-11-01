@@ -195,6 +195,14 @@ describe('collectNexus', () => {
     expect(budgets.get(HUB_URLS.nexus)).toBe(HUB_TIMEOUTS.nexus);
     expect(budgets.get(HUB_URLS.nexusHome)).toBe(HUB_TIMEOUTS.nexus);
   });
+  it('reads the engine\'s zone-less last_scan as UTC, so a running scanner on a KST server is not 9 hours stuck, and a short-interval one needs 5 minutes to count as stalled', async () => {
+    const iso = (ms: number): string => new Date(ms).toISOString().slice(0, 23); // the engine's format: UTC, no Z
+    const alerts = async (strategies: Record<string, unknown>) => (await collectNexus(deps({ nexus: { ...ENGINE, strategies } }))).alerts.map((x) => x.text).filter((t) => t.includes('스캔 정체'));
+    expect(await alerts({ a: { enabled: true, running: true, scan_interval: 60, last_scan: iso(NOW - 30_000) }, fast: { enabled: true, running: true, scan_interval: 0.05, last_scan: iso(NOW - 60_000) } })).toEqual([]);
+    const stalled = await alerts({ a: { enabled: true, running: true, scan_interval: 60, last_scan: iso(NOW - 18 * 60_000) } });
+    expect(stalled).toHaveLength(1);
+    expect(stalled[0]).toContain('18분');
+  });
   it('keeps the last good engine answer when a later probe times out: 주의 with 이전 값 사용, never 장애 while the value is fresh', async () => {
     let now = NOW; let fail = false;
     const d = deps({ nexus: ENGINE, nexusHome: home() });
@@ -211,7 +219,7 @@ describe('collectNexus', () => {
     expect(m.page!.headline).toContain('DRY RUN');
     expect(m.sources[0]).toMatchObject({ name: 'engine /api/status', ok: false, error: '시간 초과 · 이전 값 사용' });
     expect(m.sources[1]).toMatchObject({ name: 'dashboard /api/v2/home', ok: false, error: '시간 초과 · 이전 값 사용' });
-    expect(m.alerts.some((a) => a.level === 'warn' && /엔진 응답 지연/.test(a.text))).toBe(true);
+    expect(m.alerts.some((a) => a.level === 'info' && /엔진 응답 지연/.test(a.text))).toBe(true); // a slow answer within the limit is a note, not a fault
     expect(m.alerts.some((a) => /대시보드 응답 지연/.test(a.text))).toBe(true);
     // A value older than the stale limit is no longer trusted: the engine counts as down again.
     now += 10 * 60_000;
