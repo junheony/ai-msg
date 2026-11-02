@@ -41,6 +41,7 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api': 'http://127.0.0.1:9320',
+      '^/lab(/|$)': 'http://127.0.0.1:9320',
       // The socket is `/ws`. A prefix match also swallowed `src/ui/ws.ts` (the module URL `/ws.ts`)
       // and the page never mounted. Only the endpoint itself is proxied.
       '/ws': {

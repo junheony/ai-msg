@@ -18,7 +18,7 @@ export function HubRail({ mode, status, onChange, mac }: { mode: HubModeKey; sta
     <nav ref={nav} className="rail" aria-label="모드" data-testid="hub-rail">
       {HUB_MODES.map((m, i) => {
         const on = m.id === mode;
-        const st = m.id === 'home' || m.id === 'research' ? null : status?.modes.find((x) => x.id === m.id)?.state ?? null;
+        const st = m.id === 'home' || m.id === 'research' || m.id === 'lab' ? null : status?.modes.find((x) => x.id === m.id)?.state ?? null;
         const digit = modeDigit(i);
         return (
           <button key={m.id} type="button" className={`rail-btn${on ? ' on' : ''}`} aria-current={on ? 'page' : undefined} data-mode={m.id}

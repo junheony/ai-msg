@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { HubOverview } from './HubOverview';
 import { HubPage } from './HubPage';
 import { ResearchPage } from './research/ResearchPanel';
+import { LabEmbed } from './lab/LabEmbed';
 import type { HubModeKey } from './modes';
 import type { HubFeed } from './useHubStatus';
 import { liveCtlApi, type CtlApi } from './controls/api';
@@ -25,6 +26,7 @@ export const HubView = memo(function HubView({ mode, onChangeMode, feed, pushOn,
   const ctl = useMemo<CtlContext | null>(() => (controls ? { feed: ctlFeed, compose, ...(onOpenTerminal ? { openTerminal: onOpenTerminal } : {}) } : null), [controls, ctlFeed, compose, onOpenTerminal]);
   if (mode === 'msg') return null;
   if (mode === 'research') return <div className="hub-main" data-mode={mode}><ResearchPage /></div>;
+  if (mode === 'lab') return <div className="hub-main" data-mode={mode}><LabEmbed /></div>;
   return (
     <CtlProvider value={ctl}>
       <div className="hub-main" data-mode={mode}>
