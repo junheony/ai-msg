@@ -11,10 +11,11 @@ import { relTime } from './time';
 import './shorts.css';
 
 export type VideoProject = 'studio' | 'factory';
-export const VIDEO_PROJECT_KEY = 'deck.hubVideoProject';
-export const VIDEO_PROJECTS: { id: VideoProject; label: string }[] = [{ id: 'studio', label: 'engineering-shorts' }, { id: 'factory', label: 'Shorts 공장' }];
+// v2: Shorts 공장 became the default (engineering-shorts is archived), so an older kept choice is not carried over.
+export const VIDEO_PROJECT_KEY = 'deck.hubVideoProject.v2';
+export const VIDEO_PROJECTS: { id: VideoProject; label: string }[] = [{ id: 'factory', label: 'Shorts 공장' }, { id: 'studio', label: 'engineering-shorts' }];
 export function readVideoProject(): VideoProject {
-  try { return localStorage.getItem(VIDEO_PROJECT_KEY) === 'factory' ? 'factory' : 'studio'; } catch { return 'studio'; }
+  try { return localStorage.getItem(VIDEO_PROJECT_KEY) === 'studio' ? 'studio' : 'factory'; } catch { return 'factory'; }
 }
 export function writeVideoProject(p: VideoProject): void {
   try { localStorage.setItem(VIDEO_PROJECT_KEY, p); } catch { /* storage unavailable: not kept */ }

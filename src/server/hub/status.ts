@@ -6,7 +6,7 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { HubAlert, HubKpi, HubMetricValue, HubMode, HubModeId, HubSection, HubSource, HubState, HubStatus } from '../../shared/hub-types';
+import type { HubAlert, HubKpi, HubMetricValue, HubMode, HubModeId, HubSection, HubSource, HubState, HubStatus, ShortsFactoryView } from '../../shared/hub-types';
 import { HUB_MODE_IDS } from '../../shared/hub-types';
 import { collectOps } from './ops';
 import { collectNexus } from './nexus';
@@ -106,8 +106,23 @@ const NAMES: Record<HubModeId, string> = { msg: 'MSG 터미널', nexus: 'NEXUS',
 /** The 영상 card plus its second project tab (Shorts 공장); a failing shorts collector never takes engineering-shorts down with it. */
 async function withShorts(deps: HubDeps, video: Promise<HubMode>): Promise<HubMode> {
   const [mode, shorts] = await Promise.all([video, collectShorts(deps).catch((err: unknown) => { console.error('[hub] shorts', errorText(err)); return null; })]);
-  return shorts ? { ...mode, shorts } : mode;
+  return leadWithShorts(mode, shorts);
 }
+
+/** The 영상 card led by Shorts 공장 (exported for tests). */
+export function leadWithShorts(mode: HubMode, shorts: ShortsFactoryView | null): HubMode {
+  // No Shorts 공장 files at all (not set up on this host): engineering-shorts keeps the card.
+  if (!shorts || [shorts.files.status, shorts.files.channels, shorts.files.history].every((f) => f.state === 'missing')) return shorts ? { ...mode, shorts } : mode;
+  // Shorts 공장 is the live project, so it speaks for the 영상 card (state, activity, 주의, metrics, the 정상/주의/장애
+  // summary); engineering-shorts joins only while it has an active (not archived) episode.
+  const studioLive = mode.state !== 'idle' && mode.state !== 'unknown';
+  const sfAt = latestIso(shorts.files.status.at, shorts.files.channels.at, shorts.files.history.at);
+  const state = studioLive && STATE_RANK[mode.state] > STATE_RANK[shorts.state] ? mode.state : shorts.state;
+  const alerts = sortAlerts([...shorts.alerts, ...(studioLive ? mode.alerts.map((a) => ({ ...a, text: `engineering-shorts · ${a.text}` })) : [])]);
+  const metrics: Record<string, HubMetricValue> = Object.fromEntries(shorts.kpis.slice(0, 4).map((k) => [k.label, k.value]));
+  return { ...mode, state, lastActivity: studioLive ? latestIso(sfAt, mode.lastActivity) : sfAt, alerts, metrics, shorts, videoOwn: { state: mode.state, lastActivity: mode.lastActivity, alerts: mode.alerts, metrics: mode.metrics } };
+}
+const STATE_RANK: Record<HubState, number> = { down: 4, warn: 3, ok: 2, idle: 1, unknown: 0 };
 
 /** One pass over every source. A collector that throws (it should not) becomes an `unknown` card; this never rejects. */
 export async function collectHubStatus(deps: HubDeps): Promise<HubStatus> {

@@ -113,6 +113,7 @@ describe('HubPage template', () => {
     page('msg');
     expect(screen.getByTestId('hub-sec-kv').textContent).toContain('abc123');
     cleanup();
+    localStorage.setItem('deck.hubVideoProject.v2', 'studio'); // the engineering-shorts tab
     page('video');
     expect(screen.getByTestId('hub-sec-text').querySelector('pre')!.textContent).toBe('첫 줄\n둘째 줄');
     expect(screen.getByTestId('hub-lead').className).toContain('idle');

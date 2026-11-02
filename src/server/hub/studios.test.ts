@@ -7,7 +7,7 @@ const NOW = Date.parse('2026-10-30T13:00:00Z'); // 22:00 KST
 const HOME = '/Users/alice';
 const at = (s: string): number => Date.parse(s);
 
-interface Fx { files?: Record<string, string>; dirs?: Record<string, string[]>; mtimes?: Record<string, number>; render?: { mtimeMs: number; name: string }; commit?: string | null }
+interface Fx { now?: number; files?: Record<string, string>; dirs?: Record<string, string[]>; mtimes?: Record<string, number>; render?: { mtimeMs: number; name: string }; commit?: string | null }
 
 /** Deps over an in-memory filesystem; paths are relative to HOME. */
 function deps(fx: Fx, stats?: { n: number }): HubDeps {
@@ -22,7 +22,7 @@ function deps(fx: Fx, stats?: { n: number }): HubDeps {
     listDir: async (d) => fx.dirs?.[rel(d)] ?? null,
     fileMtime: async (f) => { if (stats) stats.n++; return fx.mtimes?.[rel(f)] ?? null; },
     systemdShow: async () => null,
-    now: () => NOW, self: () => ({ uptimeMs: 1000, sessions: 0, activeTurns: 0 }), host: 'h', home: HOME,
+    now: () => fx.now ?? NOW, self: () => ({ uptimeMs: 1000, sessions: 0, activeTurns: 0 }), host: 'h', home: HOME,
   };
 }
 const section = (secs: HubSection[], title: RegExp): HubSection | undefined => secs.find((s) => title.test(s.title));
@@ -53,6 +53,8 @@ const QA = {
 };
 const DRAFT_QA = { file: '/Users/alice/engineering-shorts/episodes/x/renders/draft.mp4', width: 1080, height: 1920, duration_s: 90.048, fps: 30, size_bytes: 18497751, technical_video_pass: true, black_frame_heuristic: { event_count: 0 }, frozen_frame_heuristic: { event_count: 1, total_duration_s: 2.6 }, has_audible_audio: false, audio_gate: 'blocked_typecast_voice_pending' };
 
+const VIDEO_NOW = Date.parse('2026-09-20T13:00:00Z');
+
 function videoFx(): Fx {
   const e = `engineering-shorts/episodes/${EP}`;
   return {
@@ -72,6 +74,8 @@ function videoFx(): Fx {
       [`${e}/renders/draft.mp4`]: at('2026-09-01T06:10:00Z'), [`${e}/renders/poster.png`]: at('2026-09-01T06:09:00Z'), [`${e}/renders/contact-sheet.png`]: at('2026-09-01T06:10:30Z'), [`${e}/renders/draft.qa.json`]: at('2026-09-01T06:11:00Z'),
     },
     render: { mtimeMs: at('2026-09-01T06:10:30Z'), name: 'contact-sheet.png' },
+    // 19 days after the last change: idle (over 7 days) but not archived (30 days).
+    now: VIDEO_NOW,
   };
 }
 
@@ -127,7 +131,7 @@ describe('영상 스튜디오', () => {
     expect(cards.items[0]).toMatchObject({ title: '화재경보가 울려도 스프링클러가 전부 터지지 않는 이유', badge: '무음 시각 초안', state: 'warn', sub: EP });
     expect(cards.items[0]!.links).toEqual([{ label: '초안 영상', href: `/api/hub/file/video/episodes/${EP}/renders/draft.mp4` }, { label: '포스터', href: `/api/hub/file/video/episodes/${EP}/renders/poster.png` }]);
     expect(cards.items[0]!.rows.map((r) => [r.label, r.value])).toEqual([
-      ['검토', '09-01 15:10 · 59일 6시간 전'], ['게이트', '5/6 통과 · 오디오 차단'], ['초안', '90초 · 17.6 MB · 무음'], ['대본·콘티', '3비트 · 2샷 · 주장 1/2 검증'], ['승인', '미승인'], ['다음', 'Typecast API 키·Voice ID 설정'],
+      ['검토', '09-01 15:10 · 19일 6시간 전'], ['게이트', '5/6 통과 · 오디오 차단'], ['초안', '90초 · 17.6 MB · 무음'], ['대본·콘티', '3비트 · 2샷 · 주장 1/2 검증'], ['승인', '미승인'], ['다음', 'Typecast API 키·Voice ID 설정'],
     ]);
   });
   it('translates the blockers into actions, keeps the original as hint, and builds a concrete headline/decision', async () => {
@@ -149,7 +153,7 @@ describe('영상 스튜디오', () => {
     expect(m.alerts.find((a) => a.text === `${EP} · 오디오 게이트 차단`)).toMatchObject({ level: 'info' }); // idle project: a to-do, not a fault
     expect(m.alerts.some((a) => a.level !== 'info')).toBe(false);
     expect(m.page!.kpis.map((k) => [k.label, k.value])).toEqual([['에피소드', '1'], ['단계', '무음 시각 초안'], ['게이트 통과', '5/6'], ['초안 길이', '90s'], ['Now 체크', '1/2'], ['게시 승인', '미승인']]);
-    expect(m.metrics).toMatchObject({ '에피소드': 1, '최근 렌더': '59일 6시간 전', '파일': 'contact-sheet.png', '단계': '무음 시각 초안' });
+    expect(m.metrics).toMatchObject({ '에피소드': 1, '최근 렌더': '19일 6시간 전', '파일': 'contact-sheet.png', '단계': '무음 시각 초안' });
   });
   it('logs episode and project file events newest first with the backlog Now items', async () => {
     const m = await collectVideo(deps(videoFx()));
@@ -184,6 +188,25 @@ describe('영상 스튜디오', () => {
     const steps = section(m.page!.sections, /파이프라인/)!;
     if (steps.kind !== 'steps') throw new Error('steps');
     expect(steps.items.map((s) => s.state)).toEqual(['active', 'todo', 'todo', 'todo', 'todo', 'todo', 'todo', 'todo']);
+  });
+  it('archives an episode untouched for 30+ days: listed under 보관된 에피소드, never in gates, blockers, 주의 or state', async () => {
+    const m = await collectVideo(deps({ ...videoFx(), now: Date.parse('2026-11-02T13:00:00Z') }));
+    expect(m.state).toBe('idle');
+    expect(m.alerts).toEqual([]);
+    expect(m.page!.headline).toBe('진행 중인 에피소드 없음 · 보관 1개');
+    expect(m.page!.decision).toBe('조치 없음 — 운영은 Shorts 공장 탭');
+    expect(m.metrics).toMatchObject({ '에피소드': 0, '보관': 1 });
+    const titles = m.page!.sections.map((s) => s.title);
+    expect(titles.some((t) => /게이트|블로커|파이프라인|렌더/.test(t))).toBe(false);
+    expect(section(m.page!.sections, /보관된 에피소드/)).toMatchObject({ kind: 'list', items: [{ text: expect.stringMatching(/^화재경보가 울려도 .* · 마지막 활동 \d+일/), level: 'info', hint: '30일 넘게 변경 없음' }] });
+    expect(JSON.stringify(m)).not.toMatch(/Typecast 키 필요|시간 전 변경 없음/);
+  });
+  it('an ARCHIVED marker file archives a fresh episode too', async () => {
+    const fx = videoFx();
+    const m = await collectVideo(deps({ ...fx, mtimes: { ...fx.mtimes, [`engineering-shorts/episodes/${EP}/ARCHIVED`]: at('2026-09-20T00:00:00Z') } }));
+    expect(m.state).toBe('idle');
+    expect(m.alerts).toEqual([]);
+    expect(section(m.page!.sections, /보관된 에피소드/)).toMatchObject({ items: [{ hint: 'ARCHIVED 표시' }] });
   });
   it('is unknown with source error 폴더 없음 when nothing is readable, and never leaks home paths', async () => {
     const empty = await collectVideo(deps({}));

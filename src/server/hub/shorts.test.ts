@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCalendar, buildShortsView, collectShorts, kstTomorrow, ledgerStatusOf, normalizeLedgerStatusLabel, parseChannels, parseClaudePick, parseCodex, parseDf, parseDistribution, parseHistory, parseLedger, parseStatus, redact } from './shorts';
+import { buildCalendar, buildShortsView, collectShorts, kstTomorrow, ledgerStatusOf, normalizeLedgerStatusLabel, parseChannels, parseClaudePick, parseCodex, parseDf, parseDistribution, parseHistory, parseLedger, parseStatus, redact, parseBlockers } from './shorts';
 import { stripSecrets, type HubDeps } from './shared';
 import { CH1, CH2, CH3, CHANNELS, DIST, HISTORY, HOME, LEDGER, NOW, NO_PROBES, PLACEHOLDER, PROBES_OK, STATUS } from './__fixtures__/shorts';
 
@@ -370,5 +370,18 @@ describe("routines · longform · blockers (status.json, push_dashboard_status.p
     expect(v.longform).toBeNull();
     expect(v.blockers).toEqual([]);
     expect(v.kpis.find((k) => k.label === "롱폼 오늘")).toBeUndefined();
+  });
+});
+
+describe('stale blockers', () => {
+  it('drops a blocker raised more than 30 days ago; keeps recent ones and those without since', () => {
+    const now = Date.parse('2026-11-02T12:00:00Z');
+    const out = parseBlockers([
+      { id: 'old', text: '오래된 막힘', since: '2026-09-20T00:00:00+09:00' },
+      { id: 'new', text: '최근 막힘', since: '2026-10-30T00:00:00+09:00' },
+      { id: 'nodate', text: '날짜 없음' },
+    ], now);
+    expect(out.map((b) => b.id)).toEqual(['new', 'nodate']);
+    expect(parseBlockers([{ id: 'old', text: 'x', since: '2026-01-01' }]).map((b) => b.id)).toEqual(['old']); // no clock: kept
   });
 });

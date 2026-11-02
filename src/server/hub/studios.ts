@@ -91,6 +91,8 @@ interface Episode {
   shots: number | null; beats: number | null; targetS: number | null; claims: { total: number; verified: number } | null;
   qa: { durationS: number | null; sizeBytes: number | null; width: number | null; height: number | null; fps: number | null; techPass: boolean | null; black: number | null; frozen: number | null; frozenS: number | null; audible: boolean | null; audioGate: string | null } | null;
   events: FileEvent[]; lastAt: string | null;
+  /** An `ARCHIVED` marker file in the episode folder, or `archived: true` in qa_report.json. */
+  archived: boolean;
 }
 
 const EP_FILES: [string, string][] = [['qa_report.json', 'QA 보고서'], ['script.ko.yaml', '대본'], ['storyboard.yaml', '콘티'], ['claim_ledger.yaml', '주장 원장'], ['asset_manifest.yaml', '에셋 매니페스트'], ['source_pack.yaml', '출처 팩']];
@@ -103,6 +105,7 @@ async function loadEpisode(deps: HubDeps, dir: string, id: string, stat: (f: str
     ...EP_FILES.map(([f]) => stat(path.join(ep, f))),
   ]);
   const qa = parseJson(qaText);
+  const marker = await stat(path.join(ep, 'ARCHIVED'));
   const renders = (renderNames ?? []).slice(0, 10);
   const renderTimes = await Promise.all(renders.map((n) => stat(path.join(ep, 'renders', n))));
   const draftQa = renders.some((n) => n === 'draft.qa.json') ? parseJson(await readOpt(deps, path.join(ep, 'renders', 'draft.qa.json'))) : null;
@@ -130,6 +133,7 @@ async function loadEpisode(deps: HubDeps, dir: string, id: string, stat: (f: str
     hasScript: scriptText !== null || (epTimes[1] ?? null) !== null, hasStoryboard: storyText !== null || (epTimes[2] ?? null) !== null,
     shots: count(storyText, /^\s*-\s*shot_id:/gm), beats: count(scriptText, /^\s*-\s*beat_id:/gm), targetS: scriptText ? num(Number(/^\s*target_duration_s:\s*(\d+)/m.exec(scriptText)?.[1] ?? NaN)) : null,
     claims: claimTotal !== null ? { total: claimTotal, verified: claimVerified ?? 0 } : null,
+    archived: marker !== null || (qa !== null && qa.archived === true),
     qa: draftQa ? { durationS: num(draftQa.duration_s), sizeBytes: num(draftQa.size_bytes), width: num(draftQa.width), height: num(draftQa.height), fps: num(draftQa.fps), techPass: typeof draftQa.technical_video_pass === 'boolean' ? draftQa.technical_video_pass : null, black: isObj(draftQa.black_frame_heuristic) ? num(draftQa.black_frame_heuristic.event_count) : null, frozen: isObj(draftQa.frozen_frame_heuristic) ? num(draftQa.frozen_frame_heuristic.event_count) : null, frozenS: isObj(draftQa.frozen_frame_heuristic) ? num(draftQa.frozen_frame_heuristic.total_duration_s) : null, audible: typeof draftQa.has_audible_audio === 'boolean' ? draftQa.has_audible_audio : null, audioGate: str(draftQa.audio_gate, 60) } : null,
     events, lastAt: events[0]?.at ?? null,
   };
@@ -170,6 +174,9 @@ export function episodeSteps(e: Pick<Episode, 'stage' | 'hasScript' | 'hasStoryb
   return steps;
 }
 
+/** An episode untouched this long is archived: shown in 보관된 에피소드 only. */
+export const ARCHIVE_DAYS = 30;
+
 export async function collectVideo(deps: HubDeps): Promise<HubMode> {
   const dir = path.join(deps.home, 'engineering-shorts');
   const t0 = deps.now();
@@ -181,8 +188,12 @@ export async function collectVideo(deps: HubDeps): Promise<HubMode> {
   ]);
   const epIds = (epNames ?? []).slice(0, 50);
   const epCount = epNames !== null ? epNames.length : await deps.countEntries(path.join(dir, 'episodes')).catch(() => null);
-  const episodes = await Promise.all(epIds.map((id) => loadEpisode(deps, dir, id, stat)));
-  episodes.sort((a, b) => (latestIso(b.reviewedAt, b.lastAt) ?? '').localeCompare(latestIso(a.reviewedAt, a.lastAt) ?? ''));
+  const allEpisodes = await Promise.all(epIds.map((id) => loadEpisode(deps, dir, id, stat)));
+  allEpisodes.sort((a, b) => (latestIso(b.reviewedAt, b.lastAt) ?? '').localeCompare(latestIso(a.reviewedAt, a.lastAt) ?? ''));
+  // Archived (marker, or nothing touched for ARCHIVE_DAYS): kept on disk and listed, never in gates, blockers, 주의 or state.
+  const isArchived = (e: Episode): boolean => { if (e.archived) return true; const at = latestIso(e.reviewedAt, e.lastAt); return at !== null && now - Date.parse(at) > ARCHIVE_DAYS * DAY_MS; };
+  const episodes = allEpisodes.filter((e) => !isArchived(e));
+  const archivedEps = allEpisodes.filter(isArchived);
   const project = parseProjectYaml(projectText);
   const backlog = parseBacklogNow(backlogText);
 
@@ -192,10 +203,11 @@ export async function collectVideo(deps: HubDeps): Promise<HubMode> {
   if (mtBacklog) projectEvents.push({ at: msIso(mtBacklog)!, who: '프로젝트', what: `백로그 갱신 (Now ${backlog.checked}/${backlog.total})`, hint: 'backlog.md' });
   if (mtTts) projectEvents.push({ at: msIso(mtTts)!, who: '프로젝트', what: 'Typecast TTS 어댑터 작성', hint: 'scripts/typecast_tts.py' });
   if (mtProject) projectEvents.push({ at: msIso(mtProject)!, who: '프로젝트', what: `프로젝트 설정 (${project.status ?? '단계 미상'})`, hint: 'project.yaml' });
-  const lastActivity = latestIso(msIso(latest?.mtimeMs ?? null), ...projectEvents.map((e) => e.at), ...episodes.map((e) => latestIso(e.reviewedAt, e.lastAt)));
+  const lastActivity = latestIso(msIso(latest?.mtimeMs ?? null), ...projectEvents.map((e) => e.at), ...allEpisodes.map((e) => latestIso(e.reviewedAt, e.lastAt)));
 
   const metrics: Record<string, HubMetricValue> = {};
-  if (epCount !== null) metrics['에피소드'] = epCount;
+  if (epCount !== null) metrics['에피소드'] = Math.max(0, epCount - archivedEps.length);
+  if (archivedEps.length) metrics['보관'] = archivedEps.length;
   if (latest) { metrics['최근 렌더'] = fmtAgo(now - latest.mtimeMs); metrics['파일'] = latest.name; }
   const ep0 = episodes[0];
   if (ep0?.stage) metrics['단계'] = stageKo(ep0.stage);
@@ -217,12 +229,12 @@ export async function collectVideo(deps: HubDeps): Promise<HubMode> {
   }
   const age = lastActivity ? now - Date.parse(lastActivity) : null;
   // Nobody is working on it: what it waits for is a to-do for when work resumes, not a fault.
-  if (age !== null && age > IDLE_DAYS * DAY_MS) {
+  if (episodes.length && age !== null && age > IDLE_DAYS * DAY_MS) {
     for (const a of alerts) if (a.level === 'warn') a.level = 'info';
     alerts.push({ level: 'info', text: `${fmtAgo(age)} 변경 없음` });
   }
   const worst = alerts.some((a) => a.level === 'bad') ? 'bad' : alerts.some((a) => a.level === 'warn') ? 'warn' : null;
-  const state: HubState = !any ? 'unknown' : worst ? 'warn' : age !== null && age > IDLE_DAYS * DAY_MS ? 'idle' : lastActivity ? 'ok' : 'unknown';
+  const state: HubState = !any ? 'unknown' : !episodes.length && archivedEps.length ? 'idle' : worst ? 'warn' : age !== null && age > IDLE_DAYS * DAY_MS ? 'idle' : lastActivity ? 'ok' : 'unknown';
 
   // Headline / decision: the current episode, its stage, what blocks it and what the owner does next.
   const blockedGate = ep0?.gates.find((g) => g.level === 'warn' || g.level === 'bad') ?? null;
@@ -230,14 +242,15 @@ export async function collectVideo(deps: HubDeps): Promise<HubMode> {
   const nextBacklog = backlog.items.find((i) => !i.done)?.text ?? null;
   const headline = !any ? '프로젝트 폴더 없음'
     : ep0 ? `'${ep0.id}' ${stageKo(ep0.stage)} · 게이트 ${ep0.gates.filter((g) => g.level === 'ok' || g.level === 'info').length}/${ep0.gates.length}${blockedGate ? ` · ${blockedGate.label} 게이트 ${blockedGate.word}${/typecast/i.test(blockedGate.evidence) ? ' — Typecast 키 필요' : ''}` : ep0.approval === false && ep0.gates.length ? ' · 사람 승인 대기' : ''}`
-    : `${stageKo(project.status)} · 에피소드 ${epCount ?? 0}개 · QA 기록 없음`;
+    : archivedEps.length ? `진행 중인 에피소드 없음 · 보관 ${archivedEps.length}개` : `${stageKo(project.status)} · 에피소드 ${epCount ?? 0}개 · QA 기록 없음`;
   const decision = !any ? '폴더 경로 확인'
+    : !ep0 && archivedEps.length ? '조치 없음 — 운영은 Shorts 공장 탭'
     : ep0 && ep0.blockers.length ? ep0.blockers.slice(0, 3).map((b) => b.ko.replace(/\s+\(.*$/, '')).join(' → ')
     : ep0 && ep0.approval === false && !blockedGate && ep0.gates.length ? `'${ep0.id}' 검토 후 게시 승인 여부 결정`
     : nextBacklog ? `다음 백로그: ${nextBacklog}` : '블로커 없음 — 조치 없음';
 
   const kpis: HubKpi[] = [
-    kpi('에피소드', String(epCount ?? epIds.length), { hint: ep0 ? `최근 '${ep0.id}'` : '기록 없음', status: 'info' }),
+    kpi('에피소드', String(epCount !== null ? Math.max(0, epCount - archivedEps.length) : episodes.length), { hint: ep0 ? `최근 '${ep0.id}'` : archivedEps.length ? `보관 ${archivedEps.length}개` : '기록 없음', status: 'info' }),
     kpi('단계', ep0 ? stageKo(ep0.stage) : stageKo(project.status), { status: 'info', ...(ep0?.reviewedAt ? { hint: `검토 ${fmtKst(ep0.reviewedAt)}` } : {}) }),
     kpi('게이트 통과', gateTotal ? `${gatePass}/${gateTotal}` : '—', { status: gateTotal === 0 ? 'info' : blockedGates ? 'warn' : gatePass === gateTotal ? 'ok' : 'warn', hint: blockedGate ? `${blockedGate.label} ${blockedGate.word}` : gateTotal ? '차단 없음' : 'QA 기록 없음' }),
     kpi('초안 길이', ep0?.qa?.durationS !== null && ep0?.qa?.durationS !== undefined ? `${fmtNum(ep0.qa.durationS, 1)}s` : '—', { ...(ep0?.qa ? { hint: `${ep0.qa.width ?? '?'}×${ep0.qa.height ?? '?'} @ ${ep0.qa.fps ?? '?'}fps${ep0.qa.audible === false ? ' · 무음' : ''}`, status: ep0.qa.techPass === false ? 'bad' : 'ok' } : { status: 'info' }) }),
@@ -266,7 +279,8 @@ export async function collectVideo(deps: HubDeps): Promise<HubMode> {
     };
   });
 
-  const sections: HubSection[] = [sec.cards('에피소드', cards, { open: true, cols: 2, note: `${episodes.length}개 · 게시 승인 ${ep0?.approval === true ? '완료' : '대기'} · 자동 게시 ${project.autoPublish ? '켬' : '끔'}` })];
+  // Nothing active: the archived ones are listed below, an empty 에피소드 grid says nothing.
+  const sections: HubSection[] = episodes.length || !archivedEps.length ? [sec.cards('에피소드', cards, { open: true, cols: 2, note: `${episodes.length}개 · 게시 승인 ${ep0?.approval === true ? '완료' : '대기'} · 자동 게시 ${project.autoPublish ? '켬' : '끔'}` })] : [];
   if (ep0) {
     sections.push(sec.steps(`파이프라인 · ${ep0.id}`, episodeSteps(ep0), { open: true, note: `QA 단계 ${stageKo(ep0.stage)}${ep0.reviewedAt ? ` · 검토 ${fmtKst(ep0.reviewedAt)}` : ''}` }));
     const images: HubImage[] = [];
@@ -281,8 +295,9 @@ export async function collectVideo(deps: HubDeps): Promise<HubMode> {
     ], { open: true, wrap: [2], note: ep0.gates.length ? `${ep0.gates.filter((g) => g.level === 'ok' || g.level === 'info').length}/${ep0.gates.length} 통과${blockedGates ? ` · 차단 ${blockedGates}` : ''}` : 'QA 보고서 없음' }));
     sections.push(sec.list('블로커 · 다음 할 일', ep0.blockers.length ? ep0.blockers.map((b, i) => ({ text: b.ko, level: i === 0 ? 'warn' as const : 'info' as const, hint: b.en })) : [{ text: '기록 없음', level: 'info' as const }], { open: true, note: 'qa_report.json의 blocking_next_actions · 순서대로' }));
   }
-  const log = [...episodes.flatMap((e) => e.events), ...projectEvents].sort(byNewest).slice(0, 40);
-  sections.push(sec.table('작업 로그', ['시각', '대상', '무엇', '파일'], log.map((e) => [fmtKst(e.at), e.who, e.what, e.hint ?? '']), { open: log.length > 0, wrap: [2], note: log.length ? `파일 변경 시각 기준 · ${log.length}건` : '기록 없음' }));
+  if (archivedEps.length) sections.push(sec.list('보관된 에피소드', archivedEps.map((e) => ({ text: `${e.title ?? e.id} · 마지막 활동 ${agoFrom(latestIso(e.reviewedAt, e.lastAt), now)}`, level: 'info' as const, hint: e.archived ? 'ARCHIVED 표시' : `${ARCHIVE_DAYS}일 넘게 변경 없음` })), { open: !episodes.length, note: `${archivedEps.length}개 · 파일은 그대로 · 게이트·블로커·주의에서 제외` }));
+  const log = [...allEpisodes.flatMap((e) => e.events), ...projectEvents].sort(byNewest).slice(0, 40);
+  sections.push(sec.table('작업 로그', ['시각', '대상', '무엇', '파일'], log.map((e) => [fmtKst(e.at), e.who, e.what, e.hint ?? '']), { open: log.length > 0 && episodes.length > 0, wrap: [2], note: log.length ? `파일 변경 시각 기준 · ${log.length}건` : '기록 없음' }));
   sections.push(sec.list('백로그 Now', backlog.items.length ? backlog.items.map((i) => ({ text: i.text, level: i.done ? 'ok' as const : 'info' as const })) : [{ text: '기록 없음', level: 'info' as const }], { note: `${backlog.checked}/${backlog.total} 완료` }));
   if (ep0?.qa) sections.push(sec.kv('기계 QA (draft.qa.json)', [
     ['해상도', `${ep0.qa.width ?? '?'}×${ep0.qa.height ?? '?'} @ ${ep0.qa.fps ?? '?'}fps`], ['길이', ep0.qa.durationS === null ? '—' : `${fmtNum(ep0.qa.durationS, 3)}s`], ['크기', ep0.qa.sizeBytes === null ? '—' : fmtBytes(ep0.qa.sizeBytes)], ['기술 검사', ep0.qa.techPass === null ? '—' : ep0.qa.techPass ? '통과' : '실패'],

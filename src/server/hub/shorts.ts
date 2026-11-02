@@ -96,7 +96,7 @@ export function parseStatus(text: string | null, nowMs: number): { raw: StatusRa
     distribution: parseDistribution(obj.distribution),
     routines: parseRoutines(obj.routines),
     longform: parseLongform(obj.longform),
-    blockers: parseBlockers(obj.blockers),
+    blockers: parseBlockers(obj.blockers, nowMs),
   };
   let f = withAge(file, SF_STALE_MS.status, nowMs);
   if (raw.placeholder && f.state !== 'malformed') f = { ...f, state: 'placeholder', note: f.state === 'stale' ? `자리표시자 · ${f.note}` : '자리표시자 · 루틴이 아직 쓰지 않음' };
@@ -136,10 +136,16 @@ export function parseLongform(v: unknown): SfLongform | null {
     progress: p ? { file: baseName(p.file), updatedAt: toIso(p.updated_at), lines: lines(p.lines, 10) } : null,
   };
 }
-export function parseBlockers(v: unknown): SfBlocker[] {
+/** A blocker raised this long ago and never touched again is dropped as stale: the view shows only live, actionable ones. */
+export const SF_BLOCKER_STALE_MS = 30 * 86_400_000;
+
+export function parseBlockers(v: unknown, nowMs?: number): SfBlocker[] {
   return objs(v).slice(0, 40).flatMap((b) => {
     const text = line(b.text); if (!text || b.resolved_at) return [];
-    return [{ id: str(b.id, 60) ?? text.slice(0, 20), text, scope: line(b.scope), owner: str(b.owner, 12), since: str(b.since, 25) }];
+    const since = str(b.since, 25);
+    const sinceMs = since ? Date.parse(since) : NaN;
+    if (nowMs !== undefined && Number.isFinite(sinceMs) && nowMs - sinceMs > SF_BLOCKER_STALE_MS) return [];
+    return [{ id: str(b.id, 60) ?? text.slice(0, 20), text, scope: line(b.scope), owner: str(b.owner, 12), since }];
   });
 }
 

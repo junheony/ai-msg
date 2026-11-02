@@ -129,6 +129,8 @@ export interface HubMode {
   studio?: GameStudio;
   /** 영상 only: the Shorts 공장 project (~/shorts_status files, read-only), shown as the mode's second tab. */
   shorts?: ShortsFactoryView;
+  /** 영상 only: engineering-shorts' own header while Shorts 공장 speaks for the card (state, activity, 주의, metrics). */
+  videoOwn?: { state: HubState; lastActivity: string | null; alerts: HubAlert[]; metrics: Record<string, HubMetricValue> };
   /** 야핑봇 only: independently cached public Rising feed. */
   rising?: YappingRising;
   /** 야핑봇 only: KST calendar-day metrics, independently cached for 60 seconds. */

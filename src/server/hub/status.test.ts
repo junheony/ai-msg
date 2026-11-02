@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { collectHubStatus, createHubStatus, errorText, fetchJsonWithTimeout, HUB_URLS, latestRenderIn, SECRET_FIELD_RE, stripSecrets, toIso, type HubDeps } from './status';
+import type { HubMode, ShortsFactoryView } from '../../shared/hub-types';
+import { collectHubStatus, createHubStatus, errorText, fetchJsonWithTimeout, HUB_URLS, latestRenderIn, leadWithShorts, SECRET_FIELD_RE, stripSecrets, toIso, type HubDeps } from './status';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -225,5 +226,30 @@ describe('hub status helpers', () => {
       expect((await latestRenderIn(root))?.name).toBe('b.mp4');
       expect(await latestRenderIn(path.join(root, 'missing'))).toBeNull();
     } finally { await fs.rm(root, { recursive: true, force: true }); }
+  });
+});
+
+describe('영상 card led by Shorts 공장', () => {
+  const studio = (state: HubMode['state'], alerts: HubMode['alerts'] = []): HubMode => ({ id: 'video', name: '영상 스튜디오', state, lastActivity: '2026-09-01T06:13:00.000Z', metrics: { '에피소드': 0 }, alerts, links: [], sources: [] });
+  const file = (state: 'fresh' | 'missing', at: string | null) => ({ name: 'x', state, at, note: null });
+  const sf = (over: Partial<ShortsFactoryView> = {}): ShortsFactoryView => ({
+    state: 'warn', headline: 'h', decision: 'd', kpis: [{ label: '채널', value: '10' }], alerts: [{ level: 'warn', text: 'alba 내일 예약 없음' }],
+    files: { status: file('fresh', '2026-11-02T12:36:04.000Z'), channels: file('fresh', '2026-11-02T12:30:00.000Z'), history: { ...file('fresh', null), rows: 0, skipped: 0 } },
+    ...over,
+  } as unknown as ShortsFactoryView);
+  it('an archived engineering-shorts hands state, activity, 주의 and metrics to the factory and keeps its own for its tab', () => {
+    const m = leadWithShorts(studio('idle'), sf());
+    expect(m).toMatchObject({ state: 'warn', lastActivity: '2026-11-02T12:36:04.000Z', alerts: [{ level: 'warn', text: 'alba 내일 예약 없음' }], metrics: { '채널': '10' } });
+    expect(m.videoOwn).toEqual({ state: 'idle', lastActivity: '2026-09-01T06:13:00.000Z', alerts: [], metrics: { '에피소드': 0 } });
+  });
+  it('an active episode joins: the worse state wins and its alerts are prefixed', () => {
+    const m = leadWithShorts(studio('down', [{ level: 'bad', text: 'ep · 렌더 기술 검사 실패' }]), sf({ state: 'ok', alerts: [] }));
+    expect(m.state).toBe('down');
+    expect(m.alerts).toEqual([{ level: 'bad', text: 'engineering-shorts · ep · 렌더 기술 검사 실패' }]);
+  });
+  it('no Shorts 공장 files at all: engineering-shorts keeps the card', () => {
+    const none = sf({ files: { status: file('missing', null), channels: file('missing', null), history: { ...file('missing', null), rows: 0, skipped: 0 } } as ShortsFactoryView['files'] });
+    expect(leadWithShorts(studio('idle'), none)).toMatchObject({ state: 'idle', metrics: { '에피소드': 0 } });
+    expect(leadWithShorts(studio('ok'), null).state).toBe('ok');
   });
 });

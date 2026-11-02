@@ -304,7 +304,7 @@ export function PracticeCard() {
  */
 export interface HubPageProps { modeKey: HubModeId; mode: HubMode | undefined; now: number; error: string | null; loading: boolean; onRefresh: () => void; generatedAt: string | null; /** Trading room reads, injectable for tests. */ labApi?: LabApi; srApi?: SrApi }
 
-export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generatedAt, labApi = liveLabApi, srApi = liveSrApi }: HubPageProps) {
+export function HubPage({ modeKey, mode: modeIn, now, error, loading, onRefresh, generatedAt, labApi = liveLabApi, srApi = liveSrApi }: HubPageProps) {
   const def = modeDef(modeKey);
   const trading = modeKey === 'trading';
   // Hub controls: none at all in the Trading room; QUANT shows its requests read-only and nothing else.
@@ -317,6 +317,9 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
   const [project, setProject] = useState<VideoProject>(readVideoProject);
   const pick = (p: VideoProject) => { setProject(p); writeVideoProject(p); };
   const factory = modeKey === 'video' && project === 'factory';
+  // On the engineering-shorts tab the page is its own: its state, activity and 주의, not the factory's that lead the card.
+  const mode = modeKey === 'video' && !factory && modeIn?.videoOwn ? { ...modeIn, ...modeIn.videoOwn } : modeIn;
+  const ownView = mode?.videoOwn ?? mode;
   const own = !factory;
   const yapping = modeKey === 'yapping' && !!mode?.page;
   // While Shorts 공장 is selected the header speaks for it, not for engineering-shorts.
@@ -372,8 +375,8 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
       {modeKey === 'video' && (
         <nav className="sf-tabs" role="tablist" aria-label="영상 프로젝트" data-testid="hub-video-tabs">
           {VIDEO_PROJECTS.map((p) => {
-            const n = p.id === 'factory' ? mode?.shorts?.alerts.filter((a) => a.level !== 'info').length ?? 0 : mode?.alerts.length ?? 0;
-            const worst = p.id === 'factory' ? mode?.shorts?.alerts[0]?.level : mode?.alerts[0]?.level;
+            const n = p.id === 'factory' ? mode?.shorts?.alerts.filter((a) => a.level !== 'info').length ?? 0 : ownView?.alerts.filter((a) => a.level !== 'info').length ?? 0;
+            const worst = p.id === 'factory' ? mode?.shorts?.alerts[0]?.level : ownView?.alerts[0]?.level;
             return <button key={p.id} type="button" role="tab" className="sf-tab" aria-selected={(p.id === 'factory') === factory} onClick={() => pick(p.id)}>{p.label}{n > 0 && <span className={`sf-tab-n ${worst === 'bad' ? 'bad' : 'warn'}`}>{n}</span>}</button>;
           })}
         </nav>

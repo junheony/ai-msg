@@ -44,27 +44,39 @@ describe('header while Shorts 공장 is selected', () => {
 });
 
 describe('영상 project tabs', () => {
-  it('opens on engineering-shorts, switches to Shorts 공장 on click and remembers the choice', () => {
+  it('opens on Shorts 공장, switches to engineering-shorts on click and remembers the choice', () => {
     page(video(FULL));
     const tabs = within(screen.getByTestId('hub-video-tabs')).getAllByRole('tab');
-    expect(tabs.map((t) => t.textContent)).toEqual(['engineering-shorts', `Shorts 공장${FULL.alerts.filter((a) => a.level !== 'info').length}`]);
+    expect(tabs.map((t) => t.textContent)).toEqual([`Shorts 공장${FULL.alerts.filter((a) => a.level !== 'info').length}`, expect.stringMatching(/^engineering-shorts/)]);
     expect(tabs[0]!.getAttribute('aria-selected')).toBe('true');
-    expect(screen.getByTestId('hub-sec-text')).toBeTruthy(); // the studio's own section
-    expect(screen.queryByTestId('sf-root')).toBeNull();
-    fireEvent.click(tabs[1]!);
-    expect(tabs[1]!.getAttribute('aria-selected')).toBe('true');
     expect(screen.getByTestId('sf-root')).toBeTruthy();
     expect(screen.queryByTestId('hub-sec-text')).toBeNull();
     expect(screen.queryByTestId('hub-kpis')).toBeNull();
-    expect(localStorage.getItem(VIDEO_PROJECT_KEY)).toBe('factory');
     expect(txt(screen.getByTestId('hub-mode-video'))).toContain('읽기 전용 · 제어 없음'); // the footer stays
-    cleanup();
-    page(video(FULL));
-    expect(screen.getByTestId('sf-root')).toBeTruthy(); // remembered
-    expect(screen.getByRole('tab', { name: /Shorts 공장/ }).getAttribute('aria-selected')).toBe('true');
-    fireEvent.click(screen.getByRole('tab', { name: 'engineering-shorts' }));
+    fireEvent.click(tabs[1]!);
+    expect(tabs[1]!.getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('hub-sec-text')).toBeTruthy(); // the studio's own section
     expect(screen.queryByTestId('sf-root')).toBeNull();
     expect(localStorage.getItem(VIDEO_PROJECT_KEY)).toBe('studio');
+    cleanup();
+    page(video(FULL));
+    expect(screen.queryByTestId('sf-root')).toBeNull(); // remembered
+    fireEvent.click(screen.getByRole('tab', { name: /Shorts 공장/ }));
+    expect(screen.getByTestId('sf-root')).toBeTruthy();
+    expect(localStorage.getItem(VIDEO_PROJECT_KEY)).toBe('factory');
+  });
+  it('an older kept choice (deck.hubVideoProject) does not carry over: Shorts 공장 leads', () => {
+    localStorage.setItem('deck.hubVideoProject', 'studio');
+    page(video(FULL));
+    expect(screen.getByTestId('sf-root')).toBeTruthy();
+  });
+  it('the engineering-shorts tab shows its own state and 주의, not the factory ones that lead the card', () => {
+    localStorage.setItem(VIDEO_PROJECT_KEY, 'studio');
+    const base = video(FULL);
+    page({ ...base, state: 'down', alerts: [{ level: 'bad', text: 'factory-alert' }], videoOwn: { state: 'idle', lastActivity: '2026-09-01T00:00:00.000Z', alerts: [], metrics: {} } });
+    const root = screen.getByTestId('hub-mode-video');
+    expect(txt(root)).not.toContain('factory-alert');
+    expect(within(screen.getByTestId('hub-video-tabs')).getAllByRole('tab')[1]!.textContent).toBe('engineering-shorts');
   });
   it('tells when the server sent no Shorts 공장 payload instead of showing an empty page', () => {
     localStorage.setItem(VIDEO_PROJECT_KEY, 'factory');
