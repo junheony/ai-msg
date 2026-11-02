@@ -1,0 +1,257 @@
+{
+  "capturedAt": "2026-11-01T17:52:39.919Z",
+  "base": "http://127.0.0.1:9413",
+  "scenario": "live",
+  "browser": {
+    "version": "153.0.8010.12",
+    "executablePath": "/home/max/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell"
+  },
+  "nature": "Production built App with live read-only collectors.",
+  "manifest": {
+    "preview": "brief10-live-read-only",
+    "ui": "dist/ui/index.html",
+    "modes": [
+      "yapping",
+      "quant"
+    ],
+    "shell": "empty fixture; no real sessions/accounts",
+    "rising": "live",
+    "upstreamReads": [
+      "http://127.0.0.1:8095/api/rising?limit=30",
+      "http://127.0.0.1:8810/api/snapshot.json"
+    ],
+    "startedAt": 1793555469312
+  },
+  "results": [
+    {
+      "size": "desktop",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "assertions": {
+        "noPageErrors": true,
+        "noConsoleErrors": true,
+        "noBlockedRequests": true,
+        "noHorizontalOverflow": true,
+        "localStatsPresent": true,
+        "sourceCollapsed": true,
+        "safeLinks": true,
+        "singleLineText": true,
+        "headingNotOccluded": true
+      },
+      "text": "Rising\n최근 12시간 · 상위 10개 · 2026-11-02 02:49 KST 집계\n1\nWatcherGuru\ncrypto\nJUST IN: Over $3,750,000,000 withdrawn from Binance in 10 hours following the exchange resuming withdrawals.\n178,875 조회/시간\n게시 2.6시간 경과\n2\nbinance\ncrypto\nBinance began restoring withdrawals in phases at 06:00 UTC on November 1, 2026. By 12:36 UTC, withdrawals had resumed for all 15 networks and assets in the initial phase. After an initial spike, withd\n110,009.3 조회/시간\n게시 1.6시간 경과\n3\nWatcherGuru\nai\nJUST IN: 🇺🇸 50 major US companies now oppose having their stocks tokenized on OKX and ICE's planned exchange: • IBM • Dell • Nike • Intel • IonQ • AMD • IREN • Intuit • Nvidia • Oracle • Adobe • Redd\n137,190.7 조회/시간\n게시 3.3시간 경과\n4\nkimmonismus\nai\nMythos 5.5 is already listed HTML source code of Anthropic's official website Thanks to the anonymous person who sent me the tip via email :)\n95,020.4 조회/시간\n게시 2.4시간 경과\n5\nCointelegraph\ncrypto\n🚨 ALERT: Binance recorded $3.53 billion in outflows after reopening withdrawals, equivalent to 2.7% of its assets, according to DefiLlama.\n30,976 조회/시간\n게시 0.3시간 경과\n6\nCointelegraph\ncrypto\n🚨 UPDATE: More than $4 billion in assets have reportedly been withdrawn from Binance since withdrawals resumed following the $6.3 billion hack.\n23,367.3 조회/시간\n게시 3.8시간 경과\n7\nPolymarket\nai\nJUST IN: Anthropic bans Claude Code from recreating existing video games amid a viral trend of developers using AI to reverse-engineer popular games.\n26,259.4 조회/시간\n게시 2.5시간 경과\n8\nbinance\ncrypto\nLatest Withdrawal Update Withdrawals have now been re-enabled for the following networks and assets: New: ✅ ZEC: ZEC ✅ TON: USDT, GRAM ✅ SUI: SUI Already Enabled: ✅ BTC: BTC ✅ ETH: ETH, USDT, USDC\n59,616.1 조회/시간\n게시 5.2시간 경과\n9\nWatcherGuru\ncrypto\nJUST IN: Crypto liquidations in October, 2026. • Longs: $9,213,000,000 • Shorts: $3,290,000,000 • Total: $12,500,000,000\n55,490.8 조회/시간\n게시 2.8시간 경과\n10\ncz_binance\ncrypto\n12 hours after withdrawals resumed: 2.1% net outflow, with most occurring in the first couple of hours. Over $1 billion in flow, too. Trust isn’t earned by what you say in good times. It’s earned by\n179,446 조회/시간\n게시 0.3시간 경과",
+      "ranks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "links": [
+        {
+          "href": "https://x.com/WatcherGuru/status/2116912049582452951",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/binance/status/2116926305254133892",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/WatcherGuru/status/2116901431668306033",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/kimmonismus/status/2116914141017370972",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/Cointelegraph/status/2116946151198892222",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/Cointelegraph/status/2116893351685329381",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/Polymarket/status/2116912435281949001",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/binance/status/2116871932075516174",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/WatcherGuru/status/2116908324428112309",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/cz_binance/status/2116946265422573686",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        }
+      ],
+      "singleLineText": true,
+      "missingReason": null,
+      "localCaps": 4,
+      "sourceCollapsed": true,
+      "overflow": {
+        "viewport": 1440,
+        "document": 1440,
+        "body": 1440,
+        "hub": 1368,
+        "hubClient": 1368
+      },
+      "firstCaptureHeading": {
+        "top": 150.1875,
+        "bottom": 181.546875,
+        "stickyBottom": 123,
+        "visible": true
+      },
+      "screenshots": [
+        {
+          "file": "brief10b-rising-live-desktop.png",
+          "offset": 1132
+        },
+        {
+          "file": "brief10b-rising-live-desktop-scroll-01.png",
+          "offset": 1468
+        }
+      ],
+      "errors": [],
+      "consoleErrors": [],
+      "blockedRequests": []
+    },
+    {
+      "size": "mobile",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "assertions": {
+        "noPageErrors": true,
+        "noConsoleErrors": true,
+        "noBlockedRequests": true,
+        "noHorizontalOverflow": true,
+        "localStatsPresent": true,
+        "sourceCollapsed": true,
+        "safeLinks": true,
+        "singleLineText": true,
+        "headingNotOccluded": true
+      },
+      "text": "Rising\n최근 12시간 · 상위 10개 · 2026-11-02 02:49 KST 집계\n1\nWatcherGuru\ncrypto\nJUST IN: Over $3,750,000,000 withdrawn from Binance in 10 hours following the exchange resuming withdrawals.\n178,875 조회/시간\n게시 2.6시간 경과\n2\nbinance\ncrypto\nBinance began restoring withdrawals in phases at 06:00 UTC on November 1, 2026. By 12:36 UTC, withdrawals had resumed for all 15 networks and assets in the initial phase. After an initial spike, withd\n110,009.3 조회/시간\n게시 1.6시간 경과\n3\nWatcherGuru\nai\nJUST IN: 🇺🇸 50 major US companies now oppose having their stocks tokenized on OKX and ICE's planned exchange: • IBM • Dell • Nike • Intel • IonQ • AMD • IREN • Intuit • Nvidia • Oracle • Adobe • Redd\n137,190.7 조회/시간\n게시 3.3시간 경과\n4\nkimmonismus\nai\nMythos 5.5 is already listed HTML source code of Anthropic's official website Thanks to the anonymous person who sent me the tip via email :)\n95,020.4 조회/시간\n게시 2.4시간 경과\n5\nCointelegraph\ncrypto\n🚨 ALERT: Binance recorded $3.53 billion in outflows after reopening withdrawals, equivalent to 2.7% of its assets, according to DefiLlama.\n30,976 조회/시간\n게시 0.3시간 경과\n6\nCointelegraph\ncrypto\n🚨 UPDATE: More than $4 billion in assets have reportedly been withdrawn from Binance since withdrawals resumed following the $6.3 billion hack.\n23,367.3 조회/시간\n게시 3.8시간 경과\n7\nPolymarket\nai\nJUST IN: Anthropic bans Claude Code from recreating existing video games amid a viral trend of developers using AI to reverse-engineer popular games.\n26,259.4 조회/시간\n게시 2.5시간 경과\n8\nbinance\ncrypto\nLatest Withdrawal Update Withdrawals have now been re-enabled for the following networks and assets: New: ✅ ZEC: ZEC ✅ TON: USDT, GRAM ✅ SUI: SUI Already Enabled: ✅ BTC: BTC ✅ ETH: ETH, USDT, USDC\n59,616.1 조회/시간\n게시 5.2시간 경과\n9\nWatcherGuru\ncrypto\nJUST IN: Crypto liquidations in October, 2026. • Longs: $9,213,000,000 • Shorts: $3,290,000,000 • Total: $12,500,000,000\n55,490.8 조회/시간\n게시 2.8시간 경과\n10\ncz_binance\ncrypto\n12 hours after withdrawals resumed: 2.1% net outflow, with most occurring in the first couple of hours. Over $1 billion in flow, too. Trust isn’t earned by what you say in good times. It’s earned by\n179,446 조회/시간\n게시 0.3시간 경과",
+      "ranks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "links": [
+        {
+          "href": "https://x.com/WatcherGuru/status/2116912049582452951",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/binance/status/2116926305254133892",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/WatcherGuru/status/2116901431668306033",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/kimmonismus/status/2116914141017370972",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/Cointelegraph/status/2116946151198892222",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/Cointelegraph/status/2116893351685329381",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/Polymarket/status/2116912435281949001",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/binance/status/2116871932075516174",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/WatcherGuru/status/2116908324428112309",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        },
+        {
+          "href": "https://x.com/cz_binance/status/2116946265422573686",
+          "rel": "noopener noreferrer",
+          "target": "_blank"
+        }
+      ],
+      "singleLineText": true,
+      "missingReason": null,
+      "localCaps": 4,
+      "sourceCollapsed": true,
+      "overflow": {
+        "viewport": 390,
+        "document": 390,
+        "body": 390,
+        "hub": 390,
+        "hubClient": 390
+      },
+      "firstCaptureHeading": {
+        "top": 171.984375,
+        "bottom": 203.34375,
+        "stickyBottom": 147.109375,
+        "visible": true
+      },
+      "screenshots": [
+        {
+          "file": "brief10b-rising-live-mobile.png",
+          "offset": 2014
+        },
+        {
+          "file": "brief10b-rising-live-mobile-scroll-01.png",
+          "offset": 2601
+        },
+        {
+          "file": "brief10b-rising-live-mobile-scroll-02.png",
+          "offset": 2959
+        }
+      ],
+      "errors": [],
+      "consoleErrors": [],
+      "blockedRequests": []
+    }
+  ]
+}

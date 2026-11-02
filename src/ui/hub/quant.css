@@ -1,0 +1,6 @@
+/* Account figures use the hub type scale; null readings remain quiet and reasons wrap on phones. */
+.hub-page[data-mode="quant"] .hs-rows dd.info { color: var(--muted); }
+.hub-page[data-mode="quant"] .hs-card-note { color: var(--muted); font-size: var(--fs-sm); line-height: 1.5; }
+.hub-page[data-mode="quant"] .hs-rows dt { white-space: normal; word-break: keep-all; }
+.hub-page[data-mode="quant"] .hs-rows > div { flex-wrap: wrap; }
+.hub-page[data-mode="quant"] .hs-rows dd { margin-left: auto; max-width: 100%; }

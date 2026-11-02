@@ -1,0 +1,698 @@
+{
+  "capturedAt": "2026-11-01T17:12:38.775Z",
+  "base": "http://127.0.0.1:9410",
+  "browser": {
+    "version": "153.0.8010.12",
+    "executablePath": "/home/max/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell"
+  },
+  "nature": "Production built App, live read-only production yapping/quant collectors, empty shell fixtures. No deployed-server/auth/trading verification.",
+  "manifest": {
+    "preview": "brief10-live-read-only",
+    "ui": "dist/ui/index.html",
+    "modes": [
+      "yapping",
+      "quant"
+    ],
+    "shell": "empty fixture; no real sessions/accounts",
+    "upstreamReads": [
+      "http://127.0.0.1:8810/api/snapshot.json"
+    ],
+    "startedAt": 1793552880927
+  },
+  "results": [
+    {
+      "mode": "yapping",
+      "size": "desktop",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "assertions": {
+        "shellRendered": true,
+        "noPageErrors": true,
+        "noConsoleErrors": true,
+        "noExternalRequests": true,
+        "noHorizontalOverflow": true,
+        "noOldRotation": true,
+        "threeXLinks": true,
+        "threeTelegramLinks": true,
+        "sourcePanelCollapsed": true
+      },
+      "text": "야핑봇정상자동 성장마지막 활동 2시간 전읽기 전용 새로고침@cblabx 자동 성장속보와 리포트 게시, 대화와 성장 기록@cblabx일일 한도게시 03:00 · 답글 00:00 KST 초기화속보5 / 5운영일 2026-11-01 · 완료+예약리포트1 / 2운영일 2026-11-01 · 완료+예약전체 게시7 / 7완료 7 · 예약 0 (일반 QT 포함)답글13 / 40오늘 2026-11-02 · 자정 기준팔로워 변화+3508명 · 직전 수집 대비 · 11-02 02:02조회수 변화데이터 없음조회수 과거 관측 이력이 없어 증감 비교 불가X 최근 게시@cblabx 최근 3건2시간 전OpenRouter data, Anthropic vs OpenAI (latest week): · Spend share: Anthropic 66%, OpenAI 34% · Token share: OpenAI 52%, Anthropic 48% · 12-wk spend growth: Anthropic +107%, OpenAIX에서 보기3시간 전바이낸스 커뮤니티 리워드 캠페인, 규제 당국 승인 후 시작 (Yi He) · 내일 당국 업무 시작 후 검토·승인을 거쳐 진행 · 현재 현금 바우처 캠페인은 없음, 피싱·사기 링크 주의 · 출금 재개 후 바이낸스 24시간 순유출 약 35.3억 달러 (DefiLlama)X에서 보기4시간 전Codex에 '사용 한도 초기화'권이 들어왔어요. · 설정에서 '초기화 사용'을 누르면 5시간·주간 한도(또는 둘 다) 복원 · 지급분 1회, 12월 1일 05:29(KST) 만료 · 티보가 'Banked 1/2'로 예고한 대로 내일 한 번 더 들어올 예정X에서 보기Telegram 미러@blockschool 최근 3건2시간 전앤트로픽·오픈AI 모델 지출 12주 새 급증Telegram에서 보기4시간 전커뮤니티 리워드 캠페인, 규제 승인 후 시작Telegram에서 보기4시간 전딥시크 코딩 에이전트 시제품 공개 소식Telegram에서 보기소스 상태로컬 운영 기록 연결됨자동 성장 기록연결됨systemd연결됨수집 방식로컬 운영 기록 · 읽기 전용기록 조회11-02 02:11게시 운영일2026-11-01 (03:00 KST 초기화)답글 운영일2026-11-02 (00:00 KST 초기화)API동시 조회 6~8초 지연 확인 · 로컬 기록으로 조회조회수 이력현재 누적값만 저장됨 · 시점별 관측 API 필요소스 2/2서버 생성 방금읽기 전용 · 제어 없음",
+      "visibleText": "야핑봇\n정상\n자동 성장\n마지막 활동 2시간 전\n읽기 전용\n새로고침\n@cblabx 자동 성장\n\n속보와 리포트 게시, 대화와 성장 기록\n\n@cblabx\n일일 한도\n게시 03:00 · 답글 00:00 KST 초기화\n속보\n5 / 5\n\n운영일 2026-11-01 · 완료+예약\n\n리포트\n1 / 2\n\n운영일 2026-11-01 · 완료+예약\n\n전체 게시\n7 / 7\n\n완료 7 · 예약 0 (일반 QT 포함)\n\n답글\n13 / 40\n\n오늘 2026-11-02 · 자정 기준\n\n팔로워 변화\n+3\n\n508명 · 직전 수집 대비 · 11-02 02:02\n\n조회수 변화\n데이터 없음\n\n조회수 과거 관측 이력이 없어 증감 비교 불가\n\nX 최근 게시\n@cblabx 최근 3건\n2시간 전\nOpenRouter data, Anthropic vs OpenAI (latest week): · Spend share: Anthropic 66%, OpenAI 34% · Token share: OpenAI 52%, Anthropic 48% · 12-wk spend growth: Anthropic +107%, OpenAI\nX에서 보기\n3시간 전\n바이낸스 커뮤니티 리워드 캠페인, 규제 당국 승인 후 시작 (Yi He) · 내일 당국 업무 시작 후 검토·승인을 거쳐 진행 · 현재 현금 바우처 캠페인은 없음, 피싱·사기 링크 주의 · 출금 재개 후 바이낸스 24시간 순유출 약 35.3억 달러 (DefiLlama)\nX에서 보기\n4시간 전\nCodex에 '사용 한도 초기화'권이 들어왔어요. · 설정에서 '초기화 사용'을 누르면 5시간·주간 한도(또는 둘 다) 복원 · 지급분 1회, 12월 1일 05:29(KST) 만료 · 티보가 'Banked 1/2'로 예고한 대로 내일 한 번 더 들어올 예정\nX에서 보기\nTelegram 미러\n@blockschool 최근 3건\n2시간 전\n앤트로픽·오픈AI 모델 지출 12주 새 급증\nTelegram에서 보기\n4시간 전\n커뮤니티 리워드 캠페인, 규제 승인 후 시작\nTelegram에서 보기\n4시간 전\n딥시크 코딩 에이전트 시제품 공개 소식\nTelegram에서 보기\n소스 상태로컬 운영 기록 연결됨\n소스 2/2\n서버 생성 방금\n읽기 전용 · 제어 없음",
+      "links": [
+        {
+          "text": "@cblabx",
+          "href": "https://x.com/cblabx"
+        },
+        {
+          "text": "OpenRouter data, Anthropic vs OpenAI (latest week): · Spend share: Anthropic 66%, OpenAI 34% · Token share: OpenAI 52%, Anthropic 48% · 12-wk spend growth: Anthropic +107%, OpenAIX에서 보기",
+          "href": "https://x.com/cblabx/status/2116903714040721767"
+        },
+        {
+          "text": "바이낸스 커뮤니티 리워드 캠페인, 규제 당국 승인 후 시작 (Yi He) · 내일 당국 업무 시작 후 검토·승인을 거쳐 진행 · 현재 현금 바우처 캠페인은 없음, 피싱·사기 링크 주의 · 출금 재개 후 바이낸스 24시간 순유출 약 35.3억 달러 (DefiLlama)X에서 보기",
+          "href": "https://x.com/cblabx/status/2116883312858071136"
+        },
+        {
+          "text": "Codex에 '사용 한도 초기화'권이 들어왔어요. · 설정에서 '초기화 사용'을 누르면 5시간·주간 한도(또는 둘 다) 복원 · 지급분 1회, 12월 1일 05:29(KST) 만료 · 티보가 'Banked 1/2'로 예고한 대로 내일 한 번 더 들어올 예정X에서 보기",
+          "href": "https://x.com/cblabx/status/2116867995255636014"
+        },
+        {
+          "text": "앤트로픽·오픈AI 모델 지출 12주 새 급증Telegram에서 보기",
+          "href": "https://t.me/blockschool/11727"
+        },
+        {
+          "text": "커뮤니티 리워드 캠페인, 규제 승인 후 시작Telegram에서 보기",
+          "href": "https://t.me/blockschool/11726"
+        },
+        {
+          "text": "딥시크 코딩 에이전트 시제품 공개 소식Telegram에서 보기",
+          "href": "https://t.me/blockschool/11725"
+        }
+      ],
+      "x": [
+        "https://x.com/cblabx/status/2116903714040721767",
+        "https://x.com/cblabx/status/2116883312858071136",
+        "https://x.com/cblabx/status/2116867995255636014"
+      ],
+      "tg": [
+        "https://t.me/blockschool/11727",
+        "https://t.me/blockschool/11726",
+        "https://t.me/blockschool/11725"
+      ],
+      "overflow": {
+        "viewport": 1440,
+        "document": 1440,
+        "body": 1440,
+        "hub": 1368,
+        "hubClient": 1368
+      },
+      "sourcePanels": [
+        {
+          "open": false,
+          "text": "소스 상태로컬 운영 기록 연결됨자동 성장 기록연결됨systemd연결됨수집 방식로컬 운영 기록 · 읽기 전용기록 조회11-02 02:11게시 운영일2026-11-01 (03:00 KST 초기화)답글 운영일2026-11-02 (00:00 KST 초기화)API동시 조회 6~8초 지연 확인 · 로컬 기록으로 조회조회수 이력현재 누적값만 저장됨 · 시점별 관측 API 필요"
+        }
+      ],
+      "scrollShots": [
+        {
+          "file": "yapping-desktop-scroll-01.png",
+          "offset": 421
+        }
+      ],
+      "errors": [],
+      "consoleErrors": [],
+      "blockedRequests": [],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/main-CAYJ0tWz.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/modulepreload-polyfill-P2Xu9kJm.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/rolldown-runtime-XKyaHtl9.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/react-jJ-S-UmE.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/accounts-C9SrDU9Q.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/EngineMark-CXk2bEKW.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/shortcuts-hHsVtOEX.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/Dialogs-sdPV0GBD.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/models-CgwCdLB_.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/hub-sections-C4ovIuJ1.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/vendor-DEBNP29C.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/protocol-BGbxf1AM.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/hub-sections-rgXUCHbR.css"
+        },
+        {
+          "method": "GET",
+          "path": "/api/hub/status"
+        },
+        {
+          "method": "GET",
+          "path": "/api/me"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/HubView-TziY-u4D.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/HubPage-CSuGmryd.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/HubPage-BdnYhuKG.css"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/barlow-semi-condensed-500-G0uxJNrM.woff2"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/barlow-semi-condensed-600-BkLiAYu4.woff2"
+        }
+      ]
+    },
+    {
+      "mode": "yapping",
+      "size": "mobile",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "assertions": {
+        "shellRendered": true,
+        "noPageErrors": true,
+        "noConsoleErrors": true,
+        "noExternalRequests": true,
+        "noHorizontalOverflow": true,
+        "noOldRotation": true,
+        "threeXLinks": true,
+        "threeTelegramLinks": true,
+        "sourcePanelCollapsed": true
+      },
+      "text": "야핑봇정상자동 성장마지막 활동 2시간 전읽기 전용 새로고침@cblabx 자동 성장속보와 리포트 게시, 대화와 성장 기록@cblabx일일 한도게시 03:00 · 답글 00:00 KST 초기화속보5 / 5운영일 2026-11-01 · 완료+예약리포트1 / 2운영일 2026-11-01 · 완료+예약전체 게시7 / 7완료 7 · 예약 0 (일반 QT 포함)답글13 / 40오늘 2026-11-02 · 자정 기준팔로워 변화+3508명 · 직전 수집 대비 · 11-02 02:02조회수 변화데이터 없음조회수 과거 관측 이력이 없어 증감 비교 불가X 최근 게시@cblabx 최근 3건2시간 전OpenRouter data, Anthropic vs OpenAI (latest week): · Spend share: Anthropic 66%, OpenAI 34% · Token share: OpenAI 52%, Anthropic 48% · 12-wk spend growth: Anthropic +107%, OpenAIX에서 보기3시간 전바이낸스 커뮤니티 리워드 캠페인, 규제 당국 승인 후 시작 (Yi He) · 내일 당국 업무 시작 후 검토·승인을 거쳐 진행 · 현재 현금 바우처 캠페인은 없음, 피싱·사기 링크 주의 · 출금 재개 후 바이낸스 24시간 순유출 약 35.3억 달러 (DefiLlama)X에서 보기4시간 전Codex에 '사용 한도 초기화'권이 들어왔어요. · 설정에서 '초기화 사용'을 누르면 5시간·주간 한도(또는 둘 다) 복원 · 지급분 1회, 12월 1일 05:29(KST) 만료 · 티보가 'Banked 1/2'로 예고한 대로 내일 한 번 더 들어올 예정X에서 보기Telegram 미러@blockschool 최근 3건2시간 전앤트로픽·오픈AI 모델 지출 12주 새 급증Telegram에서 보기4시간 전커뮤니티 리워드 캠페인, 규제 승인 후 시작Telegram에서 보기4시간 전딥시크 코딩 에이전트 시제품 공개 소식Telegram에서 보기소스 상태로컬 운영 기록 연결됨자동 성장 기록연결됨systemd연결됨수집 방식로컬 운영 기록 · 읽기 전용기록 조회11-02 02:11게시 운영일2026-11-01 (03:00 KST 초기화)답글 운영일2026-11-02 (00:00 KST 초기화)API동시 조회 6~8초 지연 확인 · 로컬 기록으로 조회조회수 이력현재 누적값만 저장됨 · 시점별 관측 API 필요소스 2/2서버 생성 방금읽기 전용 · 제어 없음",
+      "visibleText": "야핑봇\n정상\n자동 성장\n마지막 활동 2시간 전\n@cblabx 자동 성장\n\n속보와 리포트 게시, 대화와 성장 기록\n\n일일 한도\n게시 03:00 · 답글 00:00 KST 초기화\n속보\n5 / 5\n\n운영일 2026-11-01 · 완료+예약\n\n리포트\n1 / 2\n\n운영일 2026-11-01 · 완료+예약\n\n전체 게시\n7 / 7\n\n완료 7 · 예약 0 (일반 QT 포함)\n\n답글\n13 / 40\n\n오늘 2026-11-02 · 자정 기준\n\n팔로워 변화\n+3\n\n508명 · 직전 수집 대비 · 11-02 02:02\n\n조회수 변화\n데이터 없음\n\n조회수 과거 관측 이력이 없어 증감 비교 불가\n\nX 최근 게시\n@cblabx 최근 3건\n2시간 전\nOpenRouter data, Anthropic vs OpenAI (latest week): · Spend share: Anthropic 66%, OpenAI 34% · Token share: OpenAI 52%, Anthropic 48% · 12-wk spend growth: Anthropic +107%, OpenAI\nX에서 보기\n3시간 전\n바이낸스 커뮤니티 리워드 캠페인, 규제 당국 승인 후 시작 (Yi He) · 내일 당국 업무 시작 후 검토·승인을 거쳐 진행 · 현재 현금 바우처 캠페인은 없음, 피싱·사기 링크 주의 · 출금 재개 후 바이낸스 24시간 순유출 약 35.3억 달러 (DefiLlama)\nX에서 보기\n4시간 전\nCodex에 '사용 한도 초기화'권이 들어왔어요. · 설정에서 '초기화 사용'을 누르면 5시간·주간 한도(또는 둘 다) 복원 · 지급분 1회, 12월 1일 05:29(KST) 만료 · 티보가 'Banked 1/2'로 예고한 대로 내일 한 번 더 들어올 예정\nX에서 보기\nTelegram 미러\n@blockschool 최근 3건\n2시간 전\n앤트로픽·오픈AI 모델 지출 12주 새 급증\nTelegram에서 보기\n4시간 전\n커뮤니티 리워드 캠페인, 규제 승인 후 시작\nTelegram에서 보기\n4시간 전\n딥시크 코딩 에이전트 시제품 공개 소식\nTelegram에서 보기\n소스 상태\n로컬 운영 기록 연결됨\n소스 2/2\n서버 생성 방금\n읽기 전용 · 제어 없음",
+      "links": [
+        {
+          "text": "@cblabx",
+          "href": "https://x.com/cblabx"
+        },
+        {
+          "text": "OpenRouter data, Anthropic vs OpenAI (latest week): · Spend share: Anthropic 66%, OpenAI 34% · Token share: OpenAI 52%, Anthropic 48% · 12-wk spend growth: Anthropic +107%, OpenAIX에서 보기",
+          "href": "https://x.com/cblabx/status/2116903714040721767"
+        },
+        {
+          "text": "바이낸스 커뮤니티 리워드 캠페인, 규제 당국 승인 후 시작 (Yi He) · 내일 당국 업무 시작 후 검토·승인을 거쳐 진행 · 현재 현금 바우처 캠페인은 없음, 피싱·사기 링크 주의 · 출금 재개 후 바이낸스 24시간 순유출 약 35.3억 달러 (DefiLlama)X에서 보기",
+          "href": "https://x.com/cblabx/status/2116883312858071136"
+        },
+        {
+          "text": "Codex에 '사용 한도 초기화'권이 들어왔어요. · 설정에서 '초기화 사용'을 누르면 5시간·주간 한도(또는 둘 다) 복원 · 지급분 1회, 12월 1일 05:29(KST) 만료 · 티보가 'Banked 1/2'로 예고한 대로 내일 한 번 더 들어올 예정X에서 보기",
+          "href": "https://x.com/cblabx/status/2116867995255636014"
+        },
+        {
+          "text": "앤트로픽·오픈AI 모델 지출 12주 새 급증Telegram에서 보기",
+          "href": "https://t.me/blockschool/11727"
+        },
+        {
+          "text": "커뮤니티 리워드 캠페인, 규제 승인 후 시작Telegram에서 보기",
+          "href": "https://t.me/blockschool/11726"
+        },
+        {
+          "text": "딥시크 코딩 에이전트 시제품 공개 소식Telegram에서 보기",
+          "href": "https://t.me/blockschool/11725"
+        }
+      ],
+      "x": [
+        "https://x.com/cblabx/status/2116903714040721767",
+        "https://x.com/cblabx/status/2116883312858071136",
+        "https://x.com/cblabx/status/2116867995255636014"
+      ],
+      "tg": [
+        "https://t.me/blockschool/11727",
+        "https://t.me/blockschool/11726",
+        "https://t.me/blockschool/11725"
+      ],
+      "overflow": {
+        "viewport": 390,
+        "document": 390,
+        "body": 390,
+        "hub": 390,
+        "hubClient": 390
+      },
+      "sourcePanels": [
+        {
+          "open": false,
+          "text": "소스 상태로컬 운영 기록 연결됨자동 성장 기록연결됨systemd연결됨수집 방식로컬 운영 기록 · 읽기 전용기록 조회11-02 02:11게시 운영일2026-11-01 (03:00 KST 초기화)답글 운영일2026-11-02 (00:00 KST 초기화)API동시 조회 6~8초 지연 확인 · 로컬 기록으로 조회조회수 이력현재 누적값만 저장됨 · 시점별 관측 API 필요"
+        }
+      ],
+      "scrollShots": [
+        {
+          "file": "yapping-mobile-scroll-01.png",
+          "offset": 587
+        },
+        {
+          "file": "yapping-mobile-scroll-02.png",
+          "offset": 1174
+        },
+        {
+          "file": "yapping-mobile-scroll-03.png",
+          "offset": 1540
+        }
+      ],
+      "errors": [],
+      "consoleErrors": [],
+      "blockedRequests": [],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/main-CAYJ0tWz.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/modulepreload-polyfill-P2Xu9kJm.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/rolldown-runtime-XKyaHtl9.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/react-jJ-S-UmE.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/accounts-C9SrDU9Q.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/EngineMark-CXk2bEKW.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/shortcuts-hHsVtOEX.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/Dialogs-sdPV0GBD.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/models-CgwCdLB_.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/hub-sections-C4ovIuJ1.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/vendor-DEBNP29C.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/protocol-BGbxf1AM.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/hub-sections-rgXUCHbR.css"
+        },
+        {
+          "method": "GET",
+          "path": "/api/hub/status"
+        },
+        {
+          "method": "GET",
+          "path": "/api/me"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/HubView-TziY-u4D.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/HubPage-CSuGmryd.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/HubPage-BdnYhuKG.css"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/barlow-semi-condensed-600-BkLiAYu4.woff2"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/barlow-semi-condensed-500-G0uxJNrM.woff2"
+        }
+      ]
+    },
+    {
+      "mode": "quant",
+      "size": "desktop",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "assertions": {
+        "shellRendered": true,
+        "noPageErrors": true,
+        "noConsoleErrors": true,
+        "noExternalRequests": true,
+        "noHorizontalOverflow": true,
+        "upbitAccountsShown": true,
+        "nullReasonRendered": true
+      },
+      "text": "QUANT주의마지막 활동 2분 전snapshot.jsonfriends_snapshot.json읽기 전용 새로고침계정 6 · 7일 순익 +2,906만원 (+3.59bp) · 자본(원가) 84.02억 · 라이브 페이퍼 유닛 4 정지(10-11) · v9pp-ex 실패다음 결정 정지된 v9flws A/B(sh·a1·a2·wf) 재개/폐기 결정 · v9pp-ex 실패 확인 · 어제 적자 계정(업비트1) 상위 심볼 확인7일 순익 합+2,906만원11-01 까지 7일 · 수수료 후7일 평균 bp+3.59bp회전 809.65억어제 순익+216만원2026-11-01총 자본 (원가)84.02억코인·OTC 평균매수가 평가어제 체결 수30,589전체 6계정 중 값이 있는 계정 합페이퍼 유닛 가동4/9실패 v9pp-ex스냅샷 신선도34분 전qa_dash 2분 전주의3v9pp-ex 실패 (exit-code) · 10-15 00:43→ 로그 확인 후 재시작/폐기 결정18일 전페이퍼 A/B 유닛 4개 정지 21일 (10-11 13:03) — 재개/폐기 미결21일 전업비트1 (계정1) 어제 순익 -61만원→ 상위 심볼: LSK -89만원 · PROM +24만원 · NEAR +14만원계정 (6)7일 = 10-26~11-01 · 순익은 수수료 후 · 자본은 원가 기준 · 스냅샷 11-02 01:37 · 합계는 값이 있는 계정만6빗썸1빗썸정상SEED 15.51억 → 21.5억 (+39%) · 원가 기준 · 03-13~11-017일 순익+707만원 (+4.57bp)어제 순익 (11-01)+147만원 (+9.75bp)어제 회전15.07억어제 체결7,414건어제 수수료602,674원상위 심볼 7일GTC +143만원 · CAMP +140만원 · G +129만원수집 상태🟢 수집 11초전 · 디스크 61%(잔여 19G)자본(원가) 60일21.5억전략 추정: RE/IOC 메이커 회전 (역공학 — 라이브 전략 기록 없음) · 코인·OTC 는 평균매수가(원가) 평가빗썸2빗썸정상SEED 14.19억 → 18.69억 (+32%) · 원가 기준 · 03-13~11-017일 순익+858만원 (+5.76bp)어제 순익 (11-01)+7만원 (+0.61bp)어제 회전12.04억어제 체결5,431건어제 수수료481,522원상위 심볼 7일SOPH +258만원 · NEAR +163만원 · WLD +137만원수집 상태🟢 수집 11초전 · 디스크 59%(잔여 20G)자본(원가) 60일18.7억전략 추정: RE/IOC 메이커 회전 (역공학 — 라이브 전략 기록 없음) · 코인·OTC 는 평균매수가(원가) 평가범수동생계정3빗썸정상SEED 15.09억 → 18.62억 (+23%) · 원가 기준 · 03-15~11-017일 순익+526만원 (+3.31bp)어제 순익 (11-01)+62만원 (+5.13bp)어제 회전12.02억어제 체결6,256건어제 수수료480,695원상위 심볼 7일MANTRA +256만원 · WLD +102만원 · BANK +77만원수집 상태🟢 수집 12초전 · 디스크 51%(잔여 25G)자본(원가) 60일18.6억전략 추정: RE/IOC 메이커 회전 (역공학 — 라이브 전략 기록 없음) · 코인·OTC 는 평균매수가(원가) 평가WILL빗썸정상SEED 1.05억 → 6.17억 (+487%) · 원가 기준 · 08-27~11-017일 순익+418만원 (+3.35bp)어제 순익 (11-01)+61만원 (+5.73bp)어제 회전10.71억어제 체결4,964건어제 수수료428,308원상위 심볼 7일FORT +139만원 · UP +88만원 · PUFFER +81만원수집 상태보고 없음자본(원가) 60일6.17억전략 추정: RE/IOC 메이커 회전 (역공학 — 라이브 전략 기록 없음) · 코인·OTC 는 평균매수가(원가) 평가업비트1 (계정1)업비트주의SEED 18.35억 → 19.04억 (+4%) · 원가 기준 · 09-02~11-027일 순익+397만원 (+1.79bp)어제 순익 (11-01)-61만원 (-3.8bp)어제 회전16.09억어제 체결6,524건어제 수수료804,295원상위 심볼 7일XRP +255만원 · DOS +158만원 · KAT +127만원수집 상태active · 11-02 02:10자본(원가) 60일19억전략 추정: RE/IOC 메이커 회전 (역공학 — 라이브 전략 기록 없음) · 코인·OTC 는 평균매수가(원가) 평가업비트2 (계정2)업비트미확인데이터 없음SEED (자본 원가, 첫 기록)—현재 자본 (원가)—7일 순익 (수수료 후)—7일 순익 bp—어제 순익 (11-01)—어제 회전—어제 체결—upbit-re@acct2.service inactive · 수집 파일 없음(로그 upbit_acct2: 2026-09-02 WS/REST HTTP 401 — 키에 서버 IP 미등록)라이브 페이퍼 유닛systemd --user 읽기 전용 · 24h 스코어 기준 10-10 11:57 · 정지 = 주의, 실패 = 장애9v9flws-shPAPER주의정지 10-11 13:01 · 정상 종료24h 체결 / 대금2,524 / 2.77억24h markout5s 중앙0 bp24h crossed-at-fill22.2%24h 가드취소 touch/approach0 / 0마지막 체결10-11 13:01 · ONDO ask역할섀도 — 가드 태그만 (취소 없음, 추정)의도적 정지로 추정 — 기록 없음 · 24h 스코어는 10-09 A/B 채점v9flws-a1PAPER주의정지 10-11 13:03 · 정상 종료24h 체결 / 대금1,496 / 1.9억24h markout5s 중앙0 bp24h crossed-at-fill3.7%24h 가드취소 touch/approach1,461 / 977마지막 체결10-11 13:03 · ONDO ask역할A/B arm 1 — S stale 가드 취소의도적 정지로 추정 — 기록 없음 · 24h 스코어는 10-09 A/B 채점v9flws-a2PAPER주의정지 10-11 13:03 · 정상 종료24h 체결 / 대금1,493 / 1.66억24h markout5s 중앙1.7 bp24h crossed-at-fill3.2%24h 가드취소 touch/approach1,513 / 1,456마지막 체결10-11 13:03 · GWEI ask역할A/B arm 2 — S stale 가드 취소의도적 정지로 추정 — 기록 없음 · 24h 스코어는 10-09 A/B 채점v9flwf-exPAPER주의정지 10-11 13:03 · 정상 종료24h 체결 / 대금2,420 / 1.5억24h markout5s 중앙0 bp24h crossed-at-fill21.7%24h 가드취소 touch/approach0 / 0마지막 체결10-11 13:03 · ONDO ask역할대조군 — v9flw_ex + end_handoff의도적 정지로 추정 — 기록 없음 · 24h 스코어는 10-09 A/B 채점v9mk4-m0rPAPER정상가동 10-22 03:40 부터역할v9mk4 paper arm M0r (maker_v2 perp_pull 실험, … config/v9mk4_M0r.json)v9mk4-m3PAPER정상가동 10-22 03:40 부터역할v9mk4 paper arm M3 (maker_v2 perp_pull 실험, … config/v9mk4_M3.json)v9mk4-pcPAPER정상가동 10-22 03:40 부터역할v9mk4 paper arm P_C (maker_v2 perp_pull 실험, … config/v9mk4_P_C.json)v9pp2-exPAPER정상가동 10-22 11:18 부터 · 재시작 1역할v9pp2 paper = pilot_proposed_12d(4종) 24h 재시험, 라이브 코드 사본 (… config/v9pp2_ex.json)v9pp-exPAPER장애실패 10-15 00:43 · 비정상 종료 (exit-code)역할v9pp paper = pilot_v5k_ex config 24h trial (active symbols, submits/fills per day), v5k code (… conf실패 — 로그 확인 후 재시작/폐기 결정자본 추이 (원가 기준, 억)하루 첫 잔고 스냅샷 · 코인·OTC 는 평균매수가 평가(시장가 아님) · 최근 90일빗썸1 —빗썸2 —범수동생계정3 —WILL —업비트1 (계정1) 19억11-02102008-0508-1208-1908-2609-0209-0909-1609-2309-3010-0710-1410-2110-2811-02일별 순익 (원) 30일수수료 차감 후 · 오늘(11-02) 부분일 제외빗썸1 1.47M원빗썸2 73.9K원범수동생계정3 617K원WILL 613K원업비트1 (계정1) −611K원11-0102M4M10-0310-0610-0910-1210-1510-1810-2110-2410-2710-3011-0124h A/B 스코어 (창 × 유닛)있는 창: 1h, 3h, 8h, 24h · 유닛 합치지 않음, 대조군 wf=v9flwf_ex · 기준 10-10 11:5716창유닛체결N체결대금제출N제출→체결 p50crossed%mo5s 중앙mo5s 평균가드 touch가드 approach1hwf532,068,042원1,19516,034 ms44.2%0 bp-2.35 bp001hsh6726,244,890원1,51856,343 ms36.1%-11.86 bp-6.87 bp001ha1519,377,454원1,72612,868 ms6.7%3.21 bp2.57 bp70521ha23910,755,388원1,5798,712 ms8.6%5.94 bp3.12 bp82593hwf1659,482,791원3,47516,034 ms33.1%0 bp-2.71 bp003hsh19946,921,263원4,23020,568 ms21.7%0 bp-2.94 bp003ha112437,493,668원4,92912,872 ms4.6%1.61 bp1.63 bp186943ha211530,300,642원4,7418,712 ms6.9%0 bp1.6 bp1941368hwf55034,752,098원9,32611,676 ms26.4%0 bp-2.31 bp008hsh6441.2억10,82117,010 ms23.3%0 bp-1.9 bp008ha14241.06억12,74211,220 ms2.8%0 bp2.01 bp4622568ha240376,984,385원11,63211,503 ms3.7%0 bp2.28 bp48437724hwf2,4201.5억33,43810,206 ms21.7%0 bp-2.44 bp0024hsh2,5242.77억35,04212,695 ms22.2%0 bp-2.91 bp0024ha11,4961.9억38,2896,720 ms3.7%0 bp0.9 bp1,46197724ha21,4931.66억37,9117,564 ms3.2%1.7 bp1.95 bp1,5131,456표시 색이 붉은 타일 — 이유별qa_dash 붉은/노란 타일 26 (bad 16 · warn 10) — 전부 의도된 상태의 표시이며 장애 44정지 유닛 8 — 라이브 1h 타일 (유닛 inactive · tel 기록 중단): sh·a1·a2·wf페이퍼 A/B 가 10-11 13:03 에 의도적으로 정지된 상태로 추정 — 장애 아님 (위 라이브 유닛 카드)분석 값 부호 9 — 최O용 헷지 분석 (손익·낙폭·펀딩·basis 의 음수/양수에 색)아카이브 분석 값 — 부호에 따라 색만 붙음, 장애 아님: 무헷지 vs 헷지(해외 USDT perp 숏, 일 1회 재조정): 헷지 basis 제외 = 7.44억, 최대낙폭 무헷지 = -12.48억, 최대낙폭 헷지 = -4.92억, P1(10-01~12-21) 무헷지 = -6.55억, P2 헷지 = 8.26억, basis(김프몫) 합 = 4.76억, 펀딩 순 = -3.28억 / 벤치마크(카피 기준값): 50만원↑ 큰 체결 5초 마크아웃 = 0 bp7월 아카이브 판정 5 — 빗썸 RE 3계정 (메이커 회전 순익 음수 · 실자본 판정 NO-GO)2026-07 아카이브 판정, 라이브 아님: 빗썸1: 메이커 회전 순익 = -1.39 bp / 빗썸2: 메이커 회전 순익 = -0.12 bp / 범수동생계정3: 메이커 회전 순익 = -6.74 bp / 최종 감사(07-14): 라벨 구간 순익 = -2.81 bp, 실자본 판정 = NO-GO기타 4 — 분류되지 않은 붉은 타일업비트1 (계정1): 어제 순익 (11-01) = -610,801원 / 업비트2 (계정2): 수집기 = inactive, 마지막 수집 = — / 업비트 수집 상태 · 디스크: upbit-acct2 마지막 수집 = —스냅샷 · 소스 신선도7friends_snapshot (30분 타이머)11-02 01:37 · 34분 전qa_dash snapshot (5분 타이머)11-02 02:10 · 2분 전S 가드 24h 스코어10-10 11:57 · 22일 14시간 전RE 3계정 아카이브07-14 00:48 (07-07~13 구간)최O용 헷지 분석10-09 11:50infra watch (09:00 일보)2026-11-01 09:00 KST — 🚨 이상 1건전략 기록없음 — RE/IOC 메이커 회전은 역공학 추정 (핸드오프는 MacBook)원본 보기 (qa_dash)읽기 전용 프록시 · RE 아카이브·최O용 헷지 탭은 여기서원본 · QUANT같은 출처 프록시 · GET 전용 · 쿠키 미전달 · 제어 숨김 새로고침새 탭 소스 2/2 · snapshot.json 0ms · friends_snapshot.json 0ms서버 생성 방금읽기 전용 · 제어 없음",
+      "visibleText": "QUANT\n주의\n마지막 활동 2분 전\nsnapshot.json\nfriends_snapshot.json\n읽기 전용\n새로고침\n\n계정 6 · 7일 순익 +2,906만원 (+3.59bp) · 자본(원가) 84.02억 · 라이브 페이퍼 유닛 4 정지(10-11) · v9pp-ex 실패\n\n다음 결정 정지된 v9flws A/B(sh·a1·a2·wf) 재개/폐기 결정 · v9pp-ex 실패 확인 · 어제 적자 계정(업비트1) 상위 심볼 확인\n\n7일 순익 합\n+2,906만원\n11-01 까지 7일 · 수수료 후\n7일 평균 bp\n+3.59bp\n회전 809.65억\n어제 순익\n+216만원\n2026-11-01\n총 자본 (원가)\n84.02억\n코인·OTC 평균매수가 평가\n어제 체결 수\n30,589\n전체 6계정 중 값이 있는 계정 합\n페이퍼 유닛 가동\n4/9\n실패 v9pp-ex\n스냅샷 신선도\n34분 전\nqa_dash 2분 전\n주의\n3\nv9pp-ex 실패 (exit-code) · 10-15 00:43\n→ 로그 확인 후 재시작/폐기 결정\n18일 전\n페이퍼 A/B 유닛 4개 정지 21일 (10-11 13:03) — 재개/폐기 미결\n21일 전\n업비트1 (계정1) 어제 순익 -61만원\n→ 상위 심볼: LSK -89만원 · PROM +24만원 · NEAR +14만원\n계정 (6)\n7일 = 10-26~11-01 · 순익은 수수료 후 · 자본은 원가 기준 · 스냅샷 11-02 01:37 · 합계는 값이 있는 계정만\n6\n빗썸1\n빗썸\n정상\n\nSEED 15.51억 → 21.5억 (+39%) · 원가 기준 · 03-13~11-01\n\n7일 순익\n+707만원 (+4.57bp)\n어제 순익 (11-01)\n+147만원 (+9.75bp)\n어제 회전\n15.07억\n어제 체결\n7,414건\n어제 수수료\n602,674원\n상위 심볼 7일\nGTC +143만원 · CAMP +140만원 · G +129만원\n수집 상태\n🟢 수집 11초전 · 디스크 61%(잔여 19G)\n자본(원가) 60일\n21.5억\n\n전략 추정: RE/IOC 메이커 회전 (역공학 — 라이브 전략 기록 없음) · 코인·OTC 는 평균매수가(원가) 평가\n\n빗썸2\n빗썸\n정상\n\nSEED 14.19억 → 18.69억 (+32%) · 원가 기준 · 03-13~11-01\n\n7일 순익\n+858만원 (+5.76bp)\n어제 순익 (11-01)\n+7만원 (+0.61bp)\n어제 회전\n12.04억\n어제 체결\n5,431건\n어제 수수료\n481,522원\n상위 심볼 7일\nSOPH +258만원 · NEAR +163만원 · WLD +137만원\n수집 상태\n🟢 수집 11초전 · 디스크 59%(잔여 20G)\n자본(원가) 60일\n18.7억\n\n전략 추정: RE/IOC 메이커 회전 (역공학 — 라이브 전략 기록 없음) · 코인·OTC 는 평균매수가(원가) 평가\n\n범수동생계정3\n빗썸\n정상\n\nSEED 15.09억 → 18.62억 (+23%) · 원가 기준 · 03-15~11-01\n\n7일 순익\n+526만원 (+3.31bp)\n어제 순익 (11-01)\n+62만원 (+5.13bp)\n어제 회전\n12.02억\n어제 체결\n6,256건\n어제 수수료\n480,695원\n상위 심볼 7일\nMANTRA +256만원 · WLD +102만원 · BANK +77만원\n수집 상태\n🟢 수집 12초전 · 디스크 51%(잔여 25G)\n자본(원가) 60일\n18.6억\n\n전략 추정: RE/IOC 메이커 회전 (역공학 — 라이브 전략 기록 없음) · 코인·OTC 는 평균매수가(원가) 평가\n\nWILL\n빗썸\n정상\n\nSEED 1.05억 → 6.17억 (+487%) · 원가 기준 · 08-27~11-01\n\n7일 순익\n+418만원 (+3.35bp)\n어제 순익 (11-01)\n+61만원 (+5.73bp)\n어제 회전\n10.71억\n어제 체결\n4,964건\n어제 수수료\n428,308원\n상위 심볼 7일\nFORT +139만원 · UP +88만원 · PUFFER +81만원\n수집 상태\n보고 없음\n자본(원가) 60일\n6.17억\n\n전략 추정: RE/IOC 메이커 회전 (역공학 — 라이브 전략 기록 없음) · 코인·OTC 는 평균매수가(원가) 평가\n\n업비트1 (계정1)\n업비트\n주의\n\nSEED 18.35억 → 19.04억 (+4%) · 원가 기준 · 09-02~11-02\n\n7일 순익\n+397만원 (+1.79bp)\n어제 순익 (11-01)\n-61만원 (-3.8bp)\n어제 회전\n16.09억\n어제 체결\n6,524건\n어제 수수료\n804,295원\n상위 심볼 7일\nXRP +255만원 · DOS +158만원 · KAT +127만원\n수집 상태\nactive · 11-02 02:10\n자본(원가) 60일\n19억\n\n전략 추정: RE/IOC 메이커 회전 (역공학 — 라이브 전략 기록 없음) · 코인·OTC 는 평균매수가(원가) 평가\n\n업비트2 (계정2)\n업비트\n미확인\n\n데이터 없음\n\nSEED (자본 원가, 첫 기록)\n—\n현재 자본 (원가)\n—\n7일 순익 (수수료 후)\n—\n7일 순익 bp\n—\n어제 순익 (11-01)\n—\n어제 회전\n—\n어제 체결\n—\n\nupbit-re@acct2.service inactive · 수집 파일 없음(로그 upbit_acct2: 2026-09-02 WS/REST HTTP 401 — 키에 서버 IP 미등록)\n\n라이브 페이퍼 유닛\nsystemd --user 읽기 전용 · 24h 스코어 기준 10-10 11:57 · 정지 = 주의, 실패 = 장애\n9\nv9flws-sh\nPAPER\n주의\n\n정지 10-11 13:01 · 정상 종료\n\n24h 체결 / 대금\n2,524 / 2.77억\n24h markout5s 중앙\n0 bp\n24h crossed-at-fill\n22.2%\n24h 가드취소 touch/approach\n0 / 0\n마지막 체결\n10-11 13:01 · ONDO ask\n역할\n섀도 — 가드 태그만 (취소 없음, 추정)\n\n의도적 정지로 추정 — 기록 없음 · 24h 스코어는 10-09 A/B 채점\n\nv9flws-a1\nPAPER\n주의\n\n정지 10-11 13:03 · 정상 종료\n\n24h 체결 / 대금\n1,496 / 1.9억\n24h markout5s 중앙\n0 bp\n24h crossed-at-fill\n3.7%\n24h 가드취소 touch/approach\n1,461 / 977\n마지막 체결\n10-11 13:03 · ONDO ask\n역할\nA/B arm 1 — S stale 가드 취소\n\n의도적 정지로 추정 — 기록 없음 · 24h 스코어는 10-09 A/B 채점\n\nv9flws-a2\nPAPER\n주의\n\n정지 10-11 13:03 · 정상 종료\n\n24h 체결 / 대금\n1,493 / 1.66억\n24h markout5s 중앙\n1.7 bp\n24h crossed-at-fill\n3.2%\n24h 가드취소 touch/approach\n1,513 / 1,456\n마지막 체결\n10-11 13:03 · GWEI ask\n역할\nA/B arm 2 — S stale 가드 취소\n\n의도적 정지로 추정 — 기록 없음 · 24h 스코어는 10-09 A/B 채점\n\nv9flwf-ex\nPAPER\n주의\n\n정지 10-11 13:03 · 정상 종료\n\n24h 체결 / 대금\n2,420 / 1.5억\n24h markout5s 중앙\n0 bp\n24h crossed-at-fill\n21.7%\n24h 가드취소 touch/approach\n0 / 0\n마지막 체결\n10-11 13:03 · ONDO ask\n역할\n대조군 — v9flw_ex + end_handoff\n\n의도적 정지로 추정 — 기록 없음 · 24h 스코어는 10-09 A/B 채점\n\nv9mk4-m0r\nPAPER\n정상\n\n가동 10-22 03:40 부터\n\n역할\nv9mk4 paper arm M0r (maker_v2 perp_pull 실험, … config/v9mk4_M0r.json)\nv9mk4-m3\nPAPER\n정상\n\n가동 10-22 03:40 부터\n\n역할\nv9mk4 paper arm M3 (maker_v2 perp_pull 실험, … config/v9mk4_M3.json)\nv9mk4-pc\nPAPER\n정상\n\n가동 10-22 03:40 부터\n\n역할\nv9mk4 paper arm P_C (maker_v2 perp_pull 실험, … config/v9mk4_P_C.json)\nv9pp2-ex\nPAPER\n정상\n\n가동 10-22 11:18 부터 · 재시작 1\n\n역할\nv9pp2 paper = pilot_proposed_12d(4종) 24h 재시험, 라이브 코드 사본 (… config/v9pp2_ex.json)\nv9pp-ex\nPAPER\n장애\n\n실패 10-15 00:43 · 비정상 종료 (exit-code)\n\n역할\nv9pp paper = pilot_v5k_ex config 24h trial (active symbols, submits/fills per day), v5k code (… conf\n\n실패 — 로그 확인 후 재시작/폐기 결정\n\n자본 추이 (원가 기준, 억)\n하루 첫 잔고 스냅샷 · 코인·OTC 는 평균매수가 평가(시장가 아님) · 최근 90일\n빗썸1\n—\n빗썸2\n—\n범수동생계정3\n—\nWILL\n—\n업비트1 (계정1)\n19억\n11-02\n10\n20\n08-05\n08-12\n08-19\n08-26\n09-02\n09-09\n09-16\n09-23\n09-30\n10-07\n10-14\n10-21\n10-28\n11-02\n일별 순익 (원) 30일\n수수료 차감 후 · 오늘(11-02) 부분일 제외\n빗썸1\n1.47M원\n빗썸2\n73.9K원\n범수동생계정3\n617K원\nWILL\n613K원\n업비트1 (계정1)\n−611K원\n11-01\n0\n2M\n4M\n10-03\n10-06\n10-09\n10-12\n10-15\n10-18\n10-21\n10-24\n10-27\n10-30\n11-01\n24h A/B 스코어 (창 × 유닛)\n있는 창: 1h, 3h, 8h, 24h · 유닛 합치지 않음, 대조군 wf=v9flwf_ex · 기준 10-10 11:57\n16\n표시 색이 붉은 타일 — 이유별\nqa_dash 붉은/노란 타일 26 (bad 16 · warn 10) — 전부 의도된 상태의 표시이며 장애 4\n4\n정지 유닛 8 — 라이브 1h 타일 (유닛 inactive · tel 기록 중단): sh·a1·a2·wf\n페이퍼 A/B 가 10-11 13:03 에 의도적으로 정지된 상태로 추정 — 장애 아님 (위 라이브 유닛 카드)\n분석 값 부호 9 — 최O용 헷지 분석 (손익·낙폭·펀딩·basis 의 음수/양수에 색)\n아카이브 분석 값 — 부호에 따라 색만 붙음, 장애 아님: 무헷지 vs 헷지(해외 USDT perp 숏, 일 1회 재조정): 헷지 basis 제외 = 7.44억, 최대낙폭 무헷지 = -12.48억, 최대낙폭 헷지 = -4.92억, P1(10-01~12-21) 무헷지 = -6.55억, P2 헷지 = 8.26억, basis(김프몫) 합 = 4.76억, 펀딩 순 = -3.28억 / 벤치마크(카피 기준값): 50만원↑ 큰 체결 5초 마크아웃 = 0 bp\n7월 아카이브 판정 5 — 빗썸 RE 3계정 (메이커 회전 순익 음수 · 실자본 판정 NO-GO)\n2026-07 아카이브 판정, 라이브 아님: 빗썸1: 메이커 회전 순익 = -1.39 bp / 빗썸2: 메이커 회전 순익 = -0.12 bp / 범수동생계정3: 메이커 회전 순익 = -6.74 bp / 최종 감사(07-14): 라벨 구간 순익 = -2.81 bp, 실자본 판정 = NO-GO\n기타 4 — 분류되지 않은 붉은 타일\n업비트1 (계정1): 어제 순익 (11-01) = -610,801원 / 업비트2 (계정2): 수집기 = inactive, 마지막 수집 = — / 업비트 수집 상태 · 디스크: upbit-acct2 마지막 수집 = —\n스냅샷 · 소스 신선도\n7\n원본 보기 (qa_dash)\n읽기 전용 프록시 · RE 아카이브·최O용 헷지 탭은 여기서\n소스 2/2 · snapshot.json 0ms · friends_snapshot.json 0ms\n서버 생성 방금\n읽기 전용 · 제어 없음",
+      "links": [
+        {
+          "text": "새 탭",
+          "href": "http://127.0.0.1:9410/hub/p/quant/"
+        }
+      ],
+      "x": [],
+      "tg": [],
+      "overflow": {
+        "viewport": 1440,
+        "document": 1440,
+        "body": 1440,
+        "hub": 1368,
+        "hubClient": 1368
+      },
+      "sourcePanels": [],
+      "scrollShots": [
+        {
+          "file": "quant-desktop-scroll-01.png",
+          "offset": 755
+        },
+        {
+          "file": "quant-desktop-scroll-02.png",
+          "offset": 1510
+        },
+        {
+          "file": "quant-desktop-scroll-03.png",
+          "offset": 2265
+        },
+        {
+          "file": "quant-desktop-scroll-04.png",
+          "offset": 3020
+        },
+        {
+          "file": "quant-desktop-scroll-05.png",
+          "offset": 3400
+        }
+      ],
+      "errors": [],
+      "consoleErrors": [],
+      "blockedRequests": [],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/main-CAYJ0tWz.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/modulepreload-polyfill-P2Xu9kJm.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/rolldown-runtime-XKyaHtl9.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/react-jJ-S-UmE.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/accounts-C9SrDU9Q.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/EngineMark-CXk2bEKW.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/shortcuts-hHsVtOEX.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/Dialogs-sdPV0GBD.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/models-CgwCdLB_.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/hub-sections-C4ovIuJ1.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/vendor-DEBNP29C.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/protocol-BGbxf1AM.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/hub-sections-rgXUCHbR.css"
+        },
+        {
+          "method": "GET",
+          "path": "/api/hub/status"
+        },
+        {
+          "method": "GET",
+          "path": "/api/me"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/HubView-TziY-u4D.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/HubPage-CSuGmryd.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/HubPage-BdnYhuKG.css"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/barlow-semi-condensed-500-G0uxJNrM.woff2"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/barlow-semi-condensed-600-BkLiAYu4.woff2"
+        }
+      ]
+    },
+    {
+      "mode": "quant",
+      "size": "mobile",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "assertions": {
+        "shellRendered": true,
+        "noPageErrors": true,
+        "noConsoleErrors": true,
+        "noExternalRequests": true,
+        "noHorizontalOverflow": true,
+        "upbitAccountsShown": true,
+        "nullReasonRendered": true
+      },
+      "text": "QUANT주의마지막 활동 2분 전snapshot.jsonfriends_snapshot.json읽기 전용 새로고침계정 6 · 7일 순익 +2,906만원 (+3.59bp) · 자본(원가) 84.02억 · 라이브 페이퍼 유닛 4 정지(10-11) · v9pp-ex 실패다음 결정 정지된 v9flws A/B(sh·a1·a2·wf) 재개/폐기 결정 · v9pp-ex 실패 확인 · 어제 적자 계정(업비트1) 상위 심볼 확인7일 순익 합+2,906만원11-01 까지 7일 · 수수료 후7일 평균 bp+3.59bp회전 809.65억어제 순익+216만원2026-11-01총 자본 (원가)84.02억코인·OTC 평균매수가 평가어제 체결 수30,589전체 6계정 중 값이 있는 계정 합페이퍼 유닛 가동4/9실패 v9pp-ex스냅샷 신선도34분 전qa_dash 2분 전주의3v9pp-ex 실패 (exit-code) · 10-15 00:43→ 로그 확인 후 재시작/폐기 결정18일 전페이퍼 A/B 유닛 4개 정지 21일 (10-11 13:03) — 재개/폐기 미결21일 전업비트1 (계정1) 어제 순익 -61만원→ 상위 심볼: LSK -89만원 · PROM +24만원 · NEAR +14만원계정 (6)7일 = 10-26~11-01 · 순익은 수수료 후 · 자본은 원가 기준 · 스냅샷 11-02 01:37 · 합계는 값이 있는 계정만6빗썸1빗썸정상SEED 15.51억 → 21.5억 (+39%) · 원가 기준 · 03-13~11-017일 순익+707만원 (+4.57bp)어제 순익 (11-01)+147만원 (+9.75bp)어제 회전15.07억어제 체결7,414건어제 수수료602,674원상위 심볼 7일GTC +143만원 · CAMP +140만원 · G +129만원수집 상태🟢 수집 11초전 · 디스크 61%(잔여 19G)자본(원가) 60일21.5억전략 추정: RE/IOC 메이커 회전 (역공학 — 라이브 전략 기록 없음) · 코인·OTC 는 평균매수가(원가) 평가빗썸2빗썸정상SEED 14.19억 → 18.69억 (+32%) · 원가 기준 · 03-13~11-017일 순익+858만원 (+5.76bp)어제 순익 (11-01)+7만원 (+0.61bp)어제 회전12.04억어제 체결5,431건어제 수수료481,522원상위 심볼 7일SOPH +258만원 · NEAR +163만원 · WLD +137만원수집 상태🟢 수집 11초전 · 디스크 59%(잔여 20G)자본(원가) 60일18.7억전략 추정: RE/IOC 메이커 회전 (역공학 — 라이브 전략 기록 없음) · 코인·OTC 는 평균매수가(원가) 평가범수동생계정3빗썸정상SEED 15.09억 → 18.62억 (+23%) · 원가 기준 · 03-15~11-017일 순익+526만원 (+3.31bp)어제 순익 (11-01)+62만원 (+5.13bp)어제 회전12.02억어제 체결6,256건어제 수수료480,695원상위 심볼 7일MANTRA +256만원 · WLD +102만원 · BANK +77만원수집 상태🟢 수집 12초전 · 디스크 51%(잔여 25G)자본(원가) 60일18.6억전략 추정: RE/IOC 메이커 회전 (역공학 — 라이브 전략 기록 없음) · 코인·OTC 는 평균매수가(원가) 평가WILL빗썸정상SEED 1.05억 → 6.17억 (+487%) · 원가 기준 · 08-27~11-017일 순익+418만원 (+3.35bp)어제 순익 (11-01)+61만원 (+5.73bp)어제 회전10.71억어제 체결4,964건어제 수수료428,308원상위 심볼 7일FORT +139만원 · UP +88만원 · PUFFER +81만원수집 상태보고 없음자본(원가) 60일6.17억전략 추정: RE/IOC 메이커 회전 (역공학 — 라이브 전략 기록 없음) · 코인·OTC 는 평균매수가(원가) 평가업비트1 (계정1)업비트주의SEED 18.35억 → 19.04억 (+4%) · 원가 기준 · 09-02~11-027일 순익+397만원 (+1.79bp)어제 순익 (11-01)-61만원 (-3.8bp)어제 회전16.09억어제 체결6,524건어제 수수료804,295원상위 심볼 7일XRP +255만원 · DOS +158만원 · KAT +127만원수집 상태active · 11-02 02:10자본(원가) 60일19억전략 추정: RE/IOC 메이커 회전 (역공학 — 라이브 전략 기록 없음) · 코인·OTC 는 평균매수가(원가) 평가업비트2 (계정2)업비트미확인데이터 없음SEED (자본 원가, 첫 기록)—현재 자본 (원가)—7일 순익 (수수료 후)—7일 순익 bp—어제 순익 (11-01)—어제 회전—어제 체결—upbit-re@acct2.service inactive · 수집 파일 없음(로그 upbit_acct2: 2026-09-02 WS/REST HTTP 401 — 키에 서버 IP 미등록)라이브 페이퍼 유닛systemd --user 읽기 전용 · 24h 스코어 기준 10-10 11:57 · 정지 = 주의, 실패 = 장애9v9flws-shPAPER주의정지 10-11 13:01 · 정상 종료24h 체결 / 대금2,524 / 2.77억24h markout5s 중앙0 bp24h crossed-at-fill22.2%24h 가드취소 touch/approach0 / 0마지막 체결10-11 13:01 · ONDO ask역할섀도 — 가드 태그만 (취소 없음, 추정)의도적 정지로 추정 — 기록 없음 · 24h 스코어는 10-09 A/B 채점v9flws-a1PAPER주의정지 10-11 13:03 · 정상 종료24h 체결 / 대금1,496 / 1.9억24h markout5s 중앙0 bp24h crossed-at-fill3.7%24h 가드취소 touch/approach1,461 / 977마지막 체결10-11 13:03 · ONDO ask역할A/B arm 1 — S stale 가드 취소의도적 정지로 추정 — 기록 없음 · 24h 스코어는 10-09 A/B 채점v9flws-a2PAPER주의정지 10-11 13:03 · 정상 종료24h 체결 / 대금1,493 / 1.66억24h markout5s 중앙1.7 bp24h crossed-at-fill3.2%24h 가드취소 touch/approach1,513 / 1,456마지막 체결10-11 13:03 · GWEI ask역할A/B arm 2 — S stale 가드 취소의도적 정지로 추정 — 기록 없음 · 24h 스코어는 10-09 A/B 채점v9flwf-exPAPER주의정지 10-11 13:03 · 정상 종료24h 체결 / 대금2,420 / 1.5억24h markout5s 중앙0 bp24h crossed-at-fill21.7%24h 가드취소 touch/approach0 / 0마지막 체결10-11 13:03 · ONDO ask역할대조군 — v9flw_ex + end_handoff의도적 정지로 추정 — 기록 없음 · 24h 스코어는 10-09 A/B 채점v9mk4-m0rPAPER정상가동 10-22 03:40 부터역할v9mk4 paper arm M0r (maker_v2 perp_pull 실험, … config/v9mk4_M0r.json)v9mk4-m3PAPER정상가동 10-22 03:40 부터역할v9mk4 paper arm M3 (maker_v2 perp_pull 실험, … config/v9mk4_M3.json)v9mk4-pcPAPER정상가동 10-22 03:40 부터역할v9mk4 paper arm P_C (maker_v2 perp_pull 실험, … config/v9mk4_P_C.json)v9pp2-exPAPER정상가동 10-22 11:18 부터 · 재시작 1역할v9pp2 paper = pilot_proposed_12d(4종) 24h 재시험, 라이브 코드 사본 (… config/v9pp2_ex.json)v9pp-exPAPER장애실패 10-15 00:43 · 비정상 종료 (exit-code)역할v9pp paper = pilot_v5k_ex config 24h trial (active symbols, submits/fills per day), v5k code (… conf실패 — 로그 확인 후 재시작/폐기 결정자본 추이 (원가 기준, 억)하루 첫 잔고 스냅샷 · 코인·OTC 는 평균매수가 평가(시장가 아님) · 최근 90일빗썸1 —빗썸2 —범수동생계정3 —WILL —업비트1 (계정1) 19억11-02102008-0509-0410-0411-02일별 순익 (원) 30일수수료 차감 후 · 오늘(11-02) 부분일 제외빗썸1 1.47M원빗썸2 73.9K원범수동생계정3 617K원WILL 613K원업비트1 (계정1) −611K원11-0102M4M10-0310-1310-2311-0124h A/B 스코어 (창 × 유닛)있는 창: 1h, 3h, 8h, 24h · 유닛 합치지 않음, 대조군 wf=v9flwf_ex · 기준 10-10 11:5716창유닛체결N체결대금제출N제출→체결 p50crossed%mo5s 중앙mo5s 평균가드 touch가드 approach1hwf532,068,042원1,19516,034 ms44.2%0 bp-2.35 bp001hsh6726,244,890원1,51856,343 ms36.1%-11.86 bp-6.87 bp001ha1519,377,454원1,72612,868 ms6.7%3.21 bp2.57 bp70521ha23910,755,388원1,5798,712 ms8.6%5.94 bp3.12 bp82593hwf1659,482,791원3,47516,034 ms33.1%0 bp-2.71 bp003hsh19946,921,263원4,23020,568 ms21.7%0 bp-2.94 bp003ha112437,493,668원4,92912,872 ms4.6%1.61 bp1.63 bp186943ha211530,300,642원4,7418,712 ms6.9%0 bp1.6 bp1941368hwf55034,752,098원9,32611,676 ms26.4%0 bp-2.31 bp008hsh6441.2억10,82117,010 ms23.3%0 bp-1.9 bp008ha14241.06억12,74211,220 ms2.8%0 bp2.01 bp4622568ha240376,984,385원11,63211,503 ms3.7%0 bp2.28 bp48437724hwf2,4201.5억33,43810,206 ms21.7%0 bp-2.44 bp0024hsh2,5242.77억35,04212,695 ms22.2%0 bp-2.91 bp0024ha11,4961.9억38,2896,720 ms3.7%0 bp0.9 bp1,46197724ha21,4931.66억37,9117,564 ms3.2%1.7 bp1.95 bp1,5131,456표시 색이 붉은 타일 — 이유별qa_dash 붉은/노란 타일 26 (bad 16 · warn 10) — 전부 의도된 상태의 표시이며 장애 44정지 유닛 8 — 라이브 1h 타일 (유닛 inactive · tel 기록 중단): sh·a1·a2·wf페이퍼 A/B 가 10-11 13:03 에 의도적으로 정지된 상태로 추정 — 장애 아님 (위 라이브 유닛 카드)분석 값 부호 9 — 최O용 헷지 분석 (손익·낙폭·펀딩·basis 의 음수/양수에 색)아카이브 분석 값 — 부호에 따라 색만 붙음, 장애 아님: 무헷지 vs 헷지(해외 USDT perp 숏, 일 1회 재조정): 헷지 basis 제외 = 7.44억, 최대낙폭 무헷지 = -12.48억, 최대낙폭 헷지 = -4.92억, P1(10-01~12-21) 무헷지 = -6.55억, P2 헷지 = 8.26억, basis(김프몫) 합 = 4.76억, 펀딩 순 = -3.28억 / 벤치마크(카피 기준값): 50만원↑ 큰 체결 5초 마크아웃 = 0 bp7월 아카이브 판정 5 — 빗썸 RE 3계정 (메이커 회전 순익 음수 · 실자본 판정 NO-GO)2026-07 아카이브 판정, 라이브 아님: 빗썸1: 메이커 회전 순익 = -1.39 bp / 빗썸2: 메이커 회전 순익 = -0.12 bp / 범수동생계정3: 메이커 회전 순익 = -6.74 bp / 최종 감사(07-14): 라벨 구간 순익 = -2.81 bp, 실자본 판정 = NO-GO기타 4 — 분류되지 않은 붉은 타일업비트1 (계정1): 어제 순익 (11-01) = -610,801원 / 업비트2 (계정2): 수집기 = inactive, 마지막 수집 = — / 업비트 수집 상태 · 디스크: upbit-acct2 마지막 수집 = —스냅샷 · 소스 신선도7friends_snapshot (30분 타이머)11-02 01:37 · 34분 전qa_dash snapshot (5분 타이머)11-02 02:10 · 2분 전S 가드 24h 스코어10-10 11:57 · 22일 14시간 전RE 3계정 아카이브07-14 00:48 (07-07~13 구간)최O용 헷지 분석10-09 11:50infra watch (09:00 일보)2026-11-01 09:00 KST — 🚨 이상 1건전략 기록없음 — RE/IOC 메이커 회전은 역공학 추정 (핸드오프는 MacBook)원본 보기 (qa_dash)읽기 전용 프록시 · RE 아카이브·최O용 헷지 탭은 여기서원본 · QUANT같은 출처 프록시 · GET 전용 · 쿠키 미전달 · 제어 숨김 새로고침새 탭 소스 2/2 · snapshot.json 0ms · friends_snapshot.json 0ms서버 생성 방금읽기 전용 · 제어 없음",
+      "visibleText": "QUANT\n주의\n마지막 활동 2분 전\n\n계정 6 · 7일 순익 +2,906만원 (+3.59bp) · 자본(원가) 84.02억 · 라이브 페이퍼 유닛 4 정지(10-11) · v9pp-ex 실패\n\n다음 결정 정지된 v9flws A/B(sh·a1·a2·wf) 재개/폐기 결정 · v9pp-ex 실패 확인 · 어제 적자 계정(업비트1) 상위 심볼 확인\n\n7일 순익 합\n+2,906만원\n11-01 까지 7일 · 수수료 후\n7일 평균 bp\n+3.59bp\n회전 809.65억\n어제 순익\n+216만원\n2026-11-01\n총 자본 (원가)\n84.02억\n코인·OTC 평균매수가 평가\n어제 체결 수\n30,589\n전체 6계정 중 값이 있는 계정 합\n페이퍼 유닛 가동\n4/9\n실패 v9pp-ex\n스냅샷 신선도\n34분 전\nqa_dash 2분 전\n주의\n3\nv9pp-ex 실패 (exit-code) · 10-15 00:43\n→ 로그 확인 후 재시작/폐기 결정\n18일 전\n페이퍼 A/B 유닛 4개 정지 21일 (10-11 13:03) — 재개/폐기 미결\n21일 전\n업비트1 (계정1) 어제 순익 -61만원\n→ 상위 심볼: LSK -89만원 · PROM +24만원 · NEAR +14만원\n계정 (6)\n7일 = 10-26~11-01 · 순익은 수수료 후 · 자본은 원가 기준 · 스냅샷 11-02 01:37 · 합계는 값이 있는 계정만\n6\n빗썸1\n빗썸\n정상\n\nSEED 15.51억 → 21.5억 (+39%) · 원가 기준 · 03-13~11-01\n\n7일 순익\n+707만원 (+4.57bp)\n어제 순익 (11-01)\n+147만원 (+9.75bp)\n어제 회전\n15.07억\n어제 체결\n7,414건\n어제 수수료\n602,674원\n상위 심볼 7일\nGTC +143만원 · CAMP +140만원 · G +129만원\n수집 상태\n🟢 수집 11초전 · 디스크 61%(잔여 19G)\n자본(원가) 60일\n21.5억\n\n전략 추정: RE/IOC 메이커 회전 (역공학 — 라이브 전략 기록 없음) · 코인·OTC 는 평균매수가(원가) 평가\n\n빗썸2\n빗썸\n정상\n\nSEED 14.19억 → 18.69억 (+32%) · 원가 기준 · 03-13~11-01\n\n7일 순익\n+858만원 (+5.76bp)\n어제 순익 (11-01)\n+7만원 (+0.61bp)\n어제 회전\n12.04억\n어제 체결\n5,431건\n어제 수수료\n481,522원\n상위 심볼 7일\nSOPH +258만원 · NEAR +163만원 · WLD +137만원\n수집 상태\n🟢 수집 11초전 · 디스크 59%(잔여 20G)\n자본(원가) 60일\n18.7억\n\n전략 추정: RE/IOC 메이커 회전 (역공학 — 라이브 전략 기록 없음) · 코인·OTC 는 평균매수가(원가) 평가\n\n범수동생계정3\n빗썸\n정상\n\nSEED 15.09억 → 18.62억 (+23%) · 원가 기준 · 03-15~11-01\n\n7일 순익\n+526만원 (+3.31bp)\n어제 순익 (11-01)\n+62만원 (+5.13bp)\n어제 회전\n12.02억\n어제 체결\n6,256건\n어제 수수료\n480,695원\n상위 심볼 7일\nMANTRA +256만원 · WLD +102만원 · BANK +77만원\n수집 상태\n🟢 수집 12초전 · 디스크 51%(잔여 25G)\n자본(원가) 60일\n18.6억\n\n전략 추정: RE/IOC 메이커 회전 (역공학 — 라이브 전략 기록 없음) · 코인·OTC 는 평균매수가(원가) 평가\n\nWILL\n빗썸\n정상\n\nSEED 1.05억 → 6.17억 (+487%) · 원가 기준 · 08-27~11-01\n\n7일 순익\n+418만원 (+3.35bp)\n어제 순익 (11-01)\n+61만원 (+5.73bp)\n어제 회전\n10.71억\n어제 체결\n4,964건\n어제 수수료\n428,308원\n상위 심볼 7일\nFORT +139만원 · UP +88만원 · PUFFER +81만원\n수집 상태\n보고 없음\n자본(원가) 60일\n6.17억\n\n전략 추정: RE/IOC 메이커 회전 (역공학 — 라이브 전략 기록 없음) · 코인·OTC 는 평균매수가(원가) 평가\n\n업비트1 (계정1)\n업비트\n주의\n\nSEED 18.35억 → 19.04억 (+4%) · 원가 기준 · 09-02~11-02\n\n7일 순익\n+397만원 (+1.79bp)\n어제 순익 (11-01)\n-61만원 (-3.8bp)\n어제 회전\n16.09억\n어제 체결\n6,524건\n어제 수수료\n804,295원\n상위 심볼 7일\nXRP +255만원 · DOS +158만원 · KAT +127만원\n수집 상태\nactive · 11-02 02:10\n자본(원가) 60일\n19억\n\n전략 추정: RE/IOC 메이커 회전 (역공학 — 라이브 전략 기록 없음) · 코인·OTC 는 평균매수가(원가) 평가\n\n업비트2 (계정2)\n업비트\n미확인\n\n데이터 없음\n\nSEED (자본 원가, 첫 기록)\n—\n현재 자본 (원가)\n—\n7일 순익 (수수료 후)\n—\n7일 순익 bp\n—\n어제 순익 (11-01)\n—\n어제 회전\n—\n어제 체결\n—\n\nupbit-re@acct2.service inactive · 수집 파일 없음(로그 upbit_acct2: 2026-09-02 WS/REST HTTP 401 — 키에 서버 IP 미등록)\n\n라이브 페이퍼 유닛\nsystemd --user 읽기 전용 · 24h 스코어 기준 10-10 11:57 · 정지 = 주의, 실패 = 장애\n9\nv9flws-sh\nPAPER\n주의\n\n정지 10-11 13:01 · 정상 종료\n\n24h 체결 / 대금\n2,524 / 2.77억\n24h markout5s 중앙\n0 bp\n24h crossed-at-fill\n22.2%\n24h 가드취소 touch/approach\n0 / 0\n마지막 체결\n10-11 13:01 · ONDO ask\n역할\n섀도 — 가드 태그만 (취소 없음, 추정)\n\n의도적 정지로 추정 — 기록 없음 · 24h 스코어는 10-09 A/B 채점\n\nv9flws-a1\nPAPER\n주의\n\n정지 10-11 13:03 · 정상 종료\n\n24h 체결 / 대금\n1,496 / 1.9억\n24h markout5s 중앙\n0 bp\n24h crossed-at-fill\n3.7%\n24h 가드취소 touch/approach\n1,461 / 977\n마지막 체결\n10-11 13:03 · ONDO ask\n역할\nA/B arm 1 — S stale 가드 취소\n\n의도적 정지로 추정 — 기록 없음 · 24h 스코어는 10-09 A/B 채점\n\nv9flws-a2\nPAPER\n주의\n\n정지 10-11 13:03 · 정상 종료\n\n24h 체결 / 대금\n1,493 / 1.66억\n24h markout5s 중앙\n1.7 bp\n24h crossed-at-fill\n3.2%\n24h 가드취소 touch/approach\n1,513 / 1,456\n마지막 체결\n10-11 13:03 · GWEI ask\n역할\nA/B arm 2 — S stale 가드 취소\n\n의도적 정지로 추정 — 기록 없음 · 24h 스코어는 10-09 A/B 채점\n\nv9flwf-ex\nPAPER\n주의\n\n정지 10-11 13:03 · 정상 종료\n\n24h 체결 / 대금\n2,420 / 1.5억\n24h markout5s 중앙\n0 bp\n24h crossed-at-fill\n21.7%\n24h 가드취소 touch/approach\n0 / 0\n마지막 체결\n10-11 13:03 · ONDO ask\n역할\n대조군 — v9flw_ex + end_handoff\n\n의도적 정지로 추정 — 기록 없음 · 24h 스코어는 10-09 A/B 채점\n\nv9mk4-m0r\nPAPER\n정상\n\n가동 10-22 03:40 부터\n\n역할\nv9mk4 paper arm M0r (maker_v2 perp_pull 실험, … config/v9mk4_M0r.json)\nv9mk4-m3\nPAPER\n정상\n\n가동 10-22 03:40 부터\n\n역할\nv9mk4 paper arm M3 (maker_v2 perp_pull 실험, … config/v9mk4_M3.json)\nv9mk4-pc\nPAPER\n정상\n\n가동 10-22 03:40 부터\n\n역할\nv9mk4 paper arm P_C (maker_v2 perp_pull 실험, … config/v9mk4_P_C.json)\nv9pp2-ex\nPAPER\n정상\n\n가동 10-22 11:18 부터 · 재시작 1\n\n역할\nv9pp2 paper = pilot_proposed_12d(4종) 24h 재시험, 라이브 코드 사본 (… config/v9pp2_ex.json)\nv9pp-ex\nPAPER\n장애\n\n실패 10-15 00:43 · 비정상 종료 (exit-code)\n\n역할\nv9pp paper = pilot_v5k_ex config 24h trial (active symbols, submits/fills per day), v5k code (… conf\n\n실패 — 로그 확인 후 재시작/폐기 결정\n\n자본 추이 (원가 기준, 억)\n하루 첫 잔고 스냅샷 · 코인·OTC 는 평균매수가 평가(시장가 아님) · 최근 90일\n빗썸1\n—\n빗썸2\n—\n범수동생계정3\n—\nWILL\n—\n업비트1 (계정1)\n19억\n11-02\n10\n20\n08-05\n09-04\n10-04\n11-02\n일별 순익 (원) 30일\n수수료 차감 후 · 오늘(11-02) 부분일 제외\n빗썸1\n1.47M원\n빗썸2\n73.9K원\n범수동생계정3\n617K원\nWILL\n613K원\n업비트1 (계정1)\n−611K원\n11-01\n0\n2M\n4M\n10-03\n10-13\n10-23\n11-01\n24h A/B 스코어 (창 × 유닛)\n있는 창: 1h, 3h, 8h, 24h · 유닛 합치지 않음, 대조군 wf=v9flwf_ex · 기준 10-10 11:57\n16\n표시 색이 붉은 타일 — 이유별\nqa_dash 붉은/노란 타일 26 (bad 16 · warn 10) — 전부 의도된 상태의 표시이며 장애 4\n4\n정지 유닛 8 — 라이브 1h 타일 (유닛 inactive · tel 기록 중단): sh·a1·a2·wf\n페이퍼 A/B 가 10-11 13:03 에 의도적으로 정지된 상태로 추정 — 장애 아님 (위 라이브 유닛 카드)\n분석 값 부호 9 — 최O용 헷지 분석 (손익·낙폭·펀딩·basis 의 음수/양수에 색)\n아카이브 분석 값 — 부호에 따라 색만 붙음, 장애 아님: 무헷지 vs 헷지(해외 USDT perp 숏, 일 1회 재조정): 헷지 basis 제외 = 7.44억, 최대낙폭 무헷지 = -12.48억, 최대낙폭 헷지 = -4.92억, P1(10-01~12-21) 무헷지 = -6.55억, P2 헷지 = 8.26억, basis(김프몫) 합 = 4.76억, 펀딩 순 = -3.28억 / 벤치마크(카피 기준값): 50만원↑ 큰 체결 5초 마크아웃 = 0 bp\n7월 아카이브 판정 5 — 빗썸 RE 3계정 (메이커 회전 순익 음수 · 실자본 판정 NO-GO)\n2026-07 아카이브 판정, 라이브 아님: 빗썸1: 메이커 회전 순익 = -1.39 bp / 빗썸2: 메이커 회전 순익 = -0.12 bp / 범수동생계정3: 메이커 회전 순익 = -6.74 bp / 최종 감사(07-14): 라벨 구간 순익 = -2.81 bp, 실자본 판정 = NO-GO\n기타 4 — 분류되지 않은 붉은 타일\n업비트1 (계정1): 어제 순익 (11-01) = -610,801원 / 업비트2 (계정2): 수집기 = inactive, 마지막 수집 = — / 업비트 수집 상태 · 디스크: upbit-acct2 마지막 수집 = —\n스냅샷 · 소스 신선도\n7\n원본 보기 (qa_dash)\n읽기 전용 프록시 · RE 아카이브·최O용 헷지 탭은 여기서\n소스 2/2 · snapshot.json 0ms · friends_snapshot.json 0ms\n서버 생성 방금\n읽기 전용 · 제어 없음",
+      "links": [
+        {
+          "text": "새 탭",
+          "href": "http://127.0.0.1:9410/hub/p/quant/"
+        }
+      ],
+      "x": [],
+      "tg": [],
+      "overflow": {
+        "viewport": 390,
+        "document": 390,
+        "body": 390,
+        "hub": 390,
+        "hubClient": 390
+      },
+      "sourcePanels": [],
+      "scrollShots": [
+        {
+          "file": "quant-mobile-scroll-01.png",
+          "offset": 587
+        },
+        {
+          "file": "quant-mobile-scroll-02.png",
+          "offset": 1174
+        },
+        {
+          "file": "quant-mobile-scroll-03.png",
+          "offset": 1761
+        },
+        {
+          "file": "quant-mobile-scroll-04.png",
+          "offset": 2348
+        },
+        {
+          "file": "quant-mobile-scroll-05.png",
+          "offset": 2935
+        },
+        {
+          "file": "quant-mobile-scroll-06.png",
+          "offset": 3522
+        },
+        {
+          "file": "quant-mobile-scroll-07.png",
+          "offset": 4109
+        },
+        {
+          "file": "quant-mobile-scroll-08.png",
+          "offset": 4696
+        },
+        {
+          "file": "quant-mobile-scroll-09.png",
+          "offset": 5283
+        },
+        {
+          "file": "quant-mobile-scroll-10.png",
+          "offset": 5870
+        },
+        {
+          "file": "quant-mobile-scroll-11.png",
+          "offset": 6457
+        },
+        {
+          "file": "quant-mobile-scroll-12.png",
+          "offset": 7044
+        },
+        {
+          "file": "quant-mobile-scroll-13.png",
+          "offset": 7631
+        },
+        {
+          "file": "quant-mobile-scroll-14.png",
+          "offset": 8164
+        }
+      ],
+      "errors": [],
+      "consoleErrors": [],
+      "blockedRequests": [],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/main-CAYJ0tWz.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/modulepreload-polyfill-P2Xu9kJm.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/rolldown-runtime-XKyaHtl9.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/react-jJ-S-UmE.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/accounts-C9SrDU9Q.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/EngineMark-CXk2bEKW.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/shortcuts-hHsVtOEX.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/Dialogs-sdPV0GBD.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/models-CgwCdLB_.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/hub-sections-C4ovIuJ1.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/vendor-DEBNP29C.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/protocol-BGbxf1AM.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/hub-sections-rgXUCHbR.css"
+        },
+        {
+          "method": "GET",
+          "path": "/api/hub/status"
+        },
+        {
+          "method": "GET",
+          "path": "/api/me"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/HubView-TziY-u4D.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/HubPage-CSuGmryd.js"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/HubPage-BdnYhuKG.css"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/barlow-semi-condensed-600-BkLiAYu4.woff2"
+        },
+        {
+          "method": "GET",
+          "path": "/assets/barlow-semi-condensed-500-G0uxJNrM.woff2"
+        }
+      ]
+    }
+  ]
+}

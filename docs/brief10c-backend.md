@@ -1,0 +1,11 @@
+# BRIEF10c backend decisions
+
+- `HubMode.daily` contains sanitized `YappingDailyRow[]` plus an empty/failure reason. The collector calls only the fixed read-only `/api/metrics/daily?days=30` endpoint, uses the existing 3-second timeout, coalesces concurrent requests, and caches both successes and failures for 60 seconds after completion. Failed refreshes return no daily rows rather than presenting old comparisons as current.
+- Daily rows must contain real ISO calendar dates in strictly ascending order, no duplicates, no more than the requested 30 rows, and nonnegative safe integer counts. Followers/following explicitly accept null. Unknown upstream fields are dropped. Missing dates are allowed and preserved as unknown observations by the chart window helper.
+- Deltas use today's KST calendar date against the exact previous calendar date and date seven days earlier. Missing rows or null follower observations yield null, and real zero/negative differences remain numbers. Views compare the totals attributed to original posts published on the respective dates; this is not a rolling-period impression-gain measurement. Today's view total remains in progress.
+- Local posting/reply counters, source health, and Rising data remain independent of daily-feed failures. Conversely, unavailable local records do not suppress healthy daily metrics. Existing previous-run follower deltas are no longer used for the daily comparison tiles.
+- The synthetic fixture has 30 days with the oldest 16 follower observations null and the latest 14 observed. It is used only by tests and opt-in previews.
+
+Validation: `PATH=/home/max/.npm/_npx/387698761821791d/node_modules/node/bin:$PATH npm test -- src/server/hub/yapping-daily.test.ts src/server/hub/yapping.test.ts src/shared/yapping.test.ts src/server/hub/yapping-rising.test.ts` passed: 4 files, 49 tests. Coverage includes nulls/zero/negative differences, exact missing-date behavior, KST midnight, chart gaps, parser rejection, failure sanitization, request coalescing, cache expiry/recovery, and source independence.
+
+Remaining limitation: the upstream follower history is limited to 14 days; the UI must show the requested note and leave null observations as gaps.

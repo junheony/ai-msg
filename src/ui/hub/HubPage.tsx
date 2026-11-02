@@ -3,6 +3,8 @@ import type { HubAlert, HubKpi, HubMode, HubModeId, HubSection, HubState } from 
 import type { LabState } from '../../shared/lab-types';
 import { ExternalIcon, HubIcon, ReloadIcon } from './HubIcons';
 import { Cards, Chart, Images, KvGrid, Steps } from './HubSections';
+import { YappingHome } from './YappingHome';
+import './quant.css';
 import { NexusHome } from './NexusHome';
 import { TradingScoreboard, TradingHome } from './TradingHome';
 import { GameStudioHome } from './gamestudio/GameStudioHome';
@@ -309,6 +311,7 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
   const pick = (p: VideoProject) => { setProject(p); writeVideoProject(p); };
   const factory = modeKey === 'video' && project === 'factory';
   const own = !factory;
+  const yapping = modeKey === 'yapping' && !!mode?.page;
   // While Shorts 공장 is selected the header speaks for it, not for engineering-shorts.
   const head = factory && mode?.shorts ? sfHeader(mode.shorts) : null;
   const kpis = mode ? kpisOf(mode) : [];
@@ -349,7 +352,7 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
         {head ? <span className="hub-tag">Shorts 공장</span> : mode?.tag && !studio && <span className="hub-tag">{mode.tag}</span>}
         <span className="meta">{head ? '파일 갱신' : '마지막 활동'} {relTime(head ? head.lastActivity : mode?.lastActivity, now)}</span>
         {head && <SourceStatus sources={head.sources.map((x) => ({ name: x.name, ok: x.ok, detail: x.label }))} />}
-        {!head && !studio && mode && mode.sources.length > 0 && <SourceStatus sources={mode.sources.map((x) => ({ name: x.name, ok: x.ok, off: x.off, detail: x.off ? (x.error ?? '꺼짐') : x.ok ? (x.ms ? `${x.ms}ms` : '') : (x.error ?? '오류') }))} note={mode.sourceNote} />}
+        {!head && !studio && !yapping && mode && mode.sources.length > 0 && <SourceStatus sources={mode.sources.map((x) => ({ name: x.name, ok: x.ok, off: x.off, detail: x.off ? (x.error ?? '꺼짐') : x.ok ? (x.ms ? `${x.ms}ms` : '') : (x.error ?? '오류') }))} note={mode.sourceNote} />}
         <span className="ph-end">
           <span className="pill">읽기 전용</span>
           {/* The Trading room has no control anywhere, the header included: its feeds poll on their own (60 s), so the
@@ -372,7 +375,7 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
       {!mode && !error && <div className="hub-notice muted">상태를 불러오는 중…</div>}
       {factory && mode && (mode.shorts ? <ShortsFactoryHome sf={mode.shorts} now={now} /> : <div className="hub-notice muted" data-testid="sf-absent">서버가 Shorts 공장 데이터를 보내지 않았다 · 서버를 새 빌드로 올리면 보인다.</div>)}
       {studio && <GameStudioHome studio={studio} now={now} />}
-      {studio ? (
+      {yapping && mode ? <YappingHome mode={mode} now={now} /> : studio ? (
         <details className="gs-detail" data-testid="gs-detail">
           <summary>상세 기록</summary>
           <div className="gs-detail-in">{ops}</div>
@@ -380,6 +383,7 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
       ) : own && ops}
       {mode && (
         <footer className="foot">
+          {yapping && <span>소스 {mode.sources.filter((s) => s.ok).length}/{mode.sources.length}</span>}
           <span>서버 생성 {relTime(generatedAt, now)}</span>
           <span>읽기 전용 · 제어 없음</span>
         </footer>
