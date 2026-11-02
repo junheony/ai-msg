@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { HubMode, ShortsFactoryView } from '../../shared/hub-types';
-import { collectHubStatus, createHubStatus, errorText, fetchJsonWithTimeout, HUB_URLS, latestRenderIn, leadWithShorts, SECRET_FIELD_RE, stripSecrets, toIso, type HubDeps } from './status';
+import type { GameStudio, HubMode, ShortsFactoryView, StudioGame } from '../../shared/hub-types';
+import { collectHubStatus, createHubStatus, errorText, fetchJsonWithTimeout, HUB_URLS, latestRenderIn, leadWithShorts, SECRET_FIELD_RE, stripSecrets, toIso, withStudioActivity, type HubDeps } from './status';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -251,5 +251,22 @@ describe('영상 card led by Shorts 공장', () => {
     const none = sf({ files: { status: file('missing', null), channels: file('missing', null), history: { ...file('missing', null), rows: 0, skipped: 0 } } as ShortsFactoryView['files'] });
     expect(leadWithShorts(studio('idle'), none)).toMatchObject({ state: 'idle', metrics: { '에피소드': 0 } });
     expect(leadWithShorts(studio('ok'), null).state).toBe('ok');
+  });
+});
+
+describe('게임 스튜디오 마지막 활동 includes the manifest studio', () => {
+  const games = (state: HubMode['state'], lastActivity: string | null): HubMode => ({ id: 'game', name: '게임 스튜디오', state, lastActivity, metrics: {}, alerts: [], links: [], sources: [] });
+  const studio = (...lastAts: (string | null)[]): GameStudio => ({ games: lastAts.map((lastAt) => ({ lastAt }) as StudioGame), agents: [], others: { count: 0, working: 0, names: [] }, loot: [], feed: [], summary: { working: 0, owner: 0, released: 0, blocked: 0, games: lastAts.length }, pipeline: { doc: null, template: false, manifests: lastAts.length }, generatedAt: '' });
+  it('takes the newest of the ~/games scan and every card lastAt; an age-only idle reads ok again', () => {
+    const m = withStudioActivity(games('idle', '2026-10-01T00:00:00.000Z'), studio('2026-10-29T09:00:00.000Z', null, '2026-10-30T08:00:00.000Z'), NOW);
+    expect(m.lastActivity).toBe('2026-10-30T08:00:00.000Z');
+    expect(m.state).toBe('ok');
+    expect(m.studio?.games).toHaveLength(3);
+  });
+  it('keeps a newer ~/games time, a warn state, and idle when the cards are old too', () => {
+    expect(withStudioActivity(games('ok', '2026-10-30T09:00:00.000Z'), studio('2026-10-20T00:00:00.000Z'), NOW).lastActivity).toBe('2026-10-30T09:00:00.000Z');
+    expect(withStudioActivity(games('warn', '2026-09-01T00:00:00.000Z'), studio('2026-10-30T00:00:00.000Z'), NOW).state).toBe('warn');
+    expect(withStudioActivity(games('idle', '2026-09-01T00:00:00.000Z'), studio('2026-09-02T00:00:00.000Z'), NOW)).toMatchObject({ state: 'idle', lastActivity: '2026-09-02T00:00:00.000Z' });
+    expect(withStudioActivity(games('unknown', null), studio(null), NOW)).toMatchObject({ state: 'unknown', lastActivity: null });
   });
 });

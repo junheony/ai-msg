@@ -6,7 +6,7 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { HubAlert, HubKpi, HubMetricValue, HubMode, HubModeId, HubSection, HubSource, HubState, HubStatus, ShortsFactoryView } from '../../shared/hub-types';
+import type { GameStudio, HubAlert, HubKpi, HubMetricValue, HubMode, HubModeId, HubSection, HubSource, HubState, HubStatus, ShortsFactoryView } from '../../shared/hub-types';
 import { HUB_MODE_IDS } from '../../shared/hub-types';
 import { collectOps } from './ops';
 import { collectNexus } from './nexus';
@@ -14,7 +14,7 @@ import { collectQuant } from './quant';
 import { collectTrading } from './trading';
 import { collectUpdown } from './updown';
 import {
-  DAY_MS, DEFAULT_LINKS, HOUR_MS, HUB_CACHE_MS, HUB_TIMEOUTS, HUB_URLS, LAST_GOOD_MS, SECRET_FIELD_RE, STALLED_S, SYSTEMD_PROPS, agoFrom, bool, downMode, errorText, fmtAgo, fmtClock, fmtDuration, fmtInt, fmtKst, fmtNum, fmtUsd,
+  DAY_MS, DEFAULT_LINKS, HOUR_MS, IDLE_DAYS, HUB_CACHE_MS, HUB_TIMEOUTS, HUB_URLS, LAST_GOOD_MS, SECRET_FIELD_RE, STALLED_S, SYSTEMD_PROPS, agoFrom, bool, downMode, errorText, fmtAgo, fmtClock, fmtDuration, fmtInt, fmtKst, fmtNum, fmtUsd,
   isObj, kpi, latestIso, loopBudgetSignal, num, objs, page, probe, scrub, sec, sortAlerts, str, stripSecrets, toIso, withLastGood, type HubDeps, type HubSelf, type HubSelfSeat,
 } from './shared';
 import { collectGameStudioCached } from './gameStudio';
@@ -95,7 +95,18 @@ function collectMsg(deps: HubDeps): HubMode {
 /** 게임 스튜디오: the ops page (~/games facts) plus, with a studio folder, the gamified view built from the manifests. */
 export async function collectGameMode(deps: HubDeps): Promise<HubMode> {
   const [mode, studio] = await Promise.all([collectStudioCached(deps, 'game'), deps.studioDir ? collectGameStudioCached(deps, { studioDir: deps.studioDir }) : Promise.resolve(null)]);
-  return studio ? { ...mode, studio } : mode;
+  return studio ? withStudioActivity(mode, studio, deps.now()) : mode;
+}
+
+/**
+ * The ~/games page plus the manifest studio. 마지막 활동 is the newest of the ~/games scan and every studio card's
+ * `lastAt` (most work now happens in ~/jobs, not ~/games); a card left idle only by an old ~/games scan reads ok again.
+ */
+export function withStudioActivity(mode: HubMode, studio: GameStudio, now: number): HubMode {
+  const lastActivity = latestIso(mode.lastActivity, ...studio.games.map((g) => g.lastAt));
+  const fresh = lastActivity !== null && now - Date.parse(lastActivity) <= IDLE_DAYS * DAY_MS;
+  const state = mode.state === 'idle' && fresh ? 'ok' : mode.state;
+  return { ...mode, state, lastActivity, studio };
 }
 
 /* ───────── aggregate + cache ───────── */
