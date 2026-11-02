@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { dailyFixture } from '../../../tests/fixtures/yapping-daily';
 import { collectDaily, parseDaily } from './yapping-daily';
-import { HUB_URLS, type HubDeps } from './shared';
+import { HUB_TIMEOUTS, HUB_URLS, type HubDeps } from './shared';
 
 function deps() {
   let now = 0;
@@ -19,7 +19,7 @@ describe('daily metrics collector', () => {
   it('reads fixed 30-day GET endpoint, preserves null followers and actual zero counts', async () => {
     const { d, fetchJson } = deps();
     const result = await collectDaily(d);
-    expect(fetchJson).toHaveBeenCalledExactlyOnceWith(HUB_URLS.yappingDaily, 3000);
+    expect(fetchJson).toHaveBeenCalledExactlyOnceWith(HUB_URLS.yappingDaily, HUB_TIMEOUTS.default);
     expect(result.daily).toEqual({ rows: dailyFixture(), reason: null });
     expect(result.daily.rows.filter(row => row.followers === null)).toHaveLength(16);
     expect(result.daily.rows[0]).toMatchObject({ followers: null, following: null, views: 0, posts: 0 });

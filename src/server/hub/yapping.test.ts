@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { collectYapping } from './yapping';
-import { HUB_URLS, type HubDeps } from './shared';
+import { HUB_TIMEOUTS, HUB_URLS, type HubDeps } from './shared';
 import { YAPPING_READ_SCRIPT } from './yapping-read';
 import { yappingSourceSummary } from '../../shared/yapping';
 import { risingFixture } from '../../../tests/fixtures/yapping-rising';
@@ -55,8 +55,8 @@ describe('auto-growth yapping collector', () => {
     expect(tg.rows[0]![2]).toBe('https://t.me/blockschool/1');
     expect(m.page!.sections.some((s) => /로테이션|초안/.test(s.title))).toBe(false);
     expect(fetchJson).toHaveBeenCalledTimes(2);
-    expect(fetchJson).toHaveBeenCalledWith(HUB_URLS.yappingRising, 3000);
-    expect(fetchJson).toHaveBeenCalledWith(HUB_URLS.yappingDaily, 3000);
+    expect(fetchJson).toHaveBeenCalledWith(HUB_URLS.yappingRising, HUB_TIMEOUTS.default);
+    expect(fetchJson).toHaveBeenCalledWith(HUB_URLS.yappingDaily, HUB_TIMEOUTS.default);
     expect(exec).toHaveBeenCalledWith('python3', ['-c', YAPPING_READ_SCRIPT, '/home/test/yapping-bot', String(NOW)], { timeoutMs: 1800 });
     expect(JSON.stringify(m)).not.toContain('/home/test');
   });

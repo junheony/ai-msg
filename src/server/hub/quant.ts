@@ -429,7 +429,7 @@ export async function collectQuant(deps: HubDeps): Promise<HubMode> {
   /* ── alerts / state ── */
   const errors = (Array.isArray(snap?.errors) ? snap!.errors : []).filter((e): e is string => typeof e === 'string').slice(0, 5).map((e) => scrub(e));
   const alerts: HubAlert[] = errors.map((e) => ({ level: 'warn' as const, text: `qa_dash 오류: ${e}` }));
-  for (const u of failed) alerts.push({ level: 'bad', text: `${u.unit} 실패 (${u.info.result ?? 'failed'})${u.info.exitedAt ? ` · ${fmtKst(u.info.exitedAt)}` : ''}`, hint: '로그 확인 후 재시작/폐기 결정', at: u.info.exitedAt });
+  for (const u of failed) alerts.push({ level: u.info.exitedAt && now - Date.parse(u.info.exitedAt) > 3 * DAY_MS ? 'warn' : 'bad', text: `${u.unit} 실패 (${u.info.result ?? 'failed'})${u.info.exitedAt ? ` · ${fmtKst(u.info.exitedAt)}` : ''}`, hint: '로그 확인 후 재시작/폐기 결정', at: u.info.exitedAt });
   if (snapshotStale && snap) alerts.push({ level: 'warn', text: `qa_dash 갱신 실패 · ${source.error ?? '오류'} · 이전 값 ${fmtKst(snapshotAt ? new Date(snapshotAt).toISOString() : genAt)}` });
   if (!snap) alerts.push({ level: 'warn', text: `qa_dash 응답 없음 · ${source.error ?? '오류'}` });
   if (!friends) alerts.push({ level: 'warn', text: `friends_snapshot 없음${friendsSrc.error ? ` · ${friendsSrc.error}` : ''} — 계정 수치는 qa_dash 기준`, hint: 'friends-snapshot.timer (30분) 확인' });

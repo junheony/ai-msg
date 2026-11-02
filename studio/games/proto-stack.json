@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "id": "proto-stack",
+  "title": "Neon Stack",
+  "titleKo": "네온 스택 · 프로토타입",
+  "genre": "원탭 타워 쌓기",
+  "engine": "Vite / Capacitor",
+  "status": "building",
+  "cover": "~/jobs/proto-stack/shots/gameplay.png",
+  "repos": [
+    {
+      "label": "프로토타입 · 원격 미연결",
+      "path": "~/bbai-codex/proto-stack",
+      "branch": "main"
+    }
+  ],
+  "stages": [
+    {
+      "id": "concept",
+      "evidence": [
+        "~/bbai-codex/proto-stack/DESIGN.md"
+      ]
+    },
+    {
+      "id": "assets",
+      "evidence": []
+    },
+    {
+      "id": "build",
+      "evidence": [
+        "~/bbai-codex/proto-stack/dist/index.html"
+      ]
+    },
+    {
+      "id": "test",
+      "evidence": [
+        "~/jobs/proto-stack/REPORT.md"
+      ]
+    },
+    {
+      "id": "preview",
+      "evidence": []
+    },
+    {
+      "id": "approval",
+      "evidence": []
+    },
+    {
+      "id": "release",
+      "evidence": []
+    }
+  ],
+  "artifacts": {
+    "screenshots": [
+      "~/jobs/proto-stack/shots/*.png"
+    ],
+    "builds": [
+      "~/bbai-codex/proto-stack/dist/*.html"
+    ]
+  },
+  "tests": [
+    {
+      "label": "빌드·스모크 19개 통과 · 사람·실기기 미검증",
+      "path": "~/jobs/proto-stack/REPORT.md"
+    }
+  ],
+  "preview": [],
+  "jobs": [
+    "proto-stack"
+  ],
+  "approvals": [],
+  "nextAction": {
+    "text": "사람·실기기 플레이테스트, APK 빌드, OFL 폰트 허용 검토",
+    "owner": false
+  }
+}

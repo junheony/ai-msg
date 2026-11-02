@@ -8,7 +8,7 @@
  * There are no controls here: not a single <button>, form or link that could act on a bot. A bot that is down gets a
  * plain "응답 없음" block in its place and the rest of the page stays up. Snapshot fallbacks older than 24 h are banded.
  */
-import type { HubAlert, HubState, TradingMerged, TradingRoomView, TradingWorkstream, Ver2Book, Ver2Ledger, Ver2Paper } from '../../shared/hub-types';
+import type { HubAlert, HubState, TradingBotRow, TradingMerged, TradingRoomView, TradingWorkstream, Ver2Book, Ver2Ledger, Ver2Paper } from '../../shared/hub-types';
 import { Chart, Spark } from './HubSections';
 import { STATE_LABEL, stateClass } from './modes';
 import { relTime } from './time';
@@ -67,9 +67,35 @@ const Alerts = ({ alerts, now }: { alerts: HubAlert[]; now: number }) => (
   </ul>
 );
 
+/* ───────── the scoreboard ───────── */
+
+/** A figure, or a calm grey 데이터 없음 when the bot does not report it. */
+const Fig = ({ v, cls }: { v: string | null; cls?: string }) => (v === null ? <span className="tr-sb-none">데이터 없음</span> : <b className={cls ?? ''}>{v}</b>);
+
+/** What a trader looks at first: each bot's paper result, one line per bot, nothing summed across bots. No controls. */
+export function TradingScoreboard({ rows, tag }: { rows: TradingBotRow[]; tag?: string | undefined }) {
+  return (
+    <section className="sec open-static tr tr-sb" aria-label="봇별 페이퍼 성적" data-testid="tr-scoreboard">
+      <div className="sh"><span className="sec-title">봇별 페이퍼 성적</span>{tag && <span className="hub-tag">{tag}</span>}<span className="n">갱신 시각 KST · 봇끼리 합산 안 함</span></div>
+      <div className="tr-sb-rows" role="table">
+        <div className="tr-sb-row tr-sb-head" role="row"><span role="columnheader">봇</span><span role="columnheader">손익</span><span role="columnheader">승률</span><span role="columnheader">열린 포지션</span><span role="columnheader">갱신</span></div>
+        {rows.map((r) => (
+          <div key={r.id} className="tr-sb-row" role="row" data-testid={`tr-sb-${r.id}`}>
+            <span className="tr-sb-name" role="cell"><strong>{r.name}</strong>{r.note && <small>{r.note}</small>}</span>
+            <span role="cell" data-k="손익"><Fig v={r.pnl} cls={r.pnlTone ?? ''} /></span>
+            <span role="cell" data-k="승률"><Fig v={r.win} /></span>
+            <span role="cell" data-k="열린"><Fig v={r.open} /></span>
+            <span role="cell" data-k="갱신"><Fig v={r.updated} /></span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 /* ───────── 트레이딩룸 :8830 ───────── */
 
-const VIA: Record<TradingRoomView['via'], string> = { live: '실시간', snapshot: '스냅샷', none: '응답 없음' };
+const VIA: Record<TradingRoomView['via'], string> = { live: '실시간', snapshot: '스냅샷', none: '데이터 없음' };
 
 function Workstream({ w }: { w: TradingWorkstream }) {
   return (
@@ -103,14 +129,14 @@ function Room({ r, now }: { r: TradingRoomView; now: number }) {
       {r.via === 'snapshot' && (
         <div className={`tr-band ${r.stale ? 'warn' : 'info'}`} role="status" data-testid="tr-snapshot-band">
           <b>{r.stale ? '오래된 스냅샷' : '스냅샷으로 표시 중'}</b>
-          <span> · :8830 이 응답하지 않아 ~/trading-status 스냅샷 파일을 보여줌{r.ageH !== null ? ` · ${fmt(r.ageH, 1)}h 전 생성` : ''}{r.stale ? ' · 24h 초과 — 현재 상태와 다를 수 있음' : ''}{r.error ? ` · ${r.error}` : ''}</span>
+          <span> · 봇이 응답하지 않아 저장된 스냅샷을 보여줌{r.ageH !== null ? ` · ${fmt(r.ageH, 1)}h 전 생성` : ''}{r.stale ? ' · 24h 초과 — 현재 상태와 다를 수 있음' : ''}{r.error ? ` · ${r.error}` : ''}</span>
         </div>
       )}
-      {r.via === 'none' && <Down what=":8830 /api/status" error={r.error} hint="스냅샷 파일(~/trading-status/snapshot/trading_room_snapshot.json)도 읽지 못함. 여기서는 읽기만 하므로 trading-status.service 는 봇 쪽에서 확인." />}
+      {r.via === 'none' && <Down what="트레이딩룸 봇" error={r.error} hint="저장된 스냅샷도 없어 표시할 값이 없음." />}
       <Mini items={[
         { k: '워크스트림', v: `${okN}/${r.workstreams.length} 정상`, s: okN === r.workstreams.length ? 'ok' : okN ? 'warn' : 'bad' },
-        { k: '상태 · 단계', v: `${r.state ?? '—'} · ${r.stage ?? '—'}` },
-        { k: '봇 자체 스냅샷', v: r.botSnapshotAgeH === null ? '—' : `${fmt(r.botSnapshotAgeH, 1)}h 전`, s: r.botSnapshotAgeH !== null && r.botSnapshotAgeH > 24 ? 'warn' : '' },
+        { k: '상태 · 단계', v: `${r.kpis[0]?.value ?? '—'} · ${r.stage ?? '—'}` },
+        { k: '봇 자체 스냅샷', v: r.botSnapshotAgeH === null ? '—' : `${fmt(r.botSnapshotAgeH, 1)}h 전`, s: r.via !== 'live' && r.botSnapshotAgeH !== null && r.botSnapshotAgeH > 24 ? 'warn' : '' },
         { k: '알림', v: int(r.alerts.length), s: r.alerts.some((a) => a.level === 'bad') ? 'bad' : r.alerts.some((a) => a.level === 'warn') ? 'warn' : '' },
       ]} />
       <p className="tr-rule">세 워크스트림은 따로 본다 · PnL 은 워크스트림별 표시, 합산 없음</p>

@@ -96,7 +96,7 @@ describe('HubPage template', () => {
     expect(a.getAttribute('target')).toBe('_blank');
     expect(a.getAttribute('rel')).toContain('noopener');
     expect(screen.getByTestId('hub-lead').className).toContain('bad');
-    expect(screen.getByText('nexus · 시간 초과')).toBeTruthy();
+    expect(screen.getByTestId('hub-sources').textContent).toContain('nexus시간 초과');
   });
 
   it('bars scale to the largest magnitude and mark negatives; lists, kv and text render their rows', () => {
@@ -124,7 +124,7 @@ describe('HubPage template', () => {
     expect(screen.getByTestId('hub-kpis').textContent).toContain('확인 불가');
     expect(screen.getByTestId('hub-kpis').textContent).toContain('—');
     expect(screen.getByTestId('hub-sec-kv')).toBeTruthy();
-    expect(screen.getByText('systemd · 권한 없음')).toBeTruthy();
+    expect(screen.getByTestId('hub-sources').textContent).toContain('systemd권한 없음');
   });
 
   it('shows the error and keeps refresh usable; nothing on the page is a form control', () => {
@@ -185,7 +185,9 @@ it('trading sections are static (no fold, no frame): a 원본 is a new-tab link;
   const t = mode('trading');
   const withRaw = { ...t, page: { ...t.page!, sections: [...t.page!.sections, { kind: 'raw' as const, title: '원본', href: '/hub/p/trading/', embed: true }] } };
   page('trading', { mode: withRaw });
-  expect(document.querySelector('details, summary, iframe')).toBeNull();
+  expect(document.querySelector('iframe')).toBeNull();
+  expect([...document.querySelectorAll('details')].map((d) => d.getAttribute('data-testid'))).toEqual(['hub-sources']); // the one fold on the page, closed
+  expect(screen.getByTestId<HTMLDetailsElement>('hub-sources').open).toBe(false);
   const raw = screen.getByTestId('hub-sec-raw');
   expect(raw.tagName).toBe('SECTION');
   expect(raw.querySelector('a')!.getAttribute('target')).toBe('_blank');

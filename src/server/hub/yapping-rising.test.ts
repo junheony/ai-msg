@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { risingFixture } from '../../../tests/fixtures/yapping-rising';
 import { collectRising, parseRising } from './yapping-rising';
-import { HUB_URLS, type HubDeps } from './shared';
+import { HUB_TIMEOUTS, HUB_URLS, type HubDeps } from './shared';
 
 function deps() {
   let now = 0;
@@ -18,7 +18,7 @@ describe('Rising read-only collector', () => {
   it('orders the fixture by rank, limits to ten and projects only the card fields', async () => {
     const { d, fetchJson } = deps();
     const { rising, source } = await collectRising(d);
-    expect(fetchJson).toHaveBeenCalledExactlyOnceWith(HUB_URLS.yappingRising, 3000);
+    expect(fetchJson).toHaveBeenCalledExactlyOnceWith(HUB_URLS.yappingRising, HUB_TIMEOUTS.default);
     expect(rising.items.map(item => item.rank)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     expect(rising.items[0]).toMatchObject({ author: '@fixture_1', velocityVph: 12000.5, ageH: 0.25, topic: 'AI' });
     expect(rising).toMatchObject({ generatedAt: '2026-11-02T03:00:00.000Z', windowH: 12, reason: null });
