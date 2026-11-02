@@ -1,5 +1,6 @@
 import type { HubMode, HubState, HubStatus } from '../../shared/hub-types';
 import { ChevronRightIcon, HubIcon, ReloadIcon } from './HubIcons';
+import { ResearchPanel } from './research/ResearchPanel';
 import { Attention, decisionOf, headlineOf, kpisOf, Lead, StatePill } from './HubPage';
 import { modeDef, STATE_LABEL, stateClass, type HubModeKey } from './modes';
 import { relTime } from './time';
@@ -96,6 +97,7 @@ export function HubOverview({ status, error, loading, fetchedAt, now, pushOn, on
           </section>
         </div>
       )}
+      <ResearchPanel />
     </div>
   );
 }

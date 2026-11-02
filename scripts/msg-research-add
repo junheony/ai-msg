@@ -1,0 +1,55 @@
+#!/usr/bin/env node
+// Append one article to ~/.msg/research/articles.json (or $MSG_RESEARCH_DIR). The hub reads the file on every request,
+// so the article shows without a restart. Schema: docs/research.md.
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { parseArgs } from 'node:util';
+
+const USAGE = `Usage: msg-research-add --title <text> --date <YYYY-MM-DD> --url <http(s) url> [--tags RWA,Launchpad]
+                        [--summary <one line>] [--source <name>] [--id <id>] [--pinned] [--daily]`;
+const fail = (message) => { console.error(`msg-research-add: ${message}\n${USAGE}`); process.exit(1); };
+
+let values;
+try {
+  ({ values } = parseArgs({ options: {
+    title: { type: 'string' }, date: { type: 'string' }, url: { type: 'string' }, tags: { type: 'string', default: '' },
+    summary: { type: 'string', default: '' }, source: { type: 'string', default: 'AI-Crypto 리서치' }, id: { type: 'string' },
+    pinned: { type: 'boolean', default: false }, daily: { type: 'boolean', default: false },
+  } }));
+} catch (e) { fail(e.message); }
+
+const title = values.title?.trim(), date = values.date?.trim(), url = values.url?.trim();
+if (!title) fail('--title is required');
+if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date)) || !new Date(date).toISOString().startsWith(date)) fail('--date must be a real YYYY-MM-DD date');
+let protocol = '';
+try { protocol = new URL(url ?? '').protocol; } catch { /* reported below */ }
+if (!/^https?:$/.test(protocol)) fail('--url must be an http(s) URL');
+
+const dir = process.env.MSG_RESEARCH_DIR ?? path.join(os.homedir(), '.msg', 'research');
+const file = path.join(dir, 'articles.json');
+let articles = [];
+try {
+  articles = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!Array.isArray(articles)) fail(`${file} is not a JSON array; fix it before adding`);
+} catch (e) {
+  if (e.code !== 'ENOENT') fail(`cannot read ${file}: ${e.message}`);
+}
+
+const id = values.id?.trim() || `${date}-${createHash('sha256').update(url).digest('hex').slice(0, 8)}`;
+if (articles.some((a) => a?.id === id)) fail(`id already exists: ${id}`);
+if (articles.some((a) => a?.url === url)) fail(`url already exists: ${url}`);
+articles.push({
+  id, title, date, summary: values.summary.trim(),
+  tags: values.tags.split(',').map((t) => t.trim()).filter(Boolean),
+  url, source: values.source.trim(),
+  ...(values.pinned ? { pinned: true } : {}),
+  ...(values.daily ? { updatedDaily: true } : {}),
+});
+
+fs.mkdirSync(dir, { recursive: true });
+const tmp = `${file}.${process.pid}.tmp`;
+fs.writeFileSync(tmp, `${JSON.stringify(articles, null, 2)}\n`);
+fs.renameSync(tmp, file);
+console.log(`added ${id}`);

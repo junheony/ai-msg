@@ -57,7 +57,7 @@ export function ModeSwitcher({ mode, onChange, mac, phone, onOpenChange }: { mod
               onClick={() => pick(m.id)} onMouseEnter={() => setCursor(i)}>
               <span className="hub-mi-icon"><HubIcon name={m.icon} /></span>
               <span className="hub-mi-label">{m.label}</span>
-              <kbd className="hub-kbd">{kbd(modeDigit(i))}</kbd>
+              {modeDigit(i) !== null && <kbd className="hub-kbd">{kbd(modeDigit(i)!)}</kbd>}
               <span className="hub-mi-check"><CheckMarkIcon /></span>
             </button>
           ))}
