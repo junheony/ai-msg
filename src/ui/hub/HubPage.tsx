@@ -18,6 +18,10 @@ import { useSrFeed, type SrFeed } from './sr/useSrFeed';
 import { liveLabApi, type LabApi } from './lab/api';
 import { LabPanel } from './lab/LabPanel';
 import { useLabFeed, type LabFeed } from './lab/useLabFeed';
+import { ApprovalInbox } from './controls/Approvals';
+import { ModeActions } from './controls/CardActions';
+import { useCtl } from './controls/context';
+import { RunsPanel } from './controls/Runs';
 
 /* ───────── atoms shared with the 개요 ───────── */
 
@@ -303,6 +307,9 @@ export interface HubPageProps { modeKey: HubModeId; mode: HubMode | undefined; n
 export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generatedAt, labApi = liveLabApi, srApi = liveSrApi }: HubPageProps) {
   const def = modeDef(modeKey);
   const trading = modeKey === 'trading';
+  // Hub controls: none at all in the Trading room; QUANT shows its requests read-only and nothing else.
+  const ctl = useCtl()?.feed.state ?? null;
+  const acts = !trading && ctl;
   // The Trading room's two paper sources are read once here and shared with the strip and the panels.
   const lab = useLabFeed(labApi, trading);
   const sr = useSrFeed(srApi, trading);
@@ -354,7 +361,7 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
         {head && <SourceStatus sources={head.sources.map((x) => ({ name: x.name, ok: x.ok, detail: x.label }))} />}
         {!head && !studio && !yapping && mode && mode.sources.length > 0 && <SourceStatus sources={mode.sources.map((x) => ({ name: x.name, ok: x.ok, off: x.off, detail: x.off ? (x.error ?? '꺼짐') : x.ok ? (x.ms ? `${x.ms}ms` : '') : (x.error ?? '오류') }))} note={mode.sourceNote} />}
         <span className="ph-end">
-          <span className="pill">읽기 전용</span>
+          {acts ? <ModeActions mode={modeKey} place="head" /> : <span className="pill">읽기 전용</span>}
           {/* The Trading room has no control anywhere, the header included: its feeds poll on their own (60 s), so the
               only thing left of the button there is a passive "loading" word while the status is being read. */}
           {trading
@@ -373,6 +380,8 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
       )}
       {error && <div className="hub-notice" role="alert">상태를 불러오지 못했어요 · {error}</div>}
       {!mode && !error && <div className="hub-notice muted">상태를 불러오는 중…</div>}
+      {acts && <ApprovalInbox mode={modeKey} now={now} />}
+      {acts && <RunsPanel mode={modeKey} now={now} />}
       {factory && mode && (mode.shorts ? <ShortsFactoryHome sf={mode.shorts} now={now} /> : <div className="hub-notice muted" data-testid="sf-absent">서버가 Shorts 공장 데이터를 보내지 않았다 · 서버를 새 빌드로 올리면 보인다.</div>)}
       {studio && <GameStudioHome studio={studio} now={now} />}
       {yapping && mode ? <YappingHome mode={mode} now={now} /> : studio ? (
@@ -385,7 +394,7 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
         <footer className="foot">
           {yapping && <span>소스 {mode.sources.filter((s) => s.ok).length}/{mode.sources.length}</span>}
           <span>서버 생성 {relTime(generatedAt, now)}</span>
-          <span>읽기 전용 · 제어 없음</span>
+          <span>{acts ? (ctl.modes[modeKey]?.locked ? ctl.lockedLabel : '조치는 확인 후 실행 · 모두 기록') : '읽기 전용 · 제어 없음'}</span>
         </footer>
       )}
     </div>
