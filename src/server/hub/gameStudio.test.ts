@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { resolveHubFile } from './files';
-import { collectGameStudio, collectGameStudioCached, deriveStages, expandPath, lastHumanLine, parseAccount, parseBriefTitle, parseManifest, parseReportStatus, reportNeedsOwner, resolveGlob, scrubLine, studioAllow, studioFileRoots, studioFileUrl } from './gameStudio';
+import { MAX_JOBS, collectGameStudio, collectGameStudioCached, deriveStages, expandPath, lastHumanLine, parseAccount, parseBriefTitle, parseManifest, parseReportStatus, pickJobs, reportNeedsOwner, resolveGlob, scrubLine, studioAllow, studioFileRoots, studioFileUrl } from './gameStudio';
 import type { HubDeps } from './shared';
 
 const NOW = Date.parse('2026-11-01T03:00:00Z'); // 12:00 KST
@@ -359,6 +359,27 @@ describe('collectGameStudio', () => {
     const putOff = await collect(fx);
     expect(putOff.games[0]!.nextAction).toEqual({ text: '재측정', owner: false });
     expect(putOff.summary.owner).toBe(0);
+  });
+  it('reads every listed job even past the cap, and the rest newest folder first', async () => {
+    // A big ~/jobs listed oldest first (as readdir may): the listed job and the newest unlisted ones still show.
+    const fx = withJobs({ 'scrap-p2': { ago: 1, pid: '61' } });
+    const old = Array.from({ length: MAX_JOBS + 40 }, (_, i) => `old-${String(i).padStart(3, '0')}`);
+    fx.dirs!.jobs = [...old, 'fresh-run', 'scrap-p2'];
+    old.forEach((j, i) => { fx.mtimes![`jobs/${j}`] = NOW - (10_000 - i) * MIN; });
+    fx.mtimes!['jobs/fresh-run'] = NOW - 2 * MIN; fx.mtimes!['jobs/scrap-p2'] = NOW - 90_000 * MIN;
+    fx.files!['jobs/fresh-run/pid.txt'] = '62'; fx.mtimes!['/proc/62'] = NOW;
+    const g = await collect(fx);
+    expect(states(g)).toEqual({ 'scrap-p2': 'working' });
+    expect(g.summary.working).toBe(1);
+    expect(g.others.count).toBe(MAX_JOBS - 1);
+    expect(g.others.working).toBe(1);
+    expect(g.others.names[0]).toBe('fresh-run');
+    expect(g.others.names).not.toContain('old-000');
+  });
+  it('pickJobs: listed jobs and their follow-ups always, the rest by folder mtime, unknown mtimes last', async () => {
+    const d = deps({ mtimes: { 'jobs/a': NOW - 5 * MIN, 'jobs/b': NOW - 1 * MIN, 'jobs/listed': NOW - 999 * MIN, 'jobs/listed-2': NOW - 998 * MIN } });
+    expect(await pickJobs(d, `${HOME}/jobs`, ['listed', 'x', 'a', 'b', 'listed-2', '..', 'a'], [{ jobs: ['listed', 'gone'] }])).toEqual(['b', 'a', 'listed-2', 'listed', 'x']);
+    expect(await pickJobs(d, `${HOME}/jobs`, null, [{ jobs: ['listed'] }])).toEqual([]);
   });
   it('stays within its stat budget and the cached call never throws', async () => {
     const stats = { n: 0 };

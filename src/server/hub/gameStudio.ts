@@ -28,7 +28,13 @@ const LOG_TAIL_BYTES = 16 * 1024;
 const REPORT_TAIL_BYTES = 16 * 1024;
 const LINE_MAX = 140;
 const MAX_GAMES = 24;
-const MAX_JOBS = 60;
+/**
+ * Job dirs read per pass, newest folder mtime first (on top of every job a manifest lists, which is always read). ~/jobs
+ * grows by a few folders a day; at 60 the newest ones fell off the end in listing order and never showed as working.
+ */
+export const MAX_JOBS = 160;
+/** Folder names stat'ed to order ~/jobs by mtime (a separate budget, so a big ~/jobs never starves stage evidence). */
+const MAX_JOB_LISTING = 400;
 const IMAGE_RE = /\.(png|jpe?g|gif|webp)$/i;
 const VIDEO_RE = /\.(mp4|webm)$/i;
 const HTML_RE = /\.html?$/i;
@@ -442,6 +448,24 @@ async function loadStudioGame(ctx: Ctx, m: Manifest, agentsByJob: Map<string, St
 
 /* ───────── the collector ───────── */
 
+/**
+ * Which ~/jobs folders to read: every job a manifest lists and its follow-ups (`name-2`, `name-cx`) when the folder
+ * exists, then the rest newest folder mtime first (unknown mtimes last, in listing order) up to MAX_JOBS in total.
+ * Output order: newest first.
+ */
+export async function pickJobs(deps: HubDeps, jobsDir: string, jobNames: string[] | null, manifests: { jobs: string[] }[]): Promise<string[]> {
+  const names = [...new Set((jobNames ?? []).filter((j) => JOB_RE.test(j)))];
+  const dirStat = statBudget(deps, MAX_JOB_LISTING);
+  const timed = await Promise.all(names.map(async (job, i) => ({ job, i, ms: await dirStat(path.join(jobsDir, job)) })));
+  timed.sort((a, b) => (b.ms ?? -Infinity) - (a.ms ?? -Infinity) || a.i - b.i);
+  const families = new Set(manifests.flatMap((m) => m.jobs.map(jobFamily)));
+  const keep = new Set(timed.filter((t) => families.has(jobFamily(t.job))).map((t) => t.job));
+  const cap = Math.max(MAX_JOBS, keep.size);
+  for (const t of timed) { if (keep.size >= cap) break; keep.add(t.job); }
+  return timed.filter((t) => keep.has(t.job)).map((t) => t.job);
+}
+
+
 export interface GameStudioOpts { /** The folder holding `games/*.json` (the repo's studio/). */ studioDir: string }
 
 export async function collectGameStudio(deps: HubDeps, opts: GameStudioOpts): Promise<GameStudio> {
@@ -454,7 +478,7 @@ export async function collectGameStudio(deps: HubDeps, opts: GameStudioOpts): Pr
   const files = (names ?? []).filter((n) => /\.json$/i.test(n)).slice(0, MAX_GAMES);
   const manifests = (await Promise.all(files.map(async (f) => parseManifest(await readOpt(deps, path.join(gamesDir, f)))))).filter((m): m is Manifest => !!m);
   // Agents: every job dir (bounded); linked ones show their task, the rest only as names.
-  const jobs = (jobNames ?? []).filter((j) => JOB_RE.test(j)).slice(0, MAX_JOBS);
+  const jobs = await pickJobs(deps, jobsDir, jobNames, manifests);
   // A follow-up (`name-2`, `name-cx`) belongs to the game of the job it continues, listed yet or not.
   for (const m of manifests) { const families = new Set(m.jobs.map(jobFamily)); m.jobs.push(...jobs.filter((j) => families.has(jobFamily(j)) && !m.jobs.includes(j))); }
   const linked = new Set(manifests.flatMap((m) => m.jobs));
@@ -463,7 +487,9 @@ export async function collectGameStudio(deps: HubDeps, opts: GameStudioOpts): Pr
   const agentList = loadedJobs.map((j) => j.agent);
   const agentsByJob = new Map(agentList.map((a) => [a.job, a]));
   const otherJobs = jobs.filter((j) => !linked.has(j));
-  const otherAlive = await Promise.all(otherJobs.map(async (j) => { const pid = /^\s*(\d{1,8})\s*$/.exec((await readOpt(deps, path.join(jobsDir, j, 'pid.txt'))) ?? '')?.[1]; return pid ? (await stat(`/proc/${pid}`)) !== null : false; }));
+  // Their own /proc budget: a long ~/jobs list must not eat the stage-evidence stats below.
+  const procStat = statBudget(deps, MAX_JOBS);
+  const otherAlive = await Promise.all(otherJobs.map(async (j) => { const pid = /^\s*(\d{1,8})\s*$/.exec((await readOpt(deps, path.join(jobsDir, j, 'pid.txt'))) ?? '')?.[1]; return pid ? (await procStat(`/proc/${pid}`)) !== null : false; }));
   // The ~/games facts (version, verification, deploy, tests) for manifests whose repo is a ~/games/<slug> folder.
   const gamesRoot = path.join(home, 'games');
   const slugs = new Set<string>();
