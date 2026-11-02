@@ -167,3 +167,12 @@ describe('buildEngineLimits', () => {
     expect(geminiGroupOf('GPT · 주간')).toBeNull();
   });
 });
+
+it('BRIEF7c: a passed or estimated GPT reset is unknown, while current real exhaustion and cooldowns still block', () => {
+  const ended = { ...gpt(100, 1000), weekly: { usedPct: 100, resetsAt: iso(NOW - 1) } };
+  expect(buildEngineLimits(input({ gpt: ended })).codex.weeklyUsedPct).toBeNull();
+  const estimated = { ...gpt(0, 1000), weekly: { usedPct: 0, resetsAt: iso(NOW + 1000), estimated: true } };
+  expect(buildEngineLimits(input({ gpt: estimated })).codex.weeklyUsedPct).toBeNull();
+  const current = buildEngineLimits(input({ gpt: gpt(100, 0) }));
+  expect(engineState('codex', 'gpt-6-sol', current, NOW).state).toBe('blocked');
+});

@@ -23,6 +23,7 @@ import { CopyIcon, EditIcon, RetryIcon } from './icons';
 import { Lightbox, attachmentUrl } from './Lightbox';
 import { RoleBadge } from './RoleBadge';
 import { ToolCalls } from './ToolCallView';
+import { replyStatus, type AssistantItem } from '../terminalPresentation';
 import { TurnBadge, isAbortError, isFailedTurn, isStoppedTurn } from './TurnBadge';
 
 /** Plain text of a rendered markdown subtree (code blocks arrive as nested elements). */
@@ -64,7 +65,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
           {previewable && <button type="button" className="code-copy" onClick={() => open({ kind: 'html', title: `${lang.toUpperCase()} 미리보기`, html: text })}>미리보기</button>}
           <button type="button" className="code-tool code-wrap-toggle" aria-pressed={wrap} title="긴 줄 접기 (모든 코드 블록)" onClick={() => setWrap(!wrap)}>줄바꿈</button>
           <button type="button" className="code-tool code-save" title="파일로 저장" onClick={() => saveCode(text, lang)}>저장</button>
-          <CopyButton text={text} label="코드 복사" />
+          <CopyButton text={text} label="코드 복사" compact />
         </span>
       </div>
       <pre className={wrap ? 'code-wrap' : undefined}>{children}</pre>
@@ -180,6 +181,40 @@ function Thinking({ t, streaming, concise = false }: { t: NonNullable<Extract<Ch
       {body ? <Markdown text={body} className="markdown thinking-body" /> : <div className="thinking-body muted">(암호화된 생각)</div>}
     </details>
   );
+}
+
+/** One process disclosure, with original records kept in sequence (including model/source information). */
+export function ActivitySteps({ items, cwd }: { items: AssistantItem[]; cwd?: string }) {
+  const calls = items.flatMap((it) => it.toolCalls);
+  const thoughts = items.filter((it) => it.thinking).length;
+  const live = items.some((it) => it.streaming);
+  const errors = calls.filter((call) => call.isError).length;
+  if (!calls.length && !thoughts) return null;
+  return (
+    <details className={`activity-steps${live ? ' live' : ''}`} data-testid="activity-steps">
+      <summary>
+        <span className="activity-caret" aria-hidden="true">›</span>
+        <span className="activity-title">{live ? '작업 진행 중' : '작업 과정'}</span>
+        <span className="activity-count">{[calls.length ? `도구 ${calls.length}개` : '', thoughts ? `생각 ${thoughts}개` : ''].filter(Boolean).join(' · ')}</span>
+        {errors > 0 && <span className="activity-errors">오류 {errors}</span>}
+      </summary>
+      <div className="activity-steps-body">
+        {items.map((it, i) => (
+          <div className="activity-step" key={it.toolCalls[0]?.toolUseId ?? i}>
+            {it.model && <span className="activity-source" title={it.model}>{modelLabelOf(it.model)}</span>}
+            {it.thinking && <Thinking t={it.thinking} streaming={it.streaming} />}
+            <ToolCalls calls={it.toolCalls} live={it.streaming} cwd={cwd} />
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function Answer({ text, statusOverride }: { text: string; statusOverride?: 'PARTIAL' | 'BLOCKED' | 'SUCCESS' }) {
+  const parsed = replyStatus(text);
+  const status = parsed.status === 'BLOCKED' ? 'BLOCKED' : statusOverride ?? parsed.status;
+  return <>{status && <span className={`reply-status ${status.toLowerCase()}`} aria-label={`작업 상태: ${status}`}>{status}</span>}{parsed.text && <Markdown text={parsed.text} />}</>;
 }
 
 const NOTICE_ICON: Record<InjectedNotice['kind'], string> = { task: '⚙', command: '›_', output: '›_', hook: '↪' };
@@ -545,7 +580,7 @@ function ChoiceCards({ choices, onPick }: { choices: DeckChoices; onPick: ((text
  * markdown of) the whole transcript. Items are immutable (the reducer replaces what changes), so identity is enough.
  * `last`: the conversation's last message (its actions stay visible and it offers 재시도).
  */
-export const MessageView = memo(function MessageView({ item, cwd, last = false }: { item: ChatItem; /** Session folder: diff card paths are shown relative to it. */ cwd?: string; last?: boolean }) {
+export const MessageView = memo(function MessageView({ item, cwd, last = false, steps, quietModel = false, statusOverride }: { item: ChatItem; /** Session folder: diff card paths are shown relative to it. */ cwd?: string; last?: boolean; steps?: AssistantItem[]; quietModel?: boolean; statusOverride?: 'PARTIAL' | 'BLOCKED' | 'SUCCESS' }) {
   const actions = useContext(MessageActionsContext);
   const regen = useContext(RegenerateContext);
   const [prefs] = usePrefs();
@@ -635,18 +670,17 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
   // deck-choices are cut from the live stretch only (textAt counts the raw text).
   const split = liveCuts ? { lead: liveLead, live: splitDeckChoices(item.text.slice(liveCut), true).text } : null;
   const reply = last && !item.streaming ? actions.onReply : undefined;
+  const completedError = steps === undefined && !item.streaming && !(steps ?? [item]).some((step) => step.streaming) && (steps ?? [item]).some((step) => step.toolCalls.some((call) => call.isError));
+  const answerStatus = statusOverride ?? (completedError ? 'PARTIAL' : undefined);
   const hasActions = !item.streaming && (!!item.text || !!retry || !!again || !!pick);
   const regenPick: RegenPick | null = pick && regen ? { models: regen.models, current: regen.current, sticky: !!(turn && branchFrom), onPick: pick } : null;
   return (
     <FileRootContext.Provider value={cwd || null}>
-    <div ref={msgRef} className={`msg assistant ${item.streaming ? 'streaming' : ''}${last ? ' last' : ''}`} {...(hasActions ? press : {})}>
+    <div ref={msgRef} className={`msg assistant ${item.streaming ? 'streaming' : ''}${last ? ' last' : ''}${quietModel ? ' quiet-model' : ''}`} {...(hasActions ? press : {})}>
       {/* Concise: mid-turn notes stay (milestones); full-mode attempts always show. */}
       {item.notes.map((n, i) => <div key={i} className={`note${concise ? ' concise-note' : ''}`}>{n}</div>)}
       {(!concise || !item.streaming) && item.attempts.map((t, i) => <Markdown key={i} text={t} className="markdown failed-attempt muted" />)}
-      {item.thinking && !(concise && item.streaming && !item.thinking.text && !item.thinking.redacted) && (
-        <Thinking t={item.thinking} streaming={item.streaming} concise={concise} />
-      )}
-      <ToolCalls calls={item.toolCalls} live={item.streaming} cwd={cwd} concise={concise} />
+      <ActivitySteps items={steps ?? [item]} cwd={cwd} />
       {/* Concise, mid-turn: text before the last tool call folds into a gray lead line; the text since streams live below it. */}
       {split && (!split.live || item.toolCalls.length > 0) && (
         <div className="concise-progress" data-testid="concise-progress" aria-live="polite">
@@ -658,11 +692,11 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
               : '처리 중…'}
         </div>
       )}
-      {split ? split.live && <Markdown text={split.live} /> : shownText && <Markdown text={shownText} />}
+      {split ? split.live && <Answer text={split.live} statusOverride={answerStatus} /> : (shownText || answerStatus) && <Answer text={shownText} statusOverride={answerStatus} />}
       {choices && !item.streaming && <ChoiceCards choices={choices} onPick={reply} />}
-      {item.streaming && (!split || !!split.live) && <span className="cursor">▍</span>}
+      {item.streaming && (!split || !!split.live) && <span className="cursor" aria-label="응답 작성 중" />}
       {item.error && !(!item.streaming && isAbortError(item.error, !!item.interrupted)) && <div className="error">오류: {item.error}</div>}
-      {(item.badge || item.model || item.toolCalls.length > 0 || hasActions) && (
+      {(item.badge || item.model || item.toolCalls.length > 0 || steps?.some((step) => step.toolCalls.length > 0) || hasActions) && (
         <div className="turn-foot">
           {item.badge && <TurnBadge badge={item.badge} {...(item.model ? { model: item.model } : {})} stopped={stopped} failed={stopped && isFailedTurn({ error: item.error, interrupted: !!item.interrupted })} cacheNote={item.cacheNote ?? null} ctx={last ? (item.ctx ?? null) : null} />}
           {!item.badge && item.model && <span className="msg-model" data-testid="msg-model" title={item.model}>{modelLabelOf(item.model)}</span>}
@@ -674,7 +708,7 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
               {regenPick && <RegenModelMenu models={regenPick.models} current={regenPick.current} sticky={regenPick.sticky} onPick={regenPick.onPick} />}
             </div>
           )}
-          <RoleBadge roles={roleSummary(item.toolCalls)} live={item.streaming} />
+          <RoleBadge roles={roleSummary(steps ? steps.flatMap((step) => step.toolCalls) : item.toolCalls)} live={item.streaming || !!steps?.some((step) => step.streaming)} />
         </div>
       )}
     </div>
@@ -689,4 +723,6 @@ export const MessageView = memo(function MessageView({ item, cwd, last = false }
     {feedback.node}
     </FileRootContext.Provider>
   );
-});
+}, (before, after) => before.item === after.item && before.cwd === after.cwd && before.last === after.last
+  && before.quietModel === after.quietModel && before.statusOverride === after.statusOverride && (before.steps === after.steps || (!!before.steps && !!after.steps
+    && before.steps.length === after.steps.length && before.steps.every((step, i) => step === after.steps![i]))));

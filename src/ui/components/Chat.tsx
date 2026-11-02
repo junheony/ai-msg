@@ -1,7 +1,7 @@
 import { loadDraft, saveDraft } from '../autoReload';
 import { Fragment, useContext, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { timeDividers, timeLabel } from '../dateGroups';
-import { CLAUDE_MODELS, CODEX_MODELS, DEFAULT_SANDBOX, GEMINI_MODELS, GROK_MODELS, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../../shared/models';
+import { CLAUDE_MODELS, CODEX_MODELS, DEFAULT_SANDBOX, GEMINI_MODELS, GROK_MODELS, HERMES_MODELS, type CodexSandbox, type Effort, type EngineChoice, type EngineKind, type ModelChoice } from '../../shared/models';
 import type { Account, Seat } from '../../shared/accounts';
 import type { GeminiStatus, GrokStatus } from '../../shared/protocol';
 import type { UsageSnapshot } from '../../shared/usage-types';
@@ -11,7 +11,7 @@ import { latestContext } from '../context';
 import { has } from '../features';
 import { latestTodos } from '../todos';
 import { useStickToBottom } from '../stickToBottom';
-import { mergeToolRuns } from '../toolRuns';
+import { presentTranscript } from '../terminalPresentation';
 import { ATTACHMENT_ONLY_TEXT, filesFrom, replaceAttachment, uploadFile, usePasteUploads, type UploadFn } from '../upload';
 import { AgentContext, BackgroundPill, StatusRow, type AgentCtx } from './Activity';
 import { useAccounts } from '../accounts';
@@ -79,6 +79,7 @@ export type ChatProps = {
   sessionSandbox: CodexSandbox | null;
   isNew: boolean;
   codexAvailable: boolean;
+  hermesAvailable?: boolean;
   /** null = no gemini-cli: no Gemini option. Not logged in: the option is shown disabled with 로그인 필요. */
   gemini?: GeminiStatus | null;
   /** hello.grok; null = an older server that knows no Grok: no Grok option. Known but no CLI: shown disabled (설치 필요). */
@@ -197,7 +198,7 @@ const HANDOFF_COMMANDS: CommandItem[] = [{ name: HANDOFF_COMMAND, description: '
 
 /** The model picker's choices for an engine (자동 offered for Claude and the engine 자동; Gemini / Grok only when picked). */
 export function modelChoices(engine: EngineChoice): readonly ModelChoice[] {
-  return engine === 'gemini' ? GEMINI_MODELS : engine === 'grok' ? GROK_MODELS : engine === 'codex' ? CODEX_MODELS : engine === 'claude' ? ['auto', ...CLAUDE_MODELS] : ['auto', ...CLAUDE_MODELS, ...CODEX_MODELS];
+  return engine === 'hermes' ? HERMES_MODELS : engine === 'gemini' ? GEMINI_MODELS : engine === 'grok' ? GROK_MODELS : engine === 'codex' ? CODEX_MODELS : engine === 'claude' ? ['auto', ...CLAUDE_MODELS] : ['auto', ...CLAUDE_MODELS, ...CODEX_MODELS];
 }
 
 /** Enter inserts a newline on touch screens (send with the button), as on Desktop's mobile apps. */
@@ -291,7 +292,7 @@ export function messageKeys(items: ChatItem[]): string[] {
   });
 }
 
-const WarnIcon = () => <svg className="perm-badge-icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 2.2 14.3 13.3H1.7z" /><path d="M8 6.6v3M8 11.6v.1" /></svg>;
+const AutoApprovalIcon = () => <svg className="perm-badge-icon" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 1.8 13 4v4.1c0 3-5 6-5 6s-5-3-5-6V4z" /><path d="m5.6 7.8 1.6 1.6 3.3-3.3" /></svg>;
 const TaskIcon = () => <svg className="task-add-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M9 3h4v4M13 3 7.5 8.5" /><path d="M11.5 9.5V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1h2.5" /></svg>;
 const QueueIcon = () => <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 4h8M2.5 8h5M2.5 12h4" /><path d="M12 6.5v6.5M9.75 10.75 12 13l2.25-2.25" /></svg>;
 
@@ -329,7 +330,8 @@ export function Chat(p: ChatProps) {
   const composing = useRef(false);
   // A session switch mid-composition may never deliver its compositionend here: start the next session clean.
   useEffect(() => { composing.current = false; }, [p.sessionId]);
-  const shown = useMemo(() => mergeToolRuns(p.items), [p.items]);
+  const presented = useMemo(() => presentTranscript(p.items, p.busy, p.activeTurnId), [p.items, p.busy, p.activeTurnId]);
+  const shown = useMemo(() => presented.map((p) => p.item), [presented]);
   const keys = useMemo(() => messageKeys(shown), [shown]);
   const dividers = useMemo(() => timeDividers(shown), [shown]);
   const todos = useMemo(() => latestTodos(p.items), [p.items]);
@@ -351,7 +353,7 @@ export function Chat(p: ChatProps) {
   // Gemini is explicit only: its models appear only when the Gemini engine is picked (never under 자동).
   const models = modelChoices(effectiveEngine);
   // A new session's sandbox row follows its engine picker (shown only when another engine than Claude is available).
-  const engineSelect = p.isNew && (p.codexAvailable || !!p.gemini?.available || has('grok'));
+  const engineSelect = p.isNew && (p.codexAvailable || p.hermesAvailable || !!p.gemini?.available || has('grok'));
   const hasDraft = (text.trim().length > 0 || p.attachments.length > 0) && uploading === 0;
   const queueing = p.busy && !!p.onQueue;
   /** A running Claude / Grok turn takes a message mid-turn (Codex / Gemini: after the turn). */
@@ -402,7 +404,7 @@ export function Chat(p: ChatProps) {
     };
   }, [paneRegen, scroll.attach]);
   // GPT/Gemini have no per-call approvals: their sandbox decides, so the mode picker is shown disabled. Grok has approval cards.
-  const permSupported = effectiveEngine === 'claude' || effectiveEngine === 'auto' || effectiveEngine === 'grok';
+  const permSupported = effectiveEngine === 'claude' || effectiveEngine === 'auto' || effectiveEngine === 'grok' || effectiveEngine === 'hermes';
   const permMode: PermMode = p.permMode ?? 'default';
   const folder = p.cwd ? (p.cwd.split('/').filter(Boolean).pop() ?? p.cwd) : null;
 
@@ -445,7 +447,7 @@ export function Chat(p: ChatProps) {
   const phone = useIsPhone();
   // The share actions close the menu themselves once done (a copy is async): the open menu's closer, kept here.
   const closeMenu = useRef<() => void>(() => {});
-  const share = useShareActions({ title: p.title, items: p.items, ...(p.cwd ? { cwd: p.cwd } : {}), sessionId: p.sessionId ?? null, assistant: p.sessionEngine === 'codex' ? 'GPT' : p.sessionEngine === 'gemini' ? 'Gemini' : p.sessionEngine === 'grok' ? 'Grok' : 'Claude' }, () => closeMenu.current());
+  const share = useShareActions({ title: p.title, items: p.items, ...(p.cwd ? { cwd: p.cwd } : {}), sessionId: p.sessionId ?? null, assistant: p.sessionEngine === 'codex' ? 'GPT' : p.sessionEngine === 'gemini' ? 'Gemini' : p.sessionEngine === 'grok' ? 'Grok' : p.sessionEngine === 'hermes' ? 'Hermes' : 'Claude' }, () => closeMenu.current());
   const shareActions = p.isNew ? [] : share.actions;
   // 대화에서 찾기 (⌘F / Ctrl+F in the pane, the ⋯ menu, or a 대화 내용 검색 jump with its term); a new key refocuses an open bar.
   const [find, setFind] = useState<{ query: string; anchor: Element | null; key: number } | null>(null);
@@ -571,15 +573,15 @@ export function Chat(p: ChatProps) {
     if (files.length) void addFiles(files);
   };
   return (
-    <main ref={mainRef} className="chat" onKeyDown={(e) => {
+    <main ref={mainRef} className="chat" data-engine={effectiveEngine} onKeyDown={(e) => {
       if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f' && canFind) { e.preventDefault(); openFind(); }
     }} onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
       {drag && <div className={`drop-overlay ${p.readOnly ? 'blocked' : ''}`} data-testid="drop-overlay"><span>{p.readOnly || '여기에 파일을 놓으세요'}</span></div>}
-      <SessionChipHead key={p.sessionId ?? 'new'} title={p.title} sessionKey={p.sessionId ?? null} engine={!p.isNew ? p.sessionEngine : null} cwd={p.cwd} slot={p.headSlot ?? null} phone={phone} paneId={p.headPaneId}
+      <SessionChipHead key={p.sessionId ?? 'new'} title={p.title} sessionKey={p.sessionId ?? null} engine={!p.isNew ? p.sessionEngine : null} model={p.model} cwd={p.cwd} slot={p.headSlot ?? null} phone={phone} paneId={p.headPaneId}
         grip={p.headGrip} gripTitle={p.headGripTitle} {...(tm?.onRename ? { onRename: tm.onRename } : {})} groups={headGroups} toast={share.done}
         chips={(p.headChips || (p.onPermMode && permSupported && permMode === 'bypassPermissions')) ? <>
-          {/* 모두 자동 승인 stays on the head as a warning; the other modes live in the composer's session chip. */}
-          {p.onPermMode && permSupported && permMode === 'bypassPermissions' && <span className="chip perm-badge perm-bypassPermissions" title={`${PERM_MODE_LABEL[permMode]} — ${permModeHint(permMode, effectiveEngine)}`} data-testid="perm-badge"><WarnIcon /><span className="perm-badge-full">{PERM_MODE_LABEL[permMode]}</span></span>}
+          {/* Keep the active approval policy visible without treating it as an error. */}
+          {p.onPermMode && permSupported && permMode === 'bypassPermissions' && <span className="chip perm-badge perm-bypassPermissions" role="img" aria-label={PERM_MODE_LABEL[permMode]} title={`${PERM_MODE_LABEL[permMode]} — ${permModeHint(permMode, effectiveEngine)}`} data-testid="perm-badge"><AutoApprovalIcon /><span className="perm-badge-full">자동 승인</span></span>}
           {p.headChips}
         </> : null}
         trail={p.headActions} />
@@ -621,7 +623,7 @@ export function Chat(p: ChatProps) {
                 return (
                   <Fragment key={keys[i]}>
                     {at != null && <div className="msg-time" data-testid="msg-time"><time dateTime={new Date(at).toISOString()}>{timeLabel(at)}</time></div>}
-                    <MessageView item={it} cwd={p.cwd} last={i === shown.length - 1} />
+                    <MessageView item={it} cwd={p.cwd} last={i === shown.length - 1} steps={presented[i]!.steps} quietModel={presented[i]!.quietModel} statusOverride={presented[i]!.statusOverride} />
                   </Fragment>
                 );
               })}
@@ -650,7 +652,7 @@ export function Chat(p: ChatProps) {
       </div>
       {scroll.detached && (
         <div className="jump-anchor">
-          <button type="button" className={`jump-bottom ${scroll.unread ? 'unread' : ''}`} onClick={scroll.attach} title="맨 아래로" data-testid="jump-bottom">
+          <button type="button" className={`jump-bottom ${scroll.unread ? 'unread' : ''}`} onClick={() => scroll.attach(true)} title="맨 아래로" data-testid="jump-bottom">
             <span aria-hidden="true">↓</span>{scroll.unread ? ' 새 메시지' : <span className="sr-only">맨 아래로</span>}
           </button>
         </div>
@@ -667,11 +669,12 @@ export function Chat(p: ChatProps) {
           </div>
         )}
         {p.handoffWriting && <div className="handoff-status" role="status" data-testid="handoff-status">인계 메모 작성 중… 끝나면 새 세션이 열리고 메모가 입력창에 들어갑니다</div>}
-        {!p.busy && <ContextHint info={ctx} onHandoff={p.onHandoff} cold={!pillCold} />}
         {p.composerNote && <div className="pane-notice notice composer-note" role="status" data-testid="composer-note"><span className="pane-notice-text">{p.composerNote}</span></div>}
         {p.onPickCwd && <button type="button" className="btn ghost retry" data-testid="grokbot-handoff-cwd" onClick={p.onPickCwd}>작업 폴더 바꾸기</button>}
         {p.onGrokBotHandoff && <button type="button" className="btn ghost retry" data-testid="grokbot-handoff" onClick={p.onGrokBotHandoff}>MSG Grok 새 세션으로 이어가기</button>}
         <Composer
+          status={!p.busy ? <ContextHint info={ctx} onHandoff={p.onHandoff} cold={!pillCold} /> : null}
+          shortcut={coarse ? null : sendKey === 'mod-enter' ? `${isMacPlatform() ? '⌘Enter' : 'Ctrl+Enter'} 보내기 · Enter 줄바꿈` : 'Enter 보내기 · Shift+Enter 줄바꿈'}
           dragover={drag && !p.readOnly}
           popup={suggest.popup}
           {...(ghost ? { hint: (
@@ -685,7 +688,7 @@ export function Chat(p: ChatProps) {
               isNew={p.isNew}
               folder={folder}
               engine={effectiveEngine}
-              engines={p.isNew ? { codexAvailable: p.codexAvailable, gemini: p.gemini ?? null, grok: p.grok ?? null, onEngine: p.onEngine } : null}
+              engines={p.isNew ? { codexAvailable: p.codexAvailable, hermesAvailable: p.hermesAvailable, gemini: p.gemini ?? null, grok: p.grok ?? null, onEngine: p.onEngine } : null}
               sandbox={p.isNew
                 ? (engineSelect ? { value: p.sandbox, onChange: p.onSandbox } : null)
                 : p.sessionEngine === 'codex' ? { value: p.sessionSandbox ?? DEFAULT_SANDBOX, ...(p.onSessionSandbox ? { onChange: p.onSessionSandbox, existing: true } : {}) }
@@ -735,7 +738,7 @@ export function Chat(p: ChatProps) {
             // letter, swaps words with autocorrect and underlines code — prompts are not prose.
             autoCorrect="off" autoCapitalize="off" spellCheck={false}
             disabled={!!p.readOnly}
-            placeholder={p.readOnly ? p.readOnly : ghost ? ghost : queueing ? (steering ? (coarse ? '실행 중 · 보내면 다음 도구 실행 뒤 전달' : '실행 중 · Enter 로 보내면 다음 도구 실행 뒤 전달 · Esc 중단') : coarse ? '실행 중 · 보내면 대기열에 추가' : '실행 중 · Enter 로 대기열에 추가 · Esc 중단') : coarse ? '메시지 입력 · @ 파일 · / 명령' : (sendKey === 'mod-enter' ? '메시지 입력 · ⌘Enter 로 보내기 · Enter 줄바꿈' : '메시지 입력 · Enter 로 보내기 · Shift+Enter 줄바꿈')}
+            placeholder={p.readOnly ? p.readOnly : ghost ? ghost : queueing ? (steering ? (coarse ? '실행 중 · 보내면 다음 도구 실행 뒤 전달' : '실행 중 · Enter 로 보내면 다음 도구 실행 뒤 전달 · Esc 중단') : coarse ? '실행 중 · 보내면 대기열에 추가' : '실행 중 · Enter 로 대기열에 추가 · Esc 중단') : coarse ? '메시지 입력 · @ 파일 · / 명령' : '메시지 입력 · @ 파일 · / 명령'}
             aria-label="메시지"
             rows={1}
             // Not a form field: keeps iOS from showing its AutoFill (password/card/address) bar above the keyboard.

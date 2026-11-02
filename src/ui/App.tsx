@@ -212,6 +212,13 @@ export function App() {
   const [stripRow, setStripRow] = useState<HTMLDivElement | null>(null);
   const [drawer, setDrawer] = useState(() => saved?.drawer ?? false);
   const [usageOpen, setUsageOpen] = useState<null | 'limits' | 'history'>(null);
+  const usageRefreshPending = useRef(false);
+  const refreshUsage = useCallback(() => {
+    if (usageRefreshPending.current) return;
+    usageRefreshPending.current = true;
+    // The server publishes the refreshed snapshot over the existing usage websocket.
+    void fetch('/api/usage?refresh=1').catch(() => {}).finally(() => { usageRefreshPending.current = false; });
+  }, []);
   const [highlightsOpen, setHighlightsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** 설치 점검: opened by itself once per page when the server says the first-run wizard is still to be shown. */
@@ -1381,10 +1388,10 @@ export function App() {
   const loginSeats = reauthWithUsage(reauth, state.usage);
   return (
     <AccountsContext value={accounts}>
-    <div className="app">
+    <div className="app" data-terminal={!hubShown ? 'true' : undefined}>
       <header className="topbar">
         {/* ☰ (phone drawer / tablet sidebar fold) is the terminal's: a hub mode has no sidebar to open, so the mode switch is the first thing top-left. */}
-        {phone && !hubShown && <button type="button" className="menu" aria-label="메뉴" aria-expanded={drawer} onClick={() => setDrawer((d) => !d)}>☰</button>}
+        {phone && !hubShown && <button type="button" className="menu" data-sheet-return="" aria-label="메뉴" aria-expanded={drawer} onClick={() => setDrawer((d) => !d)}>☰</button>}
         {/* Tablet / unfolded (721–1100px, CSS only shows it there): a visible way to fold the sidebar away without ⌘\. */}
         {!phone && !hubShown && <button type="button" className="icon-btn sidebar-toggle" aria-label={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} title={sidebarHidden ? '사이드바 보이기' : '사이드바 숨기기'} aria-pressed={!sidebarHidden} onClick={toggleSidebar} onMouseEnter={peekable && !peek ? armPeek : undefined} onMouseLeave={peekable ? () => { unlatchPeek(); leavePeek(); } : undefined}>☰</button>}
         {/* The session chip of the one pane (desktop) / the shown pane (phone) renders here (Pane → Chat, a portal). */}
@@ -1395,7 +1402,7 @@ export function App() {
           ? <div className="topbar-head hub-head" data-testid="hub-head"><span className="hub-head-title">{modeDef(hubMode).label}</span></div>
           : <div className="topbar-head" ref={setHeadSlot} />}
         {/* Every seat's usage, collapsed to the tightest remaining amount. The list of seats opens under the pill. */}
-        <UsageStrip usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} phone={phone} rowSlot={stripRow} open={usageOpen !== null} onToggle={() => setUsageOpen((v) => (v ? null : 'limits'))} reauth={loginSeats} onReauth={has('authLogin') ? setAuthSeat : undefined} />
+        <UsageStrip onRefresh={refreshUsage} usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} phone={phone} rowSlot={stripRow} open={usageOpen !== null} onToggle={() => setUsageOpen((v) => (v ? null : 'limits'))} reauth={loginSeats} onReauth={has('authLogin') ? setAuthSeat : undefined} />
         <div className="topbar-end">
           {!phone && <button type="button" className="icon-btn split" onClick={addPane} aria-label="새 분할" title={`새 분할 (${mod}⇧O) — 세션 칩을 끌어 순서를 바꾸거나 카드로 떼어낼 수 있어요`}><SplitIcon /></button>}
           <ActivityButton
@@ -1424,7 +1431,7 @@ export function App() {
           <button type="button" className="text-btn" onClick={retryNow}>다시 시도</button>
         </div>
       )}
-      {usageOpen && <UsageSheet usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} initialHistory={usageOpen === 'history'} onClose={() => setUsageOpen(null)} reauth={loginSeats} onReauth={has('authLogin') ? (seat) => { setUsageOpen(null); setAuthSeat(seat); } : undefined} />}
+      {usageOpen && <UsageSheet onRefresh={refreshUsage} usage={state.usage} current={active.session?.account ?? null} next={preview} grok={state.grok ?? null} initialHistory={usageOpen === 'history'} onClose={() => setUsageOpen(null)} reauth={loginSeats} onReauth={has('authLogin') ? (seat) => { setUsageOpen(null); setAuthSeat(seat); } : undefined} />}
       {authSeat && <AuthTerminal seat={authSeat} title={authTitle} onClose={() => setAuthSeat(null)} onLoggedIn={() => setAuthEpoch((n) => n + 1)} />}
       {highlightsOpen && <Highlights onClose={() => setHighlightsOpen(false)} live={{ waiting: [...state.pending.map((c) => ({ sessionId: c.sessionId, kind: 'permission' as const })), ...state.questions.map((c) => ({ sessionId: c.sessionId, kind: 'question' as const }))], activity: state.activity }} engineOf={(id) => paletteSessions.find((x) => x.sessionId === id)?.engine} onOpenSession={(sessionId, cwd, title) => { setHighlightsOpen(false); if (!openById.current(sessionId)) openIn(active.id, sessionId, cwd, title); }} />}
       {settingsOpen && <SettingsView build={buildId} defaultPermMode={state.defaultPermMode} onDefaultPermMode={(defaultPermissionMode) => send({ type: 'set_settings', defaultPermissionMode })} routingPolicy={state.routingPolicy} onRoutingPolicy={(routingPolicy) => send({ type: 'set_settings', routingPolicy })} sameVendorRotation={state.sameVendorRotation} onSameVendorRotation={(sameVendorRotation) => send({ type: 'set_settings', sameVendorRotation })} commanderEnabled={state.commanderEnabled} onCommanderEnabled={(commanderEnabled) => send({ type: 'set_settings', commanderEnabled })} autoRoute={state.autoRoute} onAutoRoute={(patch) => send({ type: 'set_settings', ...patch })} claudeAccounts={state.accounts.filter((a) => !a.retired).length} grokLocked={state.grok?.locked ?? null} onGrokUnlock={() => send({ type: 'grok_unlock' })} taskCap={has('tasks') ? (state.taskCap ?? null) : null} onTaskCap={(taskSoftCap) => send({ type: 'set_settings', taskSoftCap })} onSetup={has('setup') ? () => { setSettingsOpen(false); setSetupOpen(true); } : undefined} onClose={() => setSettingsOpen(false)} />}
@@ -1528,6 +1535,7 @@ export function App() {
             avatarTitle="MSG"
             footMenu={[
               { label: '설정', hint: `${mod},`, run: () => setSettingsOpen(true) },
+              { label: '사용량 보기', run: () => setUsageOpen('limits') },
               { label: '사용량 기록', run: () => setUsageOpen('history') },
               { label: `테마: ${THEME_LABEL[prefs.theme]}`, run: () => window.dispatchEvent(new CustomEvent('deck:cycle-theme')) },
               { label: '단축키', hint: `${mod}/`, run: () => setHelpOpen(true) },

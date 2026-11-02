@@ -9,7 +9,7 @@ export type MiniSessionState = 'running' | 'idle' | 'waiting';
 export interface MiniSession {
   /** The session's title (the first prompt, or the deck title); never a path. */
   title: string;
-  engine: 'claude' | 'codex' | 'gemini' | 'grok' | null;
+  engine: 'claude' | 'codex' | 'gemini' | 'grok' | 'hermes' | null;
   /** Deck model id (opus, fable, gpt-5…) or wire id; null = unknown. */
   model: string | null;
   /** The seat the last turn ran on (a, b, c, gpt…); null = unknown. */
@@ -39,7 +39,7 @@ export interface MiniSeat {
   id: string;
   label: string;
   status: 'ok' | 'stale' | 'down';
-  /** Left in the 5-hour window, 0–100; null = unknown. */
+  /** Left in the 5-hour window, 0–100; null = unknown, always null for a Claude account (no such limit any more). */
   left5h: number | null;
   /** Left in the weekly window, 0–100; null = unknown. */
   leftWeek: number | null;

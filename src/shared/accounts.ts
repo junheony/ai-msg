@@ -10,7 +10,7 @@ export const ACCOUNT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,15}$/;
  * Never a Claude account: ids that already mean another seat or usage source (`Seat`, `UsageSource`), the words the
  * UI and the wire use for "no account" (`auto`, `none`, a stringified null), and an Object.prototype member (ids key plain objects).
  */
-export const RESERVED_ACCOUNT_IDS: readonly string[] = ['gpt', 'g1', 'g2', 'x1', 'x2', 'grok', 'codex', 'all', 'auto', 'none', 'null', 'undefined', 'constructor'];
+export const RESERVED_ACCOUNT_IDS: readonly string[] = ['gpt', 'g1', 'g2', 'x1', 'x2', 'grok', 'codex', 'hermes', 'all', 'auto', 'none', 'null', 'undefined', 'constructor'];
 
 /** One entry of `<configDir>/accounts.json`. */
 export type AccountSpec = {

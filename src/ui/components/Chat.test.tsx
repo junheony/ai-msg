@@ -63,13 +63,13 @@ describe('Chat', () => {
 
   it('pane header: engine mark (role=img) only once the engine is known — no Claude flash on an opening Codex thread', () => {
     renderChat([], false, vi.fn(), { title: 'thread', sessionEngine: null });
-    expect(document.querySelector('.head-chip-title .engine-mark')).toBeNull();
+    expect(document.querySelector('.head-identity .engine-mark')).toBeNull();
     cleanup();
     renderChat([], false, vi.fn(), { title: 'thread', sessionEngine: 'codex' });
-    expect(screen.getByRole('img', { name: 'Codex (GPT)' }).closest('.head-chip-title')).not.toBeNull();
+    expect(screen.getByRole('img', { name: 'Codex (GPT)' }).closest('.head-identity')).not.toBeNull();
     cleanup();
     renderChat([], false, vi.fn(), { title: 'thread', sessionEngine: 'claude' });
-    expect(screen.getByRole('img', { name: 'Claude' }).closest('.head-chip-title')).not.toBeNull();
+    expect(screen.getByRole('img', { name: 'Claude' }).closest('.head-identity')).not.toBeNull();
     cleanup();
     renderChat([], false, vi.fn(), { title: 'thread', sessionEngine: 'claude', isNew: true });
     expect(screen.queryByRole('img', { name: 'Claude' })).toBeNull();
@@ -271,7 +271,8 @@ describe('Composer keyboard (Desktop)', () => {
     type('again');
     fireEvent.keyDown(box(), { key: 'Enter', metaKey: true });
     expect(onSend).toHaveBeenLastCalledWith('again');
-    expect(screen.getByLabelText('메시지').getAttribute('placeholder')).toContain('Enter 로 보내기 · Shift+Enter 줄바꿈');
+    expect(screen.getByText('Enter 보내기 · Shift+Enter 줄바꿈')).toBeTruthy();
+    expect(screen.getByLabelText('메시지').getAttribute('placeholder')).toBe('메시지 입력 · @ 파일 · / 명령');
   });
 
   it('an Enter that belongs to an IME composition never sends (isComposing, keyCode 229, between compositionstart/end)', () => {

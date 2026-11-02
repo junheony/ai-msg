@@ -10,7 +10,7 @@ import path from 'node:path';
 type Rec = Record<string, unknown>;
 
 /** Directory names: anything at or under one of these is always a card. Compared after NFC + lower case. */
-const DENY_DIRS = new Set(['.git', '.claude', '.grok', '.cursor', '.vscode', '.idea', '.husky', '.githooks']);
+const DENY_DIRS = new Set(['.git', '.claude', '.grok', '.hermes', '.cursor', '.vscode', '.idea', '.husky', '.githooks']);
 /** File names that are always a card (`.env*` is matched by prefix). */
 const DENY_FILES = new Set(['.gitmodules', '.envrc', '.mcp.json']);
 

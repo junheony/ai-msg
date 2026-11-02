@@ -12,8 +12,8 @@ describe('ClaudeMark', () => {
     expect(marks).toHaveLength(2);
     expect(container.querySelector('.engine-mark.claude svg.engine-mark-svg')).not.toBeNull();
     for (const m of marks) {
-      expect(m.querySelectorAll('line').length).toBeGreaterThanOrEqual(8);
-      expect(m.querySelector('g')?.getAttribute('stroke')).toBe('#D97757');
+      expect(m.querySelector('path')?.getAttribute('d')?.length).toBeGreaterThan(500);
+      expect(m.querySelector('path')?.getAttribute('fill')).toBe('#D97757');
     }
     expect(container.textContent).toBe('');
   });
@@ -27,5 +27,17 @@ describe('Grok mark', () => {
     expect(container.textContent).toBe('');
     expect(engineOf({ account: 'x1' })).toBe('grok');
     expect(engineOf({ engine: 'grok', account: 'a' })).toBe('grok');
+  });
+});
+
+
+describe('Hermes and Gemini identities', () => {
+  it('gives each engine its own accessible inline mark and respects an explicit Hermes engine', () => {
+    const { container } = render(<><EngineMark engine="hermes" /><EngineMark engine="gemini" /></>);
+    expect(container.querySelector('.engine-mark.hermes svg.hermes-mark')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Hermes"]')).not.toBeNull();
+    expect(container.querySelector('.engine-mark.gemini svg.gemini-mark')).not.toBeNull();
+    expect(engineOf({ engine: 'hermes', account: 'gpt' })).toBe('hermes');
+    expect(engineOf({ account: 'hermes' })).toBe('hermes');
   });
 });

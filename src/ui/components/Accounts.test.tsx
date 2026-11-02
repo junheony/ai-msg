@@ -27,7 +27,7 @@ const usage: UsageSnapshot = {
   generatedAt: 'x', deckReachable: true,
   accounts: { a: { status: 'ok', fetchedAt: null, fiveHour: w(10), weekly: w(20), fable: null }, d: { status: 'ok', fetchedAt: null, fiveHour: w(60), weekly: w(5), fable: null }, old: { status: 'ok', fetchedAt: null, fiveHour: w(1), weekly: w(1), fable: null } },
 };
-const cards = () => [...document.querySelectorAll('.usage-seat')].map((c) => c.querySelector('.usage-seat-name')!.textContent);
+const cards = () => [...document.querySelectorAll('.usage-seat')].map((c) => (c.querySelector('.usage-account-badge') ?? c.querySelector('.usage-identity .usage-seg-who'))!.textContent);
 
 afterEach(() => { cleanup(); setFeatures(undefined); });
 
@@ -47,9 +47,12 @@ describe('usage sheet with any number of accounts', () => {
   it('five active accounts: a row each in configured order (the retired one has none) and GPT', () => {
     render(<With list={SIX}>{sheet('d')}</With>);
     expect(cards()).toEqual(['Main', 'Work', 'D', 'Team-2', 'Personal', 'GPT']);
+    expect(screen.getByTestId('account-team-2').querySelector('.usage-account-badge')?.getAttribute('title')).toBe('Team-2');
     expect(screen.queryByTestId('account-old')).toBeNull();
-    expect(screen.getByTestId('a-fiveHour').textContent).toBe('5h90% 남음');
-    expect(screen.getByTestId('d-weekly').textContent).toBe('주간95% 남음');
+    // A's snapshot still carries a 5h reading: no row for it, the weekly is what shows.
+    expect(screen.queryByTestId('a-fiveHour')).toBeNull();
+    expect(screen.getByTestId('a-weekly').textContent).toBe('주간80%');
+    expect(screen.getByTestId('d-weekly').textContent).toBe('주간95%');
     expect(screen.queryByTestId('b-fiveHour')).toBeNull();
     expect(screen.getByTestId('b-weekly').textContent).toContain('—');
     expect(screen.getByTestId('team-2-weekly').textContent).toContain('—');
@@ -82,7 +85,8 @@ describe('AccountPicker with the configured accounts', () => {
     expect(screen.getByTestId('account-picker').textContent).toContain('자동 · Team-2');
     expect(names()).toEqual(['자동', 'Main', 'Work (Desktop)', 'D', 'Team-2', 'Personal']);
     const items = within(screen.getByTestId('account-menu')).getAllByRole('menuitemradio');
-    expect(items[1]!.textContent).toContain('5h 90% 남음 · 주간 80% 남음');
+    expect(items[1]!.textContent).toContain('주간 80% 남음');
+    expect(items[1]!.textContent).not.toContain('5h');
     expect(items[2]!.querySelector('.mp-desc')).toBeNull();
     fireEvent.click(items[4]!);
     expect(onPin).toHaveBeenCalledWith('team-2');

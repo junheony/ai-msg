@@ -1,0 +1,45 @@
+{
+  "build": "main-xnOjKvfr.js",
+  "passed": true,
+  "browserErrors": 0,
+  "viewports": {
+    "desktop": {
+      "viewportWidth": 1440,
+      "fontScale": "1.35",
+      "paneWidth": 400,
+      "composerWidth": 372,
+      "visibleComposerButtons": 5,
+      "allButtonsInside": true,
+      "documentOverflow": false,
+      "chatOverflow": false,
+      "composerOverflow": false,
+      "modelMenuReachable": true,
+      "optionsOpen": true,
+      "modelMenuOpen": true,
+      "usageMenuOpen": true,
+      "stepExpandCollapse": true,
+      "homeHasHamburger": false
+    },
+    "mobile": {
+      "viewportWidth": 390,
+      "fontScale": "1.35",
+      "paneWidth": 390,
+      "composerWidth": 370,
+      "visibleComposerButtons": 5,
+      "allButtonsInside": true,
+      "documentOverflow": false,
+      "chatOverflow": false,
+      "composerOverflow": false,
+      "modelMenuReachable": true,
+      "optionsOpen": true,
+      "modelMenuOpen": true,
+      "usageMenuOpen": true,
+      "stepExpandCollapse": true,
+      "homeHasHamburger": false
+    }
+  },
+  "unexercised": [
+    "queue controls",
+    "running-task controls"
+  ]
+}

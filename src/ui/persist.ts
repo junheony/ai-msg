@@ -33,7 +33,7 @@ function storage(): Store | null {
 
 const isObj = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x);
 const shortStr = (x: unknown, max: number): x is string => typeof x === 'string' && x.length <= max;
-const ENGINES: readonly EngineChoice[] = ['claude', 'codex', 'gemini', 'grok', 'auto'];
+const ENGINES: readonly EngineChoice[] = ['claude', 'codex', 'gemini', 'grok', 'hermes', 'auto'];
 const isModelChoice = (x: unknown): x is ModelChoice => x === 'auto' || isClaudeModel(x) || isCodexModel(x) || isGeminiModel(x) || isGrokModel(x);
 
 function readJson(key: string, store: Store | null): unknown {
@@ -54,7 +54,7 @@ function session(x: unknown): PersistedSession | null {
   const sessionId = x.sessionId === null ? null : shortStr(x.sessionId, 200) && x.sessionId ? x.sessionId : undefined;
   if (sessionId === undefined) return null;
   const title = shortStr(x.title, 500) ? x.title : (sessionId?.slice(0, 8) ?? '새 세션');
-  const engine = x.engine === 'claude' || x.engine === 'codex' || x.engine === 'gemini' || x.engine === 'grok' ? x.engine : null;
+  const engine = x.engine === 'claude' || x.engine === 'codex' || x.engine === 'gemini' || x.engine === 'grok' || x.engine === 'hermes' ? x.engine : null;
   return { sessionId, cwd: x.cwd, title, engine };
 }
 
@@ -70,7 +70,7 @@ export function parsePane(x: unknown): PersistedPane {
     session: sess,
     model: isModelChoice(x.model) ? x.model : d.model,
     ...(x.modelPicked === true ? { modelPicked: true as const } : {}),
-    efforts: { claude: isEffort(e.claude) ? e.claude : DEFAULT_EFFORT.claude, codex: isEffort(e.codex) ? e.codex : DEFAULT_EFFORT.codex, gemini: isEffort(e.gemini) ? e.gemini : DEFAULT_EFFORT.gemini, grok: isEffort(e.grok) ? e.grok : DEFAULT_EFFORT.grok },
+    efforts: { hermes: isEffort(e.hermes) ? e.hermes : DEFAULT_EFFORT.hermes, claude: isEffort(e.claude) ? e.claude : DEFAULT_EFFORT.claude, codex: isEffort(e.codex) ? e.codex : DEFAULT_EFFORT.codex, gemini: isEffort(e.gemini) ? e.gemini : DEFAULT_EFFORT.gemini, grok: isEffort(e.grok) ? e.grok : DEFAULT_EFFORT.grok },
     autoEffort: isEffort(x.autoEffort) ? x.autoEffort : null,
     engine: ENGINES.includes(x.engine as EngineChoice) ? (x.engine as EngineChoice) : d.engine,
     sandbox: CODEX_SANDBOXES.includes(x.sandbox as CodexSandbox) ? (x.sandbox as CodexSandbox) : d.sandbox,

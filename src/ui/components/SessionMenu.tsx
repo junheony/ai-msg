@@ -14,6 +14,7 @@ export function deleteBlockedReason(s: Pick<SessionEntry, 'imported' | 'engine' 
   if (s.imported && s.engine === 'gemini') return 'agy 기록은 MSG에서 지울 수 없어요';
   if (s.imported) return 'Codex 앱 기록은 MSG에서 지울 수 없어요';
   if (s.engine === 'codex' || s.account === 'gpt') return 'GPT 대화 기록은 Codex 폴더에 있어 MSG에서 지울 수 없어요';
+  if (s.engine === 'hermes' || s.account === 'hermes') return 'Hermes 대화 기록은 MSG에서 지울 수 없어요';
   if (s.engine === 'gemini') return 'Gemini 대화 기록은 MSG에서 지울 수 없어요';
   if (s.engine === 'grok') return 'Grok 대화 기록은 MSG에서 지울 수 없어요';
   return null;

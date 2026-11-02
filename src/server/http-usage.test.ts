@@ -16,6 +16,7 @@ let base = '';
 let server: http.Server;
 let dir: string;
 let refreshes = 0;
+let quotaRefreshes = 0;
 const sinces: number[] = [];
 
 beforeAll(async () => {
@@ -29,7 +30,7 @@ beforeAll(async () => {
   const usage = new UsageService({ accounts: testRegistry(), deckUrl: 'http://x', fetchFn: async () => ({ ok: true, json: async () => ({ cards: [] }) }) });
   const idx = new UsageIndex({ projectsRoots: rootsOf(roots), codexSessionsRoot: path.join(dir, 'codex'), indexFile: path.join(dir, 'usage-index.json') });
   const usageHistory = { history: (d: number) => idx.history(d), refresh: () => { refreshes++; return idx.refresh(); } };
-  server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: dir, usage, index, usageHistory, highlights: { query: (since: number) => { sinces.push(since); return [{ at: since + 1, kind: 'server', sessionId: null, cwd: '', title: '서버', body: '서버 시작' }]; } } }));
+  server = http.createServer(createRequestHandler({ token: TOKEN, uiDir: dir, usage, index, refreshUsage: async () => { quotaRefreshes++; usage.applyGptLive({ weekly: { usedPct: 7, resetsAt: null } }, Date.now()); }, usageHistory, highlights: { query: (since: number) => { sinces.push(since); return [{ at: since + 1, kind: 'server', sessionId: null, cwd: '', title: '서버', body: '서버 시작' }]; } } }));
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
@@ -73,5 +74,19 @@ describe('GET /api/highlights', () => {
     for (const q of ['?hours=48', '?hours=abc', '']) {
       expect((await (await fetch(`${base}/api/highlights${q}`, { headers: { cookie } })).json() as { hours: number }).hours).toBe(24);
     }
+  });
+});
+
+
+describe('GET /api/usage quota refresh', () => {
+  it('requires auth and returns freshly read quota instead of the prior snapshot', async () => {
+    expect((await fetch(`${base}/api/usage?refresh=1`)).status).toBe(401);
+    expect(quotaRefreshes).toBe(0);
+    const r = await fetch(`${base}/api/usage?refresh=1`, { headers: { cookie } });
+    expect(r.status).toBe(200);
+    expect(quotaRefreshes).toBe(1);
+    expect(await r.json()).toMatchObject({ gpt: { weekly: { usedPct: 7 } } });
+    await fetch(`${base}/api/usage`, { headers: { cookie } });
+    expect(quotaRefreshes).toBe(1);
   });
 });

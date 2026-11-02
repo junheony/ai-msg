@@ -92,7 +92,7 @@ export const SECRET_FIELD_RE = /key|token|secret|vault|wallet|password|passwd|cr
 const HOME_PATH_RE = /(?:\/(?:home|Users)\/[^\s'"`)\]]+|~\/[^\s'"`)\]]+)/g;
 
 /** One deck session for the MSG 터미널 page: no ids, no paths (the project is the folder's last name). */
-export interface HubSelfSession { title: string; project: string; engine: 'claude' | 'codex' | 'gemini' | 'grok'; seat: string; lastModified: number; running: boolean; bg: number }
+export interface HubSelfSession { title: string; project: string; engine: 'claude' | 'codex' | 'gemini' | 'grok' | 'hermes'; seat: string; lastModified: number; running: boolean; bg: number }
 /** One seat's quota as the usage header knows it. Percentages are "used"; null = that window is not reported for this seat. */
 export interface HubSelfSeat { id: string; label: string; status: 'ok' | 'stale' | 'down' | 'login' | 'cooldown' | 'unknown'; fiveHour: number | null; weekly: number | null; fable: number | null; resetsAt: string | null; weeklyResetsAt: string | null; note?: string }
 export interface HubSelf {

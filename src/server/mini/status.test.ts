@@ -63,8 +63,9 @@ describe('mini status', () => {
     });
     // opus: (1000×4 + 250×20 + 60000×4×0.1 + 2000×4×1.25) / 1e6
     expect(s.sessions[0]!.costUsd).toBeCloseTo(0.04, 2);
+    // A's card still has a 5-hour value: Claude no longer has that limit, so it is not said; GPT keeps its own.
     expect(s.seats).toEqual([
-      { id: 'a', label: 'A', status: 'ok', left5h: 63, leftWeek: 19, resets5h: '2026-10-30T12:00:00Z', resetsWeek: '2026-11-02T00:00:00Z' },
+      { id: 'a', label: 'A', status: 'ok', left5h: null, leftWeek: 19, resets5h: null, resetsWeek: '2026-11-02T00:00:00Z' },
       { id: 'b', label: 'B', status: 'stale', left5h: null, leftWeek: 90, resets5h: null, resetsWeek: null },
       { id: 'c', label: 'C', status: 'down', left5h: null, leftWeek: null, resets5h: null, resetsWeek: null },
       { id: 'gpt', label: 'GPT', status: 'ok', left5h: 0, leftWeek: 95, resets5h: '2026-10-30T11:00:00Z', resetsWeek: null },

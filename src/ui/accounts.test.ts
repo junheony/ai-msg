@@ -70,6 +70,9 @@ describe('labels and looks', () => {
     expect(names.label('zz-gone')).toBe('zz-gone');
     expect(names.label('c')).toBe('c');
     expect(names.label('gpt')).toBe('GPT');
+    expect(names.label('hermes')).toBe('Hermes');
+    expect(names.look('hermes')).toEqual({ slot: null, kind: 'other' });
+    expect(names.state('hermes')).toBeNull();
     expect(names.label('g1')).toBe('Gemini');
     expect(names.label('g2')).toBe('Gemini 2');
     expect(names.label('x1')).toBe('Grok');

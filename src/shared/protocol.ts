@@ -34,7 +34,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
      * New sessions only (D3): which engine opens the session. Ignored on resume — the stored engine wins. 'auto' = 자동 분배
      * (chooseRoute): Gemini / Grok only when on in settings `autoEngines` and agreed to in `autoConsent`.
      */
-    engine: z.enum(['claude', 'codex', 'gemini', 'grok', 'auto']).optional(),
+    engine: z.enum(['claude', 'codex', 'gemini', 'grok', 'hermes', 'auto']).optional(),
     /** New Codex / Gemini sessions only (D2). */
     sandbox: z.enum(['read-only', 'workspace-write']).optional(),
     /** New Claude sessions only: 이 세션은 B 써 (null/absent = 자동). Existing sessions use set_account_pin. */
@@ -121,7 +121,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('grok_unlock') }),
   z.object({ type: z.literal('set_settings'), autoApprove: z.boolean().optional(), defaultPermissionMode: z.enum(PERM_MODES).optional(), routingPolicy: z.enum(['balance', 'drain']).optional(), sameVendorRotation: z.boolean().optional(), /** 총사령탑 켜기·끄기 (설정 화면 토글). */ commanderEnabled: z.boolean().optional(),
     /** 자동 분배: engines 자동 may use, engines whose external-transfer card was accepted, Grok fast model. */
-    autoEngines: z.array(z.enum(['claude', 'codex', 'gemini', 'grok'])).max(4).optional(), autoConsent: z.array(z.enum(['claude', 'codex', 'gemini', 'grok'])).max(4).optional(), grokFast: z.boolean().optional(), taskSoftCap: z.number().int().min(1).max(10).optional() }),
+    autoEngines: z.array(z.enum(['claude', 'codex', 'gemini', 'grok', 'hermes'])).max(5).optional(), autoConsent: z.array(z.enum(['claude', 'codex', 'gemini', 'grok', 'hermes'])).max(5).optional(), grokFast: z.boolean().optional(), taskSoftCap: z.number().int().min(1).max(10).optional() }),
   /**
    * 'routePreview' servers: which account the next Claude turn of this session (null with a `cwd` = a new session there)
    * would run on if sent now with `model` (absent = the session's own default; '자동' on a new session has no preview),
@@ -186,7 +186,7 @@ export type DeckSettings = { autoApprove: boolean; defaultPermissionMode: PermMo
   taskSoftCap?: number };
 
 /**
- * 자동 account routing: 'balance' (고르게 분산) = the safe account with the lowest 5h usage;
+ * 자동 account routing: 'balance' (고르게 분산) = the safe account with the lowest weekly usage;
  * 'drain' (리셋 임박 먼저 소진) = the account whose weekly quota resets soonest, relative to what is left.
  */
 export const ROUTING_POLICIES = ['balance', 'drain'] as const;
@@ -278,7 +278,7 @@ export type ServerMessage =
   | { type: 'grok_status'; grok: GrokStatus }
   /** 'hub' servers, only to sockets that sent `hub_watch{on:true}`: the unified hub's status (the same shape as GET /api/hub/status). */
   | { type: 'hub_status'; status: HubStatus }
-  | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; /** 직접 고른 세션 아이콘 (session id → emoji or `glyph:<name>`); absent = an older server. */ sessionIcons?: Record<string, string>; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; activity?: SessionActivity[]; codex: { available: boolean }; gemini?: GeminiStatus; grok?: GrokStatus; /** See FEATURES; absent = none (an older server). Unknown names are ignored. */ features?: string[]; /** 'accounts' servers: the configured Claude accounts (retired included), in configured order. Absent (an older server) = a/b/c, a is home. */ accounts?: AccountInfo[]; /** UI build id of the serving deck (null in dev); a changed id on reconnect means a new UI is out. */ build?: string | null; /** 'setup' servers: the first-run wizard is still to be shown. */ setup?: { needed: boolean } }
+  | { type: 'hello'; usage: UsageSnapshot; projects: ProjectEntry[]; pins?: string[]; /** 직접 고른 세션 아이콘 (session id → emoji or `glyph:<name>`); absent = an older server. */ sessionIcons?: Record<string, string>; desktop?: DesktopSession[]; settings?: DeckSettings; running: RunningTurn[]; activity?: SessionActivity[]; codex: { available: boolean }; hermes?: { available: boolean }; gemini?: GeminiStatus; grok?: GrokStatus; /** See FEATURES; absent = none (an older server). Unknown names are ignored. */ features?: string[]; /** 'accounts' servers: the configured Claude accounts (retired included), in configured order. Absent (an older server) = a/b/c, a is home. */ accounts?: AccountInfo[]; /** UI build id of the serving deck (null in dev); a changed id on reconnect means a new UI is out. */ build?: string | null; /** 'setup' servers: the first-run wizard is still to be shown. */ setup?: { needed: boolean } }
   /** `features`: the server's list again when a setting changed it (총사령탑 켜기·끄기 → 'commander'); absent = unchanged. */
   | { type: 'settings'; settings: DeckSettings; features?: string[] }
   /** 백그라운드 작업 ('tasks' servers): the whole list (newest last) and the soft cap, after hello and on every change. */

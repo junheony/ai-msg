@@ -47,6 +47,8 @@ export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey:
   /** scrollHeight at the last scroll event (nextStick) and at the last resize (unread detection). */
   const scrollHeight = useRef(0);
   const lastHeight = useRef(0);
+  const jumping = useRef(false);
+  const jumpTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   // Manual anchoring (browsers without overflow-anchor, i.e. Safari): the first child crossing the viewport top.
   const anchor = useRef<{ el: Element; offset: number } | null>(null);
@@ -83,7 +85,7 @@ export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey:
     if (!el) return;
     const grew = el.scrollHeight > lastHeight.current;
     lastHeight.current = el.scrollHeight;
-    if (stick.current) { toBottom(el); return; }
+    if (stick.current) { if (!jumping.current) toBottom(el); return; }
     const a = anchor.current;
     if (a && a.el.isConnected && !nativeAnchoring()) {
       const delta = a.el.getBoundingClientRect().top - el.getBoundingClientRect().top - a.offset;
@@ -96,15 +98,33 @@ export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey:
   const detach = useCallback(() => {
     const el = ref.current;
     if (!el || el.scrollTop <= 0 || !stick.current) return;
+    if (jumping.current && typeof el.scrollTo === 'function') el.scrollTo({ top: el.scrollTop, behavior: 'instant' });
+    jumping.current = false;
+    if (jumpTimer.current) clearTimeout(jumpTimer.current);
     stick.current = false;
     publish(true, shown.current.unread);
   }, [ref, publish]);
 
   /** Jump to the bottom and follow again (jump button, send, session switch). */
-  const attach = useCallback(() => {
+  const attach = useCallback((smooth = false) => {
+    if (jumpTimer.current) clearTimeout(jumpTimer.current);
     stick.current = true;
     const el = ref.current;
-    if (el) { toBottom(el); lastHeight.current = el.scrollHeight; }
+    if (el) {
+      const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+      jumping.current = smooth && !reduced && typeof el.scrollTo === 'function';
+      if (jumping.current) {
+        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+        // Older browsers lack scrollend; content can grow beyond the original target mid-animation.
+        jumpTimer.current = setTimeout(() => {
+          if (!jumping.current) return;
+          jumping.current = false;
+          if (stick.current && ref.current) toBottom(ref.current);
+        }, 800);
+      }
+      else toBottom(el);
+      lastHeight.current = el.scrollHeight;
+    }
     publish(false, false);
   }, [ref, toBottom, publish]);
 
@@ -113,6 +133,10 @@ export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey:
     if (!el) return;
     const onScroll = () => {
       const s = { top: el.scrollTop, height: el.scrollHeight, client: el.clientHeight };
+      if (jumping.current) {
+        if (distanceFromBottom(s) > AT_BOTTOM) { lastTop.current = s.top; return; }
+        jumping.current = false;
+      }
       stick.current = nextStick(stick.current, { top: lastTop.current, height: scrollHeight.current }, s);
       lastTop.current = s.top;
       scrollHeight.current = s.height;
@@ -120,6 +144,11 @@ export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey:
       else { publish(true, shown.current.unread); recordAnchor(el); }
     };
     // Upward intent detaches at once, before the scroll lands (a follow in the same frame would undo it).
+    const onScrollEnd = () => {
+      if (!jumping.current) return;
+      jumping.current = false;
+      if (stick.current) toBottom(el);
+    };
     const onWheel = (e: WheelEvent) => { if (e.deltaY < 0) detach(); };
     const onKey = (e: KeyboardEvent) => { if (UP_KEYS.has(e.key) || (e.key === ' ' && e.shiftKey)) detach(); };
     // The start point stays fixed for the whole gesture: per-move deltas would let slow drags and jitter slip under the threshold.
@@ -131,6 +160,7 @@ export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey:
       const t = e.touches[0];
       if (t && touchStart.current && touchDetaches(touchStart.current, { x: t.clientX, y: t.clientY })) detach();
     };
+    el.addEventListener('scrollend', onScrollEnd);
     el.addEventListener('scroll', onScroll, { passive: true });
     el.addEventListener('wheel', onWheel, { passive: true });
     el.addEventListener('keydown', onKey);
@@ -151,15 +181,17 @@ export function useStickToBottom(ref: RefObject<HTMLElement | null>, contentKey:
       }
     }
     return () => {
+      el.removeEventListener('scrollend', onScrollEnd);
       el.removeEventListener('scroll', onScroll);
       el.removeEventListener('wheel', onWheel);
       el.removeEventListener('keydown', onKey);
       el.removeEventListener('touchstart', onTouchStart);
       el.removeEventListener('touchmove', onTouchMove);
+      if (jumpTimer.current) clearTimeout(jumpTimer.current);
       ro?.disconnect();
       mo?.disconnect();
     };
-  }, [ref, onResize, detach, publish, recordAnchor]);
+  }, [ref, onResize, detach, publish, recordAnchor, toBottom]);
 
   // New items: same as a resize (the ResizeObserver also catches growth inside a message, images, expanding cards).
   useLayoutEffect(onResize, [contentKey, onResize]);

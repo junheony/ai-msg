@@ -3,7 +3,7 @@ import type { GrokStatus } from '../../shared/protocol';
 import type { Seat } from '../../shared/accounts';
 import type { UsageSnapshot } from '../../shared/usage-types';
 import { useAccounts } from '../accounts';
-import { buildSeats, chipCountdown, chipState, pickMain, PopRow, RESET_PASSED_NOTE, RESET_PASSED_SAID, seatStale, spokenCountdown, staleNote, useClock, type ChipKind, type RouteNext, type SeatData } from './usageSeats';
+import { buildSeats, resetLabel, resetStamp, SeatIdentity, useUsageRefresh, chipCountdown, chipState, pickMain, PopRow, RESET_PASSED_NOTE, RESET_PASSED_SAID, seatStale, spokenCountdown, staleNote, useClock, windowPassed, type ChipKind, type RouteNext, type SeatData } from './usageSeats';
 import { ClockIcon, RefreshIcon } from './icons';
 
 /**
@@ -117,9 +117,6 @@ export function stripSegs({ seats, current, next, stale, now, label }: {
 /** The strip's hover title, first line: the numbers are what is left (they read the other way round before). */
 const STRIP_TITLE = '계정별 남은 사용량 — 숫자와 막대는 남은 양 · 노랑 20% 이하 · 빨강 5% 이하';
 
-/** The reset is said in mid only when it matters: amber, red, spent, a cooldown's end. */
-const loud = (k: ChipKind) => k === 'warn' || k === 'danger' || k === 'spent' || k === 'cooldown';
-
 /** A remaining percent ("58%"), as opposed to 소진 / 쿨다운 / 리셋됨 / 가능 / ?. */
 const percentValue = (v: string) => /^\d+%$/.test(v);
 
@@ -144,30 +141,26 @@ function outWord(s: StripSeg): string {
   return s.kind === 'cooldown' ? '쿨다운' : s.bar === 0 ? '소진' : '로그인';
 }
 
-/**
- * Old numbers by stage: full = muted bar · "70%" · clock "3일 전"; mid = "70%" · clock "3일 전"; min = "70%" · clock.
- * Past the reset: refresh "리셋됨" in the number's place (min: the icon alone). The words are in the title and aria.
- */
-function Segment({ s, stage, measure }: { s: StripSeg; stage: Exclude<StripStage, 'row'>; measure?: boolean }) {
-  const age = s.icon === 'clock';
-  const reset = age ? (stage === 'min' ? '' : s.reset) : stage === 'full' || (stage === 'mid' && loud(s.kind)) ? s.reset : '';
-  return (
-    <span
-      className={`usage-seg ${s.kind}${s.stale && s.kind !== 'stale' ? ' stale' : ''}`}
-      {...(s.current ? { 'data-current': '' } : {})}
-      {...(measure ? {} : { 'data-testid': `seg-${s.seat}` })}
-    >
-      {s.next && <span className="usage-seg-next" {...(measure ? {} : { 'data-testid': `next-${s.seat}` })}>→</span>}
-      <span className="usage-seg-who">{s.label}</span>
-      {stage === 'full' && <span className="usage-seg-bar"><i style={{ width: `${s.bar ?? 0}%` }} /></span>}
-      <span className="usage-seg-num">
-        {s.icon === 'refresh' && <RefreshIcon className="usage-seg-icon" />}
-        {s.icon === 'refresh' && stage === 'min' ? null : s.value}
+/** Shared provider identity, single remaining-capacity bar, and a calm exhausted/login state. */
+export function UsageSeatSummary({ s, d, now, login, onLogin }: { s: StripSeg; d: SeatData; now: number; login: boolean; onLogin?: () => void }) {
+  const main = pickMain(d.rows.filter((r) => !(s.stale && windowPassed(r.w, now))));
+  const at = d.status === 'cooldown' ? d.until : main?.row.w?.resetsAt;
+  const reset = at ? resetLabel(at, now) : '';
+  const exhausted = s.kind === 'spent' || s.kind === 'cooldown';
+  return <span className={`usage-seg ${s.kind}${s.stale && s.kind !== 'stale' ? ' stale' : ''}`} data-testid={`seg-${s.seat}`} {...(s.current ? { 'data-current': '' } : {})}>
+    <span className="usage-pop-heading">
+      {s.next && <span className="usage-seg-next" data-testid={`next-${s.seat}`}>→</span>}
+      <SeatIdentity d={d} label={s.label} />
+      <span className={`usage-seg-num${exhausted && !login ? ' usage-exhausted' : ''}`} title={at ? resetStamp(at) : undefined}>
+        {s.icon === 'refresh' && !login && <RefreshIcon className="usage-seg-icon" />}
+        {login ? '로그인 필요' : s.value}
+        {!login && exhausted && reset && <span className="usage-exhausted-reset"> · {reset}</span>}
       </span>
-      {age && <span className="usage-seg-reset usage-seg-age"><ClockIcon className="usage-seg-icon" />{reset}</span>}
-      {!age && reset && <span className="usage-seg-reset">{s.dot ? `· ${reset}` : reset}</span>}
+      {login && onLogin && <span data-testid={`reauth-${s.seat}`}><button type="button" className="text-btn usage-reauth-btn" onClick={onLogin}>로그인</button></span>}
     </span>
-  );
+    {!login && <span className="usage-seg-bar" aria-hidden="true"><i style={{ width: `${s.bar ?? 0}%` }} /></span>}
+    {!login && s.icon === 'clock' && <span className="usage-seg-reset usage-seg-age"><ClockIcon className="usage-seg-icon" />{s.reset}</span>}
+  </span>;
 }
 
 /**
@@ -176,7 +169,7 @@ function Segment({ s, stage, measure }: { s: StripSeg; stage: Exclude<StripStage
  * The same pill on a phone — the list is the popover, not a second row of every seat. `phone` and `rowSlot` stay on
  * the props so the header call site is unchanged.
  */
-export function UsageStrip({ usage, current, next = null, grok = null, phone = false, open = false, onToggle, now: fixedNow, reauth = [], onReauth }: {
+export function UsageStrip({ usage, current, next = null, grok = null, phone = false, open = false, onToggle, now: fixedNow, reauth = [], onReauth, onRefresh }: {
   usage: UsageSnapshot | null; current: Seat | null; next?: RouteNext | null; grok?: GrokStatus | null;
   phone?: boolean;
   rowSlot?: HTMLElement | null;
@@ -185,16 +178,18 @@ export function UsageStrip({ usage, current, next = null, grok = null, phone = f
   /** Seats whose login probe is `no` (authLogin). */
   reauth?: readonly string[];
   onReauth?: (seat: string) => void;
+  onRefresh?: () => void;
 }) {
   const now = useClock(fixedNow);
   const { active, label } = useAccounts();
   const wrapRef = useRef<HTMLDivElement>(null);
   const [pop, setPop] = useState(false);
+  useUsageRefresh(pop, onRefresh);
   const seats = usage ? buildSeats(usage, active, grok, now) : [];
   // A logged-out seat still needs the pill: with no remaining-% yet there is otherwise nothing to press for 로그인.
   const shown = seats.length > 0 && (!!current || !!next || seats.some((s) => pickMain(s.rows) || s.loginNeeded) || reauth.length > 0);
   /** Seats whose CLI needs a login: the setup probe's list, or the snapshot itself (Gemini without its Google login, Grok after an auth failure). */
-  const needsLogin = (d: SeatData) => !!onReauth && (reauth.includes(d.seat) || !!d.loginNeeded);
+  const needsLogin = (d: SeatData) => reauth.includes(d.seat) || !!d.loginNeeded;
 
   useEffect(() => { if (open) setPop(false); }, [open]);
   useEffect(() => {
@@ -244,6 +239,7 @@ export function UsageStrip({ usage, current, next = null, grok = null, phone = f
             {out.map((s) => <span key={s.seat} className={`usage-out-pill ${s.kind}`} data-testid={`out-${s.seat}`}>{s.label}{!phone && <small>{outWord(s)}</small>}</span>)}
           </span>
         )}
+        {out.length > 0 && <span className="usage-out-count" aria-hidden="true">확인 {out.length}</span>}
         <span className="usage-strip-caret" aria-hidden="true">{pop ? '▴' : '▾'}</span>
       </button>
       {pop && (
@@ -253,17 +249,12 @@ export function UsageStrip({ usage, current, next = null, grok = null, phone = f
             const old = seatStale(d, snapshotStale) && d.status !== 'cooldown';
             return (
               <div key={s.seat} className={`usage-pop-seat${s.current ? ' current' : ''}`} data-testid={`pop-${s.seat}`}>
-                <Segment s={s} stage="full" />
-                {d.rows.length > 0 && (
+                <UsageSeatSummary s={s} d={d} now={now} login={needsLogin(d)} {...(onReauth ? { onLogin: () => { setPop(false); onReauth(s.seat); } } : {})} />
+                {d.engine === 'gpt' && <span className="usage-shared-note">Hermes와 한도 공유</span>}
+                {!needsLogin(d) && d.rows.length > 0 && (
                   <div className="usage-pop-rows">
-                    {d.rows.map((r) => <PopRow key={r.key} id={`pop-${s.seat}-${r.key}`} seat={s.seat} name={r.name} k={r.key} w={r.w} now={now} empty={r.empty} stale={old} polled={d.polled} />)}
+                    {d.rows.map((r) => <PopRow compact key={r.key} id={`pop-${s.seat}-${r.key}`} seat={s.seat} name={r.name} k={r.key} w={r.w} now={now} empty={r.empty} stale={old} polled={d.polled} />)}
                   </div>
-                )}
-                {needsLogin(d) && (
-                  <span className="usage-reauth" data-testid={`reauth-${s.seat}`}>
-                    <span>로그인 필요</span>
-                    <button type="button" className="text-btn" onClick={() => { setPop(false); onReauth!(s.seat); }}>로그인</button>
-                  </span>
                 )}
               </div>
             );

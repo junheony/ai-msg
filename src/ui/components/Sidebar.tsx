@@ -1,3 +1,4 @@
+import { sessionPreview, type ReplyStatus } from '../terminalPresentation';
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import type { EngineKind } from '../../shared/models';
 import type { SessionActivity } from '../../shared/protocol';
@@ -6,7 +7,7 @@ import { groupByDate } from '../dateGroups';
 import { groupBranches, linksOf, type BranchGroup } from '../../shared/branches';
 import { searchTranscripts, type SearchHit } from '../sessionApi';
 import { FolderPicker } from './FolderPicker';
-import { EngineMark, GeminiMark, GrokMark, OpenAIMark, engineOf } from './EngineMark';
+import { EngineMark, GeminiMark, GrokMark, HermesMark, OpenAIMark, engineOf } from './EngineMark';
 import { usePinReorder } from '../pinOrder';
 import { BlockedDeleteItem, MenuList, deleteBlockedReason, isGrokBotEntry } from './SessionMenu';
 import { openInNewTab } from './ShareMenu';
@@ -316,9 +317,10 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
    * Line 2: the last reply's preview when there is one, else the project folder. Only a non-Claude engine gets a mark (a
    * 12px muted glyph up front); a row deck cannot continue gets a one-word tag. Statuses are the row end's job.
    */
-  const metaLine = (p: { engine: EngineKind; tag?: string | null; text: string; title?: string }) => (
+  const metaLine = (p: { engine: EngineKind; tag?: string | null; text: string; title?: string; status?: ReplyStatus | null }) => (
     <span className="session-meta" {...(p.title ? { title: p.title } : {})}>
       {p.engine !== 'claude' && <MetaEngine engine={p.engine} />}
+      {p.status && <span className={`preview-status ${p.status.toLowerCase()}`} aria-label={`작업 상태: ${p.status}`} title={p.status} />}
       {p.tag && <span className="meta-tag">{p.tag}</span>}
       <span className="meta-text">{p.text}</span>
     </span>
@@ -354,8 +356,9 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     const current = !!currentSessionId && members.includes(currentSessionId);
     const engine = engineOf(target);
     // A 갈래 row shows its newest version (`target`): title and preview both come from it.
-    const preview = oneLine(target.preview);
-    const meta = metaLine({ engine, tag: rowTag(s), text: preview || slug, ...(s.imported ? { title: importTitle(s) } : {}) });
+    const parsedPreview = sessionPreview(target.preview);
+    const preview = parsedPreview.text;
+    const meta = metaLine({ engine, tag: rowTag(s), status: parsedPreview.status, text: preview || slug, ...(s.imported ? { title: importTitle(s) } : {}) });
     const avatarEl = avatarOf(slug, s.sessionId, target.title);
     // The row's tooltip keeps what the row stopped showing: folder, engine, run kind, 갈래, the time.
     const facts = [slug, engine !== 'claude' ? ENGINE_NAME[engine] ?? engine : null, s.codexExec || s.autoRun ? '자동 실행' : null, ...grokBotTags(s).filter((t) => !t.startsWith('안 읽음')), s.codexArchived ? 'Codex 보관' : null, s.cwdMissing ? '폴더 없음' : null, members.length > 1 ? `갈래 ${members.length}` : null, ago(target.lastModified, now)];
@@ -363,7 +366,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
     // the folder when line 2 shows it, the tag, and the statuses the end mark's label names.
     const spoken = facts.filter((f): f is string => !!f && !(f === slug && !preview) && f !== rowTag(s) && f !== '답장 대기');
     return (
-      <li key={s.sessionId} {...rowProps(key)} className={rowClass(current)} title={`${target.title}\n${facts.filter(Boolean).join(' · ')}`}
+      <li key={s.sessionId} {...rowProps(key)} className={rowClass(current)} data-engine={engine} title={`${target.title}\n${facts.filter(Boolean).join(' · ')}`}
         onContextMenu={canEdit ? (e) => { e.preventDefault(); setMenu(key); } : undefined}>
         {edit ? (
           // Renaming: an input cannot sit inside a button, so the row is plain for the while.
@@ -410,7 +413,7 @@ export function Sidebar({ projects, currentSessionId, onOpen, onNew, onRefresh, 
             {onTogglePin && <button type="button" role="menuitem" onClick={() => { setMenu(null); onTogglePin(s.sessionId, !on); }}>{on ? '고정 해제' : '맨 위에 고정'}</button>}
             {/* Archived in Codex: only the Codex app can unarchive it. */}
             {onArchive && !target.codexArchived && <button type="button" role="menuitem" onClick={() => { setMenu(null); onArchive(target.sessionId, !target.archived); }}>{target.archived ? '보관 해제' : '보관'}</button>}
-            {onSetCwd && (target.engine ?? 'claude') !== 'gemini' && target.engine !== 'grok' && <button type="button" role="menuitem" onClick={() => { setMenu(null); onSetCwd(target); }}>작업 폴더 바꾸기</button>}
+            {onSetCwd && (target.engine ?? 'claude') !== 'gemini' && target.engine !== 'grok' && target.engine !== 'hermes' && <button type="button" role="menuitem" onClick={() => { setMenu(null); onSetCwd(target); }}>작업 폴더 바꾸기</button>}
             {onDuplicate && !isGrokBotEntry(target) && <button type="button" role="menuitem" onClick={() => { setMenu(null); onDuplicate(target.sessionId); }}>복제</button>}
             {/* GPT / Gemini / Codex-app sessions: shown disabled with the reason, so it is clear why they stay. */}
             {onDelete && (deleteBlockedReason(target)
@@ -689,7 +692,7 @@ export function importTitle(s: SessionEntry): string {
 }
 
 /** A non-Claude engine's name, for the row's tooltip. */
-const ENGINE_NAME: Partial<Record<EngineKind, string>> = { codex: 'Codex (GPT)', grok: 'Grok', gemini: 'Gemini' };
+const ENGINE_NAME: Partial<Record<EngineKind, string>> = { codex: 'Codex (GPT)', grok: 'Grok', hermes: 'Hermes', gemini: 'Gemini' };
 
 /** The one-word tag a row deck cannot continue carries on its second line (the tooltip says why). */
 export function rowTag(s: SessionEntry): string | null {
@@ -700,12 +703,11 @@ export function rowTag(s: SessionEntry): string | null {
 
 /** A preview as one line (the row truncates it with an ellipsis). */
 /** One line for the row. Fences and inline code drop out so a CSS reply does not become the preview. */
-const oneLine = (t: string | undefined) => (t ? t.replace(/```[\s\S]*?```/g, ' ').replace(/`[^`\n]*`/g, ' ').replace(/\s+/g, ' ').trim() : '');
 
 /** Line 2's engine glyph (non-Claude only): 12px, single colour (the line's muted grey), decorative — the tooltip names it. */
 function MetaEngine({ engine }: { engine: EngineKind }) {
   const cls = 'meta-engine-svg';
-  const mark = engine === 'codex' ? <OpenAIMark className={cls} /> : engine === 'grok' ? <GrokMark className={cls} /> : engine === 'gemini' ? <GeminiMark className={cls} /> : null;
+  const mark = engine === 'codex' ? <OpenAIMark className={cls} /> : engine === 'grok' ? <GrokMark className={cls} /> : engine === 'hermes' ? <HermesMark className={cls} /> : engine === 'gemini' ? <GeminiMark className={cls} /> : null;
   if (!mark) return null;
   return <span className={`meta-engine ${engine}`} aria-hidden="true">{mark}</span>;
 }

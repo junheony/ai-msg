@@ -152,7 +152,7 @@ describe('ws: server status and 다음 턴 미리보기', () => {
     await d.close();
     await new Promise((r) => setTimeout(r, 50)); // the server's close handler runs after the client sees its close
     spy.mockClear();
-    srv.usage.applyTurn('b', { fiveHour: { usedPct: 98, resetsAt: null } });
+    srv.usage.applyTurn('b', { weekly: { usedPct: 98, resetsAt: null } });
     await c.next('usage');
     expect(spy).not.toHaveBeenCalled();
     await c.close();

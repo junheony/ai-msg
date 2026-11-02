@@ -33,12 +33,13 @@ export const GROK_PERM_MODE_HINT: Record<Exclude<PermMode, 'plan'>, string> = {
 
 /** The hint for a mode on a session of `engine` (Grok's modes are answered by deck; its 모두 자동 승인 is narrower). */
 export function permModeHint(m: PermMode, engine: string): string {
+  if (engine === 'hermes') return m === 'bypassPermissions' ? 'Hermes의 권한 요청을 한 번씩 자동 승인합니다. 읽기·일부 명령은 Hermes 자체 정책을 따릅니다.' : m === 'acceptEdits' ? '작업 폴더 안의 파일 편집만 자동 승인하며, 민감한 경로·외부 파일·위험 명령은 묻습니다.' : 'Hermes의 파일 편집·위험 명령 승인 요청을 표시합니다. 읽기·일부 명령은 자체 정책을 따릅니다.';
   return engine === 'grok' && m !== 'plan' ? GROK_PERM_MODE_HINT[m] : PERM_MODE_HINT[m];
 }
 
 /** Modes offered for a session of `engine`: Grok has no plan mode in deck yet (§14.2). */
 export function permModesFor(engine?: string): readonly PermMode[] {
-  return engine === 'grok' ? PERM_MODES.filter((m) => m !== 'plan') : PERM_MODES;
+  return (engine === 'grok' || engine === 'hermes') ? PERM_MODES.filter((m) => m !== 'plan') : PERM_MODES;
 }
 
 export function isPermMode(x: unknown): x is PermMode {

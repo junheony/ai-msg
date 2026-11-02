@@ -311,14 +311,14 @@ describe('ClaudeUsagePoller', () => {
     await p.pollAccount('b');
     expect(usageOf(usage.snapshot(), 'b')).toMatchObject({
       status: 'ok', fetchedAt: new Date(NOW).toISOString(), observedBy: 'poll',
-      fiveHour: { usedPct: 0, resetsAt: null }, weekly: { usedPct: 90, resetsAt: '2026-10-23T08:59:00.000Z' }, fable: { usedPct: 87, resetsAt: '2026-10-23T08:59:00.000Z' },
+      fiveHour: null, weekly: { usedPct: 90, resetsAt: '2026-10-23T08:59:00.000Z' }, fable: { usedPct: 87, resetsAt: '2026-10-23T08:59:00.000Z' },
     });
     // A turn observed after the poll started wins; a poll reading taken before it does not overwrite.
     ms = NOW + 60_000;
     usage.applyTurn('b', { fiveHour: { usedPct: 5, resetsAt: null }, weekly: { usedPct: 91, resetsAt: null } }, NOW + 30_000);
     usage.applyCliPoll('b', { fiveHour: { usedPct: 1, resetsAt: null }, weekly: { usedPct: 80, resetsAt: null } }, NOW + 10_000);
     const b = usageOf(usage.snapshot(), 'b');
-    expect(b).toMatchObject({ fiveHour: { usedPct: 5 }, weekly: { usedPct: 91 } });
+    expect(b).toMatchObject({ fiveHour: null, weekly: { usedPct: 91 } });
     expect(b).not.toHaveProperty('observedBy');
   });
 });

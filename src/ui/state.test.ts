@@ -28,6 +28,14 @@ describe('reducer', () => {
     expect(play([{ type: 'hello', usage, projects: [], running: [], codex: { available: false }, gemini: g }]).gemini).toEqual(g);
   });
 
+  it('keeps Hermes explicit while the shared Astra model still belongs to Codex by default', () => {
+    expect(engineOf('gpt-6-astra')).toBe('codex');
+    expect(modelFor('hermes', 'opus')).toBe('gpt-6-astra');
+    const state = reducer(initialState, { type: 'set_engine', engine: 'hermes' });
+    expect(state.panes[0]?.engine).toBe('hermes');
+    expect(state.panes[0]?.model).toBe('gpt-6-astra');
+  });
+
   it('engineOf / modelFor know Gemini; the 자동 engine never keeps a Gemini model', () => {
     expect(engineOf('gemini-flash')).toBe('gemini');
     expect(modelFor('gemini', 'opus')).toBe('gemini-pro');

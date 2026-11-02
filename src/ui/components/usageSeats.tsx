@@ -45,35 +45,33 @@ export function fullestWindow(u: AccountUsage, keys: WindowKey[]): WindowKey | n
   return best?.key ?? null;
 }
 
-/** Absolute local reset time, e.g. "10/3 09:00" (an exhausted window needs a when, not a countdown). */
+/** Absolute reset time is always Korean time, independent of the browser timezone. */
 export function resetStamp(resetsAt: string | null): string {
   if (!resetsAt) return '';
   const t = parseIsoUtc(resetsAt);
   if (Number.isNaN(t)) return '';
-  const d = new Date(t);
-  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const d = new Date(t + 9 * 3_600_000);
+  return `${d.getUTCMonth() + 1}/${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')} KST`;
 }
 
-/**
- * The reset as the rows show it: within a day the local clock time ("리셋 14:30", "내일 02:10" past midnight), beyond
- * that in days ("2일 후", "1일 5시간 후"); "리셋됨" once passed; '' without a readable time. The full countdown
- * ("2시간 5분 후 리셋") stays in the row's title.
- */
+/** Compact Korean relative reset; the exact KST timestamp lives in the title. */
 export function resetLabel(resetsAt: string | null | undefined, now: number): string {
-  if (!resetsAt) return '';
-  const t = parseIsoUtc(resetsAt);
-  if (Number.isNaN(t)) return '';
-  const ms = t - now;
-  if (ms <= 0) return '리셋됨';
-  const h = Math.floor(ms / 3_600_000);
-  if (h < 24) {
-    const d = new Date(t);
-    const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    return localDay(d) === localDay(new Date(now)) ? `리셋 ${hm}` : `내일 ${hm}`;
-  }
-  const days = Math.floor(h / 24);
-  const rest = h % 24;
-  return days < 2 && rest ? `${days}일 ${rest}시간 후` : `${days}일 후`;
+  if (!resetsAt || Number.isNaN(parseIsoUtc(resetsAt))) return '';
+  const short = shortCountdown(resetsAt, now);
+  return short === '리셋됨' ? short : `${short} 후 리셋`;
+}
+
+/** Recheck the live source on opening a usage surface and returning to the window. */
+export function useUsageRefresh(open: boolean, onRefresh?: () => void) {
+  useEffect(() => {
+    if (!open || !onRefresh) return;
+    onRefresh();
+    const onFocus = () => onRefresh();
+    const onVisible = () => { if (document.visibilityState === 'visible') onRefresh(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { window.removeEventListener('focus', onFocus); document.removeEventListener('visibilitychange', onVisible); };
+  }, [open, onRefresh]);
 }
 
 /** How long ago, short: "방금", "12분 전", "3시간 전", "2일 전"; '' when unreadable. */
@@ -94,7 +92,7 @@ export function agoText(iso: string | null, now: number): string {
  * turn (`observedBy: 'poll'`): "12분 전 확인" / "추정 · 12분 전 확인".
  */
 export function observedText(u: AccountUsage, now: number): string {
-  const ago = u.fiveHour || u.weekly ? agoText(u.fetchedAt, now) : '';
+  const ago = u.weekly ? agoText(u.fetchedAt, now) : '';
   if (!ago) return '아직 관측 없음';
   const kept = u.status === 'stale' && trusted(u, now);
   if (u.observedBy === 'poll') return kept ? `추정 · ${ago} 확인` : `${ago} 확인`;
@@ -174,6 +172,16 @@ export type SeatData = {
   extraPopover?: ReactNode;
 };
 
+/** A provider identifier with a small account badge, rather than an account letter posing as a logo. */
+export function SeatIdentity({ d, label }: { d: SeatData; label: string }) {
+  return <span className="usage-identity">
+    {d.mark}
+    <span className="usage-seg-who">{d.engine === 'claude' ? 'Claude' : label}</span>
+    {d.engine === 'claude' && <span className="usage-account-badge" title={label}>{label}</span>}
+    {d.engine === 'gpt' && <span className="usage-seat-engine">Codex</span>}
+  </span>;
+}
+
 const WINDOW_NAME: Record<WindowKey, string> = { fiveHour: '5h', weekly: '주간', fable: 'Fable' };
 
 /**
@@ -186,12 +194,11 @@ export function engineCaption(d: Pick<SeatData, 'engine'>, label = ''): string {
 }
 
 /**
- * Claude A/B/C: main = fullest of 5h/weekly (Fable excluded — "Fable 은 Fable 만 막는다"); Fable only in the secondary row/popover.
- * Claude plans no longer have a 5-hour limit: the 5h row shows only when a reading still carries one, never as an empty "—" bar.
+ * Claude A/B/C: main = weekly (Fable excluded — "Fable 은 Fable 만 막는다"); Fable only in the secondary row/popover.
+ * Claude plans no longer have a 5-hour limit: no 5h row, even when a reading still carries one.
  */
 function claudeRows(u: AccountUsage, cli: boolean): SeatRow[] {
   return [
-    ...(u.fiveHour ? [{ key: 'fiveHour', name: WINDOW_NAME.fiveHour, w: u.fiveHour, mainEligible: true }] : []),
     { key: 'weekly', name: WINDOW_NAME.weekly, w: u.weekly, mainEligible: true },
     { key: 'fable', name: WINDOW_NAME.fable, w: u.fable, mainEligible: false, ...(cli && !u.fable ? { empty: CLI_NO_FABLE } : {}) },
   ];
@@ -325,13 +332,13 @@ export function shownPct(w: UsageWindow | null): number | null {
  * One window row in the sheet: label · bar (or spent pill) · REMAINING % · countdown. Every seat (Claude, GPT, Gemini
  * buckets, Grok) says the share left, like the strip: the bar is as full as what is left (a battery).
  */
-export function PopRow({ seat, name, k, w, now, empty, stale, polled, id }: { seat: Seat; name: string; k: string; w: UsageWindow | null; now: number; empty?: string; stale?: boolean; polled?: boolean; id?: string }) {
+export function PopRow({ seat, name, k, w, now, empty, stale, polled, id, compact = false }: { seat: Seat; name: string; k: string; w: UsageWindow | null; now: number; empty?: string; stale?: boolean; polled?: boolean; id?: string; compact?: boolean }) {
   const testId = id ?? `${seat}-${k}`;
   if (stale && windowPassed(w, now)) {
     return (
-      <div data-testid={testId} className="usage-row old passed" title={`${name} · ${RESET_PASSED_NOTE}`}>
+      <div data-testid={testId} className={`usage-row old passed${compact ? ' compact' : ''}`} title={`${name} · ${RESET_PASSED_NOTE}`}>
         <span className="usage-label">{name}</span>
-        <span className="usage-bar" aria-hidden="true"><i style={{ width: '0%' }} /></span>
+        {!compact && <span className="usage-bar" aria-hidden="true"><i style={{ width: '0%' }} /></span>}
         <span className="usage-value"><RefreshIcon className="usage-icon" />리셋됨</span>
       </div>
     );
@@ -339,21 +346,21 @@ export function PopRow({ seat, name, k, w, now, empty, stale, polled, id }: { se
   const rem = shownPct(w);
   const reset = w ? countdown(w.resetsAt, now) : '';
   const when = w ? resetLabel(w.resetsAt, now) : '';
-  const title = (rem === null ? `${name} · ${empty ?? '알 수 없음'}` : rem === 0 ? `${name} · 소진${w?.resetsAt ? ` · ${resetStamp(w.resetsAt)} 리셋` : ''}` : `${name} · ${rem}% 남음${reset ? ` · ${reset}` : ''}${LEVEL_NOTE[levelClass(w)] ?? ''}`) + (w?.estimated ? ` · ${ESTIMATED}` : '') + (stale && rem !== null ? ` · ${polled ? '예전에 확인한 값' : '마지막 턴 기준 값'}, 지금은 이보다 적게 남았을 수 있음` : '');
+  const title = (rem === null ? `${name} · ${empty ?? '알 수 없음'}` : rem === 0 ? `${name} · 소진${w?.resetsAt ? ` · ${resetStamp(w.resetsAt)} 리셋` : ''}` : `${name} · ${rem}% 남음${reset ? ` · ${reset}` : ''}${LEVEL_NOTE[levelClass(w)] ?? ''}`) + (w?.resetsAt && rem !== 0 ? ` · ${resetStamp(w.resetsAt)}` : '') + (w?.estimated ? ` · ${ESTIMATED}` : '') + (stale && rem !== null ? ` · ${polled ? '예전에 확인한 값' : '마지막 턴 기준 값'}, 지금은 이보다 적게 남았을 수 있음` : '');
   if (rem === 0) {
-    const at = resetStamp(w?.resetsAt ?? null);
+    const at = resetLabel(w?.resetsAt, now);
     return (
-      <div data-testid={testId} className={`usage-row spent danger${stale ? ' old' : ''}`} title={title}>
+      <div data-testid={testId} className={`usage-row spent danger${stale ? ' old' : ''}${compact ? ' compact' : ''}`} title={title}>
         <span className="usage-label">{name}</span>
         <span className="usage-pill">소진{at && <span className="usage-pill-at">{` · ${at}`}</span>}</span>
       </div>
     );
   }
   return (
-    <div data-testid={testId} className={`usage-row ${levelClass(w)}${w?.estimated ? ' estimated' : ''}${stale && rem !== null ? ' old' : ''}`} title={title}>
+    <div data-testid={testId} className={`usage-row ${levelClass(w)}${w?.estimated ? ' estimated' : ''}${stale && rem !== null ? ' old' : ''}${compact ? ' compact' : ''}`} title={title}>
       <span className="usage-label">{name}</span>
-      <span className="usage-bar" aria-hidden="true"><i style={{ width: `${rem ?? 0}%` }} /></span>
-      <span className="usage-value">{rem === null ? (empty ? <span className="usage-na">{empty}</span> : '—') : <>{rem}<small>% 남음</small></>}</span>
+      {!compact && <span className="usage-bar" aria-hidden="true"><i style={{ width: `${rem ?? 0}%` }} /></span>}
+      <span className="usage-value">{rem === null ? (empty ? <span className="usage-na">{empty}</span> : '—') : <>{rem}<small>{compact ? '%' : '% 남음'}</small></>}</span>
       {when && <span className="usage-reset" aria-label={reset}>{when}</span>}
     </div>
   );

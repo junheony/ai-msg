@@ -240,12 +240,13 @@ describe('MessageView · 간결 모드 live text', () => {
     expect(getByTestId('concise-progress').textContent).toContain('단계 1');
     expect(container.querySelector('.markdown:not(.thinking-body)')).toBeNull();
     // Tool bodies stay folded inside the collapsed step group (as before).
-    expect((getByTestId('tool-group') as HTMLDetailsElement).open).toBe(false);
+    expect((getByTestId('activity-steps') as HTMLDetailsElement).open).toBe(false);
     // …and nothing of the output shows outside that folded group.
     const outside = container.cloneNode(true) as HTMLElement;
-    outside.querySelector('[data-testid="tool-group"]')!.remove();
+    outside.querySelector('[data-testid="activity-steps"]')!.remove();
     expect(outside.textContent).not.toContain('SECRET-OUTPUT');
-    expect(container.textContent).not.toContain('SECRET-THOUGHT');
+    expect(outside.textContent).not.toContain('SECRET-THOUGHT');
+    expect(getByTestId('activity-steps').textContent).toContain('SECRET-THOUGHT');
     rerender(<MessageView item={turn(`${before}\n\n원인은 오타였어요`, [call('1', before.length)])} />);
     expect(getByTestId('concise-lead').textContent).toBe(before);
     const md = container.querySelectorAll('.markdown');

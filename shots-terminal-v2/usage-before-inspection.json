@@ -1,0 +1,557 @@
+{
+  "tag": "usage-before",
+  "fixture": "brief7c-synthetic",
+  "clock": "2026-11-01T17:00:00.000Z",
+  "provenance": "Synthetic visual comparison only; does not prove live quota or refresh.",
+  "views": {
+    "dark-desktop-popover": {
+      "x": 1004,
+      "y": 49.5,
+      "width": 340,
+      "height": 596.8125,
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "horizontalOverflow": false,
+      "panelInside": true,
+      "panelHorizontalOverflow": true,
+      "overflowContainers": [
+        {
+          "class": "usage-strip-pop",
+          "width": 340,
+          "scrollWidth": 472
+        }
+      ],
+      "rows": [
+        {
+          "id": "pop-a",
+          "text": "A37%46h5h100% 남음리셋 05:00주간37% 남음1일 22시간 후Fable소진 · 11/4 00:00",
+          "barCount": 3,
+          "x": 1010,
+          "width": 260.859375,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-b",
+          "text": "B46%4d5h100% 남음리셋 05:00주간46% 남음4일 후Fable소진 · 11/7 00:00",
+          "barCount": 3,
+          "x": 1010,
+          "width": 260.859375,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-c",
+          "text": "C38%46h5h100% 남음리셋 05:00주간38% 남음1일 22시간 후Fable소진 · 11/4 00:00",
+          "barCount": 3,
+          "x": 1010,
+          "width": 260.859375,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-gpt",
+          "text": "GPT소진· 2d주간소진 · 11/4 12:105h100% 남음리셋 05:00",
+          "barCount": 2,
+          "x": 1010,
+          "width": 260.859375,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-g1",
+          "text": "Gemini로그인 필요로그인 필요로그인",
+          "barCount": 1,
+          "x": 1010,
+          "width": 260.859375,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-g2",
+          "text": "Gemini 2로그인 필요로그인 필요로그인",
+          "barCount": 1,
+          "x": 1010,
+          "width": 260.859375,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-x1",
+          "text": "Grok71%3d주간71% 남음3일 후",
+          "barCount": 2,
+          "x": 1272.859375,
+          "width": 196.921875,
+          "insideX": false,
+          "horizontalOverflow": false
+        }
+      ],
+      "externalImages": 0,
+      "loginButtons": 2,
+      "lastRowAfterScroll": {
+        "x": 1272.859375,
+        "y": 55.5,
+        "width": 196.921875,
+        "height": 61.4375,
+        "visible": false
+      },
+      "contentPassed": false
+    },
+    "dark-desktop-sheet": {
+      "x": 1060,
+      "y": 0,
+      "width": 380,
+      "height": 900,
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "horizontalOverflow": false,
+      "panelInside": true,
+      "panelHorizontalOverflow": false,
+      "overflowContainers": [],
+      "rows": [
+        {
+          "id": "account-a",
+          "text": "AClaude관측마지막 턴 기준 · 방금5h100% 남음리셋 05:00주간37% 남음1일 22시간 후Fable소진 · 11/4 00:00",
+          "barCount": 2,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-b",
+          "text": "BClaude관측마지막 턴 기준 · 방금5h100% 남음리셋 05:00주간46% 남음4일 후Fable소진 · 11/7 00:00",
+          "barCount": 2,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-c",
+          "text": "CClaude관측마지막 턴 기준 · 방금5h100% 남음리셋 05:00주간38% 남음1일 22시간 후Fable소진 · 11/4 00:00",
+          "barCount": 2,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-gpt",
+          "text": "GPTCodex주간소진 · 11/4 12:105h100% 남음리셋 05:00",
+          "barCount": 1,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-g1",
+          "text": "Geminiagy로그인 필요로그인Gemini 로그인 필요 — 로그인 버튼으로 Google 로그인하면 사용량이 보입니다관측확인 · 11/2 02:00",
+          "barCount": 0,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-g2",
+          "text": "Gemini 2agy로그인 필요로그인Gemini 로그인 필요 — 로그인 버튼으로 Google 로그인하면 사용량이 보입니다관측확인 · 11/2 02:00",
+          "barCount": 0,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-x1",
+          "text": "Grok관측확인 · 11/2 02:00주간71% 남음3일 후구독SuperGrokMSG 오늘2턴 · 입력 1,200 · 출력 800",
+          "barCount": 1,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        }
+      ],
+      "externalImages": 0,
+      "loginButtons": 2,
+      "lastRowAfterScroll": {
+        "x": 1076,
+        "y": 672.734375,
+        "width": 348,
+        "height": 155.96875,
+        "visible": true
+      },
+      "contentPassed": true
+    },
+    "dark-mobile-sheet": {
+      "x": 0,
+      "y": 118.171875,
+      "width": 390,
+      "height": 725.828125,
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "horizontalOverflow": false,
+      "panelInside": true,
+      "panelHorizontalOverflow": false,
+      "overflowContainers": [],
+      "rows": [
+        {
+          "id": "account-a",
+          "text": "AClaude관측마지막 턴 기준 · 방금5h100% 남음리셋 05:00주간37% 남음1일 22시간 후Fable소진 · 11/4 00:00",
+          "barCount": 2,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-b",
+          "text": "BClaude관측마지막 턴 기준 · 방금5h100% 남음리셋 05:00주간46% 남음4일 후Fable소진 · 11/7 00:00",
+          "barCount": 2,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-c",
+          "text": "CClaude관측마지막 턴 기준 · 방금5h100% 남음리셋 05:00주간38% 남음1일 22시간 후Fable소진 · 11/4 00:00",
+          "barCount": 2,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-gpt",
+          "text": "GPTCodex주간소진 · 11/4 12:105h100% 남음리셋 05:00",
+          "barCount": 1,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-g1",
+          "text": "Geminiagy로그인 필요로그인Gemini 로그인 필요 — 로그인 버튼으로 Google 로그인하면 사용량이 보입니다관측확인 · 11/2 02:00",
+          "barCount": 0,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-g2",
+          "text": "Gemini 2agy로그인 필요로그인Gemini 로그인 필요 — 로그인 버튼으로 Google 로그인하면 사용량이 보입니다관측확인 · 11/2 02:00",
+          "barCount": 0,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-x1",
+          "text": "Grok관측확인 · 11/2 02:00주간71% 남음3일 후구독SuperGrokMSG 오늘2턴 · 입력 1,200 · 출력 800",
+          "barCount": 1,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        }
+      ],
+      "externalImages": 0,
+      "loginButtons": 2,
+      "lastRowAfterScroll": {
+        "x": 12,
+        "y": 616.90625,
+        "width": 366,
+        "height": 155.96875,
+        "visible": true
+      },
+      "contentPassed": true
+    },
+    "light-desktop-popover": {
+      "x": 1004,
+      "y": 49.5,
+      "width": 340,
+      "height": 596.8125,
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "horizontalOverflow": false,
+      "panelInside": true,
+      "panelHorizontalOverflow": true,
+      "overflowContainers": [
+        {
+          "class": "usage-strip-pop",
+          "width": 340,
+          "scrollWidth": 472
+        }
+      ],
+      "rows": [
+        {
+          "id": "pop-a",
+          "text": "A37%46h5h100% 남음리셋 05:00주간37% 남음1일 22시간 후Fable소진 · 11/4 00:00",
+          "barCount": 3,
+          "x": 1010,
+          "width": 260.859375,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-b",
+          "text": "B46%4d5h100% 남음리셋 05:00주간46% 남음4일 후Fable소진 · 11/7 00:00",
+          "barCount": 3,
+          "x": 1010,
+          "width": 260.859375,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-c",
+          "text": "C38%46h5h100% 남음리셋 05:00주간38% 남음1일 22시간 후Fable소진 · 11/4 00:00",
+          "barCount": 3,
+          "x": 1010,
+          "width": 260.859375,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-gpt",
+          "text": "GPT소진· 2d주간소진 · 11/4 12:105h100% 남음리셋 05:00",
+          "barCount": 2,
+          "x": 1010,
+          "width": 260.859375,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-g1",
+          "text": "Gemini로그인 필요로그인 필요로그인",
+          "barCount": 1,
+          "x": 1010,
+          "width": 260.859375,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-g2",
+          "text": "Gemini 2로그인 필요로그인 필요로그인",
+          "barCount": 1,
+          "x": 1010,
+          "width": 260.859375,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "pop-x1",
+          "text": "Grok71%3d주간71% 남음3일 후",
+          "barCount": 2,
+          "x": 1272.859375,
+          "width": 196.921875,
+          "insideX": false,
+          "horizontalOverflow": false
+        }
+      ],
+      "externalImages": 0,
+      "loginButtons": 2,
+      "lastRowAfterScroll": {
+        "x": 1272.859375,
+        "y": 55.5,
+        "width": 196.921875,
+        "height": 61.4375,
+        "visible": false
+      },
+      "contentPassed": false
+    },
+    "light-desktop-sheet": {
+      "x": 1060,
+      "y": 0,
+      "width": 380,
+      "height": 900,
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "horizontalOverflow": false,
+      "panelInside": true,
+      "panelHorizontalOverflow": false,
+      "overflowContainers": [],
+      "rows": [
+        {
+          "id": "account-a",
+          "text": "AClaude관측마지막 턴 기준 · 방금5h100% 남음리셋 05:00주간37% 남음1일 22시간 후Fable소진 · 11/4 00:00",
+          "barCount": 2,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-b",
+          "text": "BClaude관측마지막 턴 기준 · 방금5h100% 남음리셋 05:00주간46% 남음4일 후Fable소진 · 11/7 00:00",
+          "barCount": 2,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-c",
+          "text": "CClaude관측마지막 턴 기준 · 방금5h100% 남음리셋 05:00주간38% 남음1일 22시간 후Fable소진 · 11/4 00:00",
+          "barCount": 2,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-gpt",
+          "text": "GPTCodex주간소진 · 11/4 12:105h100% 남음리셋 05:00",
+          "barCount": 1,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-g1",
+          "text": "Geminiagy로그인 필요로그인Gemini 로그인 필요 — 로그인 버튼으로 Google 로그인하면 사용량이 보입니다관측확인 · 11/2 02:00",
+          "barCount": 0,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-g2",
+          "text": "Gemini 2agy로그인 필요로그인Gemini 로그인 필요 — 로그인 버튼으로 Google 로그인하면 사용량이 보입니다관측확인 · 11/2 02:00",
+          "barCount": 0,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-x1",
+          "text": "Grok관측확인 · 11/2 02:00주간71% 남음3일 후구독SuperGrokMSG 오늘2턴 · 입력 1,200 · 출력 800",
+          "barCount": 1,
+          "x": 1076,
+          "width": 348,
+          "insideX": true,
+          "horizontalOverflow": false
+        }
+      ],
+      "externalImages": 0,
+      "loginButtons": 2,
+      "lastRowAfterScroll": {
+        "x": 1076,
+        "y": 672.734375,
+        "width": 348,
+        "height": 155.96875,
+        "visible": true
+      },
+      "contentPassed": true
+    },
+    "light-mobile-sheet": {
+      "x": 0,
+      "y": 118.171875,
+      "width": 390,
+      "height": 725.828125,
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "horizontalOverflow": false,
+      "panelInside": true,
+      "panelHorizontalOverflow": false,
+      "overflowContainers": [],
+      "rows": [
+        {
+          "id": "account-a",
+          "text": "AClaude관측마지막 턴 기준 · 방금5h100% 남음리셋 05:00주간37% 남음1일 22시간 후Fable소진 · 11/4 00:00",
+          "barCount": 2,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-b",
+          "text": "BClaude관측마지막 턴 기준 · 방금5h100% 남음리셋 05:00주간46% 남음4일 후Fable소진 · 11/7 00:00",
+          "barCount": 2,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-c",
+          "text": "CClaude관측마지막 턴 기준 · 방금5h100% 남음리셋 05:00주간38% 남음1일 22시간 후Fable소진 · 11/4 00:00",
+          "barCount": 2,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-gpt",
+          "text": "GPTCodex주간소진 · 11/4 12:105h100% 남음리셋 05:00",
+          "barCount": 1,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-g1",
+          "text": "Geminiagy로그인 필요로그인Gemini 로그인 필요 — 로그인 버튼으로 Google 로그인하면 사용량이 보입니다관측확인 · 11/2 02:00",
+          "barCount": 0,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-g2",
+          "text": "Gemini 2agy로그인 필요로그인Gemini 로그인 필요 — 로그인 버튼으로 Google 로그인하면 사용량이 보입니다관측확인 · 11/2 02:00",
+          "barCount": 0,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        },
+        {
+          "id": "account-x1",
+          "text": "Grok관측확인 · 11/2 02:00주간71% 남음3일 후구독SuperGrokMSG 오늘2턴 · 입력 1,200 · 출력 800",
+          "barCount": 1,
+          "x": 12,
+          "width": 366,
+          "insideX": true,
+          "horizontalOverflow": false
+        }
+      ],
+      "externalImages": 0,
+      "loginButtons": 2,
+      "lastRowAfterScroll": {
+        "x": 12,
+        "y": 616.90625,
+        "width": 366,
+        "height": 155.96875,
+        "visible": true
+      },
+      "contentPassed": true
+    }
+  },
+  "errors": [],
+  "strictContentChecks": false,
+  "passed": true
+}

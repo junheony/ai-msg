@@ -1,0 +1,163 @@
+{
+  "tag": "header-before",
+  "source": "/home/max/.claude/projects/-home-max-agentic-harness/3640bba1-fb7e-4021-aead-07c8953df686.jsonl",
+  "counts": {
+    "messages": 1000,
+    "user": 35,
+    "assistant": 490,
+    "toolCalls": 421,
+    "sessions": 7
+  },
+  "dist": "/tmp/msg-brief7-baseline/ui",
+  "conciseMode": true,
+  "sizes": {
+    "desktop": {
+      "frame": {
+        "answerHash": "cbc35fd3",
+        "answerChars": 1110,
+        "user": true,
+        "toolGroups": 145
+      },
+      "shots": [
+        {
+          "file": "shots-terminal-v2/header-before-desktop-turn.png",
+          "width": 1440,
+          "documentWidth": 1440,
+          "overflow": false,
+          "chat": true,
+          "users": 35,
+          "answers": 164,
+          "steps": 145,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        },
+        {
+          "file": "shots-terminal-v2/header-before-desktop-answer-top.png",
+          "width": 1440,
+          "documentWidth": 1440,
+          "overflow": false,
+          "chat": true,
+          "users": 35,
+          "answers": 164,
+          "steps": 145,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        },
+        {
+          "file": "shots-terminal-v2/header-before-desktop-answer-bottom.png",
+          "width": 1440,
+          "documentWidth": 1440,
+          "overflow": false,
+          "chat": true,
+          "users": 35,
+          "answers": 164,
+          "steps": 145,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        },
+        {
+          "file": "shots-terminal-v2/header-before-desktop-list.png",
+          "width": 1440,
+          "documentWidth": 1440,
+          "overflow": false,
+          "chat": true,
+          "users": 35,
+          "answers": 164,
+          "steps": 145,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        }
+      ],
+      "interactions": {
+        "options": true,
+        "modelMenu": true,
+        "usageMenu": true,
+        "expandStep": true,
+        "homeHasHamburger": false
+      }
+    },
+    "mobile": {
+      "frame": {
+        "answerHash": "cbc35fd3",
+        "answerChars": 1110,
+        "user": true,
+        "toolGroups": 145
+      },
+      "shots": [
+        {
+          "file": "shots-terminal-v2/header-before-mobile-turn.png",
+          "width": 390,
+          "documentWidth": 390,
+          "overflow": false,
+          "chat": true,
+          "users": 35,
+          "answers": 164,
+          "steps": 145,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        },
+        {
+          "file": "shots-terminal-v2/header-before-mobile-answer-top.png",
+          "width": 390,
+          "documentWidth": 390,
+          "overflow": false,
+          "chat": true,
+          "users": 35,
+          "answers": 164,
+          "steps": 145,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        },
+        {
+          "file": "shots-terminal-v2/header-before-mobile-answer-bottom.png",
+          "width": 390,
+          "documentWidth": 390,
+          "overflow": false,
+          "chat": true,
+          "users": 35,
+          "answers": 164,
+          "steps": 145,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        },
+        {
+          "file": "shots-terminal-v2/header-before-mobile-drawer.png",
+          "width": 390,
+          "documentWidth": 390,
+          "overflow": false,
+          "chat": true,
+          "users": 35,
+          "answers": 164,
+          "steps": 145,
+          "concise": "on",
+          "login": false,
+          "errorToasts": 0,
+          "hamburger": true
+        }
+      ],
+      "interactions": {
+        "options": true,
+        "modelMenu": true,
+        "usageMenu": true,
+        "expandStep": true,
+        "homeHasHamburger": false
+      }
+    }
+  },
+  "errors": [],
+  "passed": true
+}

@@ -134,3 +134,21 @@ describe('대화에서 찾기', () => {
     vi.useRealTimers();
   });
 });
+
+describe('nested process disclosures', () => {
+  it('searches only summaries visible through every enclosing disclosure', () => {
+    const root = document.createElement('div');
+    root.innerHTML = '<div class="msg"><details class="outer"><summary>visible needle</summary><details class="inner" open><summary>inner needle</summary><p>body needle</p></details></details></div>';
+    const closed = markHits(root, 'needle');
+    expect(closed.marks).toHaveLength(1);
+    closed.clear();
+    root.querySelector<HTMLDetailsElement>('.outer')!.open = true;
+    const expanded = markHits(root, 'needle');
+    expect(expanded.marks).toHaveLength(3);
+    expanded.clear();
+    root.querySelector<HTMLDetailsElement>('.inner')!.open = false;
+    const innerClosed = markHits(root, 'needle');
+    expect(innerClosed.marks).toHaveLength(2);
+    innerClosed.clear();
+  });
+});

@@ -6,7 +6,7 @@ import { testRegistry } from '../../shared/accounts.testkit';
 const NOW = Date.parse('2026-10-01T03:00:00Z');
 
 function acct(weekly: number, fable: number | null = 10): AccountUsage {
-  return { status: 'ok', fetchedAt: new Date(NOW).toISOString(), fiveHour: { usedPct: 10, resetsAt: null }, weekly: { usedPct: weekly, resetsAt: null }, fable: fable === null ? null : { usedPct: fable, resetsAt: null } };
+  return { status: 'ok', fetchedAt: new Date(NOW).toISOString(), fiveHour: null, weekly: { usedPct: weekly, resetsAt: null }, fable: fable === null ? null : { usedPct: fable, resetsAt: null } };
 }
 
 function usage(a: AccountUsage, b: AccountUsage = a, c: AccountUsage = a): UsageSnapshot {
@@ -106,7 +106,7 @@ describe("chooseAutoModel — usage-deck 을 본 적 없는 설치 (usageSource:
     expect(r).toMatchObject({ model: 'fable', effort: 'high' });
     expect(r.reason).toContain('Fable 잔여량 모름');
     expect(r.reason).not.toContain('Opus');
-    // Known 5h/weekly from a turn, no Fable row: still Fable.
+    // Known weekly from a turn, no Fable row: still Fable.
     expect(auto('보안 취약점 검토해줘', lax(usage(acct(30, null)))).model).toBe('fable');
     expect(auto('버그 고쳐줘', lax(usage(down))).model).toBe('opus');
   });
@@ -135,8 +135,8 @@ describe("chooseAutoModel — usage-deck 을 본 적 없는 설치 (usageSource:
 });
 
 describe('chooseAutoModel — 쓸 계정이 없는데 Fable 값은 알려진 경우', () => {
-  /** Every account at 5h 96% with Fable known at 10%: no candidate, and nothing about Fable is unknown. */
-  const full: AccountUsage = { ...acct(30, 10), fiveHour: { usedPct: 96, resetsAt: null } };
+  /** Every account at weekly 96% with Fable known at 10%: no candidate, and nothing about Fable is unknown. */
+  const full: AccountUsage = acct(96, 10);
 
   it('with usage-deck: still Opus, and the reason says no account can take Fable — not an unknown Fable value', () => {
     const r = auto('보안 취약점 검토해줘', usage(full));

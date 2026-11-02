@@ -23,6 +23,22 @@ const base = (over: Partial<SessionChipProps> = {}): SessionChipProps => ({
 describe('SessionChip', () => {
   afterEach(() => { cleanup(); vi.useRealTimers(); });
 
+  it('offers available Hermes as a peer engine, with its actual model and permission controls', () => {
+    const onEngine = vi.fn();
+    const onPerm = vi.fn();
+    const { rerender } = render(<SessionChip {...base({ isNew: true, engine: 'claude', engines: { codexAvailable: false, hermesAvailable: true, onEngine } })} />);
+    fireEvent.click(screen.getByTestId('session-chip'));
+    fireEvent.change(screen.getByTestId('engine-select'), { target: { value: 'hermes' } });
+    expect(onEngine).toHaveBeenCalledWith('hermes');
+    rerender(<SessionChip {...base({ isNew: true, engine: 'hermes', model: 'gpt-6-astra', models: ['gpt-6-astra'], account: null, engines: { codexAvailable: false, hermesAvailable: true, onEngine }, sandbox: { value: 'read-only' }, perm: { mode: 'default', supported: true, onChange: onPerm } })} />);
+    expect(screen.getByRole('menuitemradio', { name: /gpt-6-astra/ })).toBeTruthy();
+    expect(screen.queryByLabelText('추론 수준')).toBeNull();
+    expect(screen.queryByLabelText('샌드박스')).toBeNull();
+    expect(screen.queryByRole('option', { name: /계획/ })).toBeNull();
+    fireEvent.change(screen.getByLabelText('권한 모드'), { target: { value: 'bypassPermissions' } });
+    expect(onPerm).toHaveBeenCalledWith('bypassPermissions');
+  });
+
   it('is one button that names model · account · permission and opens the 세션 설정 sheet (aria-haspopup / aria-expanded)', () => {
     render(<SessionChip {...base()} />);
     const chip = screen.getByTestId('session-chip');

@@ -14,9 +14,9 @@ const usage: UsageSnapshot = {
   generatedAt: 'x',
   deckReachable: false,
   accounts: {
-    a: { status: 'stale', fetchedAt: null, fiveHour: { usedPct: 13, resetsAt: new Date(NOW + 2.5 * 3_600_000).toISOString() }, weekly: { usedPct: 7, resetsAt: null }, fable: { usedPct: 0, resetsAt: null } },
-    b: { status: 'ok', fetchedAt: null, fiveHour: { usedPct: 82, resetsAt: null }, weekly: { usedPct: 3, resetsAt: null }, fable: null },
-    c: { status: 'ok', fetchedAt: null, fiveHour: { usedPct: 0, resetsAt: null }, weekly: { usedPct: 96, resetsAt: null }, fable: { usedPct: 27, resetsAt: null } },
+    a: { status: 'stale', fetchedAt: null, fiveHour: null, weekly: { usedPct: 7, resetsAt: null }, fable: { usedPct: 0, resetsAt: null } },
+    b: { status: 'ok', fetchedAt: null, fiveHour: null, weekly: { usedPct: 82, resetsAt: null }, fable: null },
+    c: { status: 'ok', fetchedAt: null, fiveHour: null, weekly: { usedPct: 96, resetsAt: null }, fable: { usedPct: 27, resetsAt: null } },
   },
 };
 
@@ -27,15 +27,27 @@ const sheet = (u: UsageSnapshot | null, current: Seat | null, opts: { now?: numb
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('usage seats in the sheet', () => {
+  it('refreshes when the sheet opens or regains focus and shows a single capacity bar', () => {
+    const refresh = vi.fn();
+    const { unmount } = render(<UsageSheet usage={usage} current="a" now={NOW} onClose={() => {}} onRefresh={refresh} />);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    fireEvent.focus(window);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('account-a').querySelectorAll('.usage-bar, .usage-seg-bar')).toHaveLength(1);
+    unmount();
+    fireEvent.focus(window);
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
   it('shows REMAINING % per window ("남음" on each row), warn/danger classes, current tag, countdown, stale note', () => {
-    sheet(usage, 'b');
-    // 13 % used = 87 % left, like the strip.
-    expect(screen.getByTestId('a-fiveHour').querySelector('.usage-value')!.textContent).toBe('87% 남음');
-    expect(screen.getByTestId('a-weekly').querySelector('.usage-value')!.textContent).toBe('93% 남음');
+    const resetsAt = new Date(NOW + 2.5 * 3_600_000).toISOString();
+    sheet({ ...usage, accounts: { ...usage.accounts, a: { ...usage.accounts.a!, weekly: { usedPct: 7, resetsAt } } } }, 'b');
+    // 7 % used = 93 % left, like the strip.
+    expect(screen.getByTestId('a-weekly').querySelector('.usage-value')!.textContent).toBe('93%');
     // The row shows the reset as a clock time ("리셋 15:00" / "내일 00:00"); the countdown is its title.
-    expect(screen.getByTestId('a-fiveHour').querySelector('.usage-reset')!.textContent).toBe(resetLabel(usage.accounts.a!.fiveHour!.resetsAt, NOW));
-    expect(screen.getByTestId('a-fiveHour').title).toContain('2시간 30분');
-    expect(screen.getByTestId('b-fiveHour').className).toContain('warn');
+    expect(screen.getByTestId('a-weekly').querySelector('.usage-reset')!.textContent).toBe(resetLabel(resetsAt, NOW));
+    expect(screen.getByTestId('a-weekly').title).toContain('2시간 30분');
+    expect(screen.getByTestId('b-weekly').className).toContain('warn');
     expect(screen.getByTestId('c-weekly').className).toContain('danger');
     expect(screen.getByTestId('b-fable').textContent).toContain('—');
     expect(screen.getByTestId('account-b').className).toContain('current');
@@ -64,9 +76,9 @@ describe('usage seats in the sheet', () => {
     expect(card.className).toContain('current');
     expect(card.title).toBe('');
     expect(screen.getByTestId('g1-b0').textContent).toContain('4 Argon');
-    expect(screen.getByTestId('g1-b0').textContent).toContain('73% 남음');
+    expect(screen.getByTestId('g1-b0').textContent).toContain('73%');
     expect(screen.getByTestId('g1-b0').title).toContain('2시간 10분');
-    expect(screen.getByTestId('g1-b0').querySelector('.usage-reset')!.textContent).toMatch(/^(리셋|내일) \d{2}:\d{2}$/);
+    expect(screen.getByTestId('g1-b0').querySelector('.usage-reset')!.textContent).toBe('2시간 후 리셋');
     expect(screen.getByTestId('g1-b1').textContent).toContain('3.8 Flash');
     expect(screen.getByTestId('g1-b1').className).toContain('danger');
     expect(screen.getByTestId('g1-observed').textContent).toContain('확인');
@@ -78,18 +90,18 @@ describe('usage seats in the sheet', () => {
     const card = screen.getByTestId('account-g1');
     expect(card.title).toContain('로그인 버튼');
     expect(card.className).toContain('down');
-    expect(screen.getByTestId('g1-main').textContent).toContain('로그인');
-    expect(screen.getByTestId('g1-status').textContent).toBe('로그인 필요');
+    expect(card.querySelector('.usage-seg-num')?.textContent).toBe('로그인 필요');
+    expect(card.textContent?.match(/로그인 필요/g)).toHaveLength(1);
     expect(screen.queryByTestId('reauth-g1')).toBeNull();
     unmount();
     // With the login feature: a 로그인 button for that seat, from the snapshot alone (the setup list may not know yet).
     const onReauth = vi.fn();
     const { unmount: unmount2 } = render(<UsageSheet usage={{ ...usage, geminiSeats: { g1: out, g2: { ...out, loggedIn: true, status: 'ok', buckets: [{ name: 'Gemini · 5h', usedPct: 10, resetsAt: null }] } } }} current={null} onClose={() => {}} now={NOW} reauth={[]} onReauth={onReauth} />);
     expect(screen.getByTestId('reauth-g1').textContent).toBe('로그인');
-    expect(screen.getByTestId('g1-status').className).toContain('login');
+    expect(screen.getByTestId('account-g1').textContent?.match(/로그인 필요/g)).toHaveLength(1);
     expect(screen.queryByTestId('reauth-g2')).toBeNull();
-    expect(screen.getByTestId('account-g2').querySelector('.usage-seat-name')!.textContent).toBe('Gemini 2');
-    fireEvent.click(screen.getByTestId('reauth-g1'));
+    expect(screen.getByTestId('account-g2').querySelector('.usage-seg-who')!.textContent).toBe('Gemini 2');
+    fireEvent.click(screen.getByTestId('reauth-g1').querySelector('button')!);
     expect(onReauth).toHaveBeenCalledWith('g1');
     unmount2();
     const stale = { status: 'stale' as const, fetchedAt: null, loggedIn: true, buckets: [{ name: 'x', usedPct: 10, resetsAt: null }], error: 'agy /usage 실패 (exit 1)' };
@@ -119,18 +131,18 @@ describe('usage seats in the sheet', () => {
   it('without a fixed now, the countdown ticks every 30 s', () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
-    const u: UsageSnapshot = { ...usage, accounts: { ...usage.accounts, a: { ...usage.accounts.a!, fiveHour: { usedPct: 13, resetsAt: new Date(NOW + 2 * 3_600_000).toISOString() } } } };
+    const u: UsageSnapshot = { ...usage, accounts: { ...usage.accounts, a: { ...usage.accounts.a!, weekly: { usedPct: 13, resetsAt: new Date(NOW + 2 * 3_600_000).toISOString() } } } };
     sheet(u, null, { now: undefined });
-    expect(screen.getByTestId('a-fiveHour').title).toContain('2시간 후 리셋');
+    expect(screen.getByTestId('a-weekly').title).toContain('2시간 후 리셋');
     act(() => { vi.advanceTimersByTime(60_000); });
-    expect(screen.getByTestId('a-fiveHour').title).toContain('1시간 59분');
+    expect(screen.getByTestId('a-weekly').title).toContain('1시간 59분');
   });
 
   it('GPT: weekly remaining % when ok, — with a hint when unknown, current tag', () => {
     const withGpt: UsageSnapshot = { ...usage, gpt: { status: 'ok', fetchedAt: null, fiveHour: null, weekly: { usedPct: 40, resetsAt: null }, fable: null } };
     sheet(withGpt, 'gpt');
-    expect(screen.getByTestId('gpt-weekly').textContent).toContain('60% 남음');
-    expect(screen.getByTestId('gpt-weekly').title).toContain('60% 남음');
+    expect(screen.getByTestId('gpt-weekly').textContent).toContain('60%');
+    expect(screen.getByTestId('gpt-weekly').title).toContain('60%');
     expect(screen.getByTestId('gpt-weekly').title).not.toContain('사용');
     expect(screen.getByTestId('account-gpt').className).toContain('current');
     expect(screen.getByTestId('account-gpt').querySelector('svg.usage-mark.gpt')).toBeTruthy();
@@ -149,8 +161,8 @@ describe('usage seats in the sheet', () => {
     expect(w.className).toContain('danger');
     expect(w.textContent).not.toContain('0%');
     expect(w.querySelector('.usage-bar')).toBeNull();
-    expect(w.querySelector('.usage-pill')!.textContent).toBe(`소진 · ${resetStamp(resetsAt)}`);
-    expect(resetStamp(resetsAt)).toMatch(/^\d{1,2}\/\d{1,2} \d{2}:\d{2}$/);
+    expect(w.querySelector('.usage-pill')!.textContent).toBe('소진 · 3일 후 리셋');
+    expect(resetStamp(resetsAt)).toMatch(/^\d{1,2}\/\d{1,2} \d{2}:\d{2} KST$/);
     expect(w.title).toContain(`${resetStamp(resetsAt)} 리셋`);
   });
 
@@ -166,26 +178,26 @@ describe('usage seats in the sheet', () => {
 
   it('each window has a bar filled to the REMAINING % (a battery, like the strip); the legend says what the numbers and colours mean', () => {
     sheet({ ...usage, deckReachable: true }, 'b');
-    const bar = screen.getByTestId('a-fiveHour').querySelector('.usage-bar > i') as HTMLElement;
-    expect(bar.style.width).toBe('87%');
+    const bar = screen.getByTestId('account-a').querySelector('.usage-seg-bar > i') as HTMLElement;
+    expect(bar.style.width).toBe('93%');
     expect(screen.getByTestId('account-a').querySelector('svg.usage-mark.claude.claude-mark')).not.toBeNull();
     const legend = document.querySelector('.usage-sheet-legend')!;
     expect(legend.textContent).toBe('숫자는 남은 양 · 노랑 20% 이하 남음 · 빨강 5% 이하 남음');
     expect(legend.textContent).not.toContain('사용');
     // The colours keep their used-% thresholds (82 % used → amber, 96 % → red), said as what is left.
-    expect(screen.getByTestId('b-fiveHour').title).toBe('5h · 18% 남음 · 노랑: 20% 이하 남음');
+    expect(screen.getByTestId('b-weekly').title).toBe('주간 · 18% 남음 · 노랑: 20% 이하 남음');
     expect(screen.getByTestId('c-weekly').title).toBe('주간 · 4% 남음 · 빨강: 5% 이하 남음');
     // A's numbers are old (stale): marked old and said so (an upper bound of what is left).
     expect(screen.getByTestId('a-weekly').title).toBe('주간 · 93% 남음 · 마지막 턴 기준 값, 지금은 이보다 적게 남았을 수 있음');
     expect(screen.getByTestId('a-weekly').className).toContain('old');
-    expect(screen.getByTestId('b-fiveHour').className).not.toContain('old');
+    expect(screen.getByTestId('b-weekly').className).not.toContain('old');
   });
 
   it('다음 턴 tag on the routed seat, Opus noted, reason in the title; staying put is no news unless it steps down to Opus', () => {
-    const { rerender } = sheet(usage, 'a', { next: { account: 'b', reason: '5h 여유 많음' } });
+    const { rerender } = sheet(usage, 'a', { next: { account: 'b', reason: '주간 여유 많음' } });
     const tag = screen.getByTestId('sheet-next-b');
     expect(tag.textContent).toBe('다음 턴 여기');
-    expect(tag.title).toBe('다음 턴은 이 계정으로 갑니다: 5h 여유 많음');
+    expect(tag.title).toBe('다음 턴은 이 계정으로 갑니다: 주간 여유 많음');
     const again = (next: RouteNext | null) => rerender(<UsageSheet usage={usage} current="a" onClose={() => {}} now={NOW} next={next} />);
     again({ account: 'c', reason: 'r', asOpus: true });
     expect(screen.getByTestId('sheet-next-c').textContent).toBe('다음 턴 여기 · Opus');
@@ -221,31 +233,28 @@ describe('short countdowns and the fullest window', () => {
     expect(shortCountdown('2026-13-45T99:00:00Z', NOW)).toBe('');
   });
 
-  it('resetLabel: a clock time within a day (내일 past midnight), days beyond, 리셋됨 once passed, nothing without a time', () => {
-    const hm = (ms: number) => { const d = new Date(NOW + ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
-    const sameDay = (ms: number) => new Date(NOW + ms).getDate() === new Date(NOW).getDate();
-    expect(resetLabel(at(2 * 3_600_000 + 5 * 60_000), NOW)).toBe(`${sameDay(2 * 3_600_000) ? '리셋' : '내일'} ${hm(2 * 3_600_000 + 5 * 60_000)}`);
-    expect(resetLabel(at(23 * 3_600_000), NOW)).toBe(`${sameDay(23 * 3_600_000) ? '리셋' : '내일'} ${hm(23 * 3_600_000)}`);
-    // Some hour of the next 23 crosses local midnight: that one says 내일.
-    expect(Array.from({ length: 23 }, (_, i) => resetLabel(at((i + 1) * 3_600_000), NOW)).some((l) => l.startsWith('내일 '))).toBe(true);
-    expect(resetLabel(at(24 * 3_600_000), NOW)).toBe('1일 후');
-    expect(resetLabel(at(29.5 * 3_600_000), NOW)).toBe('1일 5시간 후');
-    expect(resetLabel(at(2.2 * 86_400_000), NOW)).toBe('2일 후');
-    expect(resetLabel(at(6 * 86_400_000 + 23 * 3_600_000), NOW)).toBe('6일 후');
+  it('reset labels use Korean relative time and absolute tooltips always use KST', () => {
+    expect(resetLabel(at(2 * 3_600_000 + 5 * 60_000), NOW)).toBe('2시간 후 리셋');
+    expect(resetLabel(at(23 * 3_600_000), NOW)).toBe('23시간 후 리셋');
+    expect(resetLabel(at(24 * 3_600_000), NOW)).toBe('1일 후 리셋');
+    expect(resetLabel(at(29.5 * 3_600_000), NOW)).toBe('1일 5시간 후 리셋');
+    expect(resetLabel(at(2.2 * 86_400_000), NOW)).toBe('2일 후 리셋');
     expect(resetLabel(at(-1), NOW)).toBe('리셋됨');
     expect(resetLabel(null, NOW)).toBe('');
     expect(resetLabel('junk', NOW)).toBe('');
+    expect(resetStamp('2026-11-01T16:54:00Z')).toBe('11/2 01:54 KST');
+    expect(resetStamp('2026-11-01T16:54:00')).toBe('11/2 01:54 KST');
   });
 
   it('the sheet names seats as the strip does (A / B / C, GPT, Gemini, Gemini 2, Grok) with the engine as a caption: Claude, Codex, agy', () => {
     const g = { status: 'ok' as const, fetchedAt: null, loggedIn: true, buckets: [{ name: 'Gemini · 5h', usedPct: 1, resetsAt: null }] };
     sheet({ ...usage, gpt: { status: 'ok', fetchedAt: null, fiveHour: null, weekly: { usedPct: 40, resetsAt: null }, fable: null }, geminiSeats: { g1: g, g2: g }, grokSeats: { x1: { status: 'ok', lastTurnAt: null, lastError: null, cooldownUntil: null, today: { inputTokens: 0, outputTokens: 0, turns: 0, day: '' } } } }, null, { grok: { bin: true } as GrokStatus });
-    const names = [...document.querySelectorAll('.usage-seat-name')].map((n) => n.textContent);
-    expect(names).toEqual(['A', 'B', 'C', 'GPT', 'Gemini', 'Gemini 2', 'Grok']);
+    const names = [...document.querySelectorAll('.usage-identity .usage-seg-who')].map((n) => n.textContent);
+    expect(names).toEqual(['Claude', 'Claude', 'Claude', 'GPT', 'Gemini', 'Gemini 2', 'Grok']);
     const caption = (seat: string) => screen.getByTestId(`account-${seat}`).querySelector('.usage-seat-engine')?.textContent ?? null;
-    expect(caption('a')).toBe('Claude');
+    expect(screen.getByTestId('account-a').querySelector('.usage-account-badge')?.textContent).toBe('A');
     expect(caption('gpt')).toBe('Codex');
-    expect(caption('g2')).toBe('agy');
+    expect(caption('g2')).toBeNull();
     expect(caption('x1')).toBeNull();
     cleanup();
   });
@@ -260,19 +269,64 @@ describe('short countdowns and the fullest window', () => {
   });
 });
 
+describe('usage sheet · Claude has no 5-hour limit', () => {
+  const iso = (ms: number) => new Date(NOW + ms).toISOString();
+
+  it('a Claude snapshot that still carries fiveHour (spent, with a reset): no 5h row, text or reset anywhere; the seat follows its weekly', () => {
+    const u: UsageSnapshot = { ...usage, deckReachable: true, accounts: { a: { status: 'ok', fetchedAt: null, fiveHour: { usedPct: 100, resetsAt: iso(12 * 60_000) }, weekly: { usedPct: 30, resetsAt: iso(3 * 86_400_000) }, fable: null } } };
+    sheet(u, 'a');
+    expect(screen.queryByTestId('a-fiveHour')).toBeNull();
+    const seat = screen.getByTestId('account-a');
+    expect(seat.textContent).not.toContain('5h');
+    expect(seat.textContent).not.toContain('소진');
+    expect(seat.textContent).not.toContain('12분');
+    // Titles, labels and test ids too (not outerHTML: SVG path data can hold a "5h").
+    expect([seat, ...seat.querySelectorAll('*')].flatMap((e) => ['title', 'aria-label', 'data-testid'].map((k) => e.getAttribute(k) ?? '')).join(' ')).not.toMatch(/5h|fiveHour/);
+    expect((seat.querySelector('.usage-seg-bar > i') as HTMLElement).style.width).toBe('70%');
+    expect(screen.getByTestId('a-weekly').querySelector('.usage-value')!.textContent).toBe('70%');
+  });
+
+  it('the other way round: a full 5h left does not hide a spent weekly', () => {
+    sheet({ ...usage, deckReachable: true, accounts: { a: { status: 'ok', fetchedAt: null, fiveHour: { usedPct: 0, resetsAt: iso(3_600_000) }, weekly: { usedPct: 100, resetsAt: iso(12 * 60_000) }, fable: null } } }, 'a');
+    expect(screen.queryByTestId('a-fiveHour')).toBeNull();
+    expect(screen.getByTestId('a-weekly').textContent).toContain('소진');
+    expect((screen.getByTestId('account-a').querySelector('.usage-seg-bar > i') as HTMLElement).style.width).toBe('0%');
+  });
+
+  it('fiveHour null with a weekly value is a normal seat: not old, not stale, no status word, and it says when it was observed', () => {
+    const fetchedAt = iso(-5 * 60_000);
+    sheet({ ...usage, deckReachable: true, usageMode: 'cli', accounts: { a: { status: 'ok', fetchedAt, fiveHour: null, weekly: { usedPct: 30, resetsAt: iso(3 * 86_400_000) }, fable: null } } }, 'a');
+    const seat = screen.getByTestId('account-a');
+    for (const cls of ['stale', 'old', 'down', 'kept']) expect(seat.className).not.toContain(cls);
+    expect(screen.queryByTestId('a-status')).toBeNull();
+    expect(screen.queryByTestId('a-refresh')).toBeNull();
+    expect(screen.queryByTestId('usage-stale')).toBeNull();
+    expect(seat.title).toBe('마지막 턴 기준 · 5분 전');
+    expect(screen.getByTestId('a-weekly').className).not.toContain('old');
+  });
+
+  it('a GPT seat still shows its 5h window', () => {
+    sheet({ ...usage, deckReachable: true, gpt: { status: 'ok', fetchedAt: null, fiveHour: { usedPct: 85, resetsAt: iso(2 * 3_600_000) }, weekly: { usedPct: 20, resetsAt: iso(3 * 86_400_000) }, fable: null } }, null);
+    const five = screen.getByTestId('gpt-fiveHour');
+    expect(five.querySelector('.usage-label')!.textContent).toBe('5h');
+    expect(five.querySelector('.usage-value')!.textContent).toBe('15%');
+    expect(five.querySelector('.usage-reset')!.textContent).toBe('2시간 후 리셋');
+  });
+});
+
 describe('usage sheet · old numbers per window', () => {
   it('an old seat: a row past its reset says 리셋됨 with a refresh icon on an empty bar; the window not reset yet keeps its % (dimmed); one refresh line', () => {
     const iso = (ms: number) => new Date(NOW + ms).toISOString();
-    const old: UsageSnapshot = { ...usage, accounts: { a: { status: 'stale', fetchedAt: iso(-3 * 86_400_000), fiveHour: { usedPct: 95, resetsAt: iso(-3_600_000) }, weekly: { usedPct: 30, resetsAt: iso(2 * 86_400_000) }, fable: null } } };
+    const old: UsageSnapshot = { ...usage, accounts: { a: { status: 'stale', fetchedAt: iso(-3 * 86_400_000), fiveHour: null, weekly: { usedPct: 95, resetsAt: iso(-3_600_000) }, fable: { usedPct: 30, resetsAt: iso(2 * 86_400_000) } } } };
     sheet(old, 'a');
-    const five = screen.getByTestId('a-fiveHour');
-    expect(five.querySelector('.usage-value')!.textContent).toBe('리셋됨');
-    expect(five.querySelector('.usage-value svg')).not.toBeNull();
-    expect((five.querySelector('.usage-bar > i') as HTMLElement).style.width).toBe('0%');
-    expect(five.title).toBe('5h · 리셋 시각이 지나 지금 값은 모름. 이 계정으로 한 턴 돌리면 갱신됨');
     const weekly = screen.getByTestId('a-weekly');
-    expect(weekly.querySelector('.usage-value')!.textContent).toBe('70% 남음');
-    expect(weekly.className).toContain('old');
+    expect(weekly.querySelector('.usage-value')!.textContent).toBe('리셋됨');
+    expect(weekly.querySelector('.usage-value svg')).not.toBeNull();
+    expect(weekly.querySelector('.usage-bar')).toBeNull();
+    expect(weekly.title).toBe('주간 · 리셋 시각이 지나 지금 값은 모름. 이 계정으로 한 턴 돌리면 갱신됨');
+    const fable = screen.getByTestId('a-fable');
+    expect(fable.querySelector('.usage-value')!.textContent).toBe('70%');
+    expect(fable.className).toContain('old');
     expect(screen.getByTestId('account-a').className).toContain('old');
     // The status tag keeps its word with a clock; the card says how to refresh it.
     expect(screen.getByTestId('a-status').textContent).toBe('오래됨');
@@ -281,7 +335,7 @@ describe('usage sheet · old numbers per window', () => {
     cleanup();
     // Fresh numbers: the row is as read (the server judges resets on its side), no refresh line.
     sheet({ ...old, deckReachable: true, accounts: { a: { ...old.accounts.a!, status: 'ok' } } }, 'a');
-    expect(screen.getByTestId('a-fiveHour').querySelector('.usage-value')!.textContent).toBe('5% 남음');
+    expect(screen.getByTestId('a-weekly').querySelector('.usage-value')!.textContent).toBe('5%');
     expect(screen.queryByTestId('a-refresh')).toBeNull();
     expect(screen.getByTestId('account-a').className).not.toContain('old');
   });
@@ -293,9 +347,9 @@ describe('usage seats · cli usage mode (observed times)', () => {
     deckReachable: false,
     usageMode: 'cli',
     accounts: {
-      a: { status: 'stale', fetchedAt: new Date(NOW - 12 * 60_000).toISOString(), fiveHour: { usedPct: 0, resetsAt: new Date(NOW - 60_000).toISOString(), estimated: true }, weekly: { usedPct: 40, resetsAt: null }, fable: null },
+      a: { status: 'stale', fetchedAt: new Date(NOW - 12 * 60_000).toISOString(), fiveHour: null, weekly: { usedPct: 0, resetsAt: new Date(NOW - 60_000).toISOString(), estimated: true }, fable: null },
       b: { status: 'down', fetchedAt: null, fiveHour: null, weekly: null, fable: null },
-      c: { status: 'ok', fetchedAt: new Date(NOW - 20_000).toISOString(), fiveHour: { usedPct: 10, resetsAt: null }, weekly: { usedPct: 3, resetsAt: null }, fable: null },
+      c: { status: 'ok', fetchedAt: new Date(NOW - 20_000).toISOString(), fiveHour: null, weekly: { usedPct: 3, resetsAt: null }, fable: null },
     },
   };
 
@@ -329,16 +383,16 @@ describe('usage seats · cli usage mode (observed times)', () => {
     expect(screen.getByTestId('account-b').title).toBe('아직 관측 없음');
     expect(screen.getByTestId('account-c').title).toBe('마지막 턴 기준 · 방금');
     expect(screen.queryByTestId('usage-stale')).toBeNull();
-    expect(screen.getByTestId('a-fiveHour').title).toContain('추정');
-    expect(screen.getByTestId('a-weekly').title).not.toContain('추정');
+    expect(screen.getByTestId('a-weekly').title).toContain('추정');
+    expect(screen.getByTestId('c-weekly').title).not.toContain('추정');
     expect(screen.getByTestId('a-observed').textContent).toContain('마지막 턴 기준 · 12분 전');
-    expect(screen.getByTestId('a-fiveHour').textContent).toContain('100% 남음');
+    expect(screen.getByTestId('a-weekly').textContent).toContain('100%');
     expect(screen.getByTestId('b-observed').textContent).toContain('아직 관측 없음');
     expect(screen.getByTestId('account-gpt').title).not.toContain('usage-deck');
   });
 
   it('MED-1: a stale seat within trustUntil is kept (추정(유지)) and not dimmed; past it, dimmed', () => {
-    const a = { ...cliUsage.accounts.a!, fiveHour: { usedPct: 30, resetsAt: new Date(NOW + 3_600_000).toISOString() }, trustUntil: new Date(NOW + 3_600_000).toISOString() };
+    const a = { ...cliUsage.accounts.a!, weekly: { usedPct: 30, resetsAt: new Date(NOW + 3_600_000).toISOString() }, trustUntil: new Date(NOW + 3_600_000).toISOString() };
     const kept: UsageSnapshot = { ...cliUsage, accounts: { ...cliUsage.accounts, a } };
     expect(observedText(a, NOW)).toBe('추정 · 마지막 턴 12분 전');
     expect(observedText(a, NOW + 2 * 3_600_000)).toBe('마지막 턴 기준 · 2시간 전');
@@ -363,8 +417,8 @@ describe('usage seats · cli usage mode (observed times)', () => {
 
   it('LOW-5: an estimated row carries the estimated class (striped bar, dashed number)', () => {
     sheet(cliUsage, null);
-    expect(screen.getByTestId('a-fiveHour').className).toContain('estimated');
-    expect(screen.getByTestId('a-weekly').className).not.toContain('estimated');
+    expect(screen.getByTestId('a-weekly').className).toContain('estimated');
+    expect(screen.getByTestId('c-weekly').className).not.toContain('estimated');
     const css = readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
     expect(css).toMatch(/\.usage-row\.estimated \.usage-bar > i \{ background: repeating-linear-gradient/);
     expect(css).toMatch(/\.usage-row\.estimated \.usage-value \{ text-decoration: underline dashed/);
@@ -424,8 +478,8 @@ describe('usage seats · Grok (cooldown expiry, midnight, subscription)', () => 
   it('with the subscription usage: one 주간 row with the %, tier, today and the observed stamp', () => {
     sheet(grokUsage({ billing: billing(1) }), null, bin);
     expect(screen.getByTestId('x1-week').textContent).toContain('주간');
-    expect(screen.getByTestId('x1-week').textContent).toContain('99% 남음');
-    expect(screen.getByTestId('x1-week').querySelector('.usage-bar > i')!.getAttribute('style')).toContain('width: 99%');
+    expect(screen.getByTestId('x1-week').textContent).toContain('99%');
+    expect(screen.getByTestId('account-x1').querySelector('.usage-seg-bar > i')!.getAttribute('style')).toContain('width: 99%');
     expect(screen.getByTestId('x1-tier').textContent).toBe('구독SuperGrok Heavy');
     expect(screen.getByTestId('x1-today').textContent).toBe('MSG 오늘3턴 · 입력 1,200 · 출력 34');
     expect(screen.getByTestId('x1-observed').textContent).toContain('확인');
@@ -442,7 +496,7 @@ describe('usage seats · Grok (cooldown expiry, midnight, subscription)', () => 
   it('a period that ended since the reading reads as a fresh period (estimated, not the old number)', () => {
     sheet(grokUsage({ billing: billing(90, NOW - 60_000) }), null, bin);
     const row = screen.getByTestId('x1-week');
-    expect(row.textContent).toContain('100% 남음');
+    expect(row.textContent).toContain('100%');
     expect(row.className).toContain('estimated');
   });
 
@@ -454,13 +508,13 @@ describe('usage seats · Grok (cooldown expiry, midnight, subscription)', () => 
 
   it('logged out (status down) says 로그인 필요, including over an older subscription reading', () => {
     const { unmount } = sheet(grokUsage({ status: 'down', lastTurnAt: null, lastError: 'auth', today: { inputTokens: 0, outputTokens: 0, turns: 0, day: today } }), null, bin);
-    expect(screen.getByTestId('x1-main').textContent).toBe('로그인 필요');
-    expect(screen.getByTestId('x1-status').textContent).toBe('로그인 필요');
+    expect(screen.getByTestId('account-x1').querySelector('.usage-seg-num')?.textContent).toBe('로그인 필요');
+    expect(screen.getByTestId('account-x1').textContent?.match(/로그인 필요/g)).toHaveLength(1);
     expect(screen.queryByText('아직 사용 없음')).toBeNull();
     unmount();
     sheet(grokUsage({ status: 'down', lastError: 'auth', billing: billing(40) }), null, bin);
-    expect(screen.getByTestId('x1-main').textContent).toBe('로그인 필요');
-    expect(screen.getByTestId('x1-status').textContent).toBe('로그인 필요');
+    expect(screen.getByTestId('account-x1').querySelector('.usage-seg-num')?.textContent).toBe('로그인 필요');
+    expect(screen.getByTestId('account-x1').textContent?.match(/로그인 필요/g)).toHaveLength(1);
   });
 });
 

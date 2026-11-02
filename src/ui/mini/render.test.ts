@@ -13,8 +13,8 @@ const status: MiniStatus = {
     { title: 'quant', engine: 'codex', model: 'gpt-5', account: 'gpt', contextPct: null, context: null, out: 0, cacheRead: 0, costUsd: null, turns: 1, lastPrompt: '', state: 'running', updatedAgoMs: 120_000, forMs: 10_000 },
   ],
   seats: [
-    { id: 'a', label: 'A', status: 'ok', left5h: 8, leftWeek: 40, resets5h: new Date(NOW + 130 * 60_000).toISOString(), resetsWeek: new Date(NOW + 50 * 3600_000).toISOString() },
-    { id: 'gpt', label: 'GPT', status: 'down', left5h: null, leftWeek: null, resets5h: null, resetsWeek: null },
+    { id: 'a', label: 'A', status: 'ok', left5h: null, leftWeek: 40, resets5h: null, resetsWeek: new Date(NOW + 50 * 3600_000).toISOString() },
+    { id: 'gpt', label: 'GPT', status: 'down', left5h: 8, leftWeek: null, resets5h: new Date(NOW + 130 * 60_000).toISOString(), resetsWeek: null },
   ],
   hub: { modes: [{ id: 'quant', name: 'Quant', state: 'down' }, { id: 'news', name: 'News', state: 'ok' }], counts: { ok: 1, down: 1, warn: 0, idle: 0, unknown: 0 }, worst: 'down', generated_at: new Date(NOW).toISOString() },
   generated_at: new Date(NOW).toISOString(),
@@ -62,6 +62,18 @@ describe('renderStatus', () => {
     expect(html).toContain('class="big none"');
     expect(html).toContain('10초 째');
     expect(html).toContain('claude-opus-4-1 · a');
+  });
+  it('a 5시간 cell only for GPT: a Claude seat has none even with residual data', () => {
+    const only = (seat: MiniStatus['seats'][number]) => renderStatus({ ...status, running: 0, waiting: 0, sessions: [], seats: [seat], hub: null }, NOW);
+    const resets5h = new Date(NOW + 130 * 60_000).toISOString();
+    const seat = { status: 'ok' as const, left5h: 8, leftWeek: 40, resets5h, resetsWeek: null };
+    const claude = only({ ...seat, id: 'a', label: 'A' });
+    expect(claude).not.toContain('5시간');
+    expect(claude).not.toContain('<span class="num">8</span>');
+    expect(claude).toContain('<span class="num">40</span>');
+    const gpt = only({ ...seat, id: 'gpt', label: 'GPT' });
+    expect(gpt).toMatch(/5시간 · <span data-reset="[^"]+">2h 10m</);
+    expect(gpt).toContain('<span class="num">8</span>');
   });
   it('seats and hub', () => {
     expect(html).toContain('class="seat-cell danger"><span class="num">8</span>');

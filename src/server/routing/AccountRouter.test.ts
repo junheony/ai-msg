@@ -8,7 +8,8 @@ import { resolveModel } from './ModelPolicy';
 const NOW = Date.parse('2026-09-30T12:30:00Z');
 const H = 3_600_000;
 
-type Spec = { s?: number | null; w?: number; f?: number | null; status?: AccountUsage['status']; age?: number; resetH?: number };
+/** `s`: a 5h value left on a card. Claude has no 5h limit any more: a card normally has none, and the router ignores one that does. */
+type Spec = { s?: number; w?: number; f?: number | null; status?: AccountUsage['status']; age?: number; resetH?: number };
 
 function acct(spec: Spec): AccountUsage {
   const status = spec.status ?? 'ok';
@@ -17,7 +18,7 @@ function acct(spec: Spec): AccountUsage {
   return {
     status,
     fetchedAt,
-    fiveHour: spec.s === null ? null : spec.s === undefined ? { usedPct: 10, resetsAt } : { usedPct: spec.s, resetsAt },
+    fiveHour: spec.s === undefined ? null : { usedPct: spec.s, resetsAt },
     weekly: spec.w === undefined ? null : { usedPct: spec.w, resetsAt },
     fable: spec.f === null ? null : { usedPct: spec.f ?? 0, resetsAt },
   };
@@ -59,12 +60,12 @@ describe('rankCandidates', () => {
 
   it('excludes ≥95, cooldown, stale >600s, missing weekly, and explicit exclude', () => {
     const { candidates, excluded } = rankCandidates(input({
-      usage: snap({ w: 96 }, { w: 10, s: 95 }, { w: 10, status: 'stale', age: 601_000 }),
+      usage: snap({ w: 96 }, { w: 95 }, { w: 10, status: 'stale', age: 601_000 }),
       cooldownUntilMs: {},
     }));
     expect(candidates).toEqual([]);
     expect(excluded.a).toMatch(/주간 4% 남음/);
-    expect(excluded.b).toMatch(/5h 5% 남음/);
+    expect(excluded.b).toMatch(/주간 5% 남음/);
     expect(excluded.c).toMatch(/stale/);
     const r2 = rankCandidates(input({ usage: snap({ w: 10 }, {}, { w: 10 }), cooldownUntilMs: { c: NOW + 1000 }, exclude: ['a'] }));
     expect(r2.candidates).toEqual([]);
@@ -102,10 +103,10 @@ describe('chooseAccount — table', () => {
     { name: 'new session, protected a has the best score → a (not skipped)', in: { protectedAccount: 'a', usage: snap({ w: 0, resetH: 10 }, { w: 50 }, { w: 60 }) }, account: 'a', switched: false, reason: /새 세션/ },
     { name: 'new session, protected is the only candidate', in: { protectedAccount: 'a', usage: snap({ w: 0 }, { w: 96 }, { w: 97 }) }, account: 'a', switched: false, reason: /새 세션/ },
     { name: 'no eligible at all → least weekly', in: { usage: snap({ w: 96 }, { w: 95 }, { w: 99 }) }, account: 'b', switched: false, reason: /자격 있는 계정 없음/ },
-    { name: 'current over 5h 80 → switch', in: { current: 'b', lastTurnAtMs: NOW - 60_000, usage: snap({ w: 7 }, { w: 3, s: 80 }, { w: 91 }) }, account: 'a', switched: true, reason: /문턱/ },
+    { name: 'current exactly at weekly 85 → switch', in: { current: 'b', lastTurnAtMs: NOW - 60_000, usage: snap({ w: 7 }, { w: 85 }, { w: 91 }) }, account: 'a', switched: true, reason: /문턱/ },
     { name: 'current over weekly 85 → switch', in: { current: 'c', lastTurnAtMs: NOW - 60_000 }, account: 'b', switched: true, reason: /문턱/ },
     { name: 'current in cooldown → switch', in: { current: 'b', lastTurnAtMs: NOW - 60_000, cooldownUntilMs: { b: NOW + 60_000 } }, account: 'a', switched: true, reason: /쿨다운/ },
-    { name: 'current over but no alternative → stay', in: { current: 'b', usage: snap({ w: 96 }, { w: 3, s: 85 }, { w: 97 }) }, account: 'b', switched: false, reason: /대안 없음/ },
+    { name: 'current over but no alternative → stay', in: { current: 'b', usage: snap({ w: 96 }, { w: 85 }, { w: 97 }) }, account: 'b', switched: false, reason: /대안 없음/ },
     { name: 'warm cache with a better account → stay', in: { current: 'a', lastTurnAtMs: NOW - 10 * 60_000 }, account: 'a', switched: false, reason: /캐시 따뜻함/ },
     { name: 'cold cache (55 min) → better account', in: { current: 'a', lastTurnAtMs: NOW - 55 * 60_000 }, account: 'b', switched: true, reason: /캐시 식음/ },
     { name: 'just compacted → better account', in: { current: 'a', lastTurnAtMs: NOW - 60_000, justCompacted: true }, account: 'b', switched: true, reason: /압축/ },
@@ -117,15 +118,15 @@ describe('chooseAccount — table', () => {
     { name: 'needFable and current Fable unknown → switch to one with room', in: { current: 'a', lastTurnAtMs: NOW - 60_000, needFable: true, usage: snap({ w: 7, f: null }, { w: 3, f: 10 }, { w: 91, f: 27 }) }, account: 'b', switched: true, reason: /Fable/ },
     { name: 'current card down, cold cache → move to a better account', in: { current: 'a', lastTurnAtMs: NOW - 2 * H, usage: snap({ status: 'down' }, { w: 3 }, { w: 10 }) }, account: 'b', switched: true, reason: /캐시 식음/ },
     { name: 'current card down, warm cache → stay', in: { current: 'a', lastTurnAtMs: NOW - 60_000, usage: snap({ status: 'down' }, { w: 3 }, { w: 10 }) }, account: 'a', switched: false, reason: /유지/ },
-    { name: 'over threshold, only alt is also over its 5h threshold → stay', in: { current: 'a', lastTurnAtMs: NOW - 60_000, usage: snap({ s: 81, w: 10 }, { s: 90, w: 10 }, { s: 10, w: 96 }) }, account: 'a', switched: false, reason: /대안 없음/ },
-    { name: 'over threshold, alt is over its weekly threshold → stay', in: { current: 'a', lastTurnAtMs: NOW - 60_000, usage: snap({ s: 81, w: 10 }, { s: 10, w: 88 }, { s: 10, w: 96 }) }, account: 'a', switched: false, reason: /대안 없음/ },
-    { name: 'current ≥95 on 5h, alt merely over threshold → still switch', in: { current: 'a', lastTurnAtMs: NOW - 60_000, usage: snap({ s: 96, w: 10 }, { s: 90, w: 10 }, { s: 10, w: 96 }) }, account: 'b', switched: true, reason: /전환/ },
-    { name: 'current in cooldown, alt merely over threshold → still switch', in: { current: 'a', lastTurnAtMs: NOW - 60_000, cooldownUntilMs: { a: NOW + 60_000 }, usage: snap({ s: 10, w: 10 }, { s: 90, w: 10 }, { s: 10, w: 96 }) }, account: 'b', switched: true, reason: /쿨다운/ },
-    { name: 'over threshold → prefers an alt under both switch thresholds', in: { current: 'a', lastTurnAtMs: NOW - 60_000, usage: snap({ s: 81, w: 10 }, { s: 85, w: 1, resetH: 5 }, { s: 10, w: 50 }) }, account: 'c', switched: true, reason: /전환/ },
-    { name: 'over threshold, only the protected account has room → it (a candidate like any other)', in: { current: 'a', protectedAccount: 'c', lastTurnAtMs: NOW - 60_000, usage: snap({ s: 81, w: 10 }, { s: 90, w: 10 }, { s: 10, w: 10 }) }, account: 'c', switched: true, reason: /문턱 초과.*→ C 전환$/ },
-    { name: 'over threshold, protected and another both have room, same score and weekly → the other (protected last on a tie)', in: { current: 'a', protectedAccount: 'c', lastTurnAtMs: NOW - 60_000, usage: snap({ s: 81, w: 10 }, { s: 30, w: 10 }, { s: 10, w: 10 }) }, account: 'b', switched: true, reason: /→ B 전환$/ },
-    { name: 'over threshold, protected has the better score → it', in: { current: 'a', protectedAccount: 'c', lastTurnAtMs: NOW - 60_000, usage: snap({ s: 81, w: 10 }, { s: 30, w: 10 }, { s: 10, w: 10, resetH: 20 }) }, account: 'c', switched: true, reason: /→ C 전환$/ },
-    { name: 'current ≥95, only the protected account has room → protected', in: { current: 'a', protectedAccount: 'c', lastTurnAtMs: NOW - 60_000, usage: snap({ s: 96, w: 10 }, { s: 10, w: 96 }, { s: 10, w: 10 }) }, account: 'c', switched: true, reason: /전환/ },
+    { name: 'over threshold, only alt is exactly at its threshold → stay', in: { current: 'a', lastTurnAtMs: NOW - 60_000, usage: snap({ w: 86 }, { w: 85 }, { w: 96 }) }, account: 'a', switched: false, reason: /대안 없음/ },
+    { name: 'over threshold, alt is over its weekly threshold → stay', in: { current: 'a', lastTurnAtMs: NOW - 60_000, usage: snap({ w: 90 }, { w: 88 }, { w: 96 }) }, account: 'a', switched: false, reason: /대안 없음/ },
+    { name: 'current ≥95 on weekly, alt merely over threshold → still switch', in: { current: 'a', lastTurnAtMs: NOW - 60_000, usage: snap({ w: 96 }, { w: 90 }, { w: 97 }) }, account: 'b', switched: true, reason: /전환/ },
+    { name: 'current in cooldown, alt merely over threshold → still switch', in: { current: 'a', lastTurnAtMs: NOW - 60_000, cooldownUntilMs: { a: NOW + 60_000 }, usage: snap({ w: 10 }, { w: 90 }, { w: 96 }) }, account: 'b', switched: true, reason: /쿨다운/ },
+    { name: 'over threshold → prefers an alt under the switch threshold', in: { current: 'a', lastTurnAtMs: NOW - 60_000, usage: snap({ w: 86 }, { w: 90, resetH: 5 }, { w: 50 }) }, account: 'c', switched: true, reason: /전환/ },
+    { name: 'over threshold, only the protected account has room → it (a candidate like any other)', in: { current: 'a', protectedAccount: 'c', lastTurnAtMs: NOW - 60_000, usage: snap({ w: 86 }, { w: 90 }, { w: 10 }) }, account: 'c', switched: true, reason: /문턱 초과.*→ C 전환$/ },
+    { name: 'over threshold, protected and another both have room, same score and weekly → the other (protected last on a tie)', in: { current: 'a', protectedAccount: 'c', lastTurnAtMs: NOW - 60_000, usage: snap({ w: 86 }, { w: 10 }, { w: 10 }) }, account: 'b', switched: true, reason: /→ B 전환$/ },
+    { name: 'over threshold, protected has the better score → it', in: { current: 'a', protectedAccount: 'c', lastTurnAtMs: NOW - 60_000, usage: snap({ w: 86 }, { w: 10 }, { w: 10, resetH: 20 }) }, account: 'c', switched: true, reason: /→ C 전환$/ },
+    { name: 'current ≥95, only the protected account has room → protected', in: { current: 'a', protectedAccount: 'c', lastTurnAtMs: NOW - 60_000, usage: snap({ w: 96 }, { w: 96 }, { w: 10 }) }, account: 'c', switched: true, reason: /전환/ },
     { name: 'no eligible, protected has least weekly → it too (protection is only an ordering)', in: { protectedAccount: 'b', usage: snap({ w: 96 }, { w: 95 }, { w: 99 }) }, account: 'b', switched: false, reason: /자격 있는 계정 없음/ },
     { name: 'no eligible, excluded has least weekly → skip it', in: { exclude: ['b'], usage: snap({ w: 97 }, { w: 95 }, { w: 96 }) }, account: 'c', switched: false, reason: /자격 있는 계정 없음/ },
     { name: 'no eligible, only the protected one not failed this turn → it', in: { protectedAccount: 'c', exclude: ['a', 'b'], usage: snap({ w: 97 }, { w: 95 }, { w: 96 }) }, account: 'c', switched: false, reason: /자격 있는 계정 없음/ },
@@ -136,13 +137,13 @@ describe('chooseAccount — table', () => {
     { name: 'needFable, new session, only the protected account has Fable room → the protected one, as Fable', in: { needFable: true, protectedAccount: 'a', usage: snap({ w: 7, f: 20 }, { w: 3, f: 85 }, { w: 10, f: null }) }, account: 'a', switched: false, reason: /^새 세션(?!.*Opus)/ },
     { name: 'needFable, current on another account, only the protected one has Fable room → moves there', in: { current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 60_000, needFable: true, usage: snap({ w: 7, f: 20 }, { w: 3, f: 85 }, { w: 10, f: null }) }, account: 'a', switched: true, reason: /^Fable 15% 남음 → A 전환$/ },
     { name: 'needFable, session on the protected account in cooldown, no Fable room anywhere → moves (Opus routing)', in: { current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 60_000, needFable: true, cooldownUntilMs: { a: NOW + 60_000 }, usage: snap({ w: 7, f: 85 }, { w: 3, f: 90 }, { w: 10, f: null }) }, account: 'b', switched: true, reason: /Fable 여유 계정 없음 → Opus/ },
-    { name: 'needFable, session on the protected account at 5h 97%, no Fable room anywhere → moves (Opus routing)', in: { current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 60_000, needFable: true, usage: snap({ s: 97, w: 7, f: 85 }, { w: 3, f: 90 }, { w: 10, f: null }) }, account: 'b', switched: true, reason: /Fable 여유 계정 없음 → Opus/ },
+    { name: 'needFable, session on the protected account at weekly 97%, no Fable room anywhere → moves (Opus routing)', in: { current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 60_000, needFable: true, usage: snap({ w: 97, f: 85 }, { w: 3, f: 90 }, { w: 10, f: null }) }, account: 'b', switched: true, reason: /Fable 여유 계정 없음 → Opus/ },
     { name: 'needFable, session on the protected account, usable and the only one with Fable room → stays on Fable', in: { current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 60_000, needFable: true, usage: snap({ w: 7, f: 20 }, { w: 3, f: 85 }, { w: 10, f: null }) }, account: 'a', switched: false, reason: /^(?!.*Fable 여유 계정 없음)/ },
     { name: 'needFable, nobody has room → stay (caller downgrades model)', in: { current: 'a', lastTurnAtMs: NOW - 60_000, needFable: true, usage: snap({ w: 7, f: 85 }, { w: 3, f: 90 }, { w: 91, f: 80 }) }, account: 'a', switched: false, reason: /Fable 여유 계정 없음 → Opus/ },
   ];
 
   it('I1: no ping-pong when the only alternative is also over its switch threshold', () => {
-    const usage = snap({ s: 81, w: 10, resetH: 50 }, { s: 90, w: 10, resetH: 50 }, { s: 10, w: 96, resetH: 50 });
+    const usage = snap({ w: 86, resetH: 50 }, { w: 90, resetH: 50 }, { w: 96, resetH: 50 });
     for (const start of ['a', 'b'] as const) {
       let cur: Account = start;
       const seen: Account[] = [];
@@ -174,10 +175,10 @@ describe('chooseAccount · 고정 계정 (pinned)', () => {
     expect(d.pinned).toBe(true);
     expect(d.pinBlocked).toBeUndefined();
     expect(d.reason).toMatch(/고정 C/);
-    // Already there: stays, even above the 80/85 thresholds that would force a switch when unpinned.
-    const stay = chooseAccount(input({ current: 'c', lastTurnAtMs: NOW - 60_000, pinned: 'c', usage: snap({ w: 7 }, { w: 3 }, { w: 90, s: 85 }) }));
+    // Already there: stays, even above the 85 threshold that would force a switch when unpinned.
+    const stay = chooseAccount(input({ current: 'c', lastTurnAtMs: NOW - 60_000, pinned: 'c', usage: snap({ w: 7 }, { w: 3 }, { w: 90 }) }));
     expect(stay).toMatchObject({ account: 'c', switched: false, pinned: true });
-    expect(chooseAccount(input({ current: 'c', lastTurnAtMs: NOW - 60_000, usage: snap({ w: 7 }, { w: 3 }, { w: 90, s: 85 }) })).account).not.toBe('c');
+    expect(chooseAccount(input({ current: 'c', lastTurnAtMs: NOW - 60_000, usage: snap({ w: 7 }, { w: 3 }, { w: 90 }) })).account).not.toBe('c');
   });
 
   it('pinned but unusable (≥95 / cooldown / failed this turn): the router picks for this turn and says why', () => {
@@ -209,7 +210,7 @@ describe('chooseAccount · 고정 계정 (pinned)', () => {
   // 2026-10-12: sessions pinned to A on 10-09 (B·C over the Fable cap then) kept burning A at Fable 85% for days after
   // B·C had reset — the pin skipped the cap the router applies to every unpinned turn.
   it('a Fable turn on a pin at the Fable cap goes to an account with Fable room this turn (the pin stays)', () => {
-    const usage = snap({ s: 20, w: 15, f: 85 }, { s: 0, w: 2, f: 3 }, { s: 13, w: 13, f: 20 });
+    const usage = snap({ w: 15, f: 85 }, { w: 2, f: 3 }, { w: 13, f: 20 });
     const d = chooseAccount(input({ current: 'a', lastTurnAtMs: NOW - 60_000, pinned: 'a', needFable: true, policy: 'balance', usage }));
     expect(d.account).toBe('b');
     expect(d.pinned).toBeUndefined();
@@ -220,15 +221,15 @@ describe('chooseAccount · 고정 계정 (pinned)', () => {
     // The same pin for a non-Fable turn is honoured as before: the cap is about Fable only.
     expect(chooseAccount(input({ current: 'a', lastTurnAtMs: NOW - 60_000, pinned: 'a', needFable: false, usage }))).toMatchObject({ account: 'a', pinned: true });
     // Below the cap: honoured.
-    const below = snap({ s: 20, w: 15, f: 79 }, { s: 0, w: 2, f: 3 }, { s: 13, w: 13, f: 20 });
+    const below = snap({ w: 15, f: 79 }, { w: 2, f: 3 }, { w: 13, f: 20 });
     expect(chooseAccount(input({ current: 'a', pinned: 'a', needFable: true, usage: below }))).toMatchObject({ account: 'a', pinned: true });
     // Unknown Fable value on the pin: not a known cap → honoured (the unpinned router would call it 'Fable 값 없음').
-    const unknown = snap({ s: 20, w: 15, f: null }, { s: 0, w: 2, f: 3 }, { s: 13, w: 13, f: 20 });
+    const unknown = snap({ w: 15, f: null }, { w: 2, f: 3 }, { w: 13, f: 20 });
     expect(chooseAccount(input({ current: 'a', pinned: 'a', needFable: true, usage: unknown }))).toMatchObject({ account: 'a', pinned: true });
   });
 
   it('a pin at the Fable cap with no other Fable-eligible account stays — and says so, so the user can unpin', () => {
-    const usage = snap({ s: 20, w: 15, f: 85 }, { s: 0, w: 2, f: 88 }, { s: 13, w: 13, f: null });
+    const usage = snap({ w: 15, f: 85 }, { w: 2, f: 88 }, { w: 13, f: null });
     const d = chooseAccount(input({ current: 'a', lastTurnAtMs: NOW - 60_000, pinned: 'a', needFable: true, usage }));
     expect(d).toMatchObject({ account: 'a', pinned: true, switched: false });
     expect(d.pinBlocked).toBeUndefined();
@@ -239,10 +240,10 @@ describe('chooseAccount · 고정 계정 (pinned)', () => {
     expect(chooseAccount(input({ current: 'a', pinned: 'a', needFable: true, usage: snap({ f: 10 }, { f: 88 }, { f: null }) })).pinWarn).toBeUndefined();
   });
 
-  it('a pin at the Fable cap whose only Fable-eligible alternative is itself past the 5h switch threshold: holds, warns, keeps the pin mark', () => {
-    // b has Fable room but 5h 85% — the router would not move a session onto it; a is not ≥95, so it stays. The pin
+  it('a pin at the Fable cap whose only Fable-eligible alternative is itself past the weekly switch threshold: holds, warns, keeps the pin mark', () => {
+    // b has Fable room but weekly 85% — the router would not move a session onto it; a is not ≥95, so it stays. The pin
     // then holds as a pin (pinned, pinWarn), not as a silent "A 유지" from the recursion.
-    const usage = snap({ s: 20, w: 15, f: 85 }, { s: 85, w: 2, f: 3 }, { s: 13, w: 13, f: 90 });
+    const usage = snap({ w: 15, f: 85 }, { w: 85, f: 3 }, { w: 13, f: 90 });
     const d = chooseAccount(input({ current: 'a', lastTurnAtMs: NOW - 60_000, pinned: 'a', needFable: true, policy: 'balance', usage }));
     expect(d).toMatchObject({ account: 'a', pinned: true, switched: false, pinWarn: 'Fable 15% 남음 · 20% 이하 제외 — 대신 쓸 계정이 없어 그대로' });
     expect(d.pinBlocked).toBeUndefined();
@@ -253,7 +254,7 @@ describe('chooseAccount · 고정 계정 (pinned)', () => {
   });
 
   it('retry after a failure on the account the pin yielded to: the next alternative, or the pin when none is left', () => {
-    const usage = snap({ s: 20, w: 15, f: 85 }, { s: 0, w: 2, f: 3 }, { s: 13, w: 13, f: 20 });
+    const usage = snap({ w: 15, f: 85 }, { w: 2, f: 3 }, { w: 13, f: 20 });
     const next = chooseAccount(input({ current: 'a', pinned: 'a', needFable: true, policy: 'balance', usage, exclude: ['b'] }));
     expect(next).toMatchObject({ account: 'c', pinBlocked: 'Fable 15% 남음 · 20% 이하 제외' });
     const none = chooseAccount(input({ current: 'a', pinned: 'a', needFable: true, policy: 'balance', usage, exclude: ['b', 'c'] }));
@@ -261,19 +262,19 @@ describe('chooseAccount · 고정 계정 (pinned)', () => {
   });
 
   it("an edit-fork's parent account (pinIsParent) is not a user pin: the Fable cap neither moves it nor warns", () => {
-    const usage = snap({ s: 20, w: 15, f: 85 }, { s: 0, w: 2, f: 3 }, { s: 13, w: 13, f: 20 });
+    const usage = snap({ w: 15, f: 85 }, { w: 2, f: 3 }, { w: 13, f: 20 });
     const d = chooseAccount(input({ current: 'a', pinned: 'a', pinIsParent: true, needFable: true, policy: 'balance', usage }));
     expect(d).toMatchObject({ account: 'a', pinned: true, reason: '고정 A' });
     expect(d.pinBlocked).toBeUndefined();
     expect(d.pinWarn).toBeUndefined();
     // ≥95 still moves it, as before.
-    expect(chooseAccount(input({ current: 'a', pinned: 'a', pinIsParent: true, needFable: true, usage: snap({ s: 96, f: 85 }, { f: 3 }, { f: 20 }) })).pinBlocked).toBe('한도 도달');
+    expect(chooseAccount(input({ current: 'a', pinned: 'a', pinIsParent: true, needFable: true, usage: snap({ w: 96, f: 85 }, { w: 10, f: 3 }, { w: 20, f: 20 }) })).pinBlocked).toBe('한도 도달');
   });
 });
 
 describe('chooseAccount · 고르게 분산 (balance)', () => {
-  // The reported case: B resets in ~18h with 78% left, C in ~138h with 100% left. Drain sends everything to B.
-  const reported = () => snap({ s: 30, w: 40, resetH: 100 }, { s: 10, w: 22, resetH: 18 }, { s: 0, w: 0, resetH: 138 });
+  // The reported case: B resets in ~18h with 70% left, C in ~138h with 100% left. Drain sends everything to B.
+  const reported = () => snap({ w: 40, resetH: 100 }, { w: 30, resetH: 18 }, { w: 0, resetH: 138 });
   const bal = (over: Partial<RouterInput>) => input({ policy: 'balance', ...over });
 
   it('is the default when no policy is given', () => {
@@ -281,65 +282,67 @@ describe('chooseAccount · 고르게 분산 (balance)', () => {
     expect(chooseAccount(noPolicy).account).toBe('c');
   });
 
-  it('new session → lowest 5h among safe candidates, and says why', () => {
+  it('new session → lowest weekly among safe candidates, and says why', () => {
     const d = chooseAccount(bal({ protectedAccount: 'a', usage: reported() }));
     expect(d.account).toBe('c');
-    expect(d.reason).toBe('새 세션 · 분산: 5h C 100% 남음 > B 90% 남음');
+    expect(d.reason).toBe('새 세션 · 분산: 주간 C 100% 남음 > B 70% 남음');
     // The same input under drain still drains B (resets soonest).
     expect(chooseAccount(input({ protectedAccount: 'a', usage: reported() })).account).toBe('b');
   });
 
-  it('5h within 5 points → lower weekly wins, then the reset-urgency score', () => {
-    const w = chooseAccount(bal({ usage: snap({ s: 50, w: 10 }, { s: 4, w: 30, resetH: 5 }, { s: 8, w: 20, resetH: 150 }) }));
-    expect(w.account).toBe('c');
-    expect(w.reason).toMatch(/주간 C 80% 남음 > B 70% 남음/);
-    // 5h and weekly both tied: the account whose weekly resets sooner (higher score) wins.
-    const s = chooseAccount(bal({ usage: snap({ s: 50, w: 10 }, { s: 6, w: 20, resetH: 150 }, { s: 3, w: 20, resetH: 10 }) }));
+  it('weekly within 5 points → the reset-urgency score; further apart, the lower weekly', () => {
+    const w = chooseAccount(bal({ usage: snap({ w: 50 }, { w: 25, resetH: 5 }, { w: 20, resetH: 150 }) }));
+    expect(w.account).toBe('b');
+    expect(w.reason).toBe('새 세션 · 분산: 주간 비슷 · 리셋 임박 B');
+    // Same weekly: the account whose weekly resets sooner (higher score) wins, whichever it is.
+    const s = chooseAccount(bal({ usage: snap({ w: 50 }, { w: 20, resetH: 150 }, { w: 20, resetH: 10 }) }));
     expect(s.account).toBe('c');
-    const s2 = chooseAccount(bal({ usage: snap({ s: 50, w: 10 }, { s: 3, w: 20, resetH: 10 }, { s: 6, w: 20, resetH: 150 }) }));
+    const s2 = chooseAccount(bal({ usage: snap({ w: 50 }, { w: 20, resetH: 10 }, { w: 20, resetH: 150 }) }));
     expect(s2.account).toBe('b');
-    // More than 5 points apart: 5h decides even against a much lower weekly.
-    expect(chooseAccount(bal({ usage: snap({ s: 50, w: 10 }, { s: 2, w: 60 }, { s: 8, w: 0 }) })).account).toBe('b');
+    // More than 5 points apart: weekly decides even against a much sooner reset.
+    const far = chooseAccount(bal({ usage: snap({ w: 50 }, { w: 26, resetH: 5 }, { w: 20, resetH: 150 }) }));
+    expect(far.account).toBe('c');
+    expect(far.reason).toBe('새 세션 · 분산: 주간 C 80% 남음 > B 74% 남음');
   });
 
   it('skips candidates past the force thresholds', () => {
-    // B has the lowest 5h but is past the weekly 85 threshold; C is past the 5h 80 threshold.
-    const d = chooseAccount(bal({ usage: snap({ s: 40, w: 10 }, { s: 0, w: 90 }, { s: 85, w: 0 }) }));
+    // B is past the weekly 85 threshold, C exactly at it, and both reset far sooner than A.
+    const d = chooseAccount(bal({ usage: snap({ w: 40 }, { w: 90, resetH: 1 }, { w: 85, resetH: 1 }) }));
     expect(d.account).toBe('a');
   });
 
-  it('protected account with the lowest 5h wins like any other (다 같이 쓰게); it loses only a tie', () => {
-    const usage = snap({ s: 0, w: 0 }, { s: 40, w: 50 }, { s: 20, w: 60 });
+  it('protected account with the lowest weekly wins like any other (다 같이 쓰게); it loses only a tie', () => {
+    const usage = snap({ w: 0 }, { w: 50 }, { w: 20 });
     expect(rankCandidates(bal({ protectedAccount: 'a', usage })).candidates.map((c) => c.account)).toEqual(['a', 'c', 'b']);
     const d = chooseAccount(bal({ protectedAccount: 'a', usage }));
     expect(d.account).toBe('a');
-    expect(d.reason).toBe('새 세션 · 분산: 5h A 100% 남음 > C 80% 남음');
-    // 5h within the tie band and the same weekly: the other account first, and the reason says so.
-    const tie = snap({ s: 0, w: 10 }, { s: 3, w: 10 }, { s: 40, w: 10 });
+    expect(d.reason).toBe('새 세션 · 분산: 주간 A 100% 남음 > C 80% 남음');
+    // Weekly within the tie band: the other account first, and the reason says so.
+    const tie = snap({ w: 0 }, { w: 3 }, { w: 40 });
     const t = chooseAccount(bal({ protectedAccount: 'a', usage: tie }));
     expect(t.account).toBe('b');
-    expect(t.reason).toBe('새 세션 · 분산: 5h·주간 비슷 · A 동률이면 마지막');
+    expect(t.reason).toBe('새 세션 · 분산: 주간 비슷 · A 동률이면 마지막');
     expect(rankCandidates(bal({ protectedAccount: 'a', usage: tie })).candidates.map((c) => c.account)).toEqual(['b', 'a', 'c']);
-    // A lower weekly still beats the tie rule: the protected one is a normal candidate.
-    expect(chooseAccount(bal({ protectedAccount: 'a', usage: snap({ s: 0, w: 5 }, { s: 3, w: 10 }, { s: 40, w: 10 }) })).account).toBe('a');
+    // Outside the band the tie rule does not apply: the protected one is a normal candidate.
+    expect(chooseAccount(bal({ protectedAccount: 'a', usage: snap({ w: 0 }, { w: 6 }, { w: 40 }) })).account).toBe('a');
   });
 
   it('only the protected account is safe → it comes first (before anything past a threshold), both policies agree', () => {
-    // A protected and safe; B over 5h 80; C over weekly 85 → A, then the unsafe ones in drain order.
-    const usage = snap({ s: 0, w: 0 }, { s: 82, w: 10, resetH: 150 }, { s: 0, w: 88, resetH: 10 });
+    // A protected and safe; B and C over weekly 85 → A, then the unsafe ones in drain order.
+    const usage = snap({ w: 0 }, { w: 86, resetH: 150 }, { w: 88, resetH: 10 });
     const b = chooseAccount(bal({ protectedAccount: 'a', usage }));
     const d = chooseAccount(input({ protectedAccount: 'a', usage }));
     expect(b.account).toBe('a');
     expect(d.account).toBe('a');
-    expect(b.reason).toBe('새 세션 · 분산: 5h A 100% 남음 · C 문턱 근접');
+    expect(b.reason).toBe('새 세션 · 분산: 주간 A 100% 남음 · C 문턱 근접');
     expect(rankCandidates(bal({ protectedAccount: 'a', usage })).candidates.map((c) => c.account)).toEqual(['a', 'c', 'b']);
     expect(rankCandidates(input({ protectedAccount: 'a', usage })).candidates.map((c) => c.account)).toEqual(['a', 'c', 'b']);
   });
 
   it('nothing safe → falls back to the drain ordering', () => {
-    // A protected but over 5h 80 too; B over 5h 80; C over weekly 85 → no safe candidate: drain order by score
+    // A protected but over weekly 85 too; so are B and C → no safe candidate: drain order by score
     // (C 1.2, A 1.0, B 0.6) — the protected one is not moved last.
-    const usage = snap({ s: 81, w: 0 }, { s: 82, w: 10, resetH: 150 }, { s: 0, w: 88, resetH: 10 });
+    const usage = snap({ w: 86, resetH: 14 }, { w: 88, resetH: 20 }, { w: 88, resetH: 10 });
     const b = chooseAccount(bal({ protectedAccount: 'a', usage }));
     const d = chooseAccount(input({ protectedAccount: 'a', usage }));
     expect(b.account).toBe(d.account);
@@ -349,9 +352,9 @@ describe('chooseAccount · 고르게 분산 (balance)', () => {
   });
 
   it('no ping-pong: a safe protected account ranks before an account past a threshold, so every path agrees', () => {
-    // A protected and safe (5h 5); B at the limit (96); C over 5h 80 (85). Pre-fix: new session → C, forced off C → A,
+    // A protected and safe (weekly 5); B at the limit (96); C over weekly 85 (85). Pre-fix: new session → C, forced off C → A,
     // cold on A → C again, forever. Now every path lands on A and stays.
-    const usage = snap({ s: 5, w: 10 }, { s: 96, w: 10 }, { s: 85, w: 10 });
+    const usage = snap({ w: 5 }, { w: 96 }, { w: 85 });
     for (const mk of [bal, input]) {
       expect(chooseAccount(mk({ protectedAccount: 'a', usage })).account).toBe('a');
       expect(chooseAccount(mk({ current: 'a', protectedAccount: 'a', lastTurnAtMs: null, usage }))).toMatchObject({ account: 'a', switched: false });
@@ -359,11 +362,11 @@ describe('chooseAccount · 고르게 분산 (balance)', () => {
       expect(chooseAccount(mk({ current: 'c', protectedAccount: 'a', lastTurnAtMs: NOW - 60_000, usage }))).toMatchObject({ account: 'a', switched: true });
       expect(chooseAccount(mk({ current: 'c', protectedAccount: 'a', lastTurnAtMs: NOW - 2 * H, usage }))).toMatchObject({ account: 'a', switched: true });
     }
-    // Once another account has room again, a cold session on A stays while A is still the lowest 5h (A is a normal
+    // Once another account has room again, a cold session on A stays while A is still the lowest weekly (A is a normal
     // candidate), and leaves only for a clearly lower one.
-    const roomAgain = snap({ s: 5, w: 10 }, { s: 20, w: 10 }, { s: 85, w: 10 });
+    const roomAgain = snap({ w: 5 }, { w: 20 }, { w: 85 });
     expect(chooseAccount(bal({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 2 * H, usage: roomAgain }))).toMatchObject({ account: 'a', switched: false });
-    const lower = snap({ s: 25, w: 10 }, { s: 5, w: 10 }, { s: 85, w: 10 });
+    const lower = snap({ w: 30 }, { w: 5 }, { w: 85 });
     expect(chooseAccount(bal({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 2 * H, usage: lower }))).toMatchObject({ account: 'b', switched: true });
   });
 
@@ -371,7 +374,7 @@ describe('chooseAccount · 고르게 분산 (balance)', () => {
     const usage = reported();
     const cold = chooseAccount(bal({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 2 * H, usage }));
     expect(cold).toMatchObject({ account: 'c', switched: true });
-    expect(cold.reason).toMatch(/캐시 식음\(120분 경과\) → C · 분산: 5h C 100% 남음 > B 90% 남음/);
+    expect(cold.reason).toMatch(/캐시 식음\(120분 경과\) → C · 분산: 주간 C 100% 남음 > B 70% 남음/);
     const compacted = chooseAccount(bal({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 60_000, justCompacted: true, usage }));
     expect(compacted.account).toBe('c');
     const first = chooseAccount(bal({ current: 'b', protectedAccount: 'a', lastTurnAtMs: null, usage }));
@@ -382,29 +385,29 @@ describe('chooseAccount · 고르게 분산 (balance)', () => {
   });
 
   it('forced switches pick the target by the balance order (drain keeps the drain order)', () => {
-    // A over 5h 80 → forced off. B resets in 5h (drain's pick), C has the lower 5h (balance's pick).
-    const usage = snap({ s: 81, w: 10 }, { s: 30, w: 1, resetH: 5 }, { s: 10, w: 50, resetH: 150 });
+    // A over weekly 85 → forced off. B resets in 5h (drain's pick), C has the lower weekly (balance's pick).
+    const usage = snap({ w: 86 }, { w: 30, resetH: 5 }, { w: 10, resetH: 150 });
     const forced = { current: 'a' as const, lastTurnAtMs: NOW - 60_000, usage };
     expect(chooseAccount(bal(forced))).toMatchObject({ account: 'c', switched: true });
     expect(chooseAccount(bal(forced)).reason).toMatch(/문턱 초과.* → C 전환/);
     expect(chooseAccount(input(forced))).toMatchObject({ account: 'b', switched: true });
-    // Weekly ≥85 forces the switch the same way.
-    const weekly = { current: 'a' as const, lastTurnAtMs: NOW - 60_000, usage: snap({ s: 10, w: 86 }, { s: 30, w: 1, resetH: 5 }, { s: 10, w: 50, resetH: 150 }) };
+    // Exactly 85 forces the switch the same way.
+    const weekly = { current: 'a' as const, lastTurnAtMs: NOW - 60_000, usage: snap({ w: 85 }, { w: 30, resetH: 5 }, { w: 10, resetH: 150 }) };
     expect(chooseAccount(bal(weekly)).account).toBe('c');
     expect(chooseAccount(input(weekly)).account).toBe('b');
   });
 
   it('forced switches go to the protected account when it is the best, like any other; pins still override', () => {
-    // B forced (5h 82); A protected with the lowest 5h; C safe but higher → A.
-    const usage = snap({ s: 0, w: 0 }, { s: 82, w: 10 }, { s: 40, w: 50 });
-    expect(chooseAccount(bal({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 60_000, usage }))).toMatchObject({ account: 'a', switched: true, reason: '문턱 초과(5h 18% 남음 · 주간 90% 남음) → A 전환' });
+    // B forced (weekly 86); A protected with the lowest weekly; C safe but higher → A.
+    const usage = snap({ w: 0 }, { w: 86 }, { w: 50 });
+    expect(chooseAccount(bal({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 60_000, usage }))).toMatchObject({ account: 'a', switched: true, reason: '문턱 초과(주간 14% 남음) → A 전환' });
     // C lower than A → C.
-    expect(chooseAccount(bal({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 60_000, usage: snap({ s: 30, w: 0 }, { s: 82, w: 10 }, { s: 10, w: 50 }) }))).toMatchObject({ account: 'c', switched: true });
+    expect(chooseAccount(bal({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 60_000, usage: snap({ w: 30 }, { w: 86 }, { w: 10 }) }))).toMatchObject({ account: 'c', switched: true });
     // C not safe either (weekly 88): the protected A is the one account with room → A (protected is a candidate like any other).
-    const noSafe = snap({ s: 0, w: 0 }, { s: 82, w: 10 }, { s: 0, w: 88 });
-    expect(chooseAccount(bal({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 60_000, usage: noSafe }))).toMatchObject({ account: 'a', switched: true, reason: '문턱 초과(5h 18% 남음 · 주간 90% 남음) → A 전환' });
+    const noSafe = snap({ w: 0 }, { w: 86 }, { w: 88 });
+    expect(chooseAccount(bal({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 60_000, usage: noSafe }))).toMatchObject({ account: 'a', switched: true, reason: '문턱 초과(주간 14% 남음) → A 전환' });
     // B unusable (≥95) and C gone (cooldown): only the protected account is left → A.
-    const onlyA = snap({ s: 0, w: 0 }, { s: 96, w: 10 }, { s: 0, w: 10 });
+    const onlyA = snap({ w: 0 }, { w: 96 }, { w: 10 });
     expect(chooseAccount(bal({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 60_000, cooldownUntilMs: { c: NOW + 60_000 }, usage: onlyA })).account).toBe('a');
     // A pin wins over the forced switch.
     expect(chooseAccount(bal({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 60_000, pinned: 'b', usage }))).toMatchObject({ account: 'b', pinned: true });
@@ -420,78 +423,60 @@ describe('chooseAccount · 고르게 분산 (balance)', () => {
 });
 
 describe('chooseAccount · default policy (no policy given = balance)', () => {
-  it('new session spreads to the lowest 5h, the protected A included', () => {
-    // A 0 and C 5 are within the tie band: the lower weekly (A) wins; then C, then B.
-    const usage = snap({ s: 0, w: 0 }, { s: 30, w: 20 }, { s: 5, w: 40 });
+  it('new session spreads to the lowest weekly, the protected A included', () => {
+    // A 0 and C 6 are outside the tie band: A wins; then C, then B.
+    const usage = snap({ w: 0 }, { w: 30 }, { w: 6 });
     expect(chooseAccount(dflt({ protectedAccount: 'a', usage }))).toMatchObject({ account: 'a', switched: false });
     expect(rankCandidates(dflt({ protectedAccount: 'a', usage })).candidates.map((c) => c.account)).toEqual(['a', 'c', 'b']);
     // C clearly the lowest → C, then A, then B.
-    const cLow = snap({ s: 20, w: 0 }, { s: 30, w: 20 }, { s: 5, w: 40 });
+    const cLow = snap({ w: 20 }, { w: 30 }, { w: 5 });
     expect(chooseAccount(dflt({ protectedAccount: 'a', usage: cLow }))).toMatchObject({ account: 'c', switched: false });
     expect(rankCandidates(dflt({ protectedAccount: 'a', usage: cLow })).candidates.map((c) => c.account)).toEqual(['c', 'a', 'b']);
   });
 
   it('warm session stays; forced switch goes by balance order', () => {
-    const usage = snap({ s: 81, w: 10 }, { s: 30, w: 1, resetH: 5 }, { s: 10, w: 50, resetH: 150 });
+    const usage = snap({ w: 86 }, { w: 30, resetH: 5 }, { w: 10, resetH: 150 });
     expect(chooseAccount(dflt({ current: 'b', lastTurnAtMs: NOW - 10 * 60_000, usage }))).toMatchObject({ account: 'b', switched: false });
     expect(chooseAccount(dflt({ current: 'a', lastTurnAtMs: NOW - 60_000, usage }))).toMatchObject({ account: 'c', switched: true });
   });
 
-  it('cold session: hysteresis — a marginal 5h difference does not move it, a large one does', () => {
-    // On B (safe), C lower by exactly 5 points (A higher) → stays.
-    const near = chooseAccount(dflt({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 2 * H, usage: snap({ s: 30, w: 0 }, { s: 20, w: 30 }, { s: 15, w: 10 }) }));
-    expect(near).toMatchObject({ account: 'b', switched: false });
-    expect(near.reason).toMatch(/현재 계정이 최적/);
-    // C lower by 6 points → moves.
-    expect(chooseAccount(dflt({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 2 * H, usage: snap({ s: 30, w: 0 }, { s: 21, w: 30 }, { s: 15, w: 10 }) })))
+  it('cold session: hysteresis — a marginal weekly difference does not move it, a large one does', () => {
+    // On B (safe), C lower by 24 points (A higher) → stays.
+    const near = chooseAccount(dflt({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 2 * H, usage: snap({ w: 60 }, { w: 30 }, { w: 6 }) }));
+    expect(near).toMatchObject({ account: 'b', switched: false, reason: '캐시 식음(120분 경과) · 현재 계정이 최적(주간 차이 25%p 미만) · B 유지' });
+    // C lower by 25 points → moves.
+    expect(chooseAccount(dflt({ current: 'b', protectedAccount: 'a', lastTurnAtMs: NOW - 2 * H, usage: snap({ w: 60 }, { w: 31 }, { w: 6 }) })))
       .toMatchObject({ account: 'c', switched: true });
     // Current is the protected account: the same hysteresis — a 2-point win does not move it off A.
-    const onA = chooseAccount(dflt({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 2 * H, usage: snap({ s: 18, w: 0 }, { s: 20, w: 30 }, { s: 16, w: 10 }) }));
-    expect(onA).toMatchObject({ account: 'a', switched: false });
-    expect(onA.reason).toMatch(/현재 계정이 최적/);
-    expect(chooseAccount(dflt({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 2 * H, usage: snap({ s: 22, w: 0 }, { s: 20, w: 30 }, { s: 16, w: 10 }) })).account).toBe('c');
+    const onA = chooseAccount(dflt({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 2 * H, usage: snap({ w: 20 }, { w: 40 }, { w: 18 }) }));
+    expect(onA).toMatchObject({ account: 'a', switched: false, reason: '캐시 식음(120분 경과) · 현재 계정이 최적(주간 차이 25%p 미만) · A 유지' });
+    expect(chooseAccount(dflt({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 2 * H, usage: snap({ w: 43 }, { w: 60 }, { w: 18 }) })).account).toBe('c');
     // Drain keeps its old cold-cache rule (no hysteresis).
     expect(chooseAccount(input({ current: 'a', lastTurnAtMs: NOW - 2 * H })).account).toBe('b');
   });
 
-  it('cold session: a 5h-tied account with a much lower weekly (just reset) is a clear win', () => {
-    // On A (weekly 70), C just reset (weekly 2), 5h equal → moves to C.
-    const reset = snap({ s: 1, w: 70 }, { s: 0, w: 79 }, { s: 1, w: 2 });
+  it('cold session: an account with a much lower weekly (just reset) is a clear win', () => {
+    // On A (weekly 70), C just reset (weekly 2) → moves to C.
+    const reset = snap({ w: 70 }, { w: 79 }, { w: 2 });
     const moved = chooseAccount(dflt({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 3 * H, usage: reset }));
     expect(moved).toMatchObject({ account: 'c', switched: true });
     expect(moved.reason).toMatch(/캐시 식음/);
     // Exactly WEEKLY_GAP_PCT lower is enough; one point short is not.
-    expect(chooseAccount(dflt({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 3 * H, usage: snap({ s: 1, w: 30 }, { s: 0, w: 79 }, { s: 1, w: 5 }) })).account).toBe('c');
-    const short = chooseAccount(dflt({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 3 * H, usage: snap({ s: 1, w: 29 }, { s: 0, w: 79 }, { s: 1, w: 5 }) }));
+    expect(chooseAccount(dflt({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 3 * H, usage: snap({ w: 30 }, { w: 79 }, { w: 5 }) })).account).toBe('c');
+    const short = chooseAccount(dflt({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 3 * H, usage: snap({ w: 29 }, { w: 79 }, { w: 5 }) }));
     expect(short).toMatchObject({ account: 'a', switched: false });
     expect(short.reason).toMatch(/주간 차이 25%p 미만/);
     // A warm session stays even with the weekly gap.
     expect(chooseAccount(dflt({ current: 'a', protectedAccount: 'a', lastTurnAtMs: NOW - 10 * 60_000, usage: reset }))).toMatchObject({ account: 'a', switched: false });
   });
-
-  it('a missing 5h row is unknown, not 0%: ranked after known values, still a safe candidate', () => {
-    // A (protected) past the 5h threshold: B is the one safe account with a known 5h, C has none.
-    const usage = snap({ s: 85, w: 0 }, { s: 40, w: 30 }, { s: null, w: 10 });
-    const { candidates } = rankCandidates(dflt({ protectedAccount: 'a', usage }));
-    expect(candidates.map((c) => c.account)).toEqual(['b', 'c', 'a']);
-    expect(candidates.find((c) => c.account === 'c')?.fiveHourKnown).toBe(false);
-    const d = chooseAccount(dflt({ protectedAccount: 'a', usage }));
-    expect(d.account).toBe('b');
-    expect(d.reason).toMatch(/C 5h 값 없음/);
-    expect(routeLogLine(null, d, testRegistry())).toMatch(/C 5h \? · 주간 90% 남음/);
-    // Unknown 5h but the only safe account: picked over the unsafe ones (the protected one among them).
-    expect(chooseAccount(dflt({ protectedAccount: 'a', usage: snap({ s: 85, w: 0 }, { s: 85, w: 30 }, { s: null, w: 10 }) })).account).toBe('c');
-    // A safe protected account with a known 5h comes before an unknown one.
-    expect(rankCandidates(dflt({ protectedAccount: 'a', usage: snap({ s: 0, w: 0 }, { s: 85, w: 30 }, { s: null, w: 10 }) })).candidates.map((c) => c.account)).toEqual(['a', 'c', 'b']);
-  });
 });
 
 describe('routeLogLine', () => {
   it('one line: short session id, account, reason, candidates and exclusions', () => {
-    const d = chooseAccount(input({ policy: 'balance', protectedAccount: 'a', cooldownUntilMs: { a: NOW + 60_000 }, usage: snap({ s: 0, w: 0 }, { s: 10, w: 22, resetH: 18 }, { s: 0, w: 0, resetH: 138 }) }));
+    const d = chooseAccount(input({ policy: 'balance', protectedAccount: 'a', cooldownUntilMs: { a: NOW + 60_000 }, usage: snap({ w: 0 }, { w: 22, resetH: 18 }, { w: 0, resetH: 138 }) }));
     const line = routeLogLine('0123456789abcdef', d, testRegistry());
-    expect(line).toMatch(/^deck: route 01234567 → C \(새 세션 · 분산: 5h C 100% 남음 > B 90% 남음\)/);
-    expect(line).toMatch(/후보 C 5h 100% 남음 · 주간 100% 남음, B 5h 90% 남음 · 주간 78% 남음/);
+    expect(line).toMatch(/^deck: route 01234567 → C \(새 세션 · 분산: 주간 C 100% 남음 > B 78% 남음\)/);
+    expect(line).toMatch(/후보 C 주간 100% 남음, B 주간 78% 남음/);
     expect(line).toMatch(/제외 A 쿨다운/);
     expect(line).not.toMatch(/\n/);
     expect(routeLogLine(null, d, testRegistry())).toMatch(/^deck: route 새 세션 → C/);
@@ -569,7 +554,7 @@ describe('chooseAccount — 잔여량을 모르는 계정 (usage-deck 없음 · 
   });
 
   it('some cards only: an account with known room comes before every unknown one — the unknown ones stay listed', () => {
-    const d = chooseAccount(dflt({ protectedAccount: 'a', usage: snap(DOWN, { s: 10, w: 20 }, {}) }));
+    const d = chooseAccount(dflt({ protectedAccount: 'a', usage: snap(DOWN, { w: 20 }, {}) }));
     expect(d).toMatchObject({ account: 'b', unknown: ['c', 'a'] });
     expect(d.candidates.map((c) => c.account)).toEqual(['b']);
     // A stale card past the limit of trust is unknown too; one whose last numbers were at the limit is not.
@@ -593,9 +578,9 @@ describe('chooseAccount — 잔여량을 모르는 계정 (usage-deck 없음 · 
   });
 
   it('routeLogLine names the unknown accounts apart from the excluded ones', () => {
-    const d = chooseAccount(dflt({ protectedAccount: 'a', cooldownUntilMs: { a: NOW + 60_000 }, usage: snap({ w: 10 }, { s: 10, w: 20 }, DOWN) }));
+    const d = chooseAccount(dflt({ protectedAccount: 'a', cooldownUntilMs: { a: NOW + 60_000 }, usage: snap({ w: 10 }, { w: 20 }, DOWN) }));
     const line = routeLogLine(null, d, testRegistry());
-    expect(line).toMatch(/후보 B 5h 90% 남음 · 주간 80% 남음 · 잔여량 모름 C · 제외 A 쿨다운/);
+    expect(line).toMatch(/후보 B 주간 80% 남음 · 잔여량 모름 C · 제외 A 쿨다운/);
     expect(line).not.toMatch(/제외[^·]*C/);
     expect(routeLogLine(null, chooseAccount(dflt({ protectedAccount: 'a', usage: noDeck })), testRegistry())).toMatch(/\(자격 있는 계정 없음 → 잔여량 모름 · B\) · 잔여량 모름 B, C, A$/);
   });
@@ -627,7 +612,7 @@ describe("chooseAccount — usage-deck 을 본 적 없는 설치 (usageSource: '
   });
 
   it('an account whose Fable value is not known stays eligible; a known Fable ≥ 80% is still out', () => {
-    // What a no-deck install looks like after a turn: 5h and weekly from the turn itself, never a Fable row.
+    // What a no-deck install looks like after a turn: weekly from the turn itself, never a Fable row.
     const seen = lax(snap({ w: 10, f: null }, { w: 20, f: null }, DOWN));
     const r = rankCandidates(dflt({ needFable: true, usage: seen }));
     expect(r.candidates.map((c) => c.account).sort()).toEqual(['a', 'b']);
@@ -676,7 +661,7 @@ describe("chooseAccount — usage-deck 을 본 적 없는 설치 (usageSource: '
     expect(strict.asOpus).toBeUndefined();
   });
 
-  it('every account cooling down, or at a known 5h/weekly limit: still a Fable turn — only a known Fable value at the limit means Opus', () => {
+  it('every account cooling down, or at a known weekly limit: still a Fable turn — only a known Fable value at the limit means Opus', () => {
     const cooldownUntilMs = { a: NOW + 60_000, b: NOW + 60_000, c: NOW + 60_000 };
     const NOFABLE: Spec = { status: 'down', f: null };
     const cooling = lax(snap(NOFABLE, NOFABLE, NOFABLE, false));
@@ -716,9 +701,9 @@ describe('chooseAccount — 최종 리뷰: 이유 문구와 실행 모델', () =
   const sources = [undefined, 'deck', 'none'] as const;
   const withSource = (u: UsageSnapshot, s: (typeof sources)[number]): UsageSnapshot => (s ? { ...u, usageSource: s } : u);
 
-  it('no candidate for a 5h limit while Fable has room (with usage-deck): the turn runs on Fable and the reason does not say "→ Opus" or "값 없음"', () => {
+  it('no candidate for a weekly limit while Fable has room (with usage-deck): the turn runs on Fable and the reason does not say "→ Opus" or "값 없음"', () => {
     for (const s of sources) {
-      const usage = withSource(snap({ s: 96, w: 10, f: 10 }, { s: 96, w: 20, f: 10 }, { s: 96, w: 30, f: 10 }), s);
+      const usage = withSource(snap({ w: 96, f: 10 }, { w: 97, f: 10 }, { w: 98, f: 10 }), s);
       const d = chooseAccount(dflt({ needFable: true, usage }));
       expect(d.candidates).toEqual([]);
       expect(d).toMatchObject({ account: 'a', reason: '자격 있는 계정 없음 → 최소 사용 A' });
@@ -728,11 +713,11 @@ describe('chooseAccount — 최종 리뷰: 이유 문구와 실행 모델', () =
   });
 
   it('no candidate and the account it falls back to has Fable at the limit, or (with usage-deck) no Fable value: Opus, with the true cause', () => {
-    const at = snap({ s: 96, w: 10, f: 85 }, { s: 96, w: 20, f: 10 }, { s: 96, w: 30, f: 10 });
+    const at = snap({ w: 96, f: 85 }, { w: 97, f: 10 }, { w: 98, f: 10 });
     for (const s of sources) {
       expect(chooseAccount(dflt({ needFable: true, usage: withSource(at, s) }))).toMatchObject({ account: 'a', asOpus: 'Fable 여유 계정 없음', reason: 'Fable 여유 계정 없음 → Opus · 자격 있는 계정 없음 → 최소 사용 A' });
     }
-    const missing = snap({ s: 96, w: 10, f: null }, { s: 96, w: 20, f: 10 }, { s: 96, w: 30, f: 10 });
+    const missing = snap({ w: 96, f: null }, { w: 97, f: 10 }, { w: 98, f: 10 });
     expect(chooseAccount(dflt({ needFable: true, usage: missing }))).toMatchObject({ account: 'a', asOpus: 'Fable 잔여량 모름(usage-deck 값 없음)' });
     const laxD = chooseAccount(dflt({ needFable: true, usage: withSource(missing, 'none') }));
     expect(laxD.asOpus).toBeUndefined();
@@ -740,7 +725,7 @@ describe('chooseAccount — 최종 리뷰: 이유 문구와 실행 모델', () =
   });
 
   it('whatever the usage: the reason says "→ Opus" exactly when the decision carries asOpus, and the cause it names is true of the account', () => {
-    const specs: Spec[] = [{ w: 10, f: 10 }, { w: 10, f: 85 }, { w: 10, f: null }, { s: 96, w: 10, f: 10 }, { s: 96, w: 10, f: 85 }, { w: 99, f: null }, DOWN, { status: 'down', w: 10, f: 10 }, { status: 'stale', age: 1_200_000, w: 10, f: 10 }];
+    const specs: Spec[] = [{ w: 10, f: 10 }, { w: 10, f: 85 }, { w: 10, f: null }, { w: 96, f: 10 }, { w: 96, f: 85 }, { w: 99, f: null }, DOWN, { status: 'down', w: 10, f: 10 }, { status: 'stale', age: 1_200_000, w: 10, f: 10 }];
     const cools: Partial<Record<Account, number>>[] = [{}, { b: NOW + 60_000 }, { a: NOW + 60_000, b: NOW + 60_000, c: NOW + 60_000 }];
     let n = 0;
     for (const a of specs) for (const b of specs) for (const c of specs) for (const s of sources) for (const cooldownUntilMs of cools) for (const current of [null, 'b'] as const) for (const protectedAccount of [null, 'a'] as const) {
@@ -782,8 +767,8 @@ describe('chooseAccount — 최종 리뷰: 잔여량 모름 계정의 순서', (
     expect(rankCandidates(dflt({ usage: same })).unknown).toEqual(['b', 'c', 'a']);
   });
 
-  it('the current account cooling down, another at its 5h limit, the third with a down card: the turn moves to the unknown one (not "stay")', () => {
-    const d = chooseAccount(dflt({ current: 'b', lastTurnAtMs: NOW - 60_000, cooldownUntilMs: { b: NOW + 60_000 }, usage: snap({ s: 96, w: 10 }, { w: 20 }, { status: 'down' }) }));
+  it('the current account cooling down, another at its weekly limit, the third with a down card: the turn moves to the unknown one (not "stay")', () => {
+    const d = chooseAccount(dflt({ current: 'b', lastTurnAtMs: NOW - 60_000, cooldownUntilMs: { b: NOW + 60_000 }, usage: snap({ w: 96 }, { w: 20 }, { status: 'down' }) }));
     expect(d).toMatchObject({ account: 'c', switched: true, candidates: [], unknown: ['c'] });
     expect(d.reason).toMatch(/^쿨다운\(~\d\d:\d\d\) → 잔여량 모름 · C 전환$/);
   });
@@ -843,10 +828,10 @@ describe('같은 벤더 계정 자동 순환 꺼짐 (sameVendorRotation: false)'
 });
 
 describe('cli usage mode: trusted stale candidates (trustUntil)', () => {
-  // a: excluded (5h at the limit) so B and C decide; B stale for 30 min but trusted until its 5h reset.
+  // a: excluded (weekly at the limit) so B and C decide; B stale for 30 min but trusted until `trustUntil`.
   const trust = new Date(NOW + 2 * H).toISOString();
   const usageOf3 = (mode: UsageSnapshot['usageMode'], bTrust: boolean, bAge = 30 * 60_000): UsageSnapshot => {
-    const s = snap({ s: 99, w: 10 }, { s: 10, w: 20, status: 'stale', age: bAge }, { s: 40, w: 20 });
+    const s = snap({ w: 99 }, { w: 10, status: 'stale', age: bAge }, { w: 40 });
     if (bTrust) s.accounts.b = { ...s.accounts.b!, trustUntil: trust };
     return mode ? { ...s, usageMode: mode } : s;
   };
@@ -861,12 +846,111 @@ describe('cli usage mode: trusted stale candidates (trustUntil)', () => {
   it('고르게 분산: a fresh safe candidate beats a trusted-stale lower bound (B stale 10% vs C fresh 40% → C), with its reason', () => {
     const u = usageOf3('cli', true);
     expect(rankCandidates(dflt({ usage: u })).candidates.map((c) => c.account)).toEqual(['c', 'b']);
-    expect(chooseAccount(dflt({ usage: u })).reason).toBe('새 세션 · 분산: 5h C 60% 남음 · B 오래된 관측(추정)');
+    expect(chooseAccount(dflt({ usage: u })).reason).toBe('새 세션 · 분산: 주간 C 60% 남음 · B 오래된 관측(추정)');
   });
 
   it('usage-deck mode keeps the old order and reason: a stale card within STALE_MAX_MS is ranked by its numbers', () => {
     const u = usageOf3(undefined, false, 5 * 60_000);
     expect(rankCandidates(dflt({ usage: u })).candidates.map((c) => [c.account, c.stale])).toEqual([['b', true], ['c', false]]);
-    expect(chooseAccount(dflt({ usage: u })).reason).toBe('새 세션 · 분산: 5h B 90% 남음 > C 60% 남음');
+    expect(chooseAccount(dflt({ usage: u })).reason).toBe('새 세션 · 분산: 주간 B 90% 남음 > C 60% 남음');
+  });
+});
+
+describe('chooseAccount — Claude 5h 값이 카드에 남아 있어도 무시', () => {
+  const dropS = ({ s: _s, ...rest }: Spec): Spec => rest;
+  const a: Spec = { s: 100, w: 40 };
+  const b: Spec = { s: 0, w: 10 };
+  const c: Spec = { s: 50, w: 20 };
+  const clean = snap(dropS(a), dropS(b), dropS(c));
+  const left = snap(a, b, c);
+
+  it('ranking: the same order with or without the values, under both policies', () => {
+    for (const mk of [dflt, input]) {
+      const order = (usage: UsageSnapshot) => rankCandidates(mk({ usage })).candidates.map((x) => x.account);
+      expect(order(left)).toEqual(order(clean));
+    }
+    expect(rankCandidates(dflt({ usage: left })).candidates.map((x) => x.account)).toEqual(['b', 'c', 'a']);
+    // A low value does not win either: weekly decides against it.
+    expect(chooseAccount(dflt({ usage: snap({ s: 0, w: 50 }, { s: 100, w: 10 }, { s: 0, w: 60 }) })).account).toBe('b');
+  });
+
+  it('exclusion: an account at 5h 100% is a candidate; a too-old card at 5h 100% is unknown, not at its limit', () => {
+    const r = rankCandidates(dflt({ usage: snap({ s: 100, w: 10 }, { s: 100, w: 20 }, { s: 100, w: 30 }) }));
+    expect(r.candidates.map((x) => x.account)).toEqual(['a', 'b', 'c']);
+    expect(r.excluded).toEqual({});
+    const stale = rankCandidates(dflt({ usage: snap({ s: 100, w: 10, status: 'stale', age: 601_000 }, { w: 20 }, { w: 30 }) }));
+    expect(stale.unknown).toEqual(['a']);
+  });
+
+  it('force switch: a warm session at 5h 100% stays on its account, for either policy', () => {
+    const usage = snap({ s: 100, w: 10 }, { s: 0, w: 5 }, { s: 0, w: 5 });
+    for (const mk of [dflt, input]) {
+      const d = chooseAccount(mk({ current: 'a', lastTurnAtMs: NOW - 60_000, usage }));
+      expect(d).toMatchObject({ account: 'a', switched: false });
+      expect(d.reason).toMatch(/캐시 따뜻함/);
+    }
+    // No hysteresis bypass on a cold session either: 5 points of weekly do not move it.
+    expect(chooseAccount(dflt({ current: 'a', lastTurnAtMs: NOW - 2 * H, usage }))).toMatchObject({ account: 'a', switched: false, reason: '캐시 식음(120분 경과) · 현재 계정이 최적(주간 차이 25%p 미만) · A 유지' });
+  });
+
+  it('pin: a pin at 5h 100% is honoured, not blocked', () => {
+    const d = chooseAccount(dflt({ current: 'b', lastTurnAtMs: NOW - 60_000, pinned: 'a', usage: snap({ s: 100, w: 10 }, { w: 5 }, { w: 5 }) }));
+    expect(d).toMatchObject({ account: 'a', pinned: true, switched: true });
+    expect(d.pinBlocked).toBeUndefined();
+  });
+
+  it('never said: no reason or log line names a 5h value', () => {
+    for (const d of [
+      chooseAccount(dflt({ usage: left })),
+      chooseAccount(dflt({ current: 'a', lastTurnAtMs: NOW - 60_000, usage: snap({ s: 100, w: 86 }, b, c) })),
+      chooseAccount(input({ usage: left })),
+    ]) {
+      expect(d.reason).not.toMatch(/5h/);
+      expect(routeLogLine(null, d, testRegistry())).not.toMatch(/5h/);
+    }
+  });
+});
+
+describe('chooseAccount · 고르게 분산: 주간 기준 순서', () => {
+  it('lowest weekly first, whatever resets sooner', () => {
+    const r = rankCandidates(dflt({ usage: snap({ w: 20, resetH: 1 }, { w: 40, resetH: 2 }, { w: 0, resetH: 150 }) }));
+    expect(r.candidates.map((c) => c.account)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('within BALANCE_TIE_PCT: the protected account last, then the reset-urgency score', () => {
+    // 10, 12, 14: all tied. Scores B 18, C 8.6, A 0.88.
+    const usage = snap({ w: 12, resetH: 100 }, { w: 10, resetH: 5 }, { w: 14, resetH: 10 });
+    expect(rankCandidates(dflt({ usage })).candidates.map((c) => c.account)).toEqual(['b', 'c', 'a']);
+    expect(chooseAccount(dflt({ usage })).reason).toBe('새 세션 · 분산: 주간 비슷 · 리셋 임박 B');
+    // B has the lowest weekly and the best score, and still goes last when protected.
+    expect(rankCandidates(dflt({ protectedAccount: 'b', usage })).candidates.map((c) => c.account)).toEqual(['c', 'a', 'b']);
+    expect(chooseAccount(dflt({ protectedAccount: 'b', usage })).reason).toBe('새 세션 · 분산: 주간 비슷 · 리셋 임박 C');
+  });
+
+  it('the band is measured from what is left to rank each time: 0, 5, 10 is not one long tie', () => {
+    // A–B tie (B has the better score), C is past A's band. Then A alone, since C is still 10 away from it.
+    const usage = snap({ w: 0, resetH: 100 }, { w: 5, resetH: 10 }, { w: 10, resetH: 1 });
+    expect(rankCandidates(dflt({ usage })).candidates.map((c) => c.account)).toEqual(['b', 'a', 'c']);
+  });
+});
+
+describe('chooseAccount · 식은 세션 히스테리시스 (5h 값 없음)', () => {
+  const cold = (usage: UsageSnapshot, current: Account = 'b') => chooseAccount(dflt({ current, lastTurnAtMs: NOW - 2 * H, usage }));
+
+  it('no 5h row on any card: under 25 points it stays, at 25 it moves', () => {
+    const stays = snap({ w: 70 }, { w: 40 }, { w: 16 });
+    expect(Object.values(stays.accounts).map((u) => u?.fiveHour)).toEqual([null, null, null]);
+    expect(cold(stays)).toMatchObject({ account: 'b', switched: false, reason: '캐시 식음(120분 경과) · 현재 계정이 최적(주간 차이 25%p 미만) · B 유지' });
+    const moves = cold(snap({ w: 70 }, { w: 41 }, { w: 16 }));
+    expect(moves).toMatchObject({ account: 'c', switched: true });
+    expect(moves.reason).toMatch(/^캐시 식음\(120분 경과\) → C · 분산: 주간 C 84% 남음/);
+  });
+
+  it('already the best: stays, without the gap note', () => {
+    expect(cold(snap({ w: 70 }, { w: 10 }, { w: 40 }))).toMatchObject({ account: 'b', switched: false, reason: '캐시 식음(120분 경과) · 현재 계정이 최적 · B 유지' });
+  });
+
+  it('the current account past the threshold is forced off, however small the gap', () => {
+    expect(cold(snap({ w: 90 }, { w: 86 }, { w: 80 }))).toMatchObject({ account: 'c', switched: true });
   });
 });

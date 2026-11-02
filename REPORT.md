@@ -423,3 +423,231 @@ BRIEF10_PORT=9414 node scripts/brief10c-capture.mjs
 최종 타입 수정 후 빌드와 세 시나리오 캡처를 다시 실행해 통과했다. Chromium headless 153.0.8010.12를 사용했다. 이 작업의 검증용 프로세스는 정리했고 포트 9414–9416 종료를 확인했다. 운영 서비스·upstream 코드·ledger·package lock은 변경하지 않았다. 공용 transport/timeout은 유지하고 `shared.ts`에는 daily URL 한 줄만 추가했다. **merge/push/deploy/restart는 수행하지 않았다.**
 
 STATUS: DONE
+
+# Terminal redesign (BRIEF6)
+
+## Changes
+
+- Created `feat/terminal-redesign` from the fetched server main, `58b88d6`. Read `terminal-owner-1102.png` before implementation. The source repository `/home/max/ai-msg` was not modified.
+- `src/ui/terminalPresentation.ts`, `MessageView.tsx`, and `Chat.tsx`: combine consecutive tool/thinking records into quiet, expandable process groups, preserving original order, tool inspection, model provenance and turn boundaries. Narrative commentary remains visible. Repeated model labels appear on hover/focus; meaningful turn and role controls remain available. Explicit leading SUCCESS/PARTIAL/BLOCKED markers become small colored status tags.
+- `styles.css` and `App.tsx`: scope the redesign to Terminal, widen the normal transcript lane to 960px (wide setting 1040px), retain the larger Korean type scale, improve answer rhythm, distinguish user bubbles, and reduce repeated footer space. The hamburger remains exclusive to Terminal.
+- `Composer.tsx`, `Chat.tsx`, and `UsageStrip.tsx`: integrate cache state into a solid composer, clarify model/account/approval controls, enlarge send controls and simplify header quota summaries. Existing keyboard shortcuts and controls remain mounted.
+- `Sidebar.tsx`: remove markdown/status prefixes from previews, display status dots, and strengthen spacing and the active row. `FindBar.tsx` excludes content hidden inside any closed process disclosure. Historical-message memoization and grouped role summaries are covered by regression tests. `src/server/ws.tasks.test.ts` waits for server closure and uses bounded temporary-directory cleanup retries, fixing a teardown race found during validation without changing production code or assertions.
+- `scripts/qa/terminal-demo.ts`, `shoot-terminal.mjs`, `terminal-README.md`, `docs/terminal-redesign-plan.md`, and `shots-terminal/`: reproducible isolated real-session comparison, design decisions and browser inspection evidence.
+
+## Validation
+
+| Check | Final result |
+|---|---|
+| `npx vitest run --maxWorkers=4` | **357 files / 4,469 tests passed**, 83.24 s, exit 0 |
+| `npm run typecheck` | Passed |
+| `npm run build` | Passed, including bundle checks; final UI asset `main-xnOjKvfr.js` |
+| `node scripts/contrast-check.mjs` | All dark/light pairs passed |
+| `node scripts/qa/shoot-terminal.mjs shots-terminal before` | Eight baseline captures; same frozen real session and answer anchor |
+| `DIST="$PWD/dist/ui" node scripts/qa/shoot-terminal.mjs shots-terminal after` | Eight final captures; zero browser errors, failed API checks, error toasts or horizontal overflow |
+| `DIST=/home/max/msg-hub-design/repo/dist/ui LAYOUT_CHECKS=1 RDP_PORT=9344 node scripts/qa/shoot-terminal.mjs /tmp/terminal-final-layout-shots layout` | Final build passed 1.35× type scale, actual 400px split pane and 390px mobile composer bounds/menu checks |
+| Browser interactions | Process expand/collapse, options, model menu, usage menu and hamburger absence on home passed |
+| `git diff --check` | Passed |
+
+The fetched baseline passed 355 files / 4,446 tests. Validation exposed one fixed-pixel caret font-size violation and an existing WebSocket task fixture teardown race (`ENOTEMPTY` after all test assertions passed). The caret now uses the existing type token; the fixture awaits server closure before bounded cleanup. The font rule and all assertions were retained. The focused task suite passed all seven tests and typecheck after the fixture fix; the final full-suite result is above. Read-only review also identified and resolved historical-message rerenders, missing grouped role summaries and invisible nested search matches.
+
+## Before / after screenshots
+
+All screenshots use the same frozen long session and answer (normalized hash `cbc35fd3`). Desktop captures are 1440×900; mobile captures are 390×844 at device scale 1.
+
+| View | Before | After |
+|---|---|---|
+| Desktop tool-heavy turn | [before](shots-terminal/before-desktop-turn.png) | [after](shots-terminal/after-desktop-turn.png) |
+| Desktop long answer, top | [before](shots-terminal/before-desktop-answer-top.png) | [after](shots-terminal/after-desktop-answer-top.png) |
+| Desktop long answer, bottom | [before](shots-terminal/before-desktop-answer-bottom.png) | [after](shots-terminal/after-desktop-answer-bottom.png) |
+| Desktop session list | [before](shots-terminal/before-desktop-list.png) | [after](shots-terminal/after-desktop-list.png) |
+| Mobile tool-heavy turn | [before](shots-terminal/before-mobile-turn.png) | [after](shots-terminal/after-mobile-turn.png) |
+| Mobile long answer, top | [before](shots-terminal/before-mobile-answer-top.png) | [after](shots-terminal/after-mobile-answer-top.png) |
+| Mobile long answer, bottom | [before](shots-terminal/before-mobile-answer-bottom.png) | [after](shots-terminal/after-mobile-answer-bottom.png) |
+| Mobile session drawer | [before](shots-terminal/before-mobile-drawer.png) | [after](shots-terminal/after-mobile-drawer.png) |
+
+Personally inspected the before/after images and iterated on excessive footer gaps, composer height and mobile title space. The final turn replaces repeated pill stacks with compact process rows, keeps explanatory text visible, and gives the answer more usable width. Metrics are in `shots-terminal/before-inspection.json`, `after-inspection.json` and `layout-inspection.json`.
+
+## Reproduction and limits
+
+The owned, read-only demo runs on `127.0.0.1:9381`; occupied 9377 was left untouched. It freezes a production-parser snapshot of 1,000 real transcript messages (35 user, 490 assistant, 421 tool calls) from the Agentic Harness session, plus seven real sidebar titles/previews. Secret-shaped strings are redacted and tool payloads withheld; no raw transcript is committed. Usage is explicitly offline/empty, demo pin selection is synthetic, and fork status is an isolated no-divergence fixture. These are not claims about live account state.
+
+The browser uses a file-origin build and CDP bridge to the isolated host because HTTP main-frame navigation stalls in this environment. Unauthenticated reads return 401 and mutations return 405; the host cannot execute turns. Live queue/running-task controls were not exercised in the browser, although the full component suite passed. Leading bare uppercase status words followed by Korean text intentionally use the owner's report convention; ordinary prose beginning with the same pattern may also be tagged.
+
+The `frontend-design` skill was applied, with calibration from [The Seeker](https://ref.theseeker.io/?category=dashboard), [Refero](https://styles.refero.design/), [glass.samasante.com](https://glass.samasante.com/), [Navbar Gallery](https://navbar.gallery/), [Cursor Agent](https://cursor.com/docs/agent/overview), [Warp](https://www.warp.dev/ai) and [Raycast AI](https://www.raycast.com/core-features/ai). Existing hub tokens take precedence. Claude delegation was quota-blocked and the other external providers were unavailable; native delegated implementation, QA and review completed the work.
+
+No push, merge into main, deployment, unit restart, protected-service access or ledger change occurred. No required work remains blocked.
+
+STATUS: DONE
+
+# Terminal Hermes + polish (BRIEF7)
+
+## Changes
+
+- `HermesEngine.ts`, `hermesAcpBootstrap.py`, `TurnRunner.ts`, `SessionState.ts`, and `ws.ts`: Hermes is a peer engine with explicit new-session selection, ACP streaming, tool/thought events, native session resume, persisted model/title/permission mode and a bounded display transcript. The model picker shows `gpt-6-astra`; automatic routing does not silently select Hermes.
+- Installed Hermes 0.18.2 reloads dotenv and had native approval bypass enabled. The version-guarded bootstrap forces manual native requests inside the child process, preserving native auth/history and modifying no global configuration. MSG resolves each permission using the current user-selected mode; default does not use YOLO, explicit auto-approve permits once, edit-only checks paths, and unsupported plan/commander modes refuse safely. No secret values or raw native stderr reach the client.
+- `ModelPicker.tsx`, `NewChat.tsx`, `Pane.tsx`, `SessionChip.tsx`, `EngineMark.tsx`, and sidebar/state files: complete Hermes account identity, model selection and session reopening; five-engine accents, restrained empty-state treatment and keyboard/focus affordances. Unsupported effort/cwd actions are hidden for Hermes.
+- `Chat.tsx`, `MessageView.tsx`, `stickToBottom.ts`, and `styles.css`: streaming caret, process disclosure motion, user-controlled smooth bottom scrolling with upward-scroll cancellation, code-block treatment/copy affordances and reduced-motion support. Existing theme tokens and type-scale invariants remain intact.
+- CLI mocks, permission-policy fixtures, runner/socket integration tests and packaging tests cover streaming, resume, images, cancellation, live permission changes, secret-safe errors and the bundled Python resource. `scripts/qa/*` adds an isolated read-only synthetic Hermes fixture; design, runtime and independent-review notes are in `docs/terminal-brief7-*.md` and `docs/terminal-hermes-engine.md`.
+
+## Validation
+
+| Check | Result |
+|---|---|
+| `npx vitest run --maxWorkers=2` | 360 files / 4,497 tests passed; 365.01 s |
+| `npm run typecheck` | Passed |
+| `npm run build` | Passed, including bundle checks |
+| `npm run build:server` | Passed, including Python bootstrap resource |
+| `node scripts/contrast-check.mjs` | All dark/light pairs passed |
+| Installed Python `-I src/server/engine/hermesAcpBootstrap.py --check-policy` | `{"msgPolicySafe": true}`; no provider turn |
+| `DIST=/tmp/msg-brief7-before-header/ui node scripts/qa/shoot-terminal.mjs shots-terminal-v2 hermes` | 16 captures, desktop/mobile interaction checks passed |
+| `git diff --check` | Passed |
+
+An earlier full run exposed theme-token placement, an outdated engine-icon expectation and the packaging path allowlist; these were fixed with existing invariants retained. An unchanged Grok termination timing assertion exceeded its wall-time budget under host load; its isolated 74-test suite passed, followed by the final complete run above.
+
+## Screenshots and review
+
+Desktop is 1440×900, mobile 390×844. `shots-terminal-v2/hermes-inspection.json` records zero horizontal overflow, browser errors and error toasts, an editable Hermes composer, and reachable model/engine selection. Personally inspected final desktop/mobile captures and iterated after the first browser run revealed an unknown-account banner for the new Hermes seat; the account classification and regression test were corrected before final capture.
+
+| View | Desktop | Mobile |
+|---|---|---|
+| Hermes session/header | [desktop](shots-terminal-v2/hermes-desktop-header.png) | [mobile](shots-terminal-v2/hermes-mobile-header.png) |
+| Existing-session model picker | [desktop](shots-terminal-v2/hermes-desktop-model-picker.png) | [mobile](shots-terminal-v2/hermes-mobile-model-picker.png) |
+| New-session Hermes selection | [desktop](shots-terminal-v2/hermes-desktop-new-hermes-picker.png) | [mobile](shots-terminal-v2/hermes-mobile-new-hermes-picker.png) |
+| Empty state | [desktop](shots-terminal-v2/hermes-desktop-empty-state.png) | [mobile](shots-terminal-v2/hermes-mobile-empty-state.png) |
+
+The fixture is synthetic and cannot execute turns. `header-before-*` captures retain the BRIEF6 real-session comparison. The double identity, red approval chip and misleading SUCCESS marker are retained here specifically for the separately requested BRIEF7b follow-up.
+
+The `frontend-design` skill was applied with [The Seeker dashboard](https://ref.theseeker.io/?category=dashboard), [Refero](https://styles.refero.design/), [glass.samasante.com](https://glass.samasante.com/) and [Scrolltide](https://www.scrolltide.co/) references. No new image asset was needed. External delegation was unavailable because of quota/credentials; native delegated implementation and review completed the work.
+
+## Limits
+
+No paid/live provider turn was run: adapter behavior is verified with CLI mocks, installed-runtime offline policy checks, and synthetic browser evidence. The policy bridge intentionally supports Hermes 0.18.2 only; a Hermes upgrade requires a reviewed adapter update. MSG retains the last 200 display records while Hermes keeps its native full conversation. Existing non-ACP CLI sessions are not imported.
+
+No push, deployment, unit restart, protected-port access, ledger change or modification of `/home/max/ai-msg` occurred.
+
+STATUS: DONE
+
+# Header fix (BRIEF7b)
+
+## Changes
+
+- Continued after BRIEF7 was recorded DONE and committed as `b21f4ab`. Read `header-owner-1102.png` and used the same synthetic Hermes conversation for before/after comparisons.
+- `SessionChipHead.tsx` and `styles.css`: a single engine mark (or chosen custom avatar), title, small engine/model chip and aligned caret form one row. Equivalent title/folder slugs are no longer repeated; differing paths remain in the tooltip and folder actions remain in the menu. Rename, switcher, custom icon, focus and drag behavior are retained.
+- `Chat.tsx` and styles: automatic approval stays visibly labeled `자동 승인` with a small amber icon and explanatory tooltip. Composer approval text follows the same quieter color. No permission semantics changed.
+- `terminalPresentation.ts`, `MessageView.tsx`, and `Chat.tsx`: completed turns containing a failed tool show PARTIAL even when the answer says SUCCESS. Errors are collected across commentary and model changes, explicit turn IDs survive in-turn steering, historical null IDs reset at user boundaries, busy gaps remain unfinished, and BLOCKED stays authoritative. Original message text is preserved.
+- `App.tsx`: Terminal phone layout reserves space for the session title by using existing bottom navigation for mode switching and moving quota access to the sidebar account menu's `사용량 보기`. Usage history, limits, global search/activity and focus restoration remain available. Screenshot inspection prompted this iteration when the first mobile draft left only two title characters.
+- Regression tests cover failed/clean turns, cross-group errors, previous-turn isolation, steering and busy gaps, single/custom identity, path normalization, and the real phone drawer-to-usage interaction. `scripts/qa/shoot-terminal.mjs` now checks visible controls, title space, partial status and the reachable mobile usage route.
+
+## Validation
+
+| Check | Result |
+|---|---|
+| `npx vitest run --maxWorkers=2` | 360 files / 4,506 tests passed; 311.55 s |
+| `npm run typecheck` | Passed |
+| `npm run build` | Passed, including bundle checks; final asset `main--AzAaDYi.js` |
+| `RDP_PORT=9345 HEADER_CHECKS=1 DIST=/home/max/msg-hub-design/repo/dist/ui node scripts/qa/shoot-terminal.mjs shots-terminal-v2 header-after` | 16 captures and both-width header/interaction checks passed |
+| `node --check scripts/qa/shoot-terminal.mjs` | Passed |
+| `git diff --check` | Passed |
+
+## Before / after
+
+| View | Before | After |
+|---|---|---|
+| Desktop header and failed-tool turn, 1440×900 | [before](shots-terminal-v2/header-before-hermes-desktop-turn.png) | [after](shots-terminal-v2/header-after-desktop-header.png) |
+| Mobile header and failed-tool turn, 390×844 | [before](shots-terminal-v2/header-before-hermes-mobile-turn.png) | [after](shots-terminal-v2/header-after-mobile-header.png) |
+| Desktop model picker | [before](shots-terminal-v2/hermes-desktop-model-picker.png) | [after](shots-terminal-v2/header-after-desktop-model-picker.png) |
+| Mobile model picker | [before](shots-terminal-v2/hermes-mobile-model-picker.png) | [after](shots-terminal-v2/header-after-mobile-model-picker.png) |
+
+Final capture contains sixteen views. Root personally inspected desktop/mobile header and picker images. `header-after-inspection.json` records the same source/answer hash as BRIEF7, exactly one identity, visible amber automatic approval, discoverable full Hermes model, PARTIAL with one tool error, reachable usage and no page overflow or browser errors. The final mobile title has 105.28px of visible width. Mobile usage was opened through the visible drawer account menu and closed successfully. A separate task occupied the usual CDP port during capture; only our own stalled browser was stopped, and final capture used 9345. The owned read-only QA host was stopped after completion.
+
+The frontend-design references and design direction are documented in `docs/terminal-brief7-design.md`; independent status/header review is in `docs/terminal-brief7b-review.md`. Screenshots are synthetic UI evidence, not a live provider turn. BRIEF7's Hermes 0.18.2 runtime restriction and no-live-model verification limit still apply.
+
+No push, merge into `/home/max/ai-msg`, deployment, unit restart, protected-port access or ledger change occurred. No required work remains.
+
+STATUS: DONE
+
+# Usage panel (BRIEF7c)
+
+## Changes
+
+- `UsageStrip.tsx`, `UsageSheet.tsx`, `usageSeats.tsx`, and `styles.css`: shared provider identity and account badges, one thin remaining-capacity bar, aligned weekly/5h/Fable rows, calm exhaustion chips containing relative reset times, exact KST tooltips, and one muted login action per logged-out account. GPT explicitly identifies Codex and the quota shared with Hermes. Fixed the inherited flex-wrap rule that pushed Grok into a clipped second column.
+- `EngineMark.tsx`: local inline Claude, OpenAI, Gemini, and Grok identifiers; published Claude/Grok paths include source attribution and MIT notice in `docs/usage-brand-assets-LICENSE.txt`. No hotlinked image asset or new raster artwork.
+- `codexLiveUsage.ts`, `CodexUsagePoller.ts`, HTTP/server wiring and `App.tsx`: authenticated usage refresh on open/focus, using Codex's non-inference `account/rateLimits/read` before timestamped rollout fallback. Requests coalesce and are throttled; CLI owns authentication. Complete live readings clear absent windows, while malformed readings retain fallback data.
+- `UsageService.ts`, `TurnRunner.ts`, and `engineLimits.ts`: preserve original observation times, prevent older/equal/undated dashboard data from reviving old limits, clear pre-turn exhaustion/cooldown after Codex or Hermes success, persist the success timestamp against restart replay, and preserve measured new limits, credits, and newer concurrent failures. Missing or expired quota remains unknown rather than an invented remaining percentage.
+- Regression tests cover live RPC/auth/timeout, source precedence, missing windows, short-interval reset/success, restart replay, concurrent failures, dynamic account labels/order, KST times, single-bar layout, login actions, and open/focus refresh. Design, implementation, QA and independent-review notes are in `docs/usage-brief7c-*.md`.
+
+## Freshness evidence
+
+The owner crop showed GPT exhausted until November 4. The previous poller read historical rollout records only; successful turns retained a cooldown and could re-date an old record as current. A read-only query through the new helper against the installed Codex CLI succeeded at **2026-11-02 02:48:20 KST**: **weekly used 7%, remaining 93%**. The response contained no five-hour window. This is point-in-time live evidence; no inference turn, login, credit reset, or account mutation was sent. The existing running application was not restarted or deployed, so it will receive the fix only through a later deployment.
+
+## Screenshots and review
+
+`shots-terminal-v2/usage-before-*` and `usage-after-*` contain 18 PNGs per revision plus inspection JSON, covering dark/light desktop popover, desktop sheet and mobile sheet. The same synthetic seven-account fixture and frozen **November 2, 02:00 KST** clock are used throughout; GPT intentionally remains exhausted in these images to compare the exhausted design. These screenshots are visual evidence, separate from the live quota observation above.
+
+Root personally inspected dark/light popovers, the dark phone sheet and the light phone sheet's scrolled lower rows. All six after views pass strict bounds/overflow checks, display all seven accounts, use one bar for each known account and no bar for logged-out accounts, contain exactly two login buttons, and expose Grok after scrolling. No browser/API errors or external image requests were observed. The before desktop popover records the clipped Grok defect; the final layout fixes it. A later account-badge title attribute adds full-name discovery without changing the captured layout.
+
+| View | Before | After |
+|---|---|---|
+| Dark desktop popover | [before](shots-terminal-v2/usage-before-dark-desktop-popover-crop.png) | [after](shots-terminal-v2/usage-after-dark-desktop-popover-crop.png) |
+| Light desktop popover | [before](shots-terminal-v2/usage-before-light-desktop-popover-crop.png) | [after](shots-terminal-v2/usage-after-light-desktop-popover-crop.png) |
+| Dark mobile sheet | [before](shots-terminal-v2/usage-before-dark-mobile-sheet-crop.png) | [after](shots-terminal-v2/usage-after-dark-mobile-sheet-crop.png) |
+| Light mobile lower rows | [before](shots-terminal-v2/usage-before-light-mobile-sheet-bottom.png) | [after](shots-terminal-v2/usage-after-light-mobile-sheet-bottom.png) |
+
+The `frontend-design` skill informed the plan and critique, with [The Seeker](https://ref.theseeker.io/r/5649) and [glass.samasante.com](https://glass.samasante.com/) references. Existing hub typography and surface tokens are retained. External delegation was unavailable (Claude Fable quota, missing GPT/Grok API credentials); native agents handled UI, freshness and QA, followed by independent freshness review. Its source-precedence, malformed-input and concurrent-cooldown findings were fixed and regression-tested.
+
+## Validation
+
+| Check | Result |
+|---|---|
+| `npx vitest run --maxWorkers=2` | 361 files / 4,526 tests passed; 238.81 s |
+| `npm run typecheck` | Passed |
+| `npm run build` | Passed, including bundle check |
+| `npm run build:server` | Passed |
+| `node scripts/contrast-check.mjs` | All dark/light token pairs passed |
+| `node --check scripts/qa/shoot-terminal.mjs` and `node --check scripts/qa/usage-capture.mjs` | Passed |
+| `QA_STATE=/tmp/msg-usage-brief7c-qa-state.json DIST=/home/max/msg-hub-design/repo/dist/ui CAPTURE=usage RDP_PORT=9345 node scripts/qa/shoot-terminal.mjs shots-terminal-v2 usage-after` | Passed, six surfaces / 18 PNGs, no errors |
+| `git diff --check` | Passed |
+
+An initial suite overlapped review edits and was stopped because its transform cache mixed old source with new tests. The subsequent settled-source suite passed 4,525 tests and found one old Grok reset-text expectation missing the now-explicit KST suffix. That expectation now asserts the exact KST timestamp; its focused nine-test suite passed before the final whole-suite run above. Dynamic account tests were also updated for the new badge structure while preserving ordering, custom names and retired-account coverage.
+
+The owned synthetic QA host and browser were stopped after capture. No push, deployment, production restart, protected-service access or modification of `/home/max/ai-msg` occurred. Live quota fallback remains best-effort when Codex is unauthenticated, unsupported or offline; no inference test was run. No required work remains.
+
+STATUS: DONE
+
+
+## BRIEF7d
+
+Claude's 5-hour window is gone from every display and routing decision. Claude shows Weekly (7d) and Fable when known; Codex/GPT, Grok and Antigravity keep their own displays, including GPT's 5h row.
+
+### Changed files
+
+- Usage intake: `src/server/usage/UsageService.ts` (single chokepoint — Claude `fiveHour` is dropped from deck cards, CLI reads and turn events, persisted values are ignored and removed on the next write; lift/stale no longer need 5h), `src/server/usage/ClaudeUsagePoller.ts` (comment).
+- Routing: `src/server/routing/AccountRouter.ts`, `src/server/routing/AutoModel.ts` (comment).
+- Other surfaces: `src/server/hub/self.ts`, `src/server/mini/status.ts`, `src/shared/mini-types.ts`, `src/shared/protocol.ts`, `src/ui/components/usageSeats.tsx`, `src/ui/components/AccountPicker.tsx`, `src/ui/components/SettingsView.tsx`, `src/ui/mini/render.ts`, `src/ui/styles.css` (comment), `scripts/widget/msg-widget.js`.
+- Docs: `README.md`, `README.ko.md`, `docs/widget.ko.md`.
+- Tests: `src/server/routing/{AccountRouter,AutoModel,AutoRoute}.test.ts`, `src/server/usage/{UsageService,ClaudeUsagePoller}.test.ts`, `src/server/hub/self.test.ts`, `src/server/mini/status.test.ts`, `src/server/ws.status.test.ts`, `src/server/turn/TurnRunner{,.accounts,.pin}.test.ts`, `src/ui/App.test.tsx`, `src/ui/mini/{main,render}.test.ts`, `src/ui/components/{UsageStrip,usageSeats,AccountPicker,Accounts}.test.tsx`.
+
+### Behaviour that changes as a result
+
+- Balance routing: lowest weekly use first. Within 5 points, the protected account goes last, then the drain score decides.
+- A cold session moves only for a weekly gap of 25 points or more, so B 22 vs C 0 now stays. Previously a cold session could also move on a 5h difference; with no 5h data it never moved.
+- Residual Claude 5h data is ignored everywhere in the router, not only in balance ordering: exclude, force-move, pin at limit, stale at-limit and the drain policy's safety check. Real rejections still go through the existing cooldown path.
+- A down card with a fresh weekly observation now lifts to ok even when its old 5h row is present, so such an account becomes routable sooner.
+- The hub seat table keeps its 5시간 column for GPT; Claude rows show "—". The mini API keeps `left5h` / `resets5h`, null for Claude.
+
+### Validation
+
+| Check | Result |
+|---|---|
+| `npx vitest run --maxWorkers=2` | 361 files / 4,550 tests passed |
+| `npm run typecheck` | Passed |
+| `npm run build` | Passed |
+| `npm run build:server` | Passed |
+| `git diff --check` | Passed |
+
+Screenshot: `shots-terminal-v2/usage-no5h-desktop.png` (usage popover, dark desktop, synthetic `USAGE_FIXTURE=brief7c` data that still carries a Claude 5h value, showing it is not displayed). Inspected: Claude rows 주간/Fable only, GPT 주간/5h intact, no layout gap.
+
+Not verified: `scripts/widget/msg-widget.js` was edited and its mini-render counterpart tested, but the widget was not run on a Scriptable device. Not changed: mockups under `scripts/render/` and `scripts/qa/usage-fixture.ts`. No live quota was read. No push, merge, deployment or restart occurred.
+
+STATUS: DONE

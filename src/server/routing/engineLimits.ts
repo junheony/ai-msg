@@ -67,6 +67,8 @@ function grokPeriodUsage(usage: UsageSnapshot, nowMs: number): { periodUsedPct: 
 export function buildEngineLimits(i: EngineLimitsInput): EngineLimits {
   const gpt = i.usage.gpt;
   const gptDown = !gpt || gpt.status === 'down';
+  const weeklyReset = ms(gpt?.weekly?.resetsAt);
+  const gptWeekly = !gptDown && !gpt.weekly?.estimated && (weeklyReset === null || weeklyReset > i.nowMs) ? gpt.weekly : null;
   const gem = i.usage.gemini;
   const gemDown = !gem || gem.status === 'down';
   const g1rem = gemDown ? { pro: null, flash: null } : remainingByGroup(gem.buckets);
@@ -81,8 +83,8 @@ export function buildEngineLimits(i: EngineLimitsInput): EngineLimits {
     claude: { usage: i.usage, cooldownUntilMs: i.claude.cooldownUntilMs, protectedAccount: i.claude.protectedAccount, accounts: i.claude.accounts },
     codex: {
       installed: i.codex.installed,
-      weeklyUsedPct: gptDown ? null : gpt.weekly?.usedPct ?? null,
-      weeklyResetsAtMs: gptDown ? null : ms(gpt.weekly?.resetsAt),
+      weeklyUsedPct: gptWeekly?.usedPct ?? null,
+      weeklyResetsAtMs: gptWeekly ? weeklyReset : null,
       observedAtMs: gptDown ? null : ms(gpt.fetchedAt),
       cooldownUntilMs: i.codex.cooldownUntilMs,
     },

@@ -7,17 +7,17 @@ import { SessionCwdDialog } from './SessionCwdDialog';
 import { Sidebar } from './Sidebar';
 
 const noop = () => {};
-const s = (id: string, title: string, engine?: 'gemini') => ({ sessionId: id, account: 'b' as const, cwd: '/w/one', projectDir: '/p', file: '/f', title, lastModified: Date.now(), sizeBytes: 1, ...(engine ? { engine } : {}) });
+const s = (id: string, title: string, engine?: 'gemini' | 'hermes') => ({ sessionId: id, account: 'b' as const, cwd: '/w/one', projectDir: '/p', file: '/f', title, lastModified: Date.now(), sizeBytes: 1, ...(engine ? { engine } : {}) });
 const badge: TurnBadge = { account: 'b', model: 'opus', reason: '', usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0, costUsd: 0 } as never, modelNote: null };
 const assistant = (extra: object) => ({ kind: 'assistant' as const, turnId: 't', text: 'ok', toolCalls: [], badge: null, streaming: false, error: null, notes: [], attempts: [], ...extra });
 
 describe('세션 ⋯ 메뉴: 작업 폴더 바꾸기 · 복제', () => {
   afterEach(cleanup);
 
-  it('the sidebar row menu offers both and hands over the session; a Gemini session gets no 작업 폴더 바꾸기', () => {
+  it.each(['gemini', 'hermes'] as const)('the sidebar retains duplication but hides changing folders for %s', (engine) => {
     const onSetCwd = vi.fn();
     const onDuplicate = vi.fn();
-    const projects = [{ cwd: '/w/one', name: 'one', pinned: false, sessions: [s('s1', 'first'), s('g1', 'gem', 'gemini')] }];
+    const projects = [{ cwd: '/w/one', name: 'one', pinned: false, sessions: [s('s1', 'first'), s('g1', 'gem', engine)] }];
     render(<Sidebar projects={projects} currentSessionId={null} onOpen={noop} onNew={noop} onRefresh={noop} onRename={noop} onSetCwd={onSetCwd} onDuplicate={onDuplicate} />);
     const menus = () => screen.getAllByLabelText('세션 메뉴');
     const rowOf = (title: string) => menus().find((b) => b.closest('li, [role="listitem"], .session-row, div')?.textContent?.includes(title))!;

@@ -106,7 +106,7 @@ beforeAll(async () => {
   });
   store2 = new AttachmentStore(path.join(base, 'att'));
   await store2.init();
-  const runner = new TurnRunner({ accounts: testRegistry(), attachments: store2, engine: stub, usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: path.join(base, 'codex-sessions') });
+  const runner = new TurnRunner({ accounts: testRegistry(), attachments: store2, engine: stub, usage, index, store, cooldownDir: path.join(base, 'cd'), protectedAccount: null, auditFile: path.join(base, 'audit.log'), projectsRoots: rootsOf(roots), codex: null, codexSessionsRoot: path.join(base, 'codex-sessions'), hermes: { async *runTurn(req) { const id = req.resumeSessionId ?? 'ws-hermes'; await req.onSessionId?.(id); yield { kind: 'init', sessionId: id, model: 'gpt-6-astra' }; yield { kind: 'delta', text: 'Hermes response' }; yield okResult(id, 'Hermes response'); } } });
   pins = new PinStore(path.join(base, 'pins.json'));
   await pins.load();
   settings = new SettingsStore(path.join(base, 'settings.json'));
@@ -1037,5 +1037,31 @@ describe('QuestionBroker answer validation (D8)', () => {
     expect(b.resolve('r1', { other: 'x' })).toBe(true);
     expect(await p).toBeNull();
     expect(sent.at(-1)).toEqual({ type: 'question_resolved', requestId: 'r1', answers: null });
+  });
+});
+
+
+describe('Hermes websocket flow', () => {
+  it('advertises availability, creates/sends, lists, reopens and resumes the same Hermes session', async () => {
+    wsDeps.hermesAvailable = true;
+    const { ws } = await connect({ Origin: origin, Cookie: COOKIE });
+    const hello = await collect(ws, (m) => m.type === 'hello');
+    expect(hello[0]).toMatchObject({ type: 'hello', hermes: { available: true } });
+    const sent = collect(ws, (m) => m.type === 'index');
+    ws.send(JSON.stringify({ type: 'send', sessionId: null, cwd: work, text: 'Hermes new', engine: 'hermes', model: 'gpt-6-astra', permissionMode: 'default' }));
+    const events = await sent;
+    expect(events.find((m) => m.type === 'turn_started')).toMatchObject({ engine: 'hermes', account: 'hermes' });
+    expect(events.find((m) => m.type === 'turn_result')).toMatchObject({ ok: true, sessionId: 'ws-hermes' });
+    const listed = events.find((m) => m.type === 'index');
+    expect(listed?.type === 'index' && listed.projects.flatMap((p) => p.sessions).some((s) => s.sessionId === 'ws-hermes' && s.engine === 'hermes')).toBe(true);
+    const opened = collect(ws, (m) => m.type === 'history');
+    ws.send(JSON.stringify({ type: 'open_session', sessionId: 'ws-hermes' }));
+    const history = (await opened).find((m) => m.type === 'history');
+    expect(history).toMatchObject({ engine: 'hermes', sessionModel: 'gpt-6-astra', permissionMode: 'default', messages: [expect.objectContaining({ kind: 'user', text: 'Hermes new' }), expect.objectContaining({ kind: 'assistant', text: 'Hermes response' })] });
+    const resumed = collect(ws, (m) => m.type === 'turn_result');
+    ws.send(JSON.stringify({ type: 'send', sessionId: 'ws-hermes', cwd: work, text: 'Hermes resume', engine: 'claude' }));
+    expect((await resumed).find((m) => m.type === 'turn_started')).toMatchObject({ engine: 'hermes', sessionId: 'ws-hermes' });
+    ws.close();
+    wsDeps.hermesAvailable = false;
   });
 });

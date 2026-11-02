@@ -12,6 +12,7 @@ export const CONCISE_ENGINE_LABEL: Record<EngineKind, string> = {
   codex: 'GPT',
   gemini: 'Gemini',
   grok: 'Grok',
+  hermes: 'Hermes',
 };
 
 /**

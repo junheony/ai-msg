@@ -51,6 +51,7 @@ function modelField(pane: PaneState, model: ModelChoice): { model?: ModelChoice 
 
 /** 자동: effort is 자동 too unless the user picked one (null → omitted; the server picks per model). */
 function paneEffort(pane: PaneState, model: ModelChoice): Effort | null {
+  if ((pane.session?.sessionId ? pane.session.engine : pane.engine) === 'hermes') return null;
   return model === 'auto' ? pane.autoEffort : pane.efforts[engineOf(model)];
 }
 
@@ -209,7 +210,7 @@ export const TOGGLE_SIDE_EVENT = 'deck:toggle-side';
 
 export function Pane({ pane, app, active, closable, dispatch, send, onClose, onOpenSession, onStartChat, onStartChatSplit, hidden, newChatCwd, uploadFn, sessionActions, grip, onShift, floating, onFloat, onDock, onArrange, onToggleMax, maximized, collapsed, onToggleCollapse, onLayouts, onAddPane, onMaxPane, paneMaxed, headSlot, onPalette }: {
   pane: PaneState;
-  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'gemini' | 'grok' | 'usage' | 'projects' | 'defaultPermMode' | 'pins' | 'sessionIcons' | 'commanders' | 'commanderRefusals' | 'commanderMaxTurns' | 'tasks' | 'taskCap' | 'suggestions'>>;
+  app: Pick<AppState, 'pending' | 'questions' | 'codexAvailable'> & Partial<Pick<AppState, 'connected' | 'hermesAvailable' | 'gemini' | 'grok' | 'usage' | 'projects' | 'defaultPermMode' | 'pins' | 'sessionIcons' | 'commanders' | 'commanderRefusals' | 'commanderMaxTurns' | 'tasks' | 'taskCap' | 'suggestions'>>;
   active: boolean;
   closable: boolean;
   /** The ⋮⋮ handle in the header: drag it to reorder the pane, pull it off into a card, or drop a card back. Absent = no handle. */
@@ -403,7 +404,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const mod = (keys: string) => modKeys(keys, isMacPlatform());
   const phone = useIsPhone();
   const fileMenu: HeadMenuItem[] = [];
-  const desktopOpen = useOpenInDesktop(s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && s.engine !== 'grok' ? s.sessionId : null, (message) => dispatch({ type: 'show_error', message }));
+  const desktopOpen = useOpenInDesktop(s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && s.engine !== 'grok' && s.engine !== 'hermes' ? s.sessionId : null, (message) => dispatch({ type: 'show_error', message }));
   if (desktopOpen) fileMenu.push({ label: 'Desktop에서 열기', run: desktopOpen, group: 'session' });
   // 보기: 파일 패널 right after 대화에서 찾기 (spec §3.8 order); 명령 팔레트… closes the group (after 새 세션으로 이어가기)
   // — phone only: its only way to ⌘K. A desktop has ⌘K and the sidebar's search, and its menu must fit the window.
@@ -429,7 +430,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   if (closable) fileMenu.push({ label: '이 창 닫기', hint: mod('⇧X'), run: onClose, group: 'window' });
   // 총사령탑 (servers with 'commander', Claude sessions with an id): 걸기… opens the sheet, or 정지 while one is on. All of it
   // is what the server last said (the `commander` view, restored on reconnect from history/catchup) — nothing kept here.
-  const commandSid = s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && s.engine !== 'grok' && has('commander') ? s.sessionId : null;
+  const commandSid = s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && s.engine !== 'grok' && s.engine !== 'hermes' && has('commander') ? s.sessionId : null;
   const commander = commandSid ? app.commanders?.[commandSid] ?? null : null;
   const commanderRefusal = commandSid ? app.commanderRefusals?.[commandSid] ?? null : null;
   const commanderOn = isCommanderActive(commander);
@@ -465,20 +466,20 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const busy = pane.activeTurnId !== null || pane.awaitingStart;
   const onModel = (m: ModelChoice) => dispatch({ type: 'set_model', model: m, paneId: pane.id });
   const onEffort = (e: Effort | null) => dispatch(model === 'auto' ? { type: 'set_auto_effort', effort: e, paneId: pane.id } : { type: 'set_effort', engine: engineOf(model), effort: e ?? pane.efforts[engineOf(model)], paneId: pane.id });
-  const fork = s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && s.engine !== 'grok' && (
+  const fork = s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && s.engine !== 'grok' && s.engine !== 'hermes' && (
     <ForkMenu sessionId={s.sessionId} busy={busy} onResolved={() => send({ type: 'open_session', sessionId: s.sessionId! })} onError={(message) => dispatch({ type: 'show_error', message })} />
   );
   // 새 세션으로 이어가기: Claude sessions with an id, nothing running.
-  const canHandoff = !!s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && s.engine !== 'grok' && !busy;
+  const canHandoff = !!s?.sessionId && s.engine !== 'codex' && s.engine !== 'gemini' && s.engine !== 'grok' && s.engine !== 'hermes' && !busy;
   const projects = app.projects ?? [];
   const entry = s?.sessionId ? projects.flatMap((p) => p.sessions).find((x) => x.sessionId === s.sessionId) : undefined;
   // 메시지 편집 갈래: Claude sessions with an id; otherwise 편집 puts the text in the composer (the note says why).
   const canBranch = canHandoff;
   // The server refuses to resume a session whose account was retired or is not configured any more: said before the send.
-  const on = s?.sessionId && s.account && s.account !== 'gpt' && !isGeminiAccount(s.account) && !isGrokAccount(s.account) && has('accounts') ? s.account : null;
+  const on = s?.sessionId && s.account && s.account !== 'gpt' && s.account !== 'hermes' && !isGeminiAccount(s.account) && !isGrokAccount(s.account) && has('accounts') ? s.account : null;
   const names = useAccounts();
   const gone = on ? names.look(on).kind : null;
-  const editNote = !s?.sessionId ? '아직 저장되지 않은 새 세션이라 입력창에 넣습니다' : s.engine === 'codex' || s.engine === 'gemini' || s.engine === 'grok' ? 'GPT·Gemini·Grok 세션은 대화를 갈라 편집할 수 없어 입력창에 넣습니다' : busy ? '실행 중에는 입력창에 넣습니다' : null;
+  const editNote = !s?.sessionId ? '아직 저장되지 않은 새 세션이라 입력창에 넣습니다' : s.engine === 'codex' || s.engine === 'gemini' || s.engine === 'grok' || s.engine === 'hermes' ? 'GPT·Gemini·Grok·Hermes 세션은 대화를 갈라 편집할 수 없어 입력창에 넣습니다' : busy ? '실행 중에는 입력창에 넣습니다' : null;
   // Stable while the index and the session stay the same, so the memoized transcript does not re-render on every delta.
   const openRef = useRef(onOpenSession);
   openRef.current = onOpenSession;
@@ -529,7 +530,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
   const regenModels = useMemo(() => modelChoices(sessionEngine).filter((m) => m !== 'auto'), [sessionEngine]);
   const regenBranch = canBranch && !blocked;
   // GPT / Gemini cannot branch; their last prompt goes again with the picked model (their sessions keep their own model).
-  const regenRetry = !!sid && (s?.engine === 'codex' || s?.engine === 'gemini' || s?.engine === 'grok') && !busy && !blocked;
+  const regenRetry = !!sid && (s?.engine === 'codex' || s?.engine === 'gemini' || s?.engine === 'grok' || s?.engine === 'hermes') && !busy && !blocked;
   const regen = useMemo<Regenerate | null>(() => {
     if (!sid) return null;
     const branch = (turn: ReplyTurn, m?: ModelChoice) => {
@@ -559,7 +560,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
         onArchive: entry.codexArchived ? undefined : () => sessionActions.onArchive(entry.sessionId, !entry.archived),
         onDelete: () => sessionActions.onDelete(entry),
         deleteBlocked: deleteBlockedReason(entry),
-        ...(sessionActions.onSetCwd && (entry.engine ?? 'claude') !== 'gemini' && entry.engine !== 'grok' ? { onSetCwd: () => sessionActions.onSetCwd?.(entry) } : {}),
+        ...(sessionActions.onSetCwd && (entry.engine ?? 'claude') !== 'gemini' && entry.engine !== 'grok' && entry.engine !== 'hermes' ? { onSetCwd: () => sessionActions.onSetCwd?.(entry) } : {}),
         ...(sessionActions.onDuplicate && !grokBot ? { onDuplicate: () => sessionActions.onDuplicate?.(entry.sessionId) } : {}),
       }
     : { pinned, archived: false, onTogglePin: () => sessionActions.onTogglePin(sid, !pinned) };
@@ -606,7 +607,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
           sessionEngine={s.engine}
           sessionSandbox={s.sandbox}
           isNew={isNew}
-          codexAvailable={app.codexAvailable}
+          codexAvailable={app.codexAvailable} hermesAvailable={app.hermesAvailable}
           gemini={app.gemini ?? null}
           grok={app.grok ?? null}
           attachments={pane.attachments}
@@ -736,7 +737,7 @@ export function Pane({ pane, app, active, closable, dispatch, send, onClose, onO
               groups={(ctl) => [fileMenu.map((it) => <HeadItem key={it.label} label={it.label} hint={it.hint} run={it.run} ctl={ctl} />)]} />
           )}
           {onStartChat
-            ? <NewChat projects={projects} pins={app.pins ?? []} sessionIcons={app.sessionIcons} defaultCwd={newChatCwd ?? null} onStart={onStartChat} draftKey={newChatDraftKey(pane.id)} {...(onStartChatSplit ? { onStartSplit: onStartChatSplit } : {})} engine={pane.engine} sandbox={pane.sandbox} codexAvailable={app.codexAvailable} gemini={app.gemini ?? null} grok={app.grok ?? null}
+            ? <NewChat projects={projects} pins={app.pins ?? []} sessionIcons={app.sessionIcons} defaultCwd={newChatCwd ?? null} onStart={onStartChat} draftKey={newChatDraftKey(pane.id)} {...(onStartChatSplit ? { onStartSplit: onStartChatSplit } : {})} engine={pane.engine} sandbox={pane.sandbox} codexAvailable={app.codexAvailable} hermesAvailable={app.hermesAvailable} gemini={app.gemini ?? null} grok={app.grok ?? null}
                 onEngine={(engine) => dispatch({ type: 'set_engine', engine, paneId: pane.id })} onSandbox={(sandbox) => dispatch({ type: 'set_sandbox', sandbox, paneId: pane.id })} {...(onOpenSession ? { onOpenSession } : {})} {...(uploadFn ? { uploadFn } : {})}
                 models={modelChoices(pane.engine)} model={model} effort={effort} onModel={onModel} onEffort={onEffort} defaultPerm={app.defaultPermMode ?? null} />
             : <div className="chat center muted">왼쪽에서 세션을 고르거나 새 세션을 시작하세요.</div>}

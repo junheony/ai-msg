@@ -884,7 +884,7 @@ describe('App phone layout (D10)', () => {
   });
 
   it('usage strip: a collapsed pill in the top bar on a desktop and on a phone', async () => {
-    const numbered = { ...usage, accounts: { ...usage.accounts, a: { ...usage.accounts.a, fiveHour: { usedPct: 42, resetsAt: null } } } };
+    const numbered = { ...usage, accounts: { ...usage.accounts, a: { ...usage.accounts.a, weekly: { usedPct: 42, resetsAt: null } } } };
     mockMatchMedia(false);
     await boot();
     server({ type: 'usage', usage: numbered } as unknown as ServerMessage);
@@ -1098,13 +1098,14 @@ describe('App new build without a server restart', () => {
     fireEvent.click(screen.getByRole('button', { name: '설정 및 계정' }));
     const labels = screen.getAllByRole('menuitem').map((b) => b.textContent ?? '');
     // 동작 항목은 새로고침으로 끝나고, 그 뒤엔 비활성 버전 줄만 온다
-    expect(labels).toHaveLength(6);
+    expect(labels).toHaveLength(7);
     expect(labels[0]).toMatch(/^설정/);
-    expect(labels[1]).toBe('사용량 기록');
-    expect(labels[2]).toMatch(/^테마: /);
-    expect(labels[3]).toMatch(/^단축키/);
-    expect(labels[4]).toBe('새로고침');
-    expect(labels[5]).toMatch(/^MSG /);
+    expect(labels[1]).toBe('사용량 보기');
+    expect(labels[2]).toBe('사용량 기록');
+    expect(labels[3]).toMatch(/^테마: /);
+    expect(labels[4]).toMatch(/^단축키/);
+    expect(labels[5]).toBe('새로고침');
+    expect(labels[6]).toMatch(/^MSG /);
     expect(screen.getByTestId('foot-menu-version').getAttribute('aria-disabled')).toBe('true');
   });
 });
@@ -1244,7 +1245,7 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
   const permission = (sessionId: string | null, n = 0, cwd = '/w') => server({ type: 'permission_request', requestId: `r-${sessionId}-${n}`, toolName: 'Bash', input: {}, title: null, decisionReason: null, blockedPath: null, defaultToNo: false, allowSession: false, sessionLabel: null, turnId: `t-${sessionId}`, sessionId, cwd } as ServerMessage);
   const PREVIEW = ['routePreview'];
 
-  const numbered = { ...usage, accounts: { ...usage.accounts, a: { ...usage.accounts.a, fiveHour: { usedPct: 42, resetsAt: null } } } };
+  const numbered = { ...usage, accounts: { ...usage.accounts, a: { ...usage.accounts.a, weekly: { usedPct: 42, resetsAt: null } } } };
 
   it('the usage strip opens the seat list; 자세히 opens the sheet; ✕ hands focus back to the strip', async () => {
     await boot();
@@ -1279,6 +1280,22 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     expect(within(sheet).getByRole('button', { name: /토큰 사용량 기록/ }).getAttribute('aria-expanded')).toBe('true');
     fireEvent.click(within(sheet).getByRole('button', { name: '닫기' }));
     expect(document.activeElement).toBe(screen.getByTestId('usage-strip'));
+  });
+
+  it('account menu opens quota limits directly when the compact phone header omits its summary', async () => {
+    mockMatchMedia(true);
+    await boot();
+    server({ type: 'usage', usage: numbered } as unknown as ServerMessage);
+    const drawer = screen.getByRole('button', { name: '메뉴' });
+    fireEvent.click(drawer);
+    fireEvent.click(screen.getByRole('button', { name: '설정 및 계정' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '사용량 보기' }));
+    const sheet = screen.getByRole('dialog', { name: '사용량' });
+    expect(within(sheet).getByRole('button', { name: /토큰 사용량 기록/ }).getAttribute('aria-expanded')).toBe('false');
+    expect(within(sheet).getByTestId('account-b')).toBeTruthy();
+    fireEvent.click(within(sheet).getByRole('button', { name: '닫기' }));
+    expect(screen.queryByRole('dialog', { name: '사용량' })).toBeNull();
+    expect(document.activeElement).toBe(drawer);
   });
 
   const dot = () => screen.getByTestId('activity-btn');
@@ -1596,10 +1613,10 @@ describe('App top bar: 작업 현황 · 서버 상태 · 다음 턴', () => {
     await boot(PREVIEW);
     openSession('one');
     expect(frames()).toContainEqual({ type: 'route_preview', sessionId: 's1', cwd: '/w' });
-    server({ type: 'route_preview', sessionId: 's1', account: 'c', reason: '5h 여유', asOpus: true } as ServerMessage);
+    server({ type: 'route_preview', sessionId: 's1', account: 'c', reason: '주간 여유', asOpus: true } as ServerMessage);
     // The collapsed pill keeps the next turn in its label and title. The → sits on C once the seat list is open.
     const strip = screen.getByTestId('usage-strip');
-    expect(strip.title).toContain('5h 여유');
+    expect(strip.title).toContain('주간 여유');
     expect(strip.getAttribute('aria-label')).toContain('다음 턴 C(Opus)');
     expect(screen.queryByTestId('next-c')).toBeNull();
     fireEvent.click(strip);

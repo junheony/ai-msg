@@ -50,6 +50,10 @@ export const DEFAULT_GROK_MODEL: GrokModel = 'grok-4.7';
 /** The modelId Grok gets for each deck id (the same names). */
 export const GROK_CLI_ALIAS = Object.fromEntries(GROK_MODELS.map((m) => [m, m])) as Record<GrokModel, string>;
 
+export const HERMES_MODELS = ['gpt-6-astra'] as const;
+export type HermesModel = (typeof HERMES_MODELS)[number];
+export const DEFAULT_HERMES_MODEL: HermesModel = 'gpt-6-astra';
+
 export type AnyModel = ClaudeModel | CodexModel | GeminiModel | GrokModel;
 
 export const MODEL_LABEL: Record<AnyModel, string> = { sonnet: 'Sonnet', opus: 'Opus', fable: 'Fable', 'gpt-6-sol': 'GPT Sol', 'gpt-6-astra': 'GPT Astra', 'gemini-pro': 'Gemini 4 Argon', 'gemini-flash': 'Gemini Flash', 'grok-4.7': 'Grok 4.7', 'grok-4.7-build-fast': 'Grok 4.7 Fast', 'grok-4.6': 'Grok 4.6', 'grok-4.5': 'Grok 4.5' };
@@ -99,7 +103,7 @@ export const EFFORT_LABEL: Record<Effort, string> = { low: '낮음', medium: '�
 /** Per model: every Claude/GPT model reports all four (supportedEffortLevels / supported_reasoning_levels); agy's Gemini models take low/medium/high only (`--effort xhigh` fails at once). */
 export const MODEL_EFFORTS: Record<AnyModel, readonly Effort[]> = { opus: EFFORTS, sonnet: EFFORTS, fable: EFFORTS, 'gpt-6-sol': EFFORTS, 'gpt-6-astra': EFFORTS, 'gemini-pro': ['low', 'medium', 'high'], 'gemini-flash': ['low', 'medium', 'high'], 'grok-4.7': EFFORTS, 'grok-4.7-build-fast': EFFORTS, 'grok-4.6': EFFORTS, 'grok-4.5': ['low', 'medium', 'high'] };
 /** gemini: what a Gemini turn sends when nothing was picked (agy `--effort`). grok: Grok's own default (reasoning_effort high). */
-export const DEFAULT_EFFORT: Record<EngineKind, Effort> = { claude: 'high', codex: 'medium', gemini: 'medium', grok: 'high' };
+export const DEFAULT_EFFORT: Record<EngineKind, Effort> = { claude: 'high', codex: 'medium', gemini: 'medium', grok: 'high', hermes: 'high' };
 
 /**
  * 자동 (picker value 'auto'): the server picks the Claude model for the first turn of a new session from the prompt
@@ -139,7 +143,7 @@ export function isGrokModel(x: unknown): x is GrokModel {
 export const FABLE_MAX_PCT = 80;
 
 /** Spec §4.3: the engine is fixed per session; 'auto' is resolved once when the session is created (chooseRoute: Claude, GPT, or — enabled and consented in settings — Gemini / Grok). */
-export type EngineKind = 'claude' | 'codex' | 'gemini' | 'grok';
+export type EngineKind = 'claude' | 'codex' | 'gemini' | 'grok' | 'hermes';
 export type EngineChoice = EngineKind | 'auto';
 
 /** D2: codex exec cannot relay approvals, so the sandbox is the guard (changeable per session: set_sandbox). Never danger-full-access. */

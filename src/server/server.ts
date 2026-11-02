@@ -21,6 +21,7 @@ import { CodexEngine } from './engine/CodexEngine';
 import { SlashCommandCache } from './engine/slashCommands';
 import { FileLister } from './files';
 import { GeminiEngine, GeminiLogin } from './engine/GeminiEngine';
+import { HermesEngine } from './engine/HermesEngine';
 import { grokEngineLock, runGrokTurn } from './engine/GrokEngine';
 import { runGrokInspect } from './engine/grokInspect';
 import { probeGrokBilling } from './engine/grokBilling';
@@ -169,7 +170,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     const tokenCreated = !(await fs.readFile(cfg.tokenFile, 'utf8').then((t) => /^[0-9a-f]{64}$/.test(t.trim()), () => false));
     const token = await loadOrCreateToken(cfg.tokenFile);
     const accounts = cfg.accounts;
-    const usage = new UsageService({ mode: cfg.usageMode, observedFile: cfg.claudeUsageFile, deckUrl: cfg.deckUrl, accounts, usageSourceFile: cfg.usageSourceFile, strict: cfg.usageStrict, deckConfigured: cfg.deckUrlConfigured, log: (line) => console.error(line) });
+    const usage = new UsageService({ mode: cfg.usageMode, observedFile: cfg.claudeUsageFile, gptSuccessFile: path.join(cfg.configDir, 'codex-usage-success.json'), deckUrl: cfg.deckUrl, accounts, usageSourceFile: cfg.usageSourceFile, strict: cfg.usageStrict, deckConfigured: cfg.deckUrlConfigured, log: (line) => console.error(line) });
     // Session rename / 보관 live in deck's own config (never in the Claude jsonl); loaded before the first scan.
     const meta = new SessionMetaStore(path.join(cfg.configDir, 'session-meta.json'));
     const sessionIcons = new SessionIconStore(path.join(cfg.configDir, 'session-icons.json'));
@@ -197,8 +198,8 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     const files = new FileLister({ home: cfg.home, roots: cfg.cwdRoots, denyRoots: [await fs.realpath(cfg.configDir).catch(() => cfg.configDir)] });
     usage.start();
     cleanup.push(() => usage.stop());
-    // F3: GPT usage from the newest Codex rollouts (Desktop/CLI too), at start and every 60 s.
-    const codexUsage = new CodexUsagePoller({ sessionsRoot: cfg.codexSessionsRoot, usage });
+    // GPT live quota RPC (no inference), with timestamped rollout fallback, at start and every 60 s.
+    const codexUsage = new CodexUsagePoller({ sessionsRoot: cfg.codexSessionsRoot, usage, bin: cfg.codexBin });
     codexUsage.start();
     cleanup.push(() => codexUsage.stop());
     // An account not observed (`cli` mode; usage-deck mode: only one whose dashboard card is not ok) for ~8 min (before it would turn stale) gets its real limits from `claude -p /usage` (no tokens), one at a time, checked every 5 min.
@@ -233,6 +234,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
     };
     // Grok (Grok Build CLI over ACP): explicit engine only. Login is not checked up front (design §5): a logged-out turn ends
     // with "Grok 로그인 필요". x1's GROK_HOME is the real path of ~/.grok, never the shell's GROK_HOME.
+    const hermes = cfg.hermesBin ? new HermesEngine({ bin: cfg.hermesBin }) : null;
     const grokBin = cfg.grokBin;
     // Each turn gets a fresh shadow HOME under here (§14.9-1); folders a crashed server left behind go at start — awaited,
     // so the sweep is over before any Grok turn can make its folder.
@@ -273,9 +275,11 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
       memory: () => memory.get(),
       holders,
       codex,
+      codexUsage,
       gemini,
       geminiUsage,
       grok,
+      hermes,
       grokUsage,
       attachments,
       codexSessionsRoot: cfg.codexSessionsRoot,
@@ -394,8 +398,8 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
       status: createMiniStatus({ tracked: () => miniTracker.list(), running: () => ws.running(), usage: () => usage.snapshot(), accounts, hub: hub.status, titleOf: (sessionId) => (index.lookup(sessionId)?.title ?? index.codexOwned(store.codexEntries()).find((e) => e.sessionId === sessionId)?.title ?? store.get(sessionId)?.title) || null, home: cfg.home }),
       widgetToken: new WidgetTokenStore(path.join(cfg.configDir, 'widget-token')),
     };
-    const realHandler = createRequestHandler({ hub, research: createResearchService(researchDir(cfg.home)), mini, token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), version: packageVersion(), usage, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, sessionIcons, memory, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate, setup, authLogin });
-    const ws = attachWebSocket(servers, { holders, grokHome: cfg.grokBin ? cfg.grokHome : null, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, sessionIcons, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); miniTracker.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json'), tasks, pushTask: (p) => { void push.sendAll(p); }, setup: { needed: () => setupStore.needed() }, hub: hub.status });
+    const realHandler = createRequestHandler({ hub, research: createResearchService(researchDir(cfg.home)), mini, token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), version: packageVersion(), usage, refreshUsage: async () => { await codexUsage.pollOnce(); await usage.pollOnce(); }, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, sessionIcons, memory, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate, setup, authLogin });
+    const ws = attachWebSocket(servers, { holders, grokHome: cfg.grokBin ? cfg.grokHome : null, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, hermesAvailable: hermes !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, sessionIcons, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); miniTracker.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json'), tasks, pushTask: (p) => { void push.sendAll(p); }, setup: { needed: () => setupStore.needed() }, hub: hub.status });
     cleanup.push(() => ws.close());
     notifyIndex = () => ws.broadcastIndex();
     submitRetry = (r) => ws.submitRetry(r);

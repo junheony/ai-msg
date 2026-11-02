@@ -256,7 +256,8 @@ describe('engineState', () => {
     expect(st('claude', 'sonnet', { claude: { weekly: 94 } })).toBe('ok');
     expect(engineState('claude', 'opus', limits({ claude: { weekly: 88 } }), NOW)).toMatchObject({ state: 'ok', weeklyRemainingPct: 12 });
     expect(engineState('claude', 'opus', limits({ claude: { weekly: 95 } }), NOW)).toMatchObject({ state: 'blocked', why: CB });
-    expect(engineState('claude', 'opus', limits({ claude: { fiveHour: 95 } }), NOW)).toMatchObject({ state: 'blocked', why: 'Claude 쓸 계정 없음(5h 5% 남음)' });
+    // A 5h value still on a card is ignored: Claude has no 5-hour limit any more.
+    expect(engineState('claude', 'opus', limits({ claude: { fiveHour: 100 } }), NOW)).toMatchObject({ state: 'ok' });
     expect(st('claude', 'fable', { claude: { fable: 79 } })).toBe('ok');
     expect(st('claude', 'fable', { claude: { fable: 80 } })).toBe('blocked');
     expect(st('claude', 'opus', { claude: { fable: 80 } })).toBe('ok');

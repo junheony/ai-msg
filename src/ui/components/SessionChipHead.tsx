@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { EngineKind } from '../../shared/models';
+import { modelLabelOf, type EngineKind } from '../../shared/models';
 import { EngineMark } from './EngineMark';
 import { FolderChip } from './FileMenu';
 import { MenuList } from './SessionMenu';
@@ -53,23 +53,24 @@ export function HeadItem({ label, hint, run, ctl, className, checked }: { label:
 /**
  * The session chip: the pane's whole head in one button — engine mark, title, ▾ — opening a grouped menu (desktop: a
  * role="menu" under the chip; phone: a bottom sheet in the same order). With `slot` it renders into the top bar (one
- * pane, or the phone's shown pane), the folder as a small second line on desktop; otherwise it is the pane's own head
- * row, the folder moving into the menu's first line. The grip (drag / ←→ to reorder, card move) rides on the chip;
+ * pane, or the phone's shown pane); otherwise it is the pane's own head row. Folder actions live in the menu,
+ * while a path distinct from the title remains in its tooltip. The grip (drag / ←→ to reorder, card move) rides on the chip;
  * double-click renames. The phone's sheet (a modal dialog around the menu) and its scrim render into <body>, out of the
  * top bar's stacking context.
  */
-export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, paneId, chips, trail, grip, gripTitle, onRename, groups, toast, idle }: {
+export function SessionChipHead({ title, sessionKey, engine, model, cwd, slot, phone, paneId, chips, trail, grip, gripTitle, onRename, groups, toast, idle }: {
   title: string;
   /** The session the head names: a rename started on one session is never saved onto another (or after a switch). */
   sessionKey?: string | null;
   engine?: EngineKind | null;
+  model?: string;
   cwd?: string;
   /** The top bar's slot: the head renders there (portal). Absent = in the pane. */
   slot?: Element | null;
   phone?: boolean;
   /** The pane id (`data-pane-head`), so the top bar's head can be told apart. */
   paneId?: string;
-  /** Conditional chips after the session chip (갈라짐, 총사령탑, 모두 자동 승인 ⚠). */
+  /** Conditional chips after the session chip (갈라짐, 총사령탑, 자동 승인). */
   chips?: ReactNode;
   /** Right-side buttons (a floating card's – / ▭ and ✕). */
   trail?: ReactNode;
@@ -83,6 +84,9 @@ export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, p
   /** An empty split pane's head: no control shows at rest (it appears while the pointer is over the pane). */
   idle?: boolean;
 }) {
+  const sharedAvatar = useSessionAvatar(sessionKey ?? '');
+  const { icons } = useSessionIconStore();
+  const customIcon = sharedAvatar?.icon ?? (sessionKey ? icons[sessionKey] : null);
   const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const renamingRef = useRef<string | null>(null);
@@ -146,9 +150,13 @@ export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, p
   const ctl: HeadMenuCtl = { close: () => setOpen(false), rename: () => { setOpen(false); if (onRename) { renameKey.current = sessionKey; setRenaming(title); } } };
   const topbar = !!slot;
   const folder = cwd ? (cwd.split('/').filter(Boolean).pop() ?? cwd) : null;
-  // The folder line: under the chip in the desktop top bar; elsewhere (split panes, the phone) the menu's first row.
-  const folderLine = topbar && !phone;
-  const folderRow = folder && cwd && !folderLine ? <FolderChip key="folder" cwd={cwd} name={folder} asMenuItem /> : null;
+  // The full folder remains accessible in the menu; distinct paths also appear in the title tooltip.
+  const normalized = (value: string) => value.normalize('NFKC').toLocaleLowerCase().replace(/[\s_\-./]+/g, '');
+  const pathTitle = cwd && folder && normalized(folder) !== normalized(title) ? cwd : null;
+  const headTitle = [title, pathTitle, gripTitle].filter(Boolean).join('\n');
+  const engineName = engine ? ({ claude: 'Claude', codex: 'Codex', hermes: 'Hermes', gemini: 'Gemini', grok: 'Grok' })[engine] : null;
+  const modelName = model && model !== 'auto' ? (engine === 'hermes' ? model : modelLabelOf(model)) : null;
+  const folderRow = folder && cwd ? <FolderChip key="folder" cwd={cwd} name={folder} asMenuItem /> : null;
   const built = groups(ctl).map((g) => g.filter(Boolean)).filter((g) => g.length > 0);
   if (folderRow) {
     if (built[0]) built[0] = [folderRow, ...built[0]];
@@ -156,7 +164,12 @@ export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, p
   }
   const hasMenu = built.length > 0;
   const items = built.map((g, i) => <Fragment key={i}>{i > 0 && <div className="menu-sep" role="separator" />}{g}</Fragment>);
-  const label = <>{sessionKey && <HeadAvatar sessionKey={sessionKey} {...(cwd ? { cwd } : {})} title={title} />}<span className="head-chip-title">{engine && <EngineMark engine={engine} />}{title}</span>{hasMenu && <span className="caret" aria-hidden="true">▾</span>}</>;
+  const label = <>
+    {(engine || sessionKey) && <span className="head-identity">{engine && !customIcon ? <EngineMark engine={engine} /> : sessionKey && <HeadAvatar sessionKey={sessionKey} {...(cwd ? { cwd } : {})} title={title} />}</span>}
+    <span className="head-chip-title">{title}</span>
+    {engineName && <span className="head-engine-chip" title={[engineName, modelName].filter(Boolean).join(' · ')}><span>{engineName}</span>{modelName && <span className="head-engine-model">{modelName}</span>}</span>}
+    {hasMenu && <span className="caret" aria-hidden="true">⌄</span>}
+  </>;
 
   useLayoutEffect(() => {
     if (!open || phone) { setPlace(null); return; }
@@ -177,8 +190,8 @@ export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, p
   }, [open, phone]);
 
   const head = (
-    <div className={`pane-head${topbar ? ' in-topbar' : ''}${idle ? ' idle' : ''}`} data-pane-head={paneId}>
-      <div className={`pane-head-main${sessionKey ? ' with-avatar' : ''}`}>
+    <div className={`pane-head${topbar ? ' in-topbar' : ''}${idle ? ' idle' : ''}`} data-pane-head={paneId} data-engine={engine ?? undefined}>
+      <div className={`pane-head-main${sessionKey || engine ? ' with-avatar' : ''}`}>
         <span ref={wrapRef} className="head-chip-wrap" data-menu-up={place?.up ? '' : undefined} style={place ? { '--head-menu-max': `${place.max}px` } as CSSProperties : undefined}>
           {renaming !== null ? (
             <input className="head-chip-input" aria-label="채팅 이름" value={renaming} autoFocus maxLength={200}
@@ -189,7 +202,7 @@ export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, p
                 if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
               }} />
           ) : hasMenu ? (
-            <button ref={chipRef} type="button" className="head-chip" data-testid="session-chip-head" title={gripTitle ? `${title}\n${gripTitle}` : title}
+            <button ref={chipRef} type="button" className="head-chip" data-testid="session-chip-head" title={headTitle}
               aria-haspopup="menu" aria-expanded={open} {...(grip ? { 'data-grip': '' } : {})}
               // The click-swallow threshold matches the drag's own start (paneDrag: 8px for touch, 4px for a mouse).
               onPointerDown={grip ? (e) => { down.current = { x: e.clientX, y: e.clientY, slop: e.pointerType === 'touch' ? 8 : 4 }; moved.current = false; grip.onPointerDown(e); } : undefined}
@@ -201,7 +214,7 @@ export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, p
               {label}
             </button>
           ) : (
-            <span className="head-chip static" data-testid="session-chip-head" title={title}>{label}</span>
+            <span className="head-chip static" data-testid="session-chip-head" title={headTitle}>{label}</span>
           )}
           {renaming === null && sessionKey && <HeadAvatarPick sessionKey={sessionKey} />}
           {toast && <span className="share-toast" role="status">{toast}</span>}
@@ -216,7 +229,6 @@ export function SessionChipHead({ title, sessionKey, engine, cwd, slot, phone, p
             document.body,
           )}
         </span>
-        {folderLine && folder && cwd && <FolderChip cwd={cwd} name={folder} />}
       </div>
       {chips && <div className="pane-head-chips">{chips}</div>}
       {trail && <div className="pane-head-end">{trail}</div>}

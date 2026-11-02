@@ -73,6 +73,8 @@ export type HttpDeps = {
   /** 삭제 (move to session-trash) and its undo; absent = no /api/session-trash. */
   trash?: Pick<TurnRunner, 'trashSession' | 'restoreSession'>;
   /** Token usage history (사용량 view); absent = no /api/usage/history. */
+  /** Re-read current quota, without running an inference turn. */
+  refreshUsage?: () => Promise<void>;
   usageHistory?: Pick<UsageIndex, 'history' | 'refresh'>;
   /** 하이라이트 (events.jsonl); absent = no /api/highlights. */
   highlights?: Pick<EventLog, 'query'>;
@@ -647,6 +649,10 @@ export function createRequestHandler(deps: HttpDeps) {
           if (r.reason === 'diverged') { json(res, 200, { ok: false, reason: 'diverged' }); return; }
           json(res, 500, { error: r.error ?? 'Desktop 사본 갱신 실패' });
           return;
+        }
+        if (url.pathname === '/api/usage' && req.method === 'GET') {
+          if (url.searchParams.get('refresh') === '1') await deps.refreshUsage?.();
+          json(res, 200, deps.usage.snapshot()); return;
         }
         if (url.pathname === '/api/usage/history' && req.method === 'GET') {
           if (!deps.usageHistory) { json(res, 404, { error: 'not found' }); return; }
