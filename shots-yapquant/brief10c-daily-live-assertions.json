@@ -1,0 +1,645 @@
+{
+  "capturedAt": "2026-11-01T18:03:07.575Z",
+  "base": "http://127.0.0.1:9414",
+  "scenario": "live",
+  "browser": {
+    "version": "153.0.8010.12",
+    "executablePath": "/home/max/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell"
+  },
+  "nature": "Production built App with live read-only collectors.",
+  "manifest": {
+    "preview": "brief10-live-read-only",
+    "ui": "dist/ui/index.html",
+    "modes": [
+      "yapping",
+      "quant"
+    ],
+    "shell": "empty fixture; no real sessions/accounts",
+    "rising": "live",
+    "daily": "live",
+    "upstreamReads": [
+      "http://127.0.0.1:8095/api/rising?limit=30",
+      "http://127.0.0.1:8095/api/metrics/daily?days=30",
+      "http://127.0.0.1:8810/api/snapshot.json"
+    ],
+    "startedAt": 1793556183413
+  },
+  "results": [
+    {
+      "size": "desktop",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "assertions": {
+        "noPageErrors": true,
+        "noConsoleErrors": true,
+        "noBlockedRequests": true,
+        "noHorizontalOverflow": true,
+        "serverDeltasRendered": true,
+        "dailySourceSuccessful": true,
+        "thirtyDaySlots": true,
+        "actualDailyData": true,
+        "twoBarSeries": true,
+        "followerSegmentsPreserved": true,
+        "followerPointsPreserved": true,
+        "historyNote": true,
+        "growthNotOccluded": true,
+        "dailyHeadingNotOccluded": true
+      },
+      "text": "최근 30일\nKST 기준 · 오늘 집계 중\n\n조회수·게시물은 해당 날짜의 원본 게시물만 집계 (답글·재게시 제외)\n\n조회수 (회)\n0 – 414\n게시물 (건)\n0 – 11\n팔로워 (명)\n452 – 510\n10/04\n10/13\n10/23\n11/02\n\n2026-11-02 KST · 조회 0회 · 게시 0건 · 팔로워 509명\n\n팔로워 기록은 14일치",
+      "growth": [
+        {
+          "metric": "followers",
+          "label": "팔로워 변화",
+          "value": "+5",
+          "hint": "오늘 − 어제 · 7일 전 대비 +6 · KST 2026-11-02"
+        },
+        {
+          "metric": "views",
+          "label": "조회수 변화",
+          "value": "-414",
+          "hint": "오늘 − 어제 · 7일 전 대비 -15 · 날짜별 원글 조회수 차이 · 오늘 집계 중"
+        }
+      ],
+      "days": [
+        {
+          "date": "2026-10-04",
+          "views": "0",
+          "posts": "0",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-05",
+          "views": "60",
+          "posts": "1",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-06",
+          "views": "21",
+          "posts": "1",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-07",
+          "views": "0",
+          "posts": "0",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-08",
+          "views": "0",
+          "posts": "0",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-09",
+          "views": "0",
+          "posts": "0",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-10",
+          "views": "0",
+          "posts": "0",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-11",
+          "views": "0",
+          "posts": "0",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-12",
+          "views": "0",
+          "posts": "0",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-13",
+          "views": "0",
+          "posts": "0",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-14",
+          "views": "31",
+          "posts": "1",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-15",
+          "views": "0",
+          "posts": "0",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-16",
+          "views": "0",
+          "posts": "0",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-17",
+          "views": "112",
+          "posts": "2",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-18",
+          "views": "17",
+          "posts": "1",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-19",
+          "views": "81",
+          "posts": "3",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-20",
+          "views": "211",
+          "posts": "11",
+          "followers": "453"
+        },
+        {
+          "date": "2026-10-21",
+          "views": "194",
+          "posts": "2",
+          "followers": "483"
+        },
+        {
+          "date": "2026-10-22",
+          "views": "0",
+          "posts": "0",
+          "followers": "493"
+        },
+        {
+          "date": "2026-10-23",
+          "views": "119",
+          "posts": "1",
+          "followers": "498"
+        },
+        {
+          "date": "2026-10-24",
+          "views": "49",
+          "posts": "1",
+          "followers": "499"
+        },
+        {
+          "date": "2026-10-25",
+          "views": "0",
+          "posts": "0",
+          "followers": "498"
+        },
+        {
+          "date": "2026-10-26",
+          "views": "15",
+          "posts": "1",
+          "followers": "503"
+        },
+        {
+          "date": "2026-10-27",
+          "views": "0",
+          "posts": "0",
+          "followers": "506"
+        },
+        {
+          "date": "2026-10-28",
+          "views": "43",
+          "posts": "1",
+          "followers": "503"
+        },
+        {
+          "date": "2026-10-29",
+          "views": "39",
+          "posts": "1",
+          "followers": "501"
+        },
+        {
+          "date": "2026-10-30",
+          "views": "286",
+          "posts": "4",
+          "followers": "502"
+        },
+        {
+          "date": "2026-10-31",
+          "views": "177",
+          "posts": "8",
+          "followers": "501"
+        },
+        {
+          "date": "2026-11-01",
+          "views": "414",
+          "posts": "10",
+          "followers": "504"
+        },
+        {
+          "date": "2026-11-02",
+          "views": "0",
+          "posts": "0",
+          "followers": "509"
+        }
+      ],
+      "viewBars": 30,
+      "postBars": 30,
+      "followerPaths": [
+        "M330 199.17241379310343 L350 174.3448275862069 L370 166.0689655172414 L390 161.9310344827586 L410 161.10344827586206 L430 161.9310344827586 L450 157.79310344827587 L470 155.31034482758622 L490 157.79310344827587 L510 159.44827586206895 L530 158.6206896551724 L550 159.44827586206895 L570 156.9655172413793 L590 152.82758620689654"
+      ],
+      "followerPoints": [
+        {
+          "date": "2026-10-20",
+          "x": 330
+        },
+        {
+          "date": "2026-10-21",
+          "x": 350
+        },
+        {
+          "date": "2026-10-22",
+          "x": 370
+        },
+        {
+          "date": "2026-10-23",
+          "x": 390
+        },
+        {
+          "date": "2026-10-24",
+          "x": 410
+        },
+        {
+          "date": "2026-10-25",
+          "x": 430
+        },
+        {
+          "date": "2026-10-26",
+          "x": 450
+        },
+        {
+          "date": "2026-10-27",
+          "x": 470
+        },
+        {
+          "date": "2026-10-28",
+          "x": 490
+        },
+        {
+          "date": "2026-10-29",
+          "x": 510
+        },
+        {
+          "date": "2026-10-30",
+          "x": 530
+        },
+        {
+          "date": "2026-10-31",
+          "x": 550
+        },
+        {
+          "date": "2026-11-01",
+          "x": 570
+        },
+        {
+          "date": "2026-11-02",
+          "x": 590
+        }
+      ],
+      "missingReason": null,
+      "overflow": {
+        "viewport": 1440,
+        "document": 1440,
+        "body": 1440,
+        "hub": 1368,
+        "hubClient": 1368
+      },
+      "screenshots": [
+        {
+          "file": "brief10c-daily-live-desktop.png",
+          "offset": 369,
+          "visible": {
+            "growth": true,
+            "dailyHeading": true
+          }
+        }
+      ],
+      "errors": [],
+      "consoleErrors": [],
+      "blockedRequests": []
+    },
+    {
+      "size": "mobile",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "assertions": {
+        "noPageErrors": true,
+        "noConsoleErrors": true,
+        "noBlockedRequests": true,
+        "noHorizontalOverflow": true,
+        "serverDeltasRendered": true,
+        "dailySourceSuccessful": true,
+        "thirtyDaySlots": true,
+        "actualDailyData": true,
+        "twoBarSeries": true,
+        "followerSegmentsPreserved": true,
+        "followerPointsPreserved": true,
+        "historyNote": true,
+        "growthNotOccluded": true,
+        "dailyHeadingNotOccluded": true
+      },
+      "text": "최근 30일\nKST 기준 · 오늘 집계 중\n\n조회수·게시물은 해당 날짜의 원본 게시물만 집계 (답글·재게시 제외)\n\n조회수 (회)\n0 – 414\n게시물 (건)\n0 – 11\n팔로워 (명)\n452 – 510\n10/04\n10/13\n10/23\n11/02\n\n2026-11-02 KST · 조회 0회 · 게시 0건 · 팔로워 509명\n\n팔로워 기록은 14일치",
+      "growth": [
+        {
+          "metric": "followers",
+          "label": "팔로워 변화",
+          "value": "+5",
+          "hint": "오늘 − 어제 · 7일 전 대비 +6 · KST 2026-11-02"
+        },
+        {
+          "metric": "views",
+          "label": "조회수 변화",
+          "value": "-414",
+          "hint": "오늘 − 어제 · 7일 전 대비 -15 · 날짜별 원글 조회수 차이 · 오늘 집계 중"
+        }
+      ],
+      "days": [
+        {
+          "date": "2026-10-04",
+          "views": "0",
+          "posts": "0",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-05",
+          "views": "60",
+          "posts": "1",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-06",
+          "views": "21",
+          "posts": "1",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-07",
+          "views": "0",
+          "posts": "0",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-08",
+          "views": "0",
+          "posts": "0",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-09",
+          "views": "0",
+          "posts": "0",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-10",
+          "views": "0",
+          "posts": "0",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-11",
+          "views": "0",
+          "posts": "0",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-12",
+          "views": "0",
+          "posts": "0",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-13",
+          "views": "0",
+          "posts": "0",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-14",
+          "views": "31",
+          "posts": "1",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-15",
+          "views": "0",
+          "posts": "0",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-16",
+          "views": "0",
+          "posts": "0",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-17",
+          "views": "112",
+          "posts": "2",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-18",
+          "views": "17",
+          "posts": "1",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-19",
+          "views": "81",
+          "posts": "3",
+          "followers": "null"
+        },
+        {
+          "date": "2026-10-20",
+          "views": "211",
+          "posts": "11",
+          "followers": "453"
+        },
+        {
+          "date": "2026-10-21",
+          "views": "194",
+          "posts": "2",
+          "followers": "483"
+        },
+        {
+          "date": "2026-10-22",
+          "views": "0",
+          "posts": "0",
+          "followers": "493"
+        },
+        {
+          "date": "2026-10-23",
+          "views": "119",
+          "posts": "1",
+          "followers": "498"
+        },
+        {
+          "date": "2026-10-24",
+          "views": "49",
+          "posts": "1",
+          "followers": "499"
+        },
+        {
+          "date": "2026-10-25",
+          "views": "0",
+          "posts": "0",
+          "followers": "498"
+        },
+        {
+          "date": "2026-10-26",
+          "views": "15",
+          "posts": "1",
+          "followers": "503"
+        },
+        {
+          "date": "2026-10-27",
+          "views": "0",
+          "posts": "0",
+          "followers": "506"
+        },
+        {
+          "date": "2026-10-28",
+          "views": "43",
+          "posts": "1",
+          "followers": "503"
+        },
+        {
+          "date": "2026-10-29",
+          "views": "39",
+          "posts": "1",
+          "followers": "501"
+        },
+        {
+          "date": "2026-10-30",
+          "views": "286",
+          "posts": "4",
+          "followers": "502"
+        },
+        {
+          "date": "2026-10-31",
+          "views": "177",
+          "posts": "8",
+          "followers": "501"
+        },
+        {
+          "date": "2026-11-01",
+          "views": "414",
+          "posts": "10",
+          "followers": "504"
+        },
+        {
+          "date": "2026-11-02",
+          "views": "0",
+          "posts": "0",
+          "followers": "509"
+        }
+      ],
+      "viewBars": 30,
+      "postBars": 30,
+      "followerPaths": [
+        "M330 199.17241379310343 L350 174.3448275862069 L370 166.0689655172414 L390 161.9310344827586 L410 161.10344827586206 L430 161.9310344827586 L450 157.79310344827587 L470 155.31034482758622 L490 157.79310344827587 L510 159.44827586206895 L530 158.6206896551724 L550 159.44827586206895 L570 156.9655172413793 L590 152.82758620689654"
+      ],
+      "followerPoints": [
+        {
+          "date": "2026-10-20",
+          "x": 330
+        },
+        {
+          "date": "2026-10-21",
+          "x": 350
+        },
+        {
+          "date": "2026-10-22",
+          "x": 370
+        },
+        {
+          "date": "2026-10-23",
+          "x": 390
+        },
+        {
+          "date": "2026-10-24",
+          "x": 410
+        },
+        {
+          "date": "2026-10-25",
+          "x": 430
+        },
+        {
+          "date": "2026-10-26",
+          "x": 450
+        },
+        {
+          "date": "2026-10-27",
+          "x": 470
+        },
+        {
+          "date": "2026-10-28",
+          "x": 490
+        },
+        {
+          "date": "2026-10-29",
+          "x": 510
+        },
+        {
+          "date": "2026-10-30",
+          "x": 530
+        },
+        {
+          "date": "2026-10-31",
+          "x": 550
+        },
+        {
+          "date": "2026-11-01",
+          "x": 570
+        },
+        {
+          "date": "2026-11-02",
+          "x": 590
+        }
+      ],
+      "missingReason": null,
+      "overflow": {
+        "viewport": 390,
+        "document": 390,
+        "body": 390,
+        "hub": 390,
+        "hubClient": 390
+      },
+      "screenshots": [
+        {
+          "file": "brief10c-daily-live-mobile.png",
+          "offset": 527,
+          "visible": {
+            "growth": true,
+            "dailyHeading": true
+          }
+        },
+        {
+          "file": "brief10c-daily-live-mobile-scroll-01.png",
+          "offset": 1039,
+          "visible": {
+            "growth": false,
+            "dailyHeading": false
+          }
+        }
+      ],
+      "errors": [],
+      "consoleErrors": [],
+      "blockedRequests": []
+    }
+  ]
+}

@@ -61,7 +61,7 @@ export function ModeSwitcher({ mode, onChange, mac, phone, onOpenChange }: { mod
               <span className="hub-mi-check"><CheckMarkIcon /></span>
             </button>
           ))}
-          <div className="hub-menu-foot">{mac ? '⌘1–9·0' : 'Ctrl+1–9·0'} 로 전환 (메뉴가 열린 동안, 터미널 밖에서) · 왼쪽 레일로도 이동 · 읽기 전용</div>
+          <div className="hub-menu-foot">{mac ? '⌘1–9·0' : 'Ctrl+1–9·0'} 로 전환 (메뉴가 열린 동안, 터미널 밖에서) · 왼쪽 레일로도 이동</div>
         </div>
       )}
     </div>

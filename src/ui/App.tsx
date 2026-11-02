@@ -512,6 +512,8 @@ export function App() {
   // PWA: a notification click opens deck at /?session=<id> or, with deck already open, posts the id here.
   const [openReq, setOpenReq] = useState<string | null>(() => new URLSearchParams(window.location.search).get('session'));
   const openById = useRef<(sessionId: string) => boolean>(() => false);
+  const openTerminalRef = useRef<(cwd: string) => void>(() => {});
+  const openTerminal = useCallback((cwd: string) => openTerminalRef.current(cwd), []);
   useEffect(() => {
     const sw = navigator.serviceWorker;
     if (!sw) return;
@@ -1187,6 +1189,20 @@ export function App() {
     return true;
   };
   const showError = (fallback: string) => (err: unknown) => dispatch({ type: 'show_error', message: err instanceof Error ? err.message : fallback });
+  /**
+   * 허브 바로가기: a mode card's or a run's folder in the terminal — its latest session when the folder has one, else the
+   * new-chat screen with that folder picked. Read through a ref so the memoized hub keeps one stable callback.
+   */
+  openTerminalRef.current = (cwd: string) => {
+    const dir = cwd.replace(/\/+$/, '');
+    const latest = state.projects.filter((p) => p.cwd === dir).flatMap((p) => p.sessions).sort((a, b) => b.lastModified - a.lastModified)[0];
+    setHubMode('msg');
+    if (latest) { if (!openById.current(latest.sessionId)) openIn(active.id, latest.sessionId, dir, latest.title); return; }
+    setNewChatCwd((m) => ({ ...m, [active.id]: dir }));
+    if (active.session) apply({ type: 'clear_pane', paneId: active.id });
+    dispatch({ type: 'focus_pane', paneId: active.id });
+    requestFocus(active.id);
+  };
   const recent = recentSessions(state.projects);
   /** ⌘N / 새 대화: the focused pane goes back to the new-chat screen, its project preselected. */
   const newChat = (paneId = active.id) => {
@@ -1564,7 +1580,7 @@ export function App() {
         {hubShown && (
           // Over the terminal, which stays mounted (its panes, drafts and scroll positions survive a switch) but inert.
           <div className="hub-overlay" data-testid="hub-overlay">
-            <HubView mode={hubMode} onChangeMode={setHubMode} feed={hubFeed} pushOn={hubPushOn} />
+            <HubView mode={hubMode} onChangeMode={setHubMode} feed={hubFeed} pushOn={hubPushOn} onOpenTerminal={openTerminal} />
           </div>
         )}
         </div>

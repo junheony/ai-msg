@@ -197,3 +197,41 @@ it('trading sections are static (no fold, no frame): a 원본 is a new-tab link;
   page('quant');
   expect(screen.getByTestId('hub-sec-raw').tagName).toBe('DETAILS');
 });
+
+it('QUANT counts every account and renders null readings with a quiet reason alongside exchange badges', () => {
+  const q = mode('quant');
+  const value = { ...q, metrics: { ...q.metrics, '계정': 2 }, page: {
+    headline: '계정 2', decision: '조치 없음', kpis: [], sections: [{ kind: 'cards' as const, title: '계정 (2)', open: true, items: [
+      { title: '동적 새 이름', badge: '빗썸', rows: [{ label: '현재 자본', value: '120,000원' }] },
+      { title: '업비트2', badge: '업비트', state: 'unknown' as const, sub: '데이터 없음', rows: [{ label: '현재 자본', value: '—', status: 'info' as const }], note: 'collector inactive, 401 IP not registered' },
+    ] }],
+  } };
+  page('quant', { mode: value });
+  const section = screen.getByTestId('hub-sec-cards');
+  expect(section.querySelector('.cnt')?.textContent).toBe('2');
+  expect(section.querySelectorAll('article')).toHaveLength(2);
+  const missing = screen.getByRole('article', { name: '업비트2' });
+  expect(missing.querySelector('dd.info')?.textContent).toBe('—');
+  expect(missing.querySelector('.hs-card-note')?.textContent).toContain('401 IP not registered');
+  expect(missing.querySelector('.hs-badge')?.textContent).toBe('업비트');
+  expect(missing.querySelector('.hs-card-sub')?.textContent).toBe('데이터 없음');
+  expect(screen.getByTestId('hub-lead').textContent).toContain('계정 2');
+  cleanup();
+  render(<HubOverview status={{ ...STATUS, modes: STATUS.modes.map((m) => m.id === 'quant' ? value : m) }} error={null} loading={false} fetchedAt={T} now={T} pushOn onOpenMode={() => {}} onRefresh={() => {}} />);
+  expect(screen.getByRole('article', { name: 'QUANT' }).textContent).toContain('계정 2');
+});
+
+
+it('keeps yapping source failures inside the collapsed source panel and only counts sources in the footer', () => {
+  const y = mode('yapping');
+  const value = { ...y, sources: Array.from({ length: 7 }, (_, i) => ({ name: `/api/${i}`, ok: i === 6, ms: 3000, ...(i === 6 ? {} : { error: '시간 초과' }) })), page: { headline: '', decision: '', kpis: [], sections: [] } };
+  const { container } = page('yapping', { mode: value });
+  const panel = container.querySelector('.yp-sources')!;
+  expect(panel.hasAttribute('open')).toBe(false);
+  expect(panel.querySelector('summary')?.textContent).toContain('야핑봇 API 응답 느림 (6/7)');
+  const footer = container.querySelector('footer')!;
+  expect(footer.textContent).toContain('소스 1/7');
+  expect(footer.textContent).not.toMatch(/api|실패|시간 초과/);
+  expect(container.querySelector('.ph .hub-src-list')).toBeNull();
+  expect(panel.textContent).toContain('/api/0');
+});
