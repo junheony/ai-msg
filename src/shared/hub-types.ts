@@ -322,6 +322,7 @@ export interface SfDistPlatform { id: string; name: string; status: string | nul
 export interface SfDistCell {
   accountState: SfAccountState; handle: string | null; /** http(s) only. */ url: string | null; blockers: string[];
   counts: Record<SfUploadState, number>; /** null = not collected (never 0). */ views: number | null;
+  /** Profile checklist (platform_accounts.json `setup`): field → done. null = not tracked for this account. */ setup?: Record<string, boolean> | null; setupNote?: string | null;
 }
 export interface SfDistChannel { id: string; name: string; lang: string | null; /** YouTube UC id (= SfChannel.id). */ youtubeChannelId: string | null; publishKst: string | null; cells: Record<string, SfDistCell> }
 export interface SfDistUpload { state: SfUploadState; url: string | null; at: string | null; views: number | null; videoId: string | null; error: string | null; derived: boolean }
@@ -331,8 +332,21 @@ export interface SfDistribution {
   totals: Record<string, Record<SfUploadState, number>>;
   shorts: SfDistShort[]; shortsTotal: number;
   blockers: { channel: string; platform: string; text: string }[];
+  /** Checklist field order (platform_accounts.json setup_checklist.fields); [] when the file has none. */
+  setupFields?: string[];
   updatedAt: string | null;
 }
+/* ───────── routines · longform · blockers (status.json `routines` / `longform` / `blockers`, golf-shorts scripts/push_dashboard_status.py) ───────── */
+export interface SfRoutineRow { id: string; name: string; schedule: string | null; lastRunAt: string | null; status: SfRoutineStatus; note: string | null }
+export interface SfLongformItem { id: string; channelName: string | null; title: string | null; /** http(s) only. */ url: string | null; state: string | null; at: string | null; durationS: number | null; plan: string | null }
+export interface SfLongform {
+  targetPerDay: number | null; doneToday: number | null;
+  published: SfLongformItem[]; pending: SfLongformItem[];
+  /** QUEUE.md rows flattened to text; done = checked / 완료. */
+  queue: { text: string; done: boolean }[];
+  progress: { file: string | null; updatedAt: string | null; lines: string[] } | null;
+}
+export interface SfBlocker { id: string; text: string; scope: string | null; /** user = needs the owner's hand, wait = time-locked, bot = ours. */ owner: string | null; since: string | null }
 export interface ShortsFactoryView {
   state: HubState;
   headline: string;
@@ -352,5 +366,10 @@ export interface ShortsFactoryView {
   ledger: SfLedger;
   /** Per channel × platform accounts and uploads; null when status.json carries no `distribution` block. */
   distribution?: SfDistribution | null;
+  /** Every routine (shorts · longform · weekly …); [] when status.json carries no `routines`. */
+  routines?: SfRoutineRow[];
+  longform?: SfLongform | null;
+  /** Open blockers waiting on a person; [] when none reported. */
+  blockers?: SfBlocker[];
   generatedAt: string;
 }

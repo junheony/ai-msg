@@ -28,6 +28,7 @@ import fcntl
 import json
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -47,7 +48,29 @@ CHANNELS: list[dict[str, str]] = [
     {"id": "UCn2AmigSiQjID0z89Xe8vZQ", "name": "Animal Oddities", "lang": "en", "publish_kst": "08:00"},
     {"id": "UClRd6FJNY6CiGdq42Xjapdg", "name": "역사 반전", "lang": "ko", "publish_kst": "20:00"},
     {"id": "UCnwAUca9CUTxnWapE_R8D0A", "name": "History Flipped", "lang": "en", "publish_kst": "10:30"},
+    {"id": "UCP-RfVPSpQKIC5goJwKFwkw", "name": "알바 반전극장", "lang": "ko", "publish_kst": "19:00"},
+    {"id": "UCrIBdUosKJbsk38Rm0vTedg", "name": "중고거래 썰방", "lang": "ko", "publish_kst": "22:30"},
+    {"id": "UCHyuReVpPt3G3ugDaPe-bHA", "name": "건축 뜯어보기", "lang": "ko", "publish_kst": "19:30"},
 ]
+UC_RE = re.compile(r"^UC[A-Za-z0-9_-]{22}$")
+
+
+def plan_channels(out_dir: str) -> list[dict[str, str]]:
+    """CHANNELS plus any YouTube channel in <out>/platform_accounts.json (relayed from golf-shorts) not listed yet,
+    so a newly opened channel is collected without editing this file. A broken or missing file changes nothing."""
+    plan = [dict(c) for c in CHANNELS]
+    known = {c["id"] for c in plan}
+    doc = read_json(os.path.join(out_dir, "platform_accounts.json"))
+    for c in (doc.get("channels") if isinstance(doc, dict) else None) or []:
+        yt = ((c.get("platforms") or {}).get("youtube") or {}) if isinstance(c, dict) else {}
+        cid = yt.get("channel_id") if isinstance(yt, dict) else None
+        if not isinstance(cid, str) or not UC_RE.match(cid) or cid in known:
+            continue
+        name = c.get("name") if isinstance(c.get("name"), str) and c.get("name").strip() else cid
+        plan.append({"id": cid, "name": name[:80], "lang": str(c.get("lang") or "")[:8],
+                     "publish_kst": str(c.get("publish_kst") or "")[:5]})
+        known.add(cid)
+    return plan
 # Views observed by hand at 2026-11-01 19:00 KST. The channel of each video was not given: it is resolved from public
 # data (the collected lists, else one per-video lookup) and otherwise stays unmapped — never guessed from the order.
 REFERENCE_AT = "2026-11-01T19:00:00+09:00"
@@ -269,7 +292,8 @@ def run(args: argparse.Namespace, runner: Runner, sleep: Callable[[], None], log
             for c in prev.get("channels") or []:
                 if isinstance(c, dict) and isinstance(c.get("id"), str):
                     prev_by_id[c["id"]] = c
-        plan = [c for c in CHANNELS if not args.channel or c["id"] in args.channel]
+        full_plan = plan_channels(out_dir)
+        plan = [c for c in full_plan if not args.channel or c["id"] in args.channel]
         if not plan:
             log("no such channel in the plan")
             return 2
@@ -293,8 +317,8 @@ def run(args: argparse.Namespace, runner: Runner, sleep: Callable[[], None], log
                 rows.append(collector_row(entry, attempt_at))
                 log(f"{c['name']}: {len(entry['videos'])} videos, subscribers={entry['subscribers']}, total_views={entry['total_views']}")
         # channels not in this run keep their previous entry (a --channel run must not drop the others)
-        kept = [prev_by_id[c["id"]] for c in CHANNELS if c["id"] in prev_by_id and c["id"] not in {e["id"] for e in entries}]
-        order = {c["id"]: i for i, c in enumerate(CHANNELS)}
+        kept = [prev_by_id[c["id"]] for c in full_plan if c["id"] in prev_by_id and c["id"] not in {e["id"] for e in entries}]
+        order = {c["id"]: i for i, c in enumerate(full_plan)}
         all_entries = sorted(entries + kept, key=lambda e: order.get(e["id"], 999))
         doc = {"schema": 1, "generated_at": now_iso(), "collector": "collect_youtube.py", "planned_total": PLANNED_TOTAL, "channels": all_entries}
         history = read_history(history_path)

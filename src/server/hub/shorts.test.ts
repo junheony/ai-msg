@@ -331,3 +331,44 @@ describe('distribution (status.json distribution block)', () => {
     expect(d.channels[0]!.youtubeChannelId).toBe(CH1);
   });
 });
+
+describe("routines · longform · blockers (status.json, push_dashboard_status.py)", () => {
+  const extra = {
+    routines: [
+      { id: "shorts", name: "Shorts 공장", schedule: "매일 22:00 KST", last_run_at: "2026-11-01T22:00:00+09:00", status: "failed", note: "메모리 부족 → 수정 완료" },
+      { id: "longform", name: "롱폼 공장", schedule: "매일 14:00 KST", last_run_at: null, status: "unknown", note: "신규" },
+      { id: "weekly", name: "주간 리뷰", schedule: "매주 월 10:00", last_run_at: "2026-11-02T10:00:00+09:00", status: "failed", note: null },
+      { id: "", name: "", status: "ok" },
+      "junk",
+    ],
+    longform: {
+      target_per_day: 5, done_today: 1,
+      published: [{ id: "yeoksa-01", channel_name: "역사 반전", title: "t", url: "https://www.youtube.com/watch?v=kQuNYRKfTVg", state: "posted", published_at: "2026-11-02T12:00:00+09:00", duration_s: 300.4 }, { id: "x", url: "javascript:alert(1)" }],
+      pending: [{ id: "archi-02", state: "packaged", plan: "오늘 밤 업로드 예정" }],
+      queue: [{ text: "yeoksa-03", done: false }, { "#": "1", 상태: "완료", 제목: "archi-01" }],
+      progress: { file: "/home/x/PROGRESS_ep2.md", updated_at: "2026-11-02T21:00:00+09:00", lines: ["- a", "- b"] },
+    },
+    blockers: [{ id: "thumb", text: "휴대폰 인증 필요", owner: "user", scope: "archi", since: "2026-11-02" }, { id: "old", text: "done", resolved_at: "2026-11-01" }, { text: "" }],
+  };
+  it("parses all three, keeps http(s) urls only, drops resolved blockers, and raises alerts for every failed routine", () => {
+    const v = view({ status: { ...STATUS, ...extra }, channels: CHANNELS });
+    expect(v.routines!.map((r) => [r.id, r.status])).toEqual([["shorts", "failed"], ["longform", "unknown"], ["weekly", "failed"]]);
+    expect(v.longform!.targetPerDay).toBe(5);
+    expect(v.longform!.published.map((p) => p.url)).toEqual(["https://www.youtube.com/watch?v=kQuNYRKfTVg", null]);
+    expect(v.longform!.published[0]!.durationS).toBe(300);
+    expect(v.longform!.pending[0]!.plan).toBe("오늘 밤 업로드 예정");
+    expect(v.longform!.queue.map((q) => q.done)).toEqual([false, true]);
+    expect(v.longform!.progress!.file).toBe("PROGRESS_ep2.md");
+    expect(v.blockers!.map((b) => b.id)).toEqual(["thumb"]);
+    expect(texts(v)).toContain("주간 리뷰 루틴 실패");
+    expect(texts(v)).toContain("사람 손이 필요한 막힘 1건");
+    expect(kpiOf(v, "롱폼 오늘")).toMatchObject({ value: "1", unit: "/5" });
+  });
+  it("is empty / null when status.json carries none of them", () => {
+    const v = view({ status: STATUS, channels: CHANNELS });
+    expect(v.routines).toEqual([]);
+    expect(v.longform).toBeNull();
+    expect(v.blockers).toEqual([]);
+    expect(v.kpis.find((k) => k.label === "롱폼 오늘")).toBeUndefined();
+  });
+});
