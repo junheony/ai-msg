@@ -40,6 +40,7 @@ import { createMarketService, REPLAY_PREFIX, serveReplay, type MarketService } f
 import { SR_PREFIX, serveSr, type SrService } from './hub/sr';
 import { LAB_PREFIX, serveLab, type LabService } from './hub/lab';
 import { CTL_PREFIX, type ControlsService } from './hub/controls/http';
+import { isLabEmbedPath, relayLabRequest } from './hub/labEmbed';
 import type { MiniStatusService } from './mini/status';
 import { bearerOf, type WidgetTokenStore } from './mini/widgetToken';
 
@@ -85,7 +86,7 @@ export type HttpDeps = {
   /** In-app login window (allowlisted `claude auth login` and the same for Codex / Grok). Absent = no /api/auth-login. */
   authLogin?: AuthLoginHub;
   /** MSG Hub: `GET /api/hub/status` (the overview) and the `/hub/p/<id>/` embed proxy. Absent = 404 for both. */
-  hub?: { status: HubStatusService; proxyTargets?: Record<string, ProxyTarget>; /** Named folders `/api/hub/file/<name>/…` may serve (read-only media, build outputs). */ fileRoots?: HubFileRoots; /** 게임 스튜디오's pipeline doc (docs/GAME_PIPELINE.md), served as text at GET /api/hub/game-pipeline. */ pipelineDoc?: string; /** Trading room `GET /api/hub/sr[?symbol=]` (the bot's support/resistance snapshot). Absent = 404. */ sr?: SrService; /** Read-only lab gateway summary. */ lab?: LabService; /** Hub controls (승인함, 다음 작업, 실행 관리) under /api/hub/ctl/. Absent = 404. */ controls?: ControlsService };
+  hub?: { status: HubStatusService; proxyTargets?: Record<string, ProxyTarget>; /** Named folders `/api/hub/file/<name>/…` may serve (read-only media, build outputs). */ fileRoots?: HubFileRoots; /** 게임 스튜디오's pipeline doc (docs/GAME_PIPELINE.md), served as text at GET /api/hub/game-pipeline. */ pipelineDoc?: string; /** Trading room `GET /api/hub/sr[?symbol=]` (the bot's support/resistance snapshot). Absent = 404. */ sr?: SrService; /** Read-only lab gateway summary. */ lab?: LabService; /** Hub controls (승인함, 다음 작업, 실행 관리) under /api/hub/ctl/. Absent = 404. */ controls?: ControlsService; labEmbedPort?: number };
   /** Trading room chart replay: `GET /api/replay/*` public market data fetched server-side (no keys). Default = live exchanges. */
   replay?: MarketService;
   /** 리서치: `GET /api/hub/research`, the articles and sources in ~/.msg/research. Absent = 404. */
@@ -884,6 +885,14 @@ export function createRequestHandler(deps: HttpDeps) {
         if (!authed) { json(res, 401, { error: '로그인이 필요합니다' }); return; }
         if (!deps.hub) { json(res, 404, { error: 'not found' }); return; }
         await proxyHubRequest(req, res, url, deps.hub.proxyTargets ?? HUB_PROXY_TARGETS);
+        return;
+      }
+      // 연구소 embed relay: same order as above, and GET alone (the gateway answers HEAD with a 501).
+      if (isLabEmbedPath(url.pathname)) {
+        if (req.method !== 'GET') { json(res, 405, { error: 'method not allowed' }, { allow: 'GET' }); return; }
+        if (!authed) { json(res, 401, { error: '로그인이 필요합니다' }); return; }
+        if (!deps.hub) { json(res, 404, { error: 'not found' }); return; }
+        await relayLabRequest(req, res, url, deps.hub.labEmbedPort);
         return;
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') { json(res, 405, { error: 'method not allowed' }); return; }

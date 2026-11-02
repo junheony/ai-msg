@@ -2900,6 +2900,7 @@ mark.find-hit.current { background: var(--btn-primary-bg); color: var(--btn-prim
 [data-mode="updown"] { --mode-hue: rgb(239 138 106); }
 [data-mode="quant"] { --mode-hue: rgb(139 147 255); }
 [data-mode="yapping"] { --mode-hue: rgb(98 182 234); }
+[data-mode="lab"] { --mode-hue: rgb(120 200 170); }
 
 /* Switcher (header, top-left) */
 .hub-switch-wrap { position: relative; flex-shrink: 0; }

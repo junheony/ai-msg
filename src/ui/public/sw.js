@@ -34,6 +34,8 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith('/api/') || url.pathname === '/ws' || url.pathname === '/sw.js') return;
+  // The 연구소 relay's pages load in a frame: a 'navigate' too, and caching one below would replace the app shell.
+  if (url.pathname === '/lab' || url.pathname.startsWith('/lab/')) return;
 
   if (req.mode === 'navigate') {
     // Network first; offline → the last shell we saw (index.html is the same document for every path,

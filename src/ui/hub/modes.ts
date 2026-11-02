@@ -1,8 +1,8 @@
 import type { HubModeId, HubState } from '../../shared/hub-types';
 
-/** The rail's entries: the 개요, the nine modes and 리서치 (a reading page, no status). `msg` is the terminal (the existing app, untouched). */
-export type HubModeKey = 'home' | 'research' | HubModeId;
-export type HubIconName = 'grid' | 'terminal' | 'nodes' | 'candles' | 'clapper' | 'gamepad' | 'wrench' | 'updown' | 'bars' | 'bird' | 'book';
+/** The rail's entries: the 개요, the nine modes, 리서치 (a reading page, no status) and 연구소 (an embed, no status). `msg` is the terminal (the existing app, untouched). */
+export type HubModeKey = 'home' | 'research' | 'lab' | HubModeId;
+export type HubIconName = 'grid' | 'terminal' | 'nodes' | 'candles' | 'clapper' | 'gamepad' | 'wrench' | 'updown' | 'bars' | 'bird' | 'book' | 'flask';
 
 export interface HubModeDef { id: HubModeKey; label: string; short: string; icon: HubIconName }
 
@@ -18,6 +18,7 @@ export const HUB_MODES: readonly HubModeDef[] = [
   { id: 'quant', label: 'QUANT', short: 'QUANT', icon: 'bars' },
   { id: 'yapping', label: '야핑봇', short: '야핑봇', icon: 'bird' },
   { id: 'research', label: '리서치', short: '리서치', icon: 'book' },
+  { id: 'lab', label: '연구소', short: '연구소', icon: 'flask' },
 ];
 
 export const HUB_MODE_KEY = 'deck.hubMode';

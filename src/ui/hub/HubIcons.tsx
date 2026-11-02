@@ -14,6 +14,7 @@ const PATHS: Record<HubIconName, string> = {
   bars: 'M4 20h16M7 17v-5M12 17V7M17 17v-8',
   book: 'M12 6c-2-1.5-5-2-8-2v15c3 0 6 .5 8 2 2-1.5 5-2 8-2V4c-3 0-6 .5-8 2zM12 6v15',
   bird: 'M21 6l-3 1a4 4 0 0 0-7 3v1C8 11 5 9 3 6c-1 4 0 8 4 10-1 1-3 1-4 1 2 2 5 3 8 3 7 0 11-6 11-11v-1l1-2',
+  flask: 'M9 3h6M10 3v6l-5.5 9.5A1.7 1.7 0 0 0 6 21h12a1.7 1.7 0 0 0 1.5-2.5L14 9V3M7.5 15h9',
 };
 
 export function HubIcon({ name, size = 16, className }: { name: HubIconName; size?: number; className?: string }) {
