@@ -174,6 +174,14 @@ describe('collectUpdown · paper record', () => {
     }
   });
 
+  it('a stopped staging server reads as 꺼짐, quietly: it never moves the state', async () => {
+    const { updownStaging: _, ...noStaging } = ALL_OK;
+    const m = await collectUpdown(deps({ urls: noStaging }));
+    const full = await collectUpdown(deps({ urls: ALL_OK }));
+    expect(m.state).toBe(full.state);
+    expect(m.alerts.find((a) => a.text === '스테이징 꺼짐')).toMatchObject({ level: 'info' });
+    expect(m.sources.find((s) => s.off)).toMatchObject({ error: '꺼짐' });
+  });
   it('prod health and board both dead → down mode (staging alone is not enough); health dead but board alive stays a page', async () => {
     const down = await collectUpdown(deps({ urls: { updownStaging: HEALTH } }));
     expect(down).toMatchObject({ state: 'down', tag: 'PAPER', alerts: [{ level: 'bad', text: '응답 없음 · 연결 실패' }] });

@@ -1,0 +1,150 @@
+{
+  "capturedAt": "2026-11-01T18:03:18.213Z",
+  "base": "http://127.0.0.1:9416",
+  "scenario": "error",
+  "browser": {
+    "version": "153.0.8010.12",
+    "executablePath": "/home/max/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell"
+  },
+  "nature": "Production built App and daily parser with explicitly synthetic daily data aligned to current KST date; remaining statistics use live read-only collectors. Fixture label added only for capture.",
+  "manifest": {
+    "preview": "brief10-live-read-only",
+    "ui": "dist/ui/index.html",
+    "modes": [
+      "yapping",
+      "quant"
+    ],
+    "shell": "empty fixture; no real sessions/accounts",
+    "rising": "live",
+    "daily": "SYNTHETIC FIXTURE: error",
+    "upstreamReads": [
+      "http://127.0.0.1:8095/api/rising?limit=30",
+      "http://127.0.0.1:8810/api/snapshot.json"
+    ],
+    "startedAt": 1793555991775
+  },
+  "results": [
+    {
+      "size": "desktop",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "assertions": {
+        "noPageErrors": true,
+        "noConsoleErrors": true,
+        "noBlockedRequests": true,
+        "noHorizontalOverflow": true,
+        "serverDeltasRendered": true,
+        "explicitTimeout": true,
+        "noStaleDailyData": true,
+        "missingDeltaValues": true,
+        "fixtureLabel": true,
+        "growthNotOccluded": true,
+        "dailyHeadingNotOccluded": true
+      },
+      "text": "최근 30일\nKST 기준 · 오늘 집계 중\n\n조회수·게시물은 해당 날짜의 원본 게시물만 집계 (답글·재게시 제외)\n\n데이터 없음 · 시간 초과\n\n팔로워 기록은 14일치",
+      "growth": [
+        {
+          "metric": "followers",
+          "label": "팔로워 변화",
+          "value": "데이터 없음",
+          "hint": "오늘 − 어제 · 7일 전 대비 데이터 없음 · KST 2026-11-02 · 시간 초과"
+        },
+        {
+          "metric": "views",
+          "label": "조회수 변화",
+          "value": "데이터 없음",
+          "hint": "오늘 − 어제 · 7일 전 대비 데이터 없음 · 날짜별 원글 조회수 차이 · 오늘 집계 중 · 시간 초과"
+        }
+      ],
+      "days": [],
+      "viewBars": 0,
+      "postBars": 0,
+      "followerPaths": [],
+      "followerPoints": [],
+      "missingReason": "데이터 없음 · 시간 초과",
+      "overflow": {
+        "viewport": 1440,
+        "document": 1440,
+        "body": 1440,
+        "hub": 1368,
+        "hubClient": 1368
+      },
+      "screenshots": [
+        {
+          "file": "brief10c-daily-error-desktop.png",
+          "offset": 369,
+          "visible": {
+            "growth": true,
+            "dailyHeading": true
+          }
+        }
+      ],
+      "errors": [],
+      "consoleErrors": [],
+      "blockedRequests": []
+    },
+    {
+      "size": "mobile",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "assertions": {
+        "noPageErrors": true,
+        "noConsoleErrors": true,
+        "noBlockedRequests": true,
+        "noHorizontalOverflow": true,
+        "serverDeltasRendered": true,
+        "explicitTimeout": true,
+        "noStaleDailyData": true,
+        "missingDeltaValues": true,
+        "fixtureLabel": true,
+        "growthNotOccluded": true,
+        "dailyHeadingNotOccluded": true
+      },
+      "text": "최근 30일\nKST 기준 · 오늘 집계 중\n\n조회수·게시물은 해당 날짜의 원본 게시물만 집계 (답글·재게시 제외)\n\n데이터 없음 · 시간 초과\n\n팔로워 기록은 14일치",
+      "growth": [
+        {
+          "metric": "followers",
+          "label": "팔로워 변화",
+          "value": "데이터 없음",
+          "hint": "오늘 − 어제 · 7일 전 대비 데이터 없음 · KST 2026-11-02 · 시간 초과"
+        },
+        {
+          "metric": "views",
+          "label": "조회수 변화",
+          "value": "데이터 없음",
+          "hint": "오늘 − 어제 · 7일 전 대비 데이터 없음 · 날짜별 원글 조회수 차이 · 오늘 집계 중 · 시간 초과"
+        }
+      ],
+      "days": [],
+      "viewBars": 0,
+      "postBars": 0,
+      "followerPaths": [],
+      "followerPoints": [],
+      "missingReason": "데이터 없음 · 시간 초과",
+      "overflow": {
+        "viewport": 390,
+        "document": 390,
+        "body": 390,
+        "hub": 390,
+        "hubClient": 390
+      },
+      "screenshots": [
+        {
+          "file": "brief10c-daily-error-mobile.png",
+          "offset": 527,
+          "visible": {
+            "growth": true,
+            "dailyHeading": true
+          }
+        }
+      ],
+      "errors": [],
+      "consoleErrors": [],
+      "blockedRequests": []
+    }
+  ]
+}

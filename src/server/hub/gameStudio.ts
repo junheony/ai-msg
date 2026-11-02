@@ -21,8 +21,11 @@ import { loadGame, statBudget, type Game } from './studios';
 export const STAGE_LABEL: Record<StudioStageId, string> = { concept: '콘셉트', assets: '에셋', build: '빌드', test: '테스트·검증', preview: '미리보기', approval: '오너 승인', release: '출시' };
 /** An agent whose run.log moved this recently counts as working even without a live pid. */
 export const AGENT_ACTIVE_MS = 10 * 60_000;
+/** A BLOCKED report nobody picked up reads 막힘 this long, then 중단됨. */
+export const AGENT_STALE_MS = 3 * 60 * 60_000;
 export const LOOT_PER_GAME = 12;
 const LOG_TAIL_BYTES = 16 * 1024;
+const REPORT_TAIL_BYTES = 16 * 1024;
 const LINE_MAX = 140;
 const MAX_GAMES = 24;
 const MAX_JOBS = 60;
@@ -141,13 +144,42 @@ export function parseAccount(text: string | null): { account: StudioAgent['accou
 
 /** REPORT.md's last `STATUS:` line → done / blocked (with the reason) / null. */
 export function parseReportStatus(text: string | null): { status: 'done' | 'blocked' | null; reason: string | null } {
-  if (!text) return { status: null, reason: null };
-  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  const m = statusMatch(text);
+  if (!m) return { status: null, reason: null };
+  const blocked = m[1]!.toUpperCase() === 'BLOCKED';
+  return { status: blocked ? 'blocked' : 'done', reason: blocked ? scrubLine(m[2], 160) || null : null };
+}
+function statusMatch(text: string | null): RegExpExecArray | null {
+  const lines = (text ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
   for (let i = lines.length - 1; i >= Math.max(0, lines.length - 6); i--) {
     const m = /^\**STATUS\**\s*:\s*\**\s*(DONE|BLOCKED)\b\s*:?\s*(.*)$/i.exec(lines[i]!);
-    if (m) return { status: m[1]!.toUpperCase() === 'DONE' ? 'done' : 'blocked', reason: m[1]!.toUpperCase() === 'BLOCKED' ? scrubLine(m[2], 160) || null : null };
+    if (m) return m;
   }
-  return { status: null, reason: null };
+  return null;
+}
+
+const OWNER_WORD_RE = /\b(?:owner|approval)\b|승인|오너/i;
+const OWNER_NEEDED_RE = /\bneeds?\s+(?:the\s+)?owner\b|\bowner[\s-]+(?:needed|required|decision|approval|action|input)\b|\bapproval\s+(?:needed|required)\b|(?:오너|승인).{0,12}필요|오너\s*(?:결정|판단)/i;
+const OWNER_NEGATED_RE = /\b(?:no|not|without)\s+(?:\w+\s+){0,2}(?:owner|approval)\b|\b(?:owner|approval)\b.{0,24}\bnot\b|\bowner\s+approved\b|(?:오너|승인).{0,12}(?:불필요|필요\s*없|없음|아님|않)|승인(?:됨|완료|받음)/i;
+const NOTHING_RE = /^(?:none\b|no\b|n\/a\b|없음|해당\s*없음|불필요)/i;
+
+/**
+ * Does a BLOCKED report put the decision on the owner? Its STATUS line names the owner or an approval, or a heading or
+ * `label:` line says one is needed. Body prose never counts: reports mention "approved assets" and "ownership" freely.
+ */
+export function reportNeedsOwner(text: string | null): boolean {
+  const status = statusMatch(text);
+  if (status && OWNER_WORD_RE.test(status[2]!) && !OWNER_NEGATED_RE.test(status[2]!)) return true;
+  const lines = (text ?? '').split('\n').map((l) => l.trim());
+  return lines.some((l, i) => {
+    const heading = /^#{1,6}\s/.test(l);
+    const t = l.replace(/^#{1,6}\s+/, '');
+    const label = /^[-*\s]*\**([^:：*]{2,40})\**\s*[:：]\**\s*(.*)$/.exec(t);
+    const title = label?.[1] ?? (heading ? t : null);
+    if (!title || !OWNER_NEEDED_RE.test(title) || OWNER_NEGATED_RE.test(l)) return false;
+    const body = (label?.[2] || lines.slice(i + 1).find(Boolean) || '').replace(/^[-*\s]+/, '');
+    return !NOTHING_RE.test(body);
+  });
 }
 
 /** BRIEF.md's first heading (or first line). */
@@ -210,21 +242,56 @@ export function lastHumanLine(tail: string | null): string | null {
   return null;
 }
 
-export async function loadAgent(deps: HubDeps, jobsDir: string, job: string, stat: (f: string) => Promise<number | null>): Promise<StudioAgent> {
+/** An agent and what its status derivation reads: BRIEF + REPORT (never leaves the server) and the owner-needed verdict. */
+export interface LoadedJob { agent: StudioAgent; text: string; ownerNeeded: boolean }
+
+export async function loadAgent(deps: HubDeps, jobsDir: string, job: string, stat: (f: string) => Promise<number | null>): Promise<LoadedJob> {
   const dir = path.join(jobsDir, job);
   const [briefText, accountText, pidText, logTail, logMs, reportTail, reportMs] = await Promise.all([
     readOpt(deps, path.join(dir, 'BRIEF.md')), readOpt(deps, path.join(dir, 'account.txt')), readOpt(deps, path.join(dir, 'pid.txt')),
     deps.readTail(path.join(dir, 'run.log'), LOG_TAIL_BYTES).catch(() => null), stat(path.join(dir, 'run.log')),
-    deps.readTail(path.join(dir, 'REPORT.md'), 2048).catch(() => null), stat(path.join(dir, 'REPORT.md')),
+    deps.readTail(path.join(dir, 'REPORT.md'), REPORT_TAIL_BYTES).catch(() => null), stat(path.join(dir, 'REPORT.md')),
   ]);
   const pid = /^\s*(\d{1,8})\s*$/.exec(pidText ?? '')?.[1] ?? null;
   const alive = pid !== null && (await stat(`/proc/${pid}`)) !== null;
   const { account, model } = parseAccount(accountText);
   const report = parseReportStatus(reportTail);
-  const recent = logMs !== null && deps.now() - logMs < AGENT_ACTIVE_MS;
+  // A log still settling right after the final REPORT is a finished job, not one at work.
+  const reportClosedLog = report.status !== null && reportMs !== null && logMs !== null && logMs - reportMs < AGENT_ACTIVE_MS;
+  const recent = logMs !== null && deps.now() - logMs < AGENT_ACTIVE_MS && !reportClosedLog;
   // A live pid or a moving log is work in progress, whatever an older REPORT says.
   const state: StudioAgentState = alive || recent ? 'working' : report.status === 'blocked' ? 'blocked' : report.status === 'done' ? 'done' : 'idle';
-  return { job, title: parseBriefTitle(briefText), account, model, state, alive, line: lastHumanLine(logTail), lineAt: msIso(logMs), reportAt: msIso(reportMs), reason: report.reason, game: null, gameTitle: null };
+  const agent: StudioAgent = { job, title: parseBriefTitle(briefText), account, model, state, alive, line: lastHumanLine(logTail), lineAt: msIso(logMs), reportAt: msIso(reportMs), reason: report.reason, successor: null, game: null, gameTitle: null };
+  return { agent, text: `${briefText ?? ''}\n${reportTail ?? ''}`, ownerNeeded: reportNeedsOwner(reportTail) };
+}
+
+/** `name`, `name-cx`, `name-2`, `name-2-cx` are one line of work; a date suffix (`-20261101`) is not a follow-up number. */
+const jobFamily = (job: string): string => job.replace(/-cx$/, '').replace(/-\d{1,2}$/, '');
+const jobRank = (job: string): number => Number(/-(\d{1,2})(?:-cx)?$/.exec(job)?.[1] ?? 1) * 2 + (job.endsWith('-cx') ? 1 : 0);
+const FOLLOW_UP_RE = /follow[\s-]?up|supersed|continu|takes?\s+over|previous|이어|후속|이전/i;
+/** Briefs also name jobs to keep away from ("do not touch brawl-web-3", "parallel job"): that is no hand-over. */
+const NOT_FOLLOW_UP_RE = /\b(?:do not|don't|never)\b|parallel|(?:other|another) job|건드리지|병렬/i;
+const namesAsFollowUp = (text: string, job: string): boolean => {
+  const name = new RegExp(`(?<![\\w.-])${job.replace(/[.+^\${}()|[\]\\]/g, '\\$&')}(?![\\w-])`);
+  return text.split('\n').some((l) => name.test(l) && FOLLOW_UP_RE.test(l) && !NOT_FOLLOW_UP_RE.test(l));
+};
+const lastActive = (a: StudioAgent): string => newest(a.lineAt, a.reportAt) ?? '';
+
+/**
+ * What a finished BLOCKED report means now. A newer job of the same game took it over (a higher `name-N` / `-cx`, or
+ * its BRIEF/REPORT names it as the previous step) → superseded, even if the old report asked for the owner: the newer
+ * job carries any question still open. Otherwise → needs-owner when the report says so, stopped once older than
+ * AGENT_STALE_MS, and blocked only while recent.
+ */
+export function settleBlockedJobs(jobs: LoadedJob[], gameOf: (job: string) => string | undefined, now: number): void {
+  for (const { agent: a, ownerNeeded } of jobs) {
+    if (a.state !== 'blocked') continue;
+    const newer = jobs.filter((o) => o.agent !== a && gameOf(o.agent.job) === gameOf(a.job) && (o.agent.alive || lastActive(o.agent) > lastActive(a)));
+    const next = newer.filter((o) => jobFamily(o.agent.job) === jobFamily(a.job) && jobRank(o.agent.job) > jobRank(a.job)).sort((x, y) => jobRank(x.agent.job) - jobRank(y.agent.job))[0]
+      ?? newer.filter((o) => namesAsFollowUp(o.text, a.job)).sort((x, y) => lastActive(x.agent).localeCompare(lastActive(y.agent)))[0];
+    if (next) { a.state = 'superseded'; a.successor = next.agent.job; } else if (ownerNeeded) a.state = 'needs-owner';
+    else if (!(now - Date.parse(lastActive(a)) < AGENT_STALE_MS)) a.state = 'stopped';
+  }
 }
 
 /* ───────── manifests ───────── */
@@ -332,6 +399,7 @@ async function loadStudioGame(ctx: Ctx, m: Manifest, agentsByJob: Map<string, St
   const agents = m.jobs.map((j) => agentsByJob.get(j)).filter((a): a is StudioAgent => !!a);
   for (const a of agents) { a.game = m.id; a.gameTitle = m.title; }
   const newestAgent = agents.slice().sort((a, b) => (newest(b.lineAt, b.reportAt) ?? '').localeCompare(newest(a.lineAt, a.reportAt) ?? ''))[0] ?? null;
+  // Only a recent, unanswered BLOCKED holds the track up; superseded and stopped jobs are history, needs-owner is the next move.
   const blocked = newestAgent && newestAgent.state === 'blocked' ? `${newestAgent.job} 막힘${newestAgent.reason ? `: ${newestAgent.reason}` : ''}` : null;
   const stages = deriveStages(found, m.approvals, blocked);
   // Facts from the existing ~/games collector (version, verification, deploy URL, tests) when a repo is under ~/games.
@@ -351,12 +419,18 @@ async function loadStudioGame(ctx: Ctx, m: Manifest, agentsByJob: Map<string, St
   for (const a of [...loot, ...builds]) { if (!a.at) continue; const key = `${a.job ?? ''}|${a.group}|${a.at.slice(0, 13)}`; const b = batches.get(key); if (b) { b.n++; if (a.at > b.at) b.at = a.at; } else batches.set(key, { n: 1, at: a.at, job: a.job, kind: a.group }); }
   const GROUP_KO: Record<string, string> = { screenshots: '스크린샷', concept: '콘셉트 아트', video: '영상', builds: '빌드' };
   for (const b of batches.values()) events.push({ at: b.at, game: m.id, job: b.job, kind: 'loot', text: `${m.title} · ${GROUP_KO[b.kind] ?? b.kind} ${b.n}개 획득${b.job ? ` (${b.job})` : ''}`, level: 'info' });
-  for (const a of m.approvals) if (a.at) events.push({ at: a.at, game: m.id, job: null, kind: 'approval', text: `${m.title} · ${a.what} — ${a.state === 'approved' ? '오너 승인' : a.state === 'rejected' ? '오너 반려' : '승인 대기'}`, level: a.state === 'approved' ? 'ok' : a.state === 'rejected' ? 'bad' : 'warn' });
+  for (const a of m.approvals) if (a.at) events.push({ at: a.at, game: m.id, job: null, kind: 'approval', text: `${m.title} · ${a.what} — ${a.state === 'approved' ? '오너 승인' : a.state === 'rejected' ? '오너 반려' : '승인 대기'}`, level: a.state === 'approved' ? 'ok' : 'warn' });
   const lastAt = newest(...stages.map((s) => s.at), artifacts[0]?.at ?? null, ...agents.map((a) => a.lineAt));
-  // Next action: the manifest's, else derived from the track.
+  // Next action: an agent asking the owner first, then the manifest's, else derived from the track. It is the owner's
+  // only when an agent asks, or the track has reached a pending approval the manifest does not put off (owner: false).
   const pendingApproval = m.approvals.find((a) => a.state === 'pending');
   const active = stages.find((s) => s.state === 'active' || s.state === 'blocked');
-  const nextAction = m.nextAction ?? (pendingApproval ? { text: `${pendingApproval.what} — 오너 결정`, owner: true } : active ? { text: active.state === 'blocked' ? `${active.label}: ${active.note ?? '막힘'}` : `${active.label} 단계 진행`, owner: active.id === 'approval' } : null);
+  const asking = agents.find((a) => a.state === 'needs-owner');
+  const approvalCall = active?.id === 'approval' && !!pendingApproval && m.nextAction?.owner !== false;
+  const nextAction = asking ? { text: scrubLine(`${asking.job}: ${asking.reason ?? '오너 승인 필요'}`, 120), owner: true }
+    : m.nextAction ? { text: m.nextAction.text, owner: approvalCall }
+    : approvalCall ? { text: `${pendingApproval!.what} — 오너 결정`, owner: true }
+    : active ? { text: active.state === 'blocked' ? `${active.label}: ${active.note ?? '막힘'}` : `${active.label} 단계 진행`, owner: false } : null;
   return {
     id: m.id, title: m.title, titleKo: m.titleKo, genre: m.genre, engine: m.engine, status: m.status, reference: m.reference, referenceTitle: null,
     version: old?.version ?? null, cover, stages, nextAction, approvals: m.approvals,
@@ -381,8 +455,12 @@ export async function collectGameStudio(deps: HubDeps, opts: GameStudioOpts): Pr
   const manifests = (await Promise.all(files.map(async (f) => parseManifest(await readOpt(deps, path.join(gamesDir, f)))))).filter((m): m is Manifest => !!m);
   // Agents: every job dir (bounded); linked ones show their task, the rest only as names.
   const jobs = (jobNames ?? []).filter((j) => JOB_RE.test(j)).slice(0, MAX_JOBS);
+  // A follow-up (`name-2`, `name-cx`) belongs to the game of the job it continues, listed yet or not.
+  for (const m of manifests) { const families = new Set(m.jobs.map(jobFamily)); m.jobs.push(...jobs.filter((j) => families.has(jobFamily(j)) && !m.jobs.includes(j))); }
   const linked = new Set(manifests.flatMap((m) => m.jobs));
-  const agentList = await Promise.all(jobs.filter((j) => linked.has(j)).map((j) => loadAgent(deps, jobsDir, j, stat)));
+  const loadedJobs = await Promise.all(jobs.filter((j) => linked.has(j)).map((j) => loadAgent(deps, jobsDir, j, stat)));
+  settleBlockedJobs(loadedJobs, (job) => manifests.find((m) => m.jobs.includes(job))?.id, deps.now());
+  const agentList = loadedJobs.map((j) => j.agent);
   const agentsByJob = new Map(agentList.map((a) => [a.job, a]));
   const otherJobs = jobs.filter((j) => !linked.has(j));
   const otherAlive = await Promise.all(otherJobs.map(async (j) => { const pid = /^\s*(\d{1,8})\s*$/.exec((await readOpt(deps, path.join(jobsDir, j, 'pid.txt'))) ?? '')?.[1]; return pid ? (await stat(`/proc/${pid}`)) !== null : false; }));
@@ -399,20 +477,24 @@ export async function collectGameStudio(deps: HubDeps, opts: GameStudioOpts): Pr
   const STATUS_RANK: Record<StudioGame['status'], number> = { candidate: 0, building: 1, live: 2, concept: 3, paused: 4, unknown: 5 };
   const games: StudioGame[] = loaded.map(({ _events, ...g }) => g).sort((a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status] || (b.lastAt ?? '').localeCompare(a.lastAt ?? ''));
 
-  const agents = agentList.slice().sort((a, b) => { const r: Record<StudioAgentState, number> = { working: 0, blocked: 1, done: 2, idle: 3 }; return r[a.state] - r[b.state] || (newest(b.lineAt, b.reportAt) ?? '').localeCompare(newest(a.lineAt, a.reportAt) ?? ''); });
+  const agents = agentList.slice().sort((a, b) => { const r: Record<StudioAgentState, number> = { working: 0, 'needs-owner': 1, blocked: 2, idle: 3, stopped: 4, superseded: 5, done: 6 }; return r[a.state] - r[b.state] || Number(b.alive) - Number(a.alive) || (newest(b.lineAt, b.reportAt) ?? '').localeCompare(newest(a.lineAt, a.reportAt) ?? ''); });
   // Loot: round-robin over the games (each newest first), so one busy game does not fill the whole gallery.
   const loot: StudioArtifact[] = [];
   for (let i = 0; loot.length < 36 && games.some((g) => g.artifacts.length > i); i++) for (const g of games) { const a = g.artifacts[i]; if (a && loot.length < 36) loot.push(a); }
   const feed: StudioEvent[] = loaded.flatMap((g) => g._events);
+  const because = (a: StudioAgent): string => (a.reason ? `: ${a.reason}` : '');
+  const REPORT_FEED: Partial<Record<StudioAgentState, (a: StudioAgent) => string>> = {
+    'needs-owner': (a) => `승인 필요${because(a)}`, blocked: (a) => `막힘 보고${because(a)}`, stopped: (a) => `중단됨${because(a)}`, superseded: (a) => `이어받음 → ${a.successor}`, done: () => '완료 보고',
+  };
   const who = (a: StudioAgent): string => (a.account === 'codex' ? 'Codex' : a.account === 'unknown' ? '에이전트' : `Claude ${a.account}`);
   for (const a of agents) {
     if (a.lineAt) feed.push({ at: a.lineAt, game: a.game, job: a.job, kind: 'agent', text: `${who(a)} · ${a.job}${a.state === 'working' ? ' 작업 중' : ' 마지막 작업'}${a.line ? ` — ${a.line}` : ''}`, level: a.state === 'working' ? 'info' : undefined });
-    if (a.reportAt && a.state !== 'working') feed.push({ at: a.reportAt, game: a.game, job: a.job, kind: 'report', text: `${who(a)} · ${a.job} ${a.state === 'blocked' ? `막힘 보고${a.reason ? `: ${a.reason}` : ''}` : a.state === 'done' ? '완료 보고' : '보고서 갱신'}`, level: a.state === 'blocked' ? 'bad' : a.state === 'done' ? 'ok' : 'info' });
+    if (a.reportAt && a.state !== 'working') feed.push({ at: a.reportAt, game: a.game, job: a.job, kind: 'report', text: `${who(a)} · ${a.job} ${REPORT_FEED[a.state]?.(a) ?? '보고서 갱신'}`, level: a.state === 'needs-owner' ? 'bad' : a.state === 'blocked' ? 'warn' : a.state === 'done' ? 'ok' : 'info' });
   }
   feed.sort((a, b) => b.at.localeCompare(a.at));
   const summary = {
     working: agents.filter((a) => a.state === 'working').length,
-    owner: games.filter((g) => g.nextAction?.owner || g.approvals.some((a) => a.state === 'pending')).length,
+    owner: games.filter((g) => g.nextAction?.owner).length,
     released: games.filter((g) => g.status === 'live' || g.stages.find((s) => s.id === 'release')?.state === 'done').length,
     blocked: games.filter((g) => g.stages.some((s) => s.state === 'blocked')).length,
     games: games.length,

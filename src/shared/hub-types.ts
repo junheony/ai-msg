@@ -34,6 +34,8 @@ export interface HubSource {
   ms: number;
   /** A short reason when `ok` is false (시간 초과, HTTP 503, 연결 실패). */
   error?: string;
+  /** Deliberately switched off or not set up here: shown grey, never counted as a failure. */
+  off?: boolean;
 }
 
 /** One KPI tile: label, a short value, an optional unit, a status colour and a one-line hint. */
@@ -111,6 +113,10 @@ export interface HubMode {
   alerts: HubAlert[];
   links: HubLink[];
   sources: HubSource[];
+  /** Replaces the state word when `idle` means something more exact (꺼짐, 미설정). */
+  stateLabel?: string;
+  /** One muted line at the bottom of the collapsed 소스 상태 panel. */
+  sourceNote?: string;
   /** A small badge next to the activity line (DRY RUN, PAPER). */
   tag?: string;
   /** The mode's page (absent from an older server: the card shows metrics only). */
@@ -123,6 +129,34 @@ export interface HubMode {
   studio?: GameStudio;
   /** 영상 only: the Shorts 공장 project (~/shorts_status files, read-only), shown as the mode's second tab. */
   shorts?: ShortsFactoryView;
+  /** 야핑봇 only: independently cached public Rising feed. */
+  rising?: YappingRising;
+  /** 야핑봇 only: KST calendar-day metrics, independently cached for 60 seconds. */
+  daily?: YappingDaily;
+}
+
+export interface YappingDailyRow {
+  date: string;
+  followers: number | null;
+  following: number | null;
+  /** Views and count of original posts published on this KST date; excludes replies/reposts. */
+  views: number;
+  posts: number;
+}
+export interface YappingDaily {
+  rows: YappingDailyRow[];
+  reason: string | null;
+}
+
+export interface YappingRisingItem {
+  rank: number; url: string; author: string; text: string;
+  velocityVph: number; ageH: number; topic: string;
+}
+export interface YappingRising {
+  generatedAt: string | null; windowH: number | null;
+  items: YappingRisingItem[];
+  /** Sanitized failure or empty-feed reason; never the upstream response body. */
+  reason: string | null;
 }
 
 /* ───────── 게임 스튜디오 (studio/games/*.json manifests + ~/jobs agents; read-only) ───────── */
@@ -133,11 +167,12 @@ export type StudioStageState = 'done' | 'active' | 'blocked' | 'todo';
 export interface StudioStage { id: StudioStageId; label: string; state: StudioStageState; /** Evidence items found / listed. */ found: number; total: number; at: string | null; note?: string }
 export type StudioArtifactKind = 'image' | 'video' | 'html';
 export interface StudioArtifact { src: string; kind: StudioArtifactKind; group: 'screenshots' | 'concept' | 'builds' | 'video' | 'cover'; name: string; at: string | null; game: string; gameTitle: string; /** The ~/jobs/<job> that produced it, when its path is inside a job dir. */ job: string | null }
-export type StudioAgentState = 'working' | 'done' | 'blocked' | 'idle';
+/** blocked: a recent BLOCKED nobody took over · needs-owner: the REPORT asks the owner · superseded: a newer job took over · stopped: an old BLOCKED nobody took over. */
+export type StudioAgentState = 'working' | 'needs-owner' | 'blocked' | 'stopped' | 'superseded' | 'done' | 'idle';
 export interface StudioAgent {
   job: string; title: string | null; account: 'a' | 'b' | 'c' | 'codex' | 'unknown'; model: string | null; state: StudioAgentState; alive: boolean;
   /** The last human-readable run.log line (scrubbed, ≤140 chars). */
-  line: string | null; lineAt: string | null; reportAt: string | null; /** REPORT.md's STATUS reason when blocked. */ reason: string | null; game: string | null; gameTitle: string | null;
+  line: string | null; lineAt: string | null; reportAt: string | null; /** REPORT.md's STATUS reason when blocked. */ reason: string | null; /** The job that took over, when superseded. */ successor: string | null; game: string | null; gameTitle: string | null;
 }
 export interface StudioGame {
   id: string; title: string; titleKo: string | null; genre: string | null; engine: string | null; status: 'live' | 'candidate' | 'building' | 'concept' | 'paused' | 'unknown';
@@ -232,7 +267,9 @@ export interface Ver2Ledger {
   verify: { ok: boolean | null; msg: string; n: number | null; warnings: string[] } | null;
   recent: Ver2LedgerRecord[];
 }
-export interface TradingMerged { room: TradingRoomView; ver2: { paper: Ver2Paper; ledger: Ver2Ledger } }
+/** One bot's line on the Trading scoreboard; null = the bot does not report it (shown as 데이터 없음, never guessed). */
+export interface TradingBotRow { id: string; name: string; pnl: string | null; pnlTone: 'pos' | 'neg' | null; win: string | null; open: string | null; updated: string | null; note: string | null }
+export interface TradingMerged { room: TradingRoomView; ver2: { paper: Ver2Paper; ledger: Ver2Ledger }; scoreboard?: TradingBotRow[] }
 
 export interface HubStatus {
   modes: HubMode[];
@@ -304,6 +341,40 @@ export interface SfLedger {
   /** Entries skipped for lack of an id or title. */
   skipped: number;
 }
+/* ───────── distribution (status.json `distribution`, written by golf-shorts scripts/dist.py) ───────── */
+export type SfAccountState = 'none' | 'created' | 'name_pending' | 'ready';
+export const SF_ACCOUNT_STATES: readonly SfAccountState[] = ['none', 'created', 'name_pending', 'ready'];
+export type SfUploadState = 'queued' | 'scheduled' | 'posted' | 'failed';
+export const SF_UPLOAD_STATES: readonly SfUploadState[] = ['queued', 'scheduled', 'posted', 'failed'];
+export interface SfDistPlatform { id: string; name: string; status: string | null; note: string | null }
+export interface SfDistCell {
+  accountState: SfAccountState; handle: string | null; /** http(s) only. */ url: string | null; blockers: string[];
+  counts: Record<SfUploadState, number>; /** null = not collected (never 0). */ views: number | null;
+  /** Profile checklist (platform_accounts.json `setup`): field → done. null = not tracked for this account. */ setup?: Record<string, boolean> | null; setupNote?: string | null;
+}
+export interface SfDistChannel { id: string; name: string; lang: string | null; /** YouTube UC id (= SfChannel.id). */ youtubeChannelId: string | null; publishKst: string | null; cells: Record<string, SfDistCell> }
+export interface SfDistUpload { state: SfUploadState; url: string | null; at: string | null; views: number | null; videoId: string | null; error: string | null; derived: boolean }
+export interface SfDistShort { id: string; channel: string; title: string | null; batch: string | null; platforms: Record<string, SfDistUpload> }
+export interface SfDistribution {
+  platforms: SfDistPlatform[]; channels: SfDistChannel[];
+  totals: Record<string, Record<SfUploadState, number>>;
+  shorts: SfDistShort[]; shortsTotal: number;
+  blockers: { channel: string; platform: string; text: string }[];
+  /** Checklist field order (platform_accounts.json setup_checklist.fields); [] when the file has none. */
+  setupFields?: string[];
+  updatedAt: string | null;
+}
+/* ───────── routines · longform · blockers (status.json `routines` / `longform` / `blockers`, golf-shorts scripts/push_dashboard_status.py) ───────── */
+export interface SfRoutineRow { id: string; name: string; schedule: string | null; lastRunAt: string | null; status: SfRoutineStatus; note: string | null }
+export interface SfLongformItem { id: string; channelName: string | null; title: string | null; /** http(s) only. */ url: string | null; state: string | null; at: string | null; durationS: number | null; plan: string | null }
+export interface SfLongform {
+  targetPerDay: number | null; doneToday: number | null;
+  published: SfLongformItem[]; pending: SfLongformItem[];
+  /** QUEUE.md rows flattened to text; done = checked / 완료. */
+  queue: { text: string; done: boolean }[];
+  progress: { file: string | null; updatedAt: string | null; lines: string[] } | null;
+}
+export interface SfBlocker { id: string; text: string; scope: string | null; /** user = needs the owner's hand, wait = time-locked, bot = ours. */ owner: string | null; since: string | null }
 export interface ShortsFactoryView {
   state: HubState;
   headline: string;
@@ -321,5 +392,12 @@ export interface ShortsFactoryView {
   /** user_reference history points that could not be tied to a channel yet. */
   unmappedReference: { at: string; videoId: string; views: number | null }[];
   ledger: SfLedger;
+  /** Per channel × platform accounts and uploads; null when status.json carries no `distribution` block. */
+  distribution?: SfDistribution | null;
+  /** Every routine (shorts · longform · weekly …); [] when status.json carries no `routines`. */
+  routines?: SfRoutineRow[];
+  longform?: SfLongform | null;
+  /** Open blockers waiting on a person; [] when none reported. */
+  blockers?: SfBlocker[];
   generatedAt: string;
 }

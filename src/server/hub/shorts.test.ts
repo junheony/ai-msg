@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { buildCalendar, buildShortsView, collectShorts, kstTomorrow, ledgerStatusOf, normalizeLedgerStatusLabel, parseChannels, parseClaudePick, parseCodex, parseDf, parseHistory, parseLedger, parseStatus, redact } from './shorts';
+import { buildCalendar, buildShortsView, collectShorts, kstTomorrow, ledgerStatusOf, normalizeLedgerStatusLabel, parseChannels, parseClaudePick, parseCodex, parseDf, parseDistribution, parseHistory, parseLedger, parseStatus, redact } from './shorts';
 import { stripSecrets, type HubDeps } from './shared';
-import { CH1, CH2, CH3, CHANNELS, HISTORY, HOME, LEDGER, NOW, NO_PROBES, PLACEHOLDER, PROBES_OK, STATUS } from './__fixtures__/shorts';
+import { CH1, CH2, CH3, CHANNELS, DIST, HISTORY, HOME, LEDGER, NOW, NO_PROBES, PLACEHOLDER, PROBES_OK, STATUS } from './__fixtures__/shorts';
 
 const j = (v: unknown): string => JSON.stringify(v);
 const view = (o: { status?: unknown; channels?: unknown; history?: string | null; probes?: typeof PROBES_OK | typeof NO_PROBES; now?: number } = {}) =>
@@ -301,5 +301,74 @@ describe('Shorts 공장 · 적용 현황 (reference_ledger.json)', () => {
     expect(bad.alerts.find((a) => a.text === 'reference_ledger.json 형식 오류')).toMatchObject({ level: 'warn', hint: 'JSON 해석 실패' });
     expect(JSON.stringify(v)).not.toContain(HOME);
     expect(stripSecrets(v)).toEqual(v);
+  });
+});
+
+describe('distribution (status.json distribution block)', () => {
+  const withDist = (d: unknown) => buildShortsView({ status: j({ ...STATUS, distribution: d }), channels: j(CHANNELS), history: HISTORY, probes: PROBES_OK, probeNote: null }, NOW);
+  it('is null when status.json carries no block or a broken one', () => {
+    expect(view().distribution).toBeNull();
+    expect(parseDistribution('x')).toBeNull();
+    expect(parseDistribution({ platforms: [] })).toBeNull();
+  });
+  it('keeps slug platforms, sanitizes states, urls and secrets', () => {
+    const d = parseDistribution(DIST)!;
+    expect(d.platforms.map((p) => p.id)).toEqual(['youtube', 'tiktok', 'instagram']);
+    const c = d.channels[0]!;
+    expect(c.cells.tiktok!.url).toBeNull();
+    expect(c.cells.tiktok!.accountState).toBe('name_pending');
+    expect(c.cells.instagram!.accountState).toBe('none');
+    expect(c.cells.tiktok!.blockers.join(' ')).not.toContain('abc123secret');
+    expect(d.totals.tiktok).toEqual({ queued: 0, scheduled: 0, posted: 0, failed: 1 });
+    expect(d.shorts.map((s) => s.id)).toEqual(['tk-snow', 'tears', 'boil']);
+    expect(d.shorts[1]!.platforms.tiktok).toMatchObject({ state: 'failed', error: '429 rate limit' });
+  });
+  it('fills YouTube views from channels.json videos by video id', () => {
+    const d = withDist(DIST).distribution!;
+    expect(d.shorts.find((s) => s.id === 'tears')!.platforms.youtube!.views).toBe(545);
+    expect(d.shorts.find((s) => s.id === 'boil')!.platforms.youtube!.views).toBe(2300);
+    expect(d.channels[0]!.cells.youtube!.views).toBe(2845);
+    expect(d.channels[0]!.youtubeChannelId).toBe(CH1);
+  });
+});
+
+describe("routines · longform · blockers (status.json, push_dashboard_status.py)", () => {
+  const extra = {
+    routines: [
+      { id: "shorts", name: "Shorts 공장", schedule: "매일 22:00 KST", last_run_at: "2026-11-01T22:00:00+09:00", status: "failed", note: "메모리 부족 → 수정 완료" },
+      { id: "longform", name: "롱폼 공장", schedule: "매일 14:00 KST", last_run_at: null, status: "unknown", note: "신규" },
+      { id: "weekly", name: "주간 리뷰", schedule: "매주 월 10:00", last_run_at: "2026-11-02T10:00:00+09:00", status: "failed", note: null },
+      { id: "", name: "", status: "ok" },
+      "junk",
+    ],
+    longform: {
+      target_per_day: 5, done_today: 1,
+      published: [{ id: "yeoksa-01", channel_name: "역사 반전", title: "t", url: "https://www.youtube.com/watch?v=kQuNYRKfTVg", state: "posted", published_at: "2026-11-02T12:00:00+09:00", duration_s: 300.4 }, { id: "x", url: "javascript:alert(1)" }],
+      pending: [{ id: "archi-02", state: "packaged", plan: "오늘 밤 업로드 예정" }],
+      queue: [{ text: "yeoksa-03", done: false }, { "#": "1", 상태: "완료", 제목: "archi-01" }],
+      progress: { file: "/home/x/PROGRESS_ep2.md", updated_at: "2026-11-02T21:00:00+09:00", lines: ["- a", "- b"] },
+    },
+    blockers: [{ id: "thumb", text: "휴대폰 인증 필요", owner: "user", scope: "archi", since: "2026-11-02" }, { id: "old", text: "done", resolved_at: "2026-11-01" }, { text: "" }],
+  };
+  it("parses all three, keeps http(s) urls only, drops resolved blockers, and raises alerts for every failed routine", () => {
+    const v = view({ status: { ...STATUS, ...extra }, channels: CHANNELS });
+    expect(v.routines!.map((r) => [r.id, r.status])).toEqual([["shorts", "failed"], ["longform", "unknown"], ["weekly", "failed"]]);
+    expect(v.longform!.targetPerDay).toBe(5);
+    expect(v.longform!.published.map((p) => p.url)).toEqual(["https://www.youtube.com/watch?v=kQuNYRKfTVg", null]);
+    expect(v.longform!.published[0]!.durationS).toBe(300);
+    expect(v.longform!.pending[0]!.plan).toBe("오늘 밤 업로드 예정");
+    expect(v.longform!.queue.map((q) => q.done)).toEqual([false, true]);
+    expect(v.longform!.progress!.file).toBe("PROGRESS_ep2.md");
+    expect(v.blockers!.map((b) => b.id)).toEqual(["thumb"]);
+    expect(texts(v)).toContain("주간 리뷰 루틴 실패");
+    expect(texts(v)).toContain("사람 손이 필요한 막힘 1건");
+    expect(kpiOf(v, "롱폼 오늘")).toMatchObject({ value: "1", unit: "/5" });
+  });
+  it("is empty / null when status.json carries none of them", () => {
+    const v = view({ status: STATUS, channels: CHANNELS });
+    expect(v.routines).toEqual([]);
+    expect(v.longform).toBeNull();
+    expect(v.blockers).toEqual([]);
+    expect(v.kpis.find((k) => k.label === "롱폼 오늘")).toBeUndefined();
   });
 });

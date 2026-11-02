@@ -1,0 +1,172 @@
+{
+  "at": "2026-11-02T02:45:03.710985+09:00",
+  "uptime": "02:45:03 up 52 days, 10:11, 40 users,  load average: 126.33, 148.78, 149.86",
+  "free_h": "total        used        free      shared  buff/cache   available\nMem:           187Gi        52Gi        18Gi       933Mi       119Gi       135Gi\nSwap:          8.0Gi       8.0Gi        48Ki",
+  "nproc": "16",
+  "measurements": [
+    {
+      "run": 1,
+      "path": "/api/status",
+      "result": "200 0.000241 0.040810 0.040867 5609",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "run": 1,
+      "path": "/api/metrics",
+      "result": "200 0.000121 0.026161 0.026285 16382",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "run": 1,
+      "path": "/api/posts",
+      "result": "200 0.000346 0.829503 0.830730 96873",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "run": 1,
+      "path": "/api/ai_news?days=3",
+      "result": "200 0.000140 0.013302 0.013542 94276",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "run": 1,
+      "path": "/api/yap",
+      "result": "200 0.000167 0.012149 0.012299 2376",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "run": 1,
+      "path": "/api/replies?status=todo",
+      "result": "200 0.000142 0.007757 0.007810 42",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "run": 1,
+      "path": "/api/replies?status=done",
+      "result": "200 0.000460 0.103596 0.103934 3642",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "run": 1,
+      "path": "/api/rising?limit=30",
+      "result": "200 0.000156 0.068943 0.072027 13302",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "run": 2,
+      "path": "/api/status",
+      "result": "200 0.000145 0.009081 0.021137 5609",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "run": 2,
+      "path": "/api/metrics",
+      "result": "200 0.000145 0.023867 0.023943 16382",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "run": 2,
+      "path": "/api/posts",
+      "result": "200 0.000127 0.335454 0.335894 96873",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "run": 2,
+      "path": "/api/ai_news?days=3",
+      "result": "200 0.000110 0.414398 0.414464 94276",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "run": 2,
+      "path": "/api/yap",
+      "result": "200 0.000243 0.018943 0.019011 2376",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "run": 2,
+      "path": "/api/replies?status=todo",
+      "result": "200 0.000242 0.026461 0.026647 42",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "run": 2,
+      "path": "/api/replies?status=done",
+      "result": "200 0.000303 0.028517 0.030331 3642",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "run": 2,
+      "path": "/api/rising?limit=30",
+      "result": "200 0.000212 0.148123 0.148220 13302",
+      "exit": 0,
+      "error": ""
+    }
+  ],
+  "concurrent_at": "2026-11-02T02:45:36.048731+09:00",
+  "concurrent": [
+    {
+      "path": "/api/status",
+      "result": "200 0.000176 0.009895 0.010168 5609",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "path": "/api/metrics",
+      "result": "200 0.000102 0.054049 0.144054 16382",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "path": "/api/posts",
+      "result": "200 0.000091 0.053884 0.053931 96873",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "path": "/api/ai_news?days=3",
+      "result": "200 0.000092 0.174384 0.174434 94276",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "path": "/api/yap",
+      "result": "200 0.000079 0.065645 0.065779 2376",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "path": "/api/replies?status=todo",
+      "result": "200 0.000080 0.051521 0.058109 42",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "path": "/api/replies?status=done",
+      "result": "200 0.000082 0.059527 0.059566 3642",
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "path": "/api/rising?limit=30",
+      "result": "200 0.000134 0.076784 0.076827 13302",
+      "exit": 0,
+      "error": ""
+    }
+  ],
+  "uptime_after": "02:45:36 up 52 days, 10:12, 40 users,  load average: 130.75, 147.50, 149.40"
+}

@@ -33,9 +33,11 @@ import { createRequestHandler, type ServerUpdateDeps } from './http';
 import { hubSelfOf } from './hub/self';
 import { createSrService, fetchSrJson } from './hub/sr';
 import { createLabService, fetchLabJson } from './hub/lab';
+import { createResearchService, researchDir } from './hub/research';
 import { studioFileRoots } from './hub/gameStudio';
 import { createHubStatus, fetchJsonWithTimeout, liveHubDeps } from './hub/status';
 import { AuthLoginHub } from './authLogin/hub';
+import { createHubControlsLive } from './hub/controls/live';
 import { openAuthPty } from './authLogin/pty';
 import { ServerUpdateWatch, startSupervisor, supervisionCheck } from './serverUpdate';
 import { flushThenExit, installGracefulShutdown } from './lifecycle';
@@ -387,6 +389,8 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
       // Trading room SR zones (:8830 /api/sr), read once a minute, filtered per symbol server-side.
       sr: createSrService({ fetchJson: fetchSrJson }),
       lab: createLabService({ fetchJson: fetchLabJson }),
+      // 승인함 · 다음 작업 · 실행 관리 (~/.msg queues, ~/jobs); DECK_HUB_CONTROLS=0 leaves the hub read-only.
+      ...(process.env.DECK_HUB_CONTROLS === '0' ? {} : { controls: createHubControlsLive({ home: cfg.home, token, usage: () => usage.snapshot() }) }),
     };
     // MSG mini (/mini, the lock-screen widget): read-only; the widget token file is made on its first use, never logged.
     const miniTracker = new MiniTracker();
@@ -394,7 +398,7 @@ export async function startServer(o: { cfg?: DeckConfig; onListening?: (info: Li
       status: createMiniStatus({ tracked: () => miniTracker.list(), running: () => ws.running(), usage: () => usage.snapshot(), accounts, hub: hub.status, titleOf: (sessionId) => (index.lookup(sessionId)?.title ?? index.codexOwned(store.codexEntries()).find((e) => e.sessionId === sessionId)?.title ?? store.get(sessionId)?.title) || null, home: cfg.home }),
       widgetToken: new WidgetTokenStore(path.join(cfg.configDir, 'widget-token')),
     };
-    const realHandler = createRequestHandler({ hub, mini, token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), version: packageVersion(), usage, refreshUsage: async () => { await codexUsage.pollOnce(); await usage.pollOnce(); }, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, sessionIcons, memory, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate, setup, authLogin });
+    const realHandler = createRequestHandler({ hub, research: createResearchService(researchDir(cfg.home)), mini, token, uiDir: cfg.uiDir, build: () => liveBuildId(cfg.uiDir), version: packageVersion(), usage, refreshUsage: async () => { await codexUsage.pollOnce(); await usage.pollOnce(); }, index, devOrigins: cfg.devOrigins, extraHosts, extraSessions: () => store.codexEntries(), attachments, home: cfg.home, onIndexChanged: () => notifyIndex(), pins, sessionIcons, memory, meta, search, files, commands, push: { notifier: push, store: pushSubs }, forks: runner, trash: runner, usageHistory, highlights: events, serverUpdate, setup, authLogin });
     const ws = attachWebSocket(servers, { holders, grokHome: cfg.grokBin ? cfg.grokHome : null, build: () => liveBuildId(cfg.uiDir), token, devOrigins: cfg.devOrigins, runner, index, usage, store, extraHosts, codexAvailable: codex !== null, hermesAvailable: hermes !== null, accounts, geminiStatus, grokStatus, grokUnlock: () => grokEngineLock.unlock(), cwdRoots: cfg.cwdRoots, pins, sessionIcons, settings, notify: (m) => { push.notify(m); events.record(m); watch.observe(m); commander.observe(m); miniTracker.observe(m); }, onUserSend: (sessionId) => { watch.userSent(sessionId); commander.userIntervened(sessionId); }, commander, retryDue: (sessionId) => watch.retryDue(sessionId), attachments, meta, acceptedRefs: new AcceptedRefs(path.join(cfg.configDir, 'accepted-refs.json')), activityFile: path.join(cfg.configDir, 'activity.json'), tasks, pushTask: (p) => { void push.sendAll(p); }, setup: { needed: () => setupStore.needed() }, hub: hub.status });
     cleanup.push(() => ws.close());
     notifyIndex = () => ws.broadcastIndex();

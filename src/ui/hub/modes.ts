@@ -1,8 +1,8 @@
 import type { HubModeId, HubState } from '../../shared/hub-types';
 
-/** The rail's entries: the 개요 plus the nine modes. `msg` is the terminal (the existing app, untouched). */
-export type HubModeKey = 'home' | HubModeId;
-export type HubIconName = 'grid' | 'terminal' | 'nodes' | 'candles' | 'clapper' | 'gamepad' | 'wrench' | 'updown' | 'bars' | 'bird';
+/** The rail's entries: the 개요, the nine modes and 리서치 (a reading page, no status). `msg` is the terminal (the existing app, untouched). */
+export type HubModeKey = 'home' | 'research' | HubModeId;
+export type HubIconName = 'grid' | 'terminal' | 'nodes' | 'candles' | 'clapper' | 'gamepad' | 'wrench' | 'updown' | 'bars' | 'bird' | 'book';
 
 export interface HubModeDef { id: HubModeKey; label: string; short: string; icon: HubIconName }
 
@@ -17,6 +17,7 @@ export const HUB_MODES: readonly HubModeDef[] = [
   { id: 'updown', label: 'UPDOWN', short: 'UPDOWN', icon: 'updown' },
   { id: 'quant', label: 'QUANT', short: 'QUANT', icon: 'bars' },
   { id: 'yapping', label: '야핑봇', short: '야핑봇', icon: 'bird' },
+  { id: 'research', label: '리서치', short: '리서치', icon: 'book' },
 ];
 
 export const HUB_MODE_KEY = 'deck.hubMode';
@@ -32,9 +33,9 @@ export function modeDef(id: HubModeKey): HubModeDef {
 export function modeAt(digit: number): HubModeKey | null {
   return HUB_MODES[digit === 0 ? 9 : digit - 1]?.id ?? null;
 }
-/** The digit shown next to the nth entry (index 9 is ⌘0). */
-export function modeDigit(index: number): number {
-  return (index + 1) % 10;
+/** The digit shown next to the nth entry (index 9 is ⌘0); the digits run out after the tenth. */
+export function modeDigit(index: number): number | null {
+  return index < 10 ? (index + 1) % 10 : null;
 }
 
 /** The last mode this browser was in; the shell when none was kept (or storage is unavailable). */

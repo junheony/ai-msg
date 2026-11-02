@@ -5,7 +5,7 @@
  * mirrored files, `systemctl --user show`, and one fixed `ssh -o BatchMode=yes` probe that only prints.
  */
 import type { HubAlert, HubCardItem, HubKpi, HubLink, HubMetricValue, HubMode, HubSection, HubSource, HubState } from '../../shared/hub-types';
-import { HUB_TIMEOUTS, HUB_URLS, SLOW_CACHE_MS, STALLED_S, UNIT_STATE_KO, agoFrom, arr, fmtAgo, fmtDuration, fmtInt, fmtKst, fmtNum, fmtPct, fmtUsd, isObj, kpi, latestIso, num, objs, page, probe, scrub, sec, showUnit, slowCache, sortAlerts, str, toIso, unitInfo, type HubDeps, type UnitInfo } from './shared';
+import { LAST_GOOD_MS, HUB_TIMEOUTS, HUB_URLS, SLOW_CACHE_MS, STALLED_S, UNIT_STATE_KO, agoFrom, arr, fmtAgo, fmtDuration, fmtInt, fmtKst, fmtNum, fmtPct, fmtUsd, isObj, kpi, latestIso, num, objs, page, probe, scrub, sec, showUnit, slowCache, sortAlerts, str, toIso, unitInfo, type HubDeps, type UnitInfo } from './shared';
 
 export const OPS_ACCOUNTS = ['main', 'sub1', 'sub2', 'sub3'] as const;
 export type OpsProfile = (typeof OPS_ACCOUNTS)[number];
@@ -336,7 +336,11 @@ export async function collectOps(deps: HubDeps): Promise<HubMode> {
   const worse = (s: HubState): void => { const rank: Record<HubState, number> = { ok: 0, idle: 0, unknown: 1, warn: 2, down: 3 }; if (rank[s] > rank[state]) state = s; };
   if (!ps && printer.pending) alerts.push({ level: 'info', text: '프린터 상태 불러오는 중 (대시보드 8765 응답 10초+) — 미러 파일 값 표시', hint: '다음 갱신(15초)에 반영' });
   else if (!ps) { alerts.push({ level: 'warn', text: `프린터 상태 응답 없음 · ${printer.error ?? '오류'} — 미러 파일 값 표시` }); worse('warn'); }
-  else if (printer.stale) { alerts.push({ level: 'warn', text: `프린터 상태 ${printer.error ?? '오류'} · ${printer.at !== null ? fmtAgo(Math.max(0, now - printer.at)) : ''} 값 사용` }); worse('warn'); }
+  else if (printer.stale) {
+    const fresh = printer.at !== null && now - printer.at <= LAST_GOOD_MS;
+    alerts.push({ level: fresh ? 'info' : 'warn', text: `프린터 상태 ${printer.error ?? '오류'} · ${printer.at !== null ? fmtAgo(Math.max(0, now - printer.at)) : ''} 값 사용` });
+    if (!fresh) worse('warn');
+  }
   if (!o) alerts.push({ level: 'info', text: `/api/ops 응답 없음 · ${ops.source.error ?? '오류'} — 7일 비용 버킷 없음` });
   const macDown = remoteNeeded && macView.ok === false;
   if (macDown) { alerts.push({ level: 'warn', text: `맥북 연결 끊김 · 마지막 확인 ${macView.at !== null ? fmtAgo(Math.max(0, now - macView.at)) : '없음'}`, hint: '서브2·서브3 는 하트비트·미러 파일로만 표시 (launchd 확인 불가)' }); worse('warn'); }

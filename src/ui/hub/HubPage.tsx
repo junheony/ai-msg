@@ -3,8 +3,10 @@ import type { HubAlert, HubKpi, HubMode, HubModeId, HubSection, HubState } from 
 import type { LabState } from '../../shared/lab-types';
 import { ExternalIcon, HubIcon, ReloadIcon } from './HubIcons';
 import { Cards, Chart, Images, KvGrid, Steps } from './HubSections';
+import { YappingHome } from './YappingHome';
+import './quant.css';
 import { NexusHome } from './NexusHome';
-import { TradingHome } from './TradingHome';
+import { TradingScoreboard, TradingHome } from './TradingHome';
 import { GameStudioHome } from './gamestudio/GameStudioHome';
 import { readVideoProject, sfHeader, ShortsFactoryHome, VIDEO_PROJECTS, writeVideoProject, type VideoProject } from './ShortsFactoryHome';
 import { modeDef, STATE_LABEL, stateClass } from './modes';
@@ -16,11 +18,39 @@ import { useSrFeed, type SrFeed } from './sr/useSrFeed';
 import { liveLabApi, type LabApi } from './lab/api';
 import { LabPanel } from './lab/LabPanel';
 import { useLabFeed, type LabFeed } from './lab/useLabFeed';
+import { ApprovalInbox } from './controls/Approvals';
+import { ModeActions } from './controls/CardActions';
+import { useCtl } from './controls/context';
+import { RunsPanel } from './controls/Runs';
 
 /* ───────── atoms shared with the 개요 ───────── */
 
-export function StatePill({ state }: { state: HubState }) {
-  return <span className={`hub-st ${stateClass(state)}`}><i />{STATE_LABEL[state]}</span>;
+export function StatePill({ state, label }: { state: HubState; label?: string | undefined }) {
+  return <span className={`hub-st ${stateClass(state)}`}><i />{label ?? STATE_LABEL[state]}</span>;
+}
+
+interface SourceRow { name: string; ok: boolean; off?: boolean | undefined; detail: string }
+
+/**
+ * 소스 상태: every feed behind a page, folded away. The header shows one dot; the rows only open on request, because a
+ * real problem has already surfaced in plain words under 주의.
+ */
+export function SourceStatus({ sources, note }: { sources: SourceRow[]; note?: string | undefined }) {
+  const live = sources.filter((s) => !s.off);
+  const failed = live.filter((s) => !s.ok).length;
+  const tone = live.length === 0 ? '' : failed === 0 ? 'ok' : failed === live.length ? 'bad' : 'warn';
+  const word = live.length === 0 ? '사용 안 함' : failed === 0 ? '모두 정상' : `${failed}개 문제`;
+  return (
+    <details className="hub-sources" data-testid="hub-sources">
+      <summary aria-label={`소스 상태 · ${word}`} title={word}><span className={`hub-dot ${tone}`} data-testid="hub-sources-dot" /><span>소스 상태</span></summary>
+      <div className="hub-sources-panel">
+        <ul>
+          {sources.map((s) => <li key={s.name} className={s.off ? 'off' : s.ok ? 'ok' : 'bad'}><span className={`hub-dot ${s.off ? '' : s.ok ? 'ok' : 'warn'}`} /><span className="nm">{s.name}</span><span className="dt">{s.detail}</span></li>)}
+        </ul>
+        {note && <p className="hub-sources-note">{note}</p>}
+      </div>
+    </details>
+  );
 }
 
 const metricText = (v: HubMode['metrics'][string]): string => (v === null ? '—' : typeof v === 'boolean' ? (v ? '예' : '아니오') : String(v));
@@ -221,7 +251,7 @@ export function SourceStrip({ lab, sr }: { lab: LabFeed; sr: SrFeed }) {
     <div className="tr-src" data-testid="tr-src" aria-label="페이퍼 출처">
       <article className={`hs-card ${labTone}`} data-testid="tr-src-lab">
         <div className="hs-card-top"><h4><span className="tr-src-name">Lab</span> 연구실 페이퍼 요약</h4><span className="hs-badge tr-src-paper ok" title="live=false · read_only=true">PAPER ONLY</span></div>
-        <p className="hs-card-sub">트레이딩 ver2 · :8792 /lab/api/summary · 60초 갱신</p>
+        <p className="hs-card-sub">트레이딩 ver2 · 60초 갱신</p>
         <dl className="hs-rows">
           <div><dt>기준 시각</dt><dd>{fmtKstFull(snap?.generated_at ?? null)}</dd></div>
           <div><dt>상태</dt><dd className={labTone === 'bad' ? 'bad' : labTone === 'warn' ? 'warn' : 'ok'}>{labState}</dd></div>
@@ -231,7 +261,7 @@ export function SourceStrip({ lab, sr }: { lab: LabFeed; sr: SrFeed }) {
       </article>
       <article className={`hs-card ${srTone}`} data-testid="tr-src-sr">
         <div className="hs-card-top"><h4><span className="tr-src-name">SR / DCA</span> 지지·저항 · 분할매수(DCA)</h4><span className={`hs-badge tr-src-paper ${badge.tone}`} title={badge.title}>{badge.text}</span></div>
-        <p className="hs-card-sub">트레이딩룸 :8830 · /api/sr + /api/status · 60초 갱신</p>
+        <p className="hs-card-sub">트레이딩룸 · 60초 갱신</p>
         <dl className="hs-rows">
           <div><dt>SR 스냅샷</dt><dd className={!all ? '' : srOk ? (all.feeds.sr.stale ? 'warn' : 'ok') : 'bad'}>{all ? (srOk ? fmtKstFull(all.snapshotAt ?? all.room?.srSnapshot?.mtime ?? null) + (all.feeds.sr.stale ? ' · 이전 값' : '') : `응답 없음${all.feeds.sr.error ? ` · ${all.feeds.sr.error}` : ''}`) : sr.error ? `응답 없음 · ${sr.error}` : '불러오는 중…'}</dd></div>
           <div><dt>룸 상태</dt><dd className={!all ? '' : stOk ? (all.feeds.status.stale ? 'warn' : 'ok') : 'bad'}>{all ? (stOk ? fmtKstFull(all.room?.generatedAt ?? null) + (all.feeds.status.stale ? ' · 이전 값' : '') : `응답 없음${all.feeds.status.error ? ` · ${all.feeds.status.error}` : ''}`) : '—'}</dd></div>
@@ -277,6 +307,9 @@ export interface HubPageProps { modeKey: HubModeId; mode: HubMode | undefined; n
 export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generatedAt, labApi = liveLabApi, srApi = liveSrApi }: HubPageProps) {
   const def = modeDef(modeKey);
   const trading = modeKey === 'trading';
+  // Hub controls: none at all in the Trading room; QUANT shows its requests read-only and nothing else.
+  const ctl = useCtl()?.feed.state ?? null;
+  const acts = !trading && ctl;
   // The Trading room's two paper sources are read once here and shared with the strip and the panels.
   const lab = useLabFeed(labApi, trading);
   const sr = useSrFeed(srApi, trading);
@@ -285,6 +318,7 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
   const pick = (p: VideoProject) => { setProject(p); writeVideoProject(p); };
   const factory = modeKey === 'video' && project === 'factory';
   const own = !factory;
+  const yapping = modeKey === 'yapping' && !!mode?.page;
   // While Shorts 공장 is selected the header speaks for it, not for engineering-shorts.
   const head = factory && mode?.shorts ? sfHeader(mode.shorts) : null;
   const kpis = mode ? kpisOf(mode) : [];
@@ -296,8 +330,9 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
   const studio = mode?.id === 'game' ? mode.studio : undefined;
   const ops = (
     <>
-      {trading && <SourceStrip lab={lab} sr={sr} />}
       {mode && <Lead state={mode.state} headline={headlineOf(mode)} decision={decisionOf(mode)} />}
+      {mode?.trading?.scoreboard && <TradingScoreboard rows={mode.trading.scoreboard} tag={mode.tag} />}
+      {trading && <SourceStrip lab={lab} sr={sr} />}
       {kpis.length > 0 && <div className="kpis" data-testid="hub-kpis">{kpis.map((k, i) => <Kpi key={i} k={k} />)}</div>}
       {mode && (
         <section className="sec open-static" aria-label="주의">
@@ -320,13 +355,13 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
       <header className="ph">
         <span className="mode-ico"><HubIcon name={def.icon} size={18} /></span>
         <h1>{mode?.name ?? def.label}</h1>
-        {mode && <StatePill state={head ? head.state : mode.state} />}
+        {mode && <StatePill state={head ? head.state : mode.state} label={head ? undefined : mode.stateLabel} />}
         {head ? <span className="hub-tag">Shorts 공장</span> : mode?.tag && !studio && <span className="hub-tag">{mode.tag}</span>}
         <span className="meta">{head ? '파일 갱신' : '마지막 활동'} {relTime(head ? head.lastActivity : mode?.lastActivity, now)}</span>
-        {head && <span className="hub-src-list" data-testid="sf-src-list">{head.sources.map((s) => <span key={s.name} className={`src${s.ok ? '' : ' bad'}`} title={s.label}>{s.name}{s.ok ? '' : ` · ${s.label}`}</span>)}</span>}
-        {!head && !studio && mode && mode.sources.length > 0 && <span className="hub-src-list">{mode.sources.map((s) => <span key={s.name} className={`src${s.ok ? '' : ' bad'}`} title={s.ok ? `${s.ms}ms` : s.error ?? '오류'}>{s.name}{s.ok ? '' : ` · ${s.error ?? '오류'}`}</span>)}</span>}
+        {head && <SourceStatus sources={head.sources.map((x) => ({ name: x.name, ok: x.ok, detail: x.label }))} />}
+        {!head && !studio && !yapping && mode && mode.sources.length > 0 && <SourceStatus sources={mode.sources.map((x) => ({ name: x.name, ok: x.ok, off: x.off, detail: x.off ? (x.error ?? '꺼짐') : x.ok ? (x.ms ? `${x.ms}ms` : '') : (x.error ?? '오류') }))} note={mode.sourceNote} />}
         <span className="ph-end">
-          <span className="pill">읽기 전용</span>
+          {acts ? <ModeActions mode={modeKey} place="head" /> : <span className="pill">읽기 전용</span>}
           {/* The Trading room has no control anywhere, the header included: its feeds poll on their own (60 s), so the
               only thing left of the button there is a passive "loading" word while the status is being read. */}
           {trading
@@ -345,9 +380,11 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
       )}
       {error && <div className="hub-notice" role="alert">상태를 불러오지 못했어요 · {error}</div>}
       {!mode && !error && <div className="hub-notice muted">상태를 불러오는 중…</div>}
+      {acts && <ApprovalInbox mode={modeKey} now={now} />}
+      {acts && <RunsPanel mode={modeKey} now={now} />}
       {factory && mode && (mode.shorts ? <ShortsFactoryHome sf={mode.shorts} now={now} /> : <div className="hub-notice muted" data-testid="sf-absent">서버가 Shorts 공장 데이터를 보내지 않았다 · 서버를 새 빌드로 올리면 보인다.</div>)}
       {studio && <GameStudioHome studio={studio} now={now} />}
-      {studio ? (
+      {yapping && mode ? <YappingHome mode={mode} now={now} /> : studio ? (
         <details className="gs-detail" data-testid="gs-detail">
           <summary>상세 기록</summary>
           <div className="gs-detail-in">{ops}</div>
@@ -355,10 +392,9 @@ export function HubPage({ modeKey, mode, now, error, loading, onRefresh, generat
       ) : own && ops}
       {mode && (
         <footer className="foot">
-          {head ? <span>파일 {head.sources.filter((s) => s.ok).length}/{head.sources.length} 최신 · {head.sources.map((s) => `${s.name} ${s.label}`).join(' · ')}</span>
-            : <span>소스 {mode.sources.filter((s) => s.ok).length}/{mode.sources.length}{mode.sources.length ? ` · ${mode.sources.map((s) => `${s.name} ${s.ok ? `${s.ms}ms` : '실패'}`).join(' · ')}` : ''}</span>}
+          {yapping && <span>소스 {mode.sources.filter((s) => s.ok).length}/{mode.sources.length}</span>}
           <span>서버 생성 {relTime(generatedAt, now)}</span>
-          <span>읽기 전용 · 제어 없음</span>
+          <span>{acts ? (ctl.modes[modeKey]?.locked ? ctl.lockedLabel : '조치는 확인 후 실행 · 모두 기록') : '읽기 전용 · 제어 없음'}</span>
         </footer>
       )}
     </div>

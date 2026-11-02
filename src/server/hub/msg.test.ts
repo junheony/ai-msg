@@ -49,6 +49,17 @@ describe('collectMsg (via collectHubStatus)', () => {
     expect(m.page!.kpis[0]).toMatchObject({ value: '0', status: 'ok', hint: '대기 중' });
     expect(m.page!.kpis[1]!.value).toBe('—');
   });
+  it('a seat at its Fable limit is not spent, and a spent seat alarms only when no other seat is left', async () => {
+    const run = async (seats: HubSelfSeat[]) => (await collectHubStatus(deps({ uptimeMs: 1, sessions: 1, activeTurns: 0, recent: [], seats }))).modes[0]!;
+    const fable = await run([seat('a', 'Claude A', { fable: 100 }), seat('b', 'Claude B', { fable: 100 })]);
+    expect(fable.alerts.filter((a) => a.text.includes('소진'))).toEqual([]);
+    expect(fable.alerts.find((a) => a.text.startsWith('Fable 한도 100%'))).toMatchObject({ level: 'info' });
+    expect(fable.state).toBe('ok');
+    const oneOut = await run([seat('a', 'Claude A', { fiveHour: 100 }), seat('b', 'Claude B')]);
+    expect(oneOut.alerts.find((a) => a.text.startsWith('Claude A 소진'))).toMatchObject({ level: 'info' });
+    const allOut = await run([seat('a', 'Claude A', { fiveHour: 100 })]);
+    expect(allOut.alerts.find((a) => a.text.startsWith('Claude A 소진'))).toMatchObject({ level: 'warn' });
+  });
   it('shows the work: running and recent sessions (slash-command titles replaced), seats with the best one picked and the spent ones named', async () => {
     const s = await collectHubStatus(deps({
       uptimeMs: 3_600_000, sessions: 40, activeTurns: 1, active24h: 6,
@@ -67,7 +78,7 @@ describe('collectMsg (via collectHubStatus)', () => {
       ],
     }));
     const m = s.modes[0]!;
-    expect(m.state).toBe('warn'); // a seat needs a login
+    expect(m.state).toBe('ok'); // Gemini logged out, but other seats have room: a note, not a fault
     expect(m.page!.headline).toBe('진행 중 턴 1 · 24h 세션 6 · 좌석 여유 GPT 12% 사용 · 소진 Claude A · 로그인 필요 Gemini');
     expect(m.page!.decision).toBe('Gemini 다시 로그인 — 상단 칩에서');
     expect(m.page!.kpis.map((k) => [k.label, k.value])).toEqual([['진행 중 턴', '1'], ['24h 세션', '6'], ['좌석 여유', 'GPT'], ['서버 가동', '1시간 0분']]);

@@ -2976,6 +2976,22 @@ mark.find-hit.current { background: var(--btn-primary-bg); color: var(--btn-prim
 .hub-tag { font-family: var(--hub-font); font-size: var(--fs-xs); font-weight: 600; letter-spacing: .2px; padding: 2px 7px; border-radius: 6px; background: var(--mode-soft); color: var(--mode-ink); }
 .meta { font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
 .hub-src-list { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.hub-sources { position: relative; font-size: var(--fs-xs); color: var(--muted); }
+.hub-sources > summary { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: var(--r-full); cursor: pointer; list-style: none; }
+.hub-sources > summary::-webkit-details-marker { display: none; }
+.hub-sources > summary:hover, .hub-sources[open] > summary { background: var(--glass); color: var(--fg-strong); }
+.hub-sources-panel { position: absolute; z-index: 8; top: calc(100% + 6px); left: 0; width: min(420px, calc(100vw - 24px)); max-height: 60vh; overflow: auto; padding: 8px 12px; border: 1px solid var(--glass-line); border-radius: 10px; background: var(--panel); -webkit-backdrop-filter: blur(var(--glass-blur)); backdrop-filter: blur(var(--glass-blur)); }
+.hub-sources-panel ul { margin: 0; padding: 0; list-style: none; }
+.hub-sources-panel li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: 8px; padding: 3px 0; }
+.hub-sources-panel .nm { overflow-wrap: anywhere; }
+.hub-sources-panel .dt { color: var(--faint); font-variant-numeric: tabular-nums; }
+.hub-sources-panel li.bad .dt { color: var(--hub-warn); }
+.hub-sources-panel li.off, .hub-sources-panel li.off .dt { color: var(--faint); }
+.hub-sources-note { margin: 6px 0 2px; padding-top: 6px; border-top: 1px solid var(--glass-line); color: var(--faint); }
+@media (max-width: 720px) {
+  .hub-sources { position: static; }
+  .hub-sources-panel { top: auto; left: 12px; right: 12px; width: auto; margin-top: 6px; }
+}
 .src { font-family: var(--hub-font); font-size: var(--fs-xs); font-weight: 500; letter-spacing: .1px; color: var(--muted); padding: 2px 8px; border-radius: var(--r-full); border: 1px solid var(--glass-line); }
 .src.bad { color: var(--hub-bad); border-color: color-mix(in srgb, var(--hub-bad) 45%, transparent); background: var(--hub-bad-soft); }
 .ph-end { margin-left: auto; display: flex; gap: 6px; align-items: center; }

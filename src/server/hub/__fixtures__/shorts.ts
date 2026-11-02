@@ -58,3 +58,24 @@ export const LEDGER = {
     { id: 'ref-untitled', url: null, type: 'tip', status: '미착수', added_at: '2026-10-02' },
   ],
 };
+
+/** status.json `distribution` block as golf-shorts scripts/dist.py writes it (trimmed). */
+export const DIST = {
+  platforms: [{ id: 'youtube', label: 'YouTube Shorts', status: 'active' }, { id: 'tiktok', label: 'TikTok', status: 'active', note: '수동 업로드' }, { id: 'instagram', label: 'Instagram Reels', status: 'planned' }, { id: '../evil', label: 'x' }],
+  channels: [
+    { id: 'gunggeum-1min', name: '궁금한 1분', lang: 'ko', youtube_channel_id: CH1, publish_kst: '18:00', cells: {
+      youtube: { account_state: 'ready', handle: '@gunggeum_1min', url: 'https://www.youtube.com/@gunggeum_1min', blockers: [], counts: { queued: 1, scheduled: 1, posted: 1, failed: 0 }, views: null },
+      tiktok: { account_state: 'name_pending', handle: '@maxmaxmax858', url: 'javascript:alert(1)', blockers: ['닉네임 변경 잠금 2026-11-08까지', 'token=abc123secret'], counts: { queued: 0, scheduled: 0, posted: 0, failed: 1 }, views: null },
+      instagram: { account_state: 'bogus' } } },
+  ],
+  totals: { youtube: { queued: 1, scheduled: 1, posted: 1, failed: 0 }, tiktok: { failed: 1 } },
+  shorts: [
+    { id: 'tk-snow', channel: 'gunggeum-1min', title: '눈송이', batch: 'd1104', platforms: { youtube: { state: 'queued', at: '2026-11-08T18:00:00+09:00' } } },
+    { id: 'tears', channel: 'gunggeum-1min', title: null, platforms: { youtube: { state: 'scheduled', video_id: 'zCpK0B_jnnw', url: 'https://youtube.com/shorts/zCpK0B_jnnw', at: '2026-11-03T18:00:00+09:00' }, tiktok: { state: 'failed', error: '429 rate limit' } } },
+    { id: 'boil', channel: 'gunggeum-1min', title: '끓는 물', platforms: { youtube: { state: 'posted', derived: true, video_id: 'h1yhOEI46fg', at: '2026-10-31T18:00:00+09:00' } } },
+    { channel: 'gunggeum-1min' },
+  ],
+  shorts_total: 3,
+  blockers: [{ channel: '궁금한 1분', platform: 'tiktok', text: '닉네임 변경 잠금 2026-11-08까지' }, { channel: '궁금한 1분', platform: 'instagram', text: '계정 없음' }],
+  updated_at: '2026-11-02T00:30:00+09:00',
+};

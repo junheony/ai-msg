@@ -8,7 +8,8 @@ import type { HubAlert, HubCardItem, HubChartSeries, HubImage, HubKpi, HubLevel,
 export const HUB_CACHE_MS = 15_000;
 /** Per-source timeouts (ms). The ops dashboard is slow by nature. */
 export const HUB_TIMEOUTS = {
-  default: 3_000, ops: 12_000, ssh: 8_000, psql: 8_000, py: 8_000,
+  /** Everything here runs behind the hub's cached answer, so a generous budget costs the page nothing; 3 s read 시간 초과 on healthy services whenever the box was busy. */
+  default: 8_000, ops: 12_000, ssh: 8_000, psql: 8_000, py: 8_000,
   /** The NEXUS engine (:8080) is a busy arbitrage process: a plain GET takes 0.4–2.4 s on a quiet box and more while it scans, so 3 s read 시간 초과 on every other pass; under a loaded box a first answer has taken 5 s+. The probe runs behind the hub's answer (slowCache + firstWait), so a long budget costs the page nothing. */
   nexus: 15_000,
   /** How long a first hub answer waits for a slow source before saying 불러오는 중 (the load goes on behind). */
@@ -18,6 +19,8 @@ export const HUB_TIMEOUTS = {
 export const SLOW_CACHE_MS = { ops: 60_000, ssh: 120_000, psql: 60_000, nexus: 20_000, quant: 60_000, /** ver2 equity (~6k rows) and trades/events: once a minute is plenty. */ ver2: 60_000, /** 영상/게임 studios: directory walks, 50 episodes, 10 `git log`s. */ studio: 60_000 } as const;
 /** A slow source's last good answer is still shown this long after it stopped answering (marked 이전 값 사용); older, the source counts as down. */
 export const STALE_LIMIT_MS = { nexus: 5 * 60_000 } as const;
+/** A timeout alone proves nothing on a busy box: a source's last good answer stands in this long before it counts as silent. A refused connection or an HTTP error is an answer and is reported at once. */
+export const LAST_GOOD_MS = 5 * 60_000;
 
 /**
  * A tiny per-key cache for slow sources: the last good value is kept `ttlMs`; on a miss the loader runs once (callers
@@ -79,6 +82,8 @@ export const HUB_URLS = {
   quant: 'http://127.0.0.1:8810/api/snapshot.json',
   yappingStatus: 'http://127.0.0.1:8095/api/status',
   yappingMetrics: 'http://127.0.0.1:8095/api/metrics',
+  yappingRising: 'http://127.0.0.1:8095/api/rising?limit=30',
+  yappingDaily: 'http://127.0.0.1:8095/api/metrics/daily?days=30',
 } as const;
 
 /** Any field named like this is dropped from every mode, whatever a source sends. */
@@ -253,6 +258,46 @@ export function stripSecrets<T>(v: T): T {
 
 /* ───────── hardened loopback transport ───────── */
 
+const BUDGET_TICK_MS = 100;
+const BUDGET_HARD_FACTOR = 3;
+/**
+ * A timeout whose budget only counts time this process could have read the answer. `AbortSignal.timeout` cannot tell a
+ * silent server from a blocked event loop: timers run before socket reads, so a stall longer than the budget aborts every
+ * probe in flight the moment it ends, with their answers already waiting in the socket buffers. Here a stall costs the
+ * budget at most two ticks, and a really silent source is cut off at three budgets of wall time at the latest.
+ */
+export function loopBudgetSignal(timeoutMs: number, clock: () => number = () => Date.now()): { signal: AbortSignal; clear: () => void } {
+  const ac = new AbortController();
+  const hardStop = clock() + timeoutMs * BUDGET_HARD_FACTOR;
+  let left = timeoutMs, last = clock();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const tick = (): void => {
+    const t = clock();
+    left -= Math.min(t - last, BUDGET_TICK_MS * 2);
+    last = t;
+    if (left <= 0 || t >= hardStop) { timer = null; ac.abort(new DOMException('probe budget spent', 'TimeoutError')); return; }
+    timer = setTimeout(tick, Math.min(BUDGET_TICK_MS, left));
+  };
+  timer = setTimeout(tick, Math.min(BUDGET_TICK_MS, left));
+  return { signal: ac.signal, clear: () => { if (timer !== null) clearTimeout(timer); timer = null; } };
+}
+
+/** Wraps a fetcher: on a timeout (only), the URL's last good answer within `maxAgeMs` is returned instead of the failure. */
+export function withLastGood(fetchJson: HubDeps['fetchJson'], clock: () => number = () => Date.now(), maxAgeMs: number = LAST_GOOD_MS): HubDeps['fetchJson'] {
+  const good = new Map<string, { value: unknown; at: number }>();
+  return async (url, timeoutMs) => {
+    try {
+      const value = await fetchJson(url, timeoutMs);
+      good.set(url, { value, at: clock() });
+      return value;
+    } catch (err) {
+      const prev = good.get(url);
+      if (prev && errorText(err) === '시간 초과' && clock() - prev.at <= maxAgeMs) return prev.value;
+      throw err;
+    }
+  };
+}
+
 /** Bodies above this are refused unread (a status/snapshot answer is a few hundred KB at most). */
 export const LOOPBACK_MAX_BYTES = 2_000_000;
 
@@ -263,7 +308,12 @@ export const LOOPBACK_MAX_BYTES = 2_000_000;
  */
 export async function fetchLoopbackJson(allow: readonly string[], url: string, timeoutMs: number, tag = 'hub'): Promise<unknown> {
   if (!allow.includes(url)) throw new Error(`${tag}: URL not allowlisted`);
-  const response = await fetch(url, { method: 'GET', redirect: 'manual', credentials: 'omit', signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } });
+  const budget = loopBudgetSignal(timeoutMs);
+  try { return await readLoopbackJson(url, budget.signal, tag); } finally { budget.clear(); }
+}
+
+async function readLoopbackJson(url: string, signal: AbortSignal, tag: string): Promise<unknown> {
+  const response = await fetch(url, { method: 'GET', redirect: 'manual', credentials: 'omit', signal, headers: { accept: 'application/json' } });
   if (response.status !== 200) throw new Error(`HTTP ${response.status}`);
   const reader = response.body?.getReader();
   if (!reader) throw new SyntaxError('JSON empty response');

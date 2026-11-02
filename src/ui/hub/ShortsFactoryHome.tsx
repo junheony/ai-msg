@@ -3,7 +3,7 @@
  * Read-only: no control anywhere below the tab bar. Every unknown is a word (미공개 · 미수집 · 측정 불가), never a 0 or a bar.
  */
 import { useState } from 'react';
-import type { HubState, SfCalendar, SfCalendarDay, SfChannel, SfFile, SfLedger, SfLedgerItem, SfLedgerStatus, SfLedgerType, SfPlatformId, ShortsFactoryView } from '../../shared/hub-types';
+import type { HubState, SfBlocker, SfLongform, SfLongformItem, SfRoutineRow, SfAccountState, SfCalendar, SfCalendarDay, SfChannel, SfDistribution, SfFile, SfUploadState, SfLedger, SfLedgerItem, SfLedgerStatus, SfLedgerType, SfPlatformId, ShortsFactoryView } from '../../shared/hub-types';
 import { SF_LEDGER_STATUSES, SF_PLATFORMS } from '../../shared/hub-types';
 import { Attention, Kpi, Lead } from './HubPage';
 import { Spark } from './HubSections';
@@ -144,6 +144,163 @@ function Platforms({ channels }: { channels: SfChannel[] }) {
   );
 }
 
+/* ───────── 플랫폼 배포 (status.json distribution) ───────── */
+
+export const ACCOUNT_KO: Record<SfAccountState, { text: string; cls: string }> = {
+  ready: { text: '준비됨', cls: 'ok' }, name_pending: { text: '이름 대기', cls: 'warn' }, created: { text: '개설됨', cls: 'info' }, none: { text: '계정 없음', cls: 'na' },
+};
+export const UPLOAD_KO: Record<SfUploadState, { text: string; cls: string }> = {
+  queued: { text: '대기', cls: 'muted' }, scheduled: { text: '예약', cls: 'info' }, posted: { text: '게시', cls: 'ok' }, failed: { text: '실패', cls: 'bad' },
+};
+const COUNT_ORDER: SfUploadState[] = ['queued', 'scheduled', 'posted', 'failed'];
+
+export const SETUP_KO: Record<string, string> = { avatar: '프로필 사진', name: '이름', username: '아이디', bio: '소개', link: '링크', category: '카테고리', professional: '프로페셔널', contact_off: '연락처 숨김', public: '공개', ai_disclosure: 'AI 표기' };
+/** `설정 4/10`: done / tracked fields; the tooltip lists what is still open. */
+function SetupChip({ setup, fields, note }: { setup: Record<string, boolean>; fields: string[]; note: string | null }) {
+  const keys = fields.length ? fields : Object.keys(setup);
+  const done = keys.filter((k) => setup[k]).length;
+  const open = keys.filter((k) => !setup[k]).map((k) => SETUP_KO[k] ?? k);
+  const title = [note, open.length ? `남음: ${open.join(', ')}` : '프로필 설정 완료'].filter(Boolean).join('\n');
+  return <span className={`sf-setup ${done === keys.length ? 'ok' : 'warn'}`} title={title} data-testid="sf-setup">설정 {done}/{keys.length}</span>;
+}
+
+function DistMatrix({ d }: { d: SfDistribution }) {
+  const [focus, setFocus] = useState<string>('all');
+  const nameOf = new Map(d.channels.map((c) => [c.id, c.name]));
+  const shorts = (focus === 'all' ? d.shorts : d.shorts.filter((s) => s.channel === focus)).slice(0, 40);
+  const ready = (pid: string) => d.channels.filter((c) => c.cells[pid]?.accountState === 'ready').length;
+  return (
+    <Sec title="플랫폼" note={`채널 ${d.channels.length} × 플랫폼 ${d.platforms.length} · 숏츠 ${d.shortsTotal}편${d.updatedAt ? ` · 원장 ${kst(d.updatedAt)}` : ''}`} testid="sf-dist">
+      <div className="twrap">
+        <table className="t sf-t sf-dm">
+          <thead>
+            <tr><th>채널</th>{d.platforms.map((p) => <th key={p.id} title={p.note ?? undefined} className={p.status === 'planned' ? 'sf-dim-h' : ''}>{p.name}<span className="sf-dim">{p.status === 'planned' ? '계획' : `준비 ${ready(p.id)}/${d.channels.length}`}</span></th>)}</tr>
+          </thead>
+          <tbody>
+            {d.channels.map((c) => (
+              <tr key={c.id} data-testid={`sf-dist-${c.id}`}>
+                <td className="sf-name"><button type="button" className={`sf-link${focus === c.id ? ' on' : ''}`} onClick={() => setFocus(focus === c.id ? 'all' : c.id)}><b>{c.name}</b></button><span className="sf-dim">{[c.lang, c.publishKst].filter(Boolean).join(' · ')}</span></td>
+                {d.platforms.map((p) => {
+                  const cell = c.cells[p.id]; if (!cell) return <td key={p.id}><NA text="—" /></td>;
+                  const a = ACCOUNT_KO[cell.accountState];
+                  return (
+                    <td key={p.id} className={`sf-dc ${a.cls}`} data-testid={`sf-dc-${c.id}-${p.id}`} data-state={cell.accountState}>
+                      <span className={`sf-badge ${a.cls}`}>{a.text}</span>
+                      {cell.handle && (cell.url ? <a href={cell.url} target="_blank" rel="noopener noreferrer" className="sf-handle">{cell.handle}</a> : <span className="sf-handle">{cell.handle}</span>)}
+                      {COUNT_ORDER.some((k) => cell.counts[k]) && <span className="sf-cnts">{COUNT_ORDER.filter((k) => cell.counts[k]).map((k) => <span key={k} className={`sf-cnt ${UPLOAD_KO[k].cls}`} title={UPLOAD_KO[k].text}>{UPLOAD_KO[k].text} {cell.counts[k]}</span>)}</span>}
+                      {cell.views !== null && <span className="sf-dim">조회 {int(cell.views)}</span>}
+                      {cell.setup && <SetupChip setup={cell.setup} fields={d.setupFields ?? []} note={cell.setupNote ?? null} />}
+                      {cell.blockers.length > 0 && <span className="sf-blk" title={cell.blockers.join('\n')}>막힘 {cell.blockers.length}</span>}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+          <tfoot><tr><td>합계</td>{d.platforms.map((p) => { const t = d.totals[p.id]; return <td key={p.id} className="sf-cnts">{t && COUNT_ORDER.some((k) => t[k]) ? COUNT_ORDER.filter((k) => t[k]).map((k) => <span key={k} className={`sf-cnt ${UPLOAD_KO[k].cls}`}>{UPLOAD_KO[k].text} {t[k]}</span>) : <NA text="—" />}</td>; })}</tr></tfoot>
+        </table>
+      </div>
+      {d.blockers.length > 0 && (
+        <ul className="sf-list warn" data-testid="sf-dist-blockers">
+          {d.blockers.filter((b) => !b.text.endsWith('계정 없음')).map((b, i) => <li key={i}><b>{b.channel}</b> · {d.platforms.find((p) => p.id === b.platform)?.name ?? b.platform} · {b.text}</li>)}
+        </ul>
+      )}
+      <details className="sf-dist-shorts" data-testid="sf-dist-shorts">
+        <summary>숏츠별 업로드 {focus === 'all' ? '전체' : nameOf.get(focus)} · 최근 {shorts.length}편</summary>
+        <div className="twrap">
+          <table className="t sf-t sf-ds">
+            <thead><tr><th>숏츠</th><th>채널</th>{d.platforms.map((p) => <th key={p.id}>{p.name}</th>)}</tr></thead>
+            <tbody>
+              {shorts.map((s) => (
+                <tr key={`${s.channel}-${s.id}`} data-testid={`sf-ds-${s.id}`}>
+                  <td className="sf-name"><b title={s.title ?? s.id}>{s.title ?? s.id}</b>{s.batch && <span className="sf-dim">{s.batch}</span>}</td>
+                  <td>{nameOf.get(s.channel) ?? s.channel}</td>
+                  {d.platforms.map((p) => {
+                    const u = s.platforms[p.id]; if (!u) return <td key={p.id} className="sf-na">—</td>;
+                    const k = UPLOAD_KO[u.state];
+                    const label = <span className={`sf-badge ${k.cls}`} title={u.error ?? (u.derived ? '예약 시각 경과 · 게시로 간주' : undefined)}>{k.text}{u.derived ? '*' : ''}</span>;
+                    return <td key={p.id}>{u.url ? <a href={u.url} target="_blank" rel="noopener noreferrer">{label}</a> : label}{u.at && <span className="sf-dim">{kst(u.at)}</span>}{u.views !== null && <span className="sf-dim">조회 {int(u.views)}</span>}</td>;
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+      <p className="sf-rule">계정: 준비됨 · 이름 대기 · 개설됨 · 계정 없음. 업로드: 대기 · 예약 · 게시 · 실패 (* = 예약 시각이 지나 게시로 간주). 원장은 golf-shorts data/distribution_ledger.json, 바꾸려면 scripts/dist.py mark / account. 채널명을 누르면 아래 목록이 그 채널만 보인다.</p>
+    </Sec>
+  );
+}
+
+/* ───────── 루틴 · 롱폼 · 막힘 (status.json routines / longform / blockers) ───────── */
+
+function Routines({ rows, now }: { rows: SfRoutineRow[]; now: number }) {
+  return (
+    <Sec title="루틴" note={`${rows.length}개 · 실패 ${rows.filter((r) => r.status === 'failed').length}`} testid="sf-routines">
+      <div className="twrap">
+        <table className="t sf-t">
+          <thead><tr><th>루틴</th><th>주기</th><th>상태</th><th>마지막 실행</th><th>메모</th></tr></thead>
+          <tbody>{rows.map((r) => (
+            <tr key={r.id} data-testid={`sf-routine-${r.id}`} data-status={r.status}>
+              <td className="sf-name"><b>{r.name}</b></td>
+              <td>{r.schedule ?? <NA text="—" />}</td>
+              <td><span className={`sf-badge ${r.status === 'ok' ? 'ok' : r.status === 'failed' ? 'bad' : r.status === 'running' ? 'info' : 'warn'}`}>{ROUTINE_KO[r.status]}</span></td>
+              <td>{r.lastRunAt ? `${kst(r.lastRunAt)} · ${relTime(r.lastRunAt, now)}` : <NA text="실행 기록 없음" />}</td>
+              <td className="sf-ld-text"><Clip text={r.note} /></td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+    </Sec>
+  );
+}
+
+const mmss = (s: number | null): string | null => (s === null ? null : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
+function LfRow({ it }: { it: SfLongformItem }) {
+  return (
+    <tr data-testid={`sf-lf-${it.id}`}>
+      <td className="sf-name">{it.url ? <a href={it.url} target="_blank" rel="noopener noreferrer" title={it.title ?? it.id}>{it.title ?? it.id}</a> : <b title={it.title ?? it.id}>{it.title ?? it.id}</b>}<span className="sf-dim">{[it.id, mmss(it.durationS)].filter(Boolean).join(' · ')}</span></td>
+      <td>{it.channelName ?? <NA text="—" />}</td>
+      <td>{it.state === 'posted' ? <span className="sf-badge ok">게시</span> : it.state === 'scheduled' ? <span className="sf-badge info">예약</span> : <span className="sf-badge muted">{it.state === 'packaged' ? '패키징 완료' : it.state === 'ready' ? '업로드 준비' : (it.state ?? '대기')}</span>}{it.plan && <span className="sf-dim">{it.plan}</span>}</td>
+      <td>{kst(it.at)}</td>
+    </tr>
+  );
+}
+function Longform({ lf, now }: { lf: SfLongform; now: number }) {
+  const rows = [...lf.pending, ...lf.published];
+  return (
+    <Sec title="롱폼" note={`오늘 ${lf.doneToday ?? '—'}/${lf.targetPerDay ?? '—'} · 게시 ${lf.published.length} · 업로드 대기 ${lf.pending.length} · 큐 ${lf.queue.length}`} testid="sf-longform">
+      {!rows.length ? <div className="sec-empty">롱폼 없음</div> : (
+        <div className="twrap">
+          <table className="t sf-t">
+            <thead><tr><th>롱폼</th><th>채널</th><th>상태</th><th>시각 KST</th></tr></thead>
+            <tbody>{rows.map((it) => <LfRow key={`${it.state}-${it.id}`} it={it} />)}</tbody>
+          </table>
+        </div>
+      )}
+      {lf.queue.length > 0 && <ul className="sf-list" data-testid="sf-lf-queue">{lf.queue.map((q, i) => <li key={i} className={q.done ? 'ok' : ''}>{q.done ? '✓ ' : ''}{q.text}</li>)}</ul>}
+      {lf.progress && lf.progress.lines.length > 0 && (
+        <details className="sf-dist-shorts" data-testid="sf-lf-progress">
+          <summary>진행 기록 {lf.progress.file ?? ''} · {lf.progress.updatedAt ? relTime(lf.progress.updatedAt, now) : '—'}</summary>
+          <ul className="sf-list">{lf.progress.lines.map((l, i) => <li key={i}>{l}</li>)}</ul>
+        </details>
+      )}
+      <p className="sf-rule">게시 = 원장(distribution_ledger.json, format longform) 기준 · 업로드 대기 = upload_queue/longform 에 패키징 완료, 아직 게시 기록 없음 · 큐 = upload_queue/longform/QUEUE.md.</p>
+    </Sec>
+  );
+}
+
+const OWNER_KO: Record<string, string> = { user: '사용자', wait: '기다림', bot: '봇' };
+function Blockers({ items }: { items: SfBlocker[] }) {
+  return (
+    <Sec title="막힘" note={`${items.length}건 · 사용자 ${items.filter((b) => b.owner === 'user').length}`} testid="sf-blockers">
+      <ul className="sf-list warn">
+        {items.map((b) => <li key={b.id} data-testid={`sf-blocker-${b.id}`}><b>{OWNER_KO[b.owner ?? ''] ?? b.owner ?? '—'}</b> · {b.text}{b.scope && <span className="sf-dim"> · {b.scope}</span>}{b.since && <span className="sf-dim"> · {b.since}부터</span>}</li>)}
+      </ul>
+    </Sec>
+  );
+}
+
 function Pipeline({ sf, now }: { sf: ShortsFactoryView; now: number }) {
   const p = sf.pipeline; const r = p.routine;
   const rs = r.status === 'ok' ? 'ok' : r.status === 'failed' ? 'bad' : 'warn';
@@ -250,10 +407,14 @@ export function ShortsFactoryHome({ sf, now }: { sf: ShortsFactoryView; now: num
         <div className="sh"><span className="sec-title">주의</span>{warn < sf.alerts.length && <span className="n">참고 {sf.alerts.length - warn}</span>}<span className="cnt">{sf.alerts.length}</span></div>
         <Attention alerts={sf.alerts} now={now} />
       </section>
+      {sf.blockers && sf.blockers.length > 0 && <Blockers items={sf.blockers} />}
+      {sf.routines && sf.routines.length > 0 && <Routines rows={sf.routines} now={now} />}
       <Channels sf={sf} />
+      {sf.longform ? <Longform lf={sf.longform} now={now} /> : null}
       <Calendar cal={sf.calendar} channels={sf.channels} />
+      {sf.distribution ? <DistMatrix d={sf.distribution} /> : null}
       <div className="sf-grid">
-        <Platforms channels={sf.channels} />
+        {!sf.distribution && <Platforms channels={sf.channels} />}
         <Pipeline sf={sf} now={now} />
       </div>
       <Ledger ledger={sf.ledger} now={now} />

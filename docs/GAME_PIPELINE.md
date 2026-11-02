@@ -60,7 +60,7 @@ bash templates/game/scripts/new-game-from-reference.sh \
 
 각 job은 `account.txt`(a/b/c/codex), `pid.txt`, `run.log`, `REPORT.md`를 사용한다. `run.log`는 비밀을 제거한 내용만 남긴다. REPORT에는 바꾼 파일·실제 명령과 종료코드·산출물·남은 문제를 쓰고, 마지막 줄을 `STATUS: DONE` 또는 `STATUS: BLOCKED: <이유>`로 끝낸다. 중단된 실행을 통과로 기록하지 않는다.
 
-dashboard manifest의 `jobs`에 job 폴더 이름을 추가하면 스튜디오가 작업 중/완료/차단/유휴 상태를 읽는다. 연결된 REPORT의 BLOCKED는 단계 차단 정보가 된다. 코드 구현 완료와 QA 완료는 서로 다른 job 종료이며, 어느 쪽도 오너 승인으로 승격하지 않는다.
+dashboard manifest의 `jobs`에 job 폴더 이름을 추가하면 스튜디오가 작업 중/완료/차단/유휴 상태를 읽는다. 연결된 REPORT의 BLOCKED는 후속 작업이 이어받았으면 `이어받음`, 오래됐으면 `중단됨`, 오너를 요구하면 `승인 필요`로 표시하며, 최근의 `막힘`만 단계 차단 정보가 된다. 코드 구현 완료와 QA 완료는 서로 다른 job 종료이며, 어느 쪽도 오너 승인으로 승격하지 않는다.
 
 증거를 새로 만들고 검토한 뒤 **대시보드의 `studio/games/<id>.json`**을 갱신한다. 새 게임의 `studio.json`은 시작용 사본이며 자동 동기화되지 않는다. 존재하는 실제 파일은 `stages[].evidence`·`tests[].path`·`repos[].path` 등에 쓰고, 캡처 묶음은 `artifacts.screenshots`의 glob으로 연결한다. 원본 기록과 실패 리포트는 보존하되 완료 evidence에 넣지 않는다. `nextAction.text`는 가장 중요한 다음 결정/차단 하나를 한국어 60자 이내로 적는다.
 

@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { HubMode } from '../../shared/hub-types';
-import { CH1, CHANNELS, HISTORY, HOME, LEDGER, NOW, NO_PROBES, PLACEHOLDER, PROBES_OK, STATUS } from '../../server/hub/__fixtures__/shorts';
+import { CH1, CHANNELS, DIST, HISTORY, HOME, LEDGER, NOW, NO_PROBES, PLACEHOLDER, PROBES_OK, STATUS } from '../../server/hub/__fixtures__/shorts';
 import { buildShortsView } from '../../server/hub/shorts';
 import { hubStatusFixture } from './__fixtures__/status';
 import { HubPage } from './HubPage';
@@ -34,13 +34,12 @@ describe('header while Shorts 공장 is selected', () => {
     expect(txt(header)).not.toContain('studio-src');
     expect(txt(header)).toContain('파일 갱신');
     expect(txt(header)).not.toContain('61일 전');
-    expect(within(screen.getByTestId('sf-src-list')).getAllByText(/\.json|\.jsonl/).map((e) => e.textContent)).toEqual(['status.json', 'channels.json', 'history.jsonl']);
-    expect(txt(screen.getByTestId('hub-mode-video').querySelector('footer.foot')!)).toContain('파일 3/3 최신');
+    expect(within(screen.getByTestId('hub-sources')).getAllByText(/\.json|\.jsonl/).map((e) => e.textContent)).toEqual(['status.json', 'channels.json', 'history.jsonl']);
     cleanup();
     page({ ...video(EMPTY), state: 'ok' });
     const h2 = screen.getByTestId('hub-mode-video').querySelector('header.ph')!;
-    expect(txt(h2)).toContain('status.json · 없음');
-    expect(txt(screen.getByTestId('hub-mode-video').querySelector('footer.foot')!)).toContain('파일 0/3 최신');
+    expect(txt(h2)).toContain('status.json');
+    expect(txt(h2)).toContain('없음');
   });
 });
 
@@ -256,5 +255,58 @@ describe('ShortsFactoryHome', () => {
     expect(kst('2026-11-01T15:30:00Z')).toBe('11-02 00:30');
     expect(kst(null)).toBe('—');
     expect(kst('nope')).toBe('—');
+  });
+});
+
+describe('플랫폼 배포 매트릭스', () => {
+  const DISTED = buildShortsView({ status: j({ ...STATUS, distribution: DIST }), channels: j(CHANNELS), history: HISTORY, probes: PROBES_OK, probeNote: null }, NOW);
+  it('replaces the old platform table with channel × platform cells, chips, links and counts', () => {
+    render(<ShortsFactoryHome sf={DISTED} now={NOW} />);
+    expect(screen.queryByTestId('sf-platforms')).toBeNull();
+    const yt = screen.getByTestId('sf-dc-gunggeum-1min-youtube');
+    expect(yt.dataset.state).toBe('ready');
+    expect(txt(yt)).toContain('준비됨');
+    expect(within(yt).getByText('@gunggeum_1min').getAttribute('href')).toBe('https://www.youtube.com/@gunggeum_1min');
+    expect(txt(yt)).toContain('조회 2,845');
+    const tk = screen.getByTestId('sf-dc-gunggeum-1min-tiktok');
+    expect(txt(tk)).toContain('이름 대기');
+    expect(txt(tk)).toContain('실패 1');
+    expect(within(tk).getByText('@maxmaxmax858').tagName).toBe('SPAN');
+    expect(txt(screen.getByTestId('sf-dist-blockers'))).toContain('닉네임 변경 잠금');
+    expect(txt(screen.getByTestId('sf-dist-blockers'))).not.toContain('계정 없음');
+    expect(txt(screen.getByTestId('sf-ds-boil'))).toContain('게시*');
+  });
+  it('falls back to the channels.json platform table without a distribution block', () => {
+    render(<ShortsFactoryHome sf={FULL} now={NOW} />);
+    expect(screen.getByTestId('sf-platforms')).toBeTruthy();
+    expect(screen.queryByTestId('sf-dist')).toBeNull();
+  });
+});
+
+describe("routines · longform · blockers · setup checklist", () => {
+  const extra = {
+    routines: [
+      { id: "shorts", name: "Shorts 공장", schedule: "매일 22:00 KST", last_run_at: "2026-11-01T22:00:00+09:00", status: "failed", note: "메모리 부족 → 수정 완료" },
+      { id: "longform", name: "롱폼 공장", schedule: "매일 14:00 KST", last_run_at: null, status: "unknown", note: "첫 실행 11/3" },
+    ],
+    longform: { target_per_day: 5, done_today: 2, published: [{ id: "yeoksa-01", channel_name: "역사 반전", title: "해상시계", url: "https://www.youtube.com/watch?v=kQuNYRKfTVg", state: "posted", published_at: "2026-11-02T16:28:14+09:00" }], pending: [{ id: "alba-lf-01", state: "ready", plan: "게시 예정 2026-11-03 19:00" }], queue: [{ text: "alba-lf-01 · T", done: false }], progress: null },
+    blockers: [{ id: "thumb", text: "휴대폰 인증 필요", owner: "user" }],
+    distribution: { ...DIST, setup_fields: ["avatar", "link"], channels: (DIST as any).channels.map((c: any, i: number) => i ? c : { ...c, cells: { ...c.cells, youtube: { ...(c.cells?.youtube ?? { account_state: "ready" }), setup: { avatar: true, link: false }, setup_note: "웹에서 막힘" } } }) },
+  };
+  it("shows the routine table, longform links and queue, the blocker list and a 설정 n/m chip with what is open", () => {
+    const sf = buildShortsView({ status: j({ ...STATUS, ...extra }), channels: j(CHANNELS), history: HISTORY, probes: PROBES_OK, probeNote: null }, NOW);
+    render(<ShortsFactoryHome sf={sf} now={NOW} />);
+    expect(txt(screen.getByTestId("sf-routine-shorts"))).toContain("매일 22:00 KST");
+    expect(screen.getByTestId("sf-routine-longform").getAttribute("data-status")).toBe("unknown");
+    expect(txt(screen.getByTestId("sf-routine-longform"))).toContain("실행 기록 없음");
+    const lf = screen.getByTestId("sf-longform");
+    expect(txt(lf)).toContain("오늘 2/5");
+    expect(within(lf).getByRole("link", { name: "해상시계" }).getAttribute("href")).toBe("https://www.youtube.com/watch?v=kQuNYRKfTVg");
+    expect(txt(screen.getByTestId("sf-lf-alba-lf-01"))).toContain("업로드 준비");
+    expect(txt(screen.getByTestId("sf-lf-queue"))).toContain("alba-lf-01");
+    expect(txt(screen.getByTestId("sf-blocker-thumb"))).toContain("사용자");
+    const chip = screen.getByTestId("sf-setup");
+    expect(txt(chip)).toBe("설정 1/2");
+    expect(chip.getAttribute("title")).toContain("남음: 링크");
   });
 });

@@ -132,21 +132,22 @@ describe('영상 스튜디오', () => {
   });
   it('translates the blockers into actions, keeps the original as hint, and builds a concrete headline/decision', async () => {
     const m = await collectVideo(deps(videoFx()));
-    expect(m.state).toBe('warn');
+    expect(m.state).toBe('idle'); // untouched for weeks: what it waits for is a to-do, not a fault
     expect(m.page!.headline).toBe(`'${EP}' 무음 시각 초안 · 게이트 5/6 · 오디오 게이트 차단 — Typecast 키 필요`);
-    expect(m.page!.decision).toBe('Typecast API 키·Voice ID 설정 → 나레이션 생성: scripts/typecast_tts.py 실행 → 나레이션(narration.wav)·Typecast 타임스탬프 포함 재렌더');
+    expect(m.page!.decision).toBe('Typecast API 키·Voice ID 설정 → 나레이션 생성 → 나레이션·Typecast 타임스탬프 포함 재렌더');
     const blockers = section(m.page!.sections, /블로커/)!;
     if (blockers.kind !== 'list') throw new Error('list');
     expect(blockers.items.map((i) => i.text)).toEqual([
-      'Typecast API 키·Voice ID 설정 (.env: TYPECAST_API_KEY, TYPECAST_VOICE_ID) — provisional public-demo style choice: low-tone Jinwoo',
-      `나레이션 생성: scripts/typecast_tts.py 실행 (episodes/${EP})`,
-      '나레이션(narration.wav)·Typecast 타임스탬프 포함 재렌더',
+      'Typecast API 키·Voice ID 설정 (provisional public-demo style choice: low-tone Jinwoo)',
+      `나레이션 생성 (${EP})`,
+      '나레이션·Typecast 타임스탬프 포함 재렌더',
       '라우드니스·자막 타이밍/넘침·최종 편집 검토',
       '업로드 전 사람 승인 (자동 게시 금지)',
     ]);
     expect(blockers.items[0]).toMatchObject({ level: 'warn', hint: QA.blocking_next_actions[0] });
     expect(blockerKo('Fix the thing at /Users/alice/x', 'e')).toBe('Fix the thing at …');
-    expect(m.alerts[0]).toMatchObject({ level: 'warn', text: `${EP} · 오디오 게이트 차단` });
+    expect(m.alerts.find((a) => a.text === `${EP} · 오디오 게이트 차단`)).toMatchObject({ level: 'info' }); // idle project: a to-do, not a fault
+    expect(m.alerts.some((a) => a.level !== 'info')).toBe(false);
     expect(m.page!.kpis.map((k) => [k.label, k.value])).toEqual([['에피소드', '1'], ['단계', '무음 시각 초안'], ['게이트 통과', '5/6'], ['초안 길이', '90s'], ['Now 체크', '1/2'], ['게시 승인', '미승인']]);
     expect(m.metrics).toMatchObject({ '에피소드': 1, '최근 렌더': '59일 6시간 전', '파일': 'contact-sheet.png', '단계': '무음 시각 초안' });
   });

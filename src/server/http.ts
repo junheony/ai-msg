@@ -34,10 +34,12 @@ import { handleAuthLogin } from './authLogin/http';
 import type { AuthLoginHub } from './authLogin/hub';
 import type { HubStatusService } from './hub/status';
 import { HUB_PROXY_PREFIX, HUB_PROXY_TARGETS, proxyHubRequest, type ProxyTarget } from './hub/proxy';
+import { RESEARCH_PREFIX, serveResearch, type ResearchService } from './hub/research';
 import { GAME_PIPELINE_PATH, HUB_FILE_PREFIX, serveHubFile, serveTextDoc, type HubFileRoots } from './hub/files';
 import { createMarketService, REPLAY_PREFIX, serveReplay, type MarketService } from './replay/market';
 import { SR_PREFIX, serveSr, type SrService } from './hub/sr';
 import { LAB_PREFIX, serveLab, type LabService } from './hub/lab';
+import { CTL_PREFIX, type ControlsService } from './hub/controls/http';
 import type { MiniStatusService } from './mini/status';
 import { bearerOf, type WidgetTokenStore } from './mini/widgetToken';
 
@@ -83,9 +85,11 @@ export type HttpDeps = {
   /** In-app login window (allowlisted `claude auth login` and the same for Codex / Grok). Absent = no /api/auth-login. */
   authLogin?: AuthLoginHub;
   /** MSG Hub: `GET /api/hub/status` (the overview) and the `/hub/p/<id>/` embed proxy. Absent = 404 for both. */
-  hub?: { status: HubStatusService; proxyTargets?: Record<string, ProxyTarget>; /** Named folders `/api/hub/file/<name>/…` may serve (read-only media, build outputs). */ fileRoots?: HubFileRoots; /** 게임 스튜디오's pipeline doc (docs/GAME_PIPELINE.md), served as text at GET /api/hub/game-pipeline. */ pipelineDoc?: string; /** Trading room `GET /api/hub/sr[?symbol=]` (the bot's support/resistance snapshot). Absent = 404. */ sr?: SrService; /** Read-only lab gateway summary. */ lab?: LabService };
+  hub?: { status: HubStatusService; proxyTargets?: Record<string, ProxyTarget>; /** Named folders `/api/hub/file/<name>/…` may serve (read-only media, build outputs). */ fileRoots?: HubFileRoots; /** 게임 스튜디오's pipeline doc (docs/GAME_PIPELINE.md), served as text at GET /api/hub/game-pipeline. */ pipelineDoc?: string; /** Trading room `GET /api/hub/sr[?symbol=]` (the bot's support/resistance snapshot). Absent = 404. */ sr?: SrService; /** Read-only lab gateway summary. */ lab?: LabService; /** Hub controls (승인함, 다음 작업, 실행 관리) under /api/hub/ctl/. Absent = 404. */ controls?: ControlsService };
   /** Trading room chart replay: `GET /api/replay/*` public market data fetched server-side (no keys). Default = live exchanges. */
   replay?: MarketService;
+  /** 리서치: `GET /api/hub/research`, the articles and sources in ~/.msg/research. Absent = 404. */
+  research?: ResearchService;
   /**
    * MSG mini: `GET /api/mini/status` (the /mini page and the lock-screen widget) and the read-only widget token the
    * settings sheet copies / rotates. Absent = 404 for all three.
@@ -844,6 +848,12 @@ export function createRequestHandler(deps: HttpDeps) {
           json(res, 200, await deps.hub.status.status());
           return;
         }
+        // Hub controls: cookie + same-origin (above) + CSRF header + confirm header, checked in hub/controls/http.ts.
+        if (url.pathname.startsWith(CTL_PREFIX)) {
+          if (!deps.hub?.controls) { json(res, 404, { error: 'not found' }); return; }
+          await deps.hub.controls.handle(req, res, url);
+          return;
+        }
         if (url.pathname === LAB_PREFIX) {
           if (!deps.hub?.lab) { json(res, 404, { error: 'not found' }); return; }
           await serveLab(deps.hub.lab, req.method, res);
@@ -853,6 +863,11 @@ export function createRequestHandler(deps: HttpDeps) {
         if (url.pathname === SR_PREFIX) {
           if (!deps.hub?.sr) { json(res, 404, { error: 'not found' }); return; }
           await serveSr(deps.hub.sr, url, req.method, res);
+          return;
+        }
+        if (url.pathname === RESEARCH_PREFIX) {
+          if (!deps.research) { json(res, 404, { error: 'not found' }); return; }
+          await serveResearch(deps.research, req.method, res);
           return;
         }
         if (url.pathname.startsWith('/api/attachments/') && (req.method === 'GET' || req.method === 'HEAD')) {

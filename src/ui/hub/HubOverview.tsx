@@ -1,8 +1,15 @@
 import type { HubMode, HubState, HubStatus } from '../../shared/hub-types';
 import { ChevronRightIcon, HubIcon, ReloadIcon } from './HubIcons';
+import { ResearchPanel } from './research/ResearchPanel';
 import { Attention, decisionOf, headlineOf, kpisOf, Lead, StatePill } from './HubPage';
 import { modeDef, STATE_LABEL, stateClass, type HubModeKey } from './modes';
 import { relTime } from './time';
+import { ApprovalInbox } from './controls/Approvals';
+import { ModeActions } from './controls/CardActions';
+import { useCtl } from './controls/context';
+import { RunsPanel } from './controls/Runs';
+
+const toInbox = () => document.getElementById('hub-inbox')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
 
 const RANK: Record<HubState, number> = { down: 0, warn: 1, unknown: 2, idle: 3, ok: 4 };
 const worstOf = (modes: HubMode[]): HubState => modes.reduce<HubState>((w, m) => (RANK[m.state] < RANK[w] ? m.state : w), 'ok');
@@ -18,7 +25,7 @@ export function HubCard({ mode, now, onOpenMode }: { mode: HubMode; now: number;
         <span className="ico"><HubIcon name={def.icon} /></span>
         <h3>{mode.name}</h3>
         {mode.tag && <span className="hub-tag">{mode.tag}</span>}
-        <StatePill state={mode.state} />
+        <StatePill state={mode.state} label={mode.stateLabel} />
       </div>
       <p className="hl">{headlineOf(mode)}</p>
       {kpis.length > 0 && (
@@ -29,6 +36,7 @@ export function HubCard({ mode, now, onOpenMode }: { mode: HubMode; now: number;
       <div className={`al ${alert ? alert.level : 'next'}`} title={alert ? alert.text : decisionOf(mode)}>{alert ? alert.text : `다음 · ${decisionOf(mode)}`}</div>
       <div className="ft">
         <span>마지막 활동 {relTime(mode.lastActivity, now)}</span>
+        <ModeActions mode={mode.id} place="card" onInbox={toInbox} />
         <button type="button" className="open" onClick={() => onOpenMode(mode.id)} aria-label={`${mode.name} 열기`}>{mode.id === 'msg' ? '터미널' : '열기'} <ChevronRightIcon /></button>
       </div>
     </article>
@@ -38,14 +46,16 @@ export function HubCard({ mode, now, onOpenMode }: { mode: HubMode; now: number;
 /** The 개요: what needs attention across every mode, then one card per mode, then the server. */
 export function HubOverview({ status, error, loading, fetchedAt, now, pushOn, onOpenMode, onRefresh }: { status: HubStatus | null; error: string | null; loading: boolean; fetchedAt: number | null; now: number; pushOn: boolean; onOpenMode: (m: HubModeKey) => void; onRefresh: () => void }) {
   const modes = status?.modes ?? [];
+  const ctl = useCtl()?.feed.state ?? null;
   const n = { down: 0, warn: 0, ok: 0, idle: 0, unknown: 0 };
   for (const m of modes) n[m.state]++;
   const attention = modes.flatMap((m) => m.alerts.filter((a) => a.level !== 'info').map((a) => ({ ...a, who: m.name, onWho: () => onOpenMode(m.id) })));
   attention.sort((a, b) => (a.level === b.level ? 0 : a.level === 'bad' ? -1 : 1));
   const first = attention[0];
-  const sources = modes.reduce((s, m) => s + m.sources.length, 0);
-  const sourcesOk = modes.reduce((s, m) => s + m.sources.filter((x) => x.ok).length, 0);
-  const headline = `장애 ${n.down} · 주의 ${n.warn} · 정상 ${n.ok}${n.idle ? ` · 대기 ${n.idle}` : ''}${n.unknown ? ` · 미확인 ${n.unknown}` : ''}`;
+  const sources = modes.reduce((s, m) => s + m.sources.filter((x) => !x.off).length, 0);
+  const sourcesOk = modes.reduce((s, m) => s + m.sources.filter((x) => x.ok && !x.off).length, 0);
+  const off = modes.filter((m) => m.state === 'idle' && m.stateLabel).length;
+  const headline = `장애 ${n.down} · 주의 ${n.warn} · 정상 ${n.ok}${n.idle - off ? ` · 대기 ${n.idle - off}` : ''}${off ? ` · 꺼짐 ${off}` : ''}${n.unknown ? ` · 미확인 ${n.unknown}` : ''}`;
   const decision = first ? `${first.who} — ${first.text}${first.hint ? ` → ${first.hint}` : ''}` : '지금 결정할 것 없음';
   return (
     <div className="hub-page" data-testid="hub-overview">
@@ -55,16 +65,18 @@ export function HubOverview({ status, error, loading, fetchedAt, now, pushOn, on
         <span className="meta">모드 {modes.length} · 소스 {sourcesOk}/{sources}{status ? ` · ${status.host}` : ''}</span>
         <span className="ph-end">
           <span className="pill">{pushOn ? '실시간 푸시' : '15초 폴링'}</span>
-          <span className="pill">읽기 전용</span>
+          <span className="pill">{ctl ? '조치는 확인 후 실행' : '읽기 전용'}</span>
           <button type="button" className="pill btn" onClick={onRefresh} disabled={loading} aria-label="지금 새로고침"><ReloadIcon /> <span className="pill-label">{loading ? '불러오는 중…' : '새로고침'}</span></button>
         </span>
       </header>
       {error && <div className="hub-notice" role="alert">상태를 불러오지 못했어요 · {error}{status ? ` · 마지막 성공 ${relTime(fetchedAt ? new Date(fetchedAt).toISOString() : null, now)}` : ''}</div>}
       {!status && !error && <div className="hub-notice muted">상태를 불러오는 중…</div>}
       {status && <Lead state={worstOf(modes)} headline={headline} decision={decision} />}
+      <div id="hub-inbox"><ApprovalInbox now={now} /></div>
       <div className="cards">
         {modes.map((m) => <HubCard key={m.id} mode={m} now={now} onOpenMode={onOpenMode} />)}
       </div>
+      <RunsPanel now={now} limit={8} />
       {status && (
         <div className="grid2">
           <section className="sec open-static" aria-label="주의 목록">
@@ -85,6 +97,7 @@ export function HubOverview({ status, error, loading, fetchedAt, now, pushOn, on
           </section>
         </div>
       )}
+      <ResearchPanel />
     </div>
   );
 }

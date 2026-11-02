@@ -8,7 +8,7 @@
  * Nothing here runs or changes anything.
  */
 import path from 'node:path';
-import type { HubAlert, HubKpi, HubMetricValue, HubMode, HubSection, HubSource, HubState, HubStep, TradingMerged } from '../../shared/hub-types';
+import type { HubAlert, HubKpi, HubMetricValue, HubMode, HubSection, HubSource, HubState, TradingBotRow, TradingMerged } from '../../shared/hub-types';
 import { collectVer2, kstToIso } from './cblabx';
 import { DAY_MS, HUB_TIMEOUTS, UNIT_STATE_KO, agoFrom, arr, fmtAgo, fmtInt, fmtKst, fmtNum, fmtPct, fmtUsd, isObj, kpi, latestIso, num, objs, page, scrub, sec, showUnit, slowCache, sortAlerts, str, toIso, type HubDeps, type UnitInfo } from './shared';
 import { collectRoom } from './tradingRoom';
@@ -24,6 +24,11 @@ export const TRADING_TIMERS = [
   { timer: 'wave-paper.timer', service: 'wave-paper.service', label: '웨이브 페이퍼', file: 'wave_paper.db', periodMs: 120_000 },
 ] as const;
 const STALE_FACTOR = 2;
+const GO_LIVE_FILE = 'go_live_status.json';
+const NO_DATA = '데이터 없음';
+/** The sum of what is reported; null when nothing is. */
+const sumOf = (vs: (number | null)[]): number | null => { const got = vs.filter((v): v is number => v !== null); return got.length ? got.reduce((a, b) => a + b, 0) : null; };
+const usdSigned = (v: number | null): string => (v === null ? '—' : `${v > 0 ? '+' : v < 0 ? '-' : ''}$${Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const SLOW_MS = 60_000;
 const MAX_ROWS = 60;
 const GROUP_KO: Record<string, string> = { keys: '키', smoke: '실측', lane: '이송 레인', engine: '엔진', config: '설정', bybit: '바이빗', switch: '스위치' };
@@ -74,31 +79,7 @@ export function parseChecks(gl: Record<string, unknown> | null): GoLiveCheck[] {
 }
 
 /** 키 입력 → 키 점검 → 소액 실측 → 레인 설정 → T2 섀도 게이트 → 자동: done from the checks/ready flags, the first undone step is active. */
-export function goLiveSteps(gl: Record<string, unknown> | null, checks: GoLiveCheck[]): HubStep[] {
-  const ready = gl && isObj(gl.ready) ? gl.ready : {};
-  const keys = checks.filter((c) => c.id.startsWith('trade_keys.')), keyChecks = checks.filter((c) => c.id.startsWith('key_check.'));
-  const okN = (xs: GoLiveCheck[]): number => xs.filter((c) => c.ok).length;
-  const t2 = gl && isObj(gl.t2_shadow_gate) ? gl.t2_shadow_gate : null, t2v3 = gl && isObj(gl.t2v3_shadow_gate) ? gl.t2v3_shadow_gate : null;
-  const defs: { label: string; done: boolean; hint: string }[] = [
-    { label: '키 입력', done: keys.length > 0 && okN(keys) === keys.length, hint: keys.length ? `${okN(keys)}/${keys.length} 채움` : '정보 없음' },
-    { label: '키 점검', done: keyChecks.length > 0 && okN(keyChecks) === keyChecks.length, hint: keyChecks.length ? `${okN(keyChecks)}/${keyChecks.length} 통과 · keys-check` : 'keys-check' },
-    { label: '소액 실측', done: ready.smoke === true, hint: ready.smoke === true ? '완료' : `smoke${ready.t1 === true ? ' · T1 준비' : ''}${ready.p1 === true ? ' · P1 준비' : ''}` },
-    { label: '레인 설정', done: ready.lane_setup === true && ready.lane_first === true, hint: `lane-setup ${ready.lane_setup === true ? '완료' : '전'} · 첫 실이송 ${ready.lane_first === true ? '완료' : '전'}` },
-    { label: 'T2 섀도 게이트', done: ready.t2 === true || t2?.passed === true, hint: t2 ? `순환 ${fmtInt(num(t2.cycles) ?? 0)} · 중앙 ${num(t2.median_pnl_usd) === null ? '—' : fmtUsd(num(t2.median_pnl_usd)!)}${t2v3 ? ` · v3 ${t2v3.passed === true ? '통과' : '미통과'}` : ''}` : '정보 없음' },
-    { label: '자동', done: ready.auto === true, hint: ready.auto === true ? '무장됨' : '이송 무장 전' },
-  ];
-  let activeSet = gl === null;
-  return defs.map((d) => {
-    if (d.done) return { label: d.label, state: 'done', hint: d.hint };
-    if (!activeSet) { activeSet = true; return { label: d.label, state: 'active', hint: d.hint }; }
-    return { label: d.label, state: 'todo', hint: d.hint };
-  });
-}
-
 /** Failing first, source order otherwise; at most MAX_ROWS. */
-export function checklistRows(checks: GoLiveCheck[]): string[][] {
-  return [...checks.filter((c) => !c.ok), ...checks.filter((c) => c.ok)].slice(0, MAX_ROWS).map((c) => [GROUP_KO[c.group] ?? c.group, c.label, c.ok ? '통과' : '실패', c.detail || '—', c.next || '—']);
-}
 
 /* ───────── paper ───────── */
 
@@ -236,7 +217,6 @@ export async function collectTrading(deps: HubDeps): Promise<HubMode> {
   const lanes = parseLaneDoc(laneMd);
   const checks = parseChecks(gl);
   const passed = checks.filter((c) => c.ok).length;
-  const steps = goLiveSteps(gl, checks);
   const health = { data: room.status, source: room.sources[0]! };
   const h = room.status;
   const hm = h && isObj(h.metrics) ? h.metrics : {};
@@ -245,8 +225,6 @@ export async function collectTrading(deps: HubDeps): Promise<HubMode> {
   const transfer = paper && isObj(paper.by_mode) && isObj(paper.by_mode['이송']) ? paper.by_mode['이송'] : null;
   const wave = db.value?.wave ?? null, mmp = db.value?.mmp ?? null;
   const commits = git.value ?? [];
-  const glReady = gl && isObj(gl.ready) ? gl.ready : null;
-  const t2 = gl && isObj(gl.t2_shadow_gate) ? gl.t2_shadow_gate : null, t2v3 = gl && isObj(gl.t2v3_shadow_gate) ? gl.t2v3_shadow_gate : null;
 
   // ── freshness: each state file's own timestamp (json ts / generated_at; wave: file mtime) vs 2× its timer period ──
   const fileAt: Record<string, string | null> = {
@@ -258,7 +236,7 @@ export async function collectTrading(deps: HubDeps): Promise<HubMode> {
   const gitErr = git.error && git.error !== '오류' ? `git 조회 불가 · ${git.error}` : 'git 조회 불가';
   const sources: HubSource[] = [
     ...room.sources, ...ver2.sources,
-    ...TRADING_TIMERS.map((t) => ({ name: t.file, ok: present[t.file] === true, ms: 0, ...(present[t.file] ? {} : { error: '파일 없음' }) })),
+    ...TRADING_TIMERS.map((t) => (t.file === GO_LIVE_FILE && !present[t.file] ? { name: t.file, ok: false, off: true, ms: 0, error: '꺼짐' } : { name: t.file, ok: present[t.file] === true, ms: 0, ...(present[t.file] ? {} : { error: '파일 없음' }) })),
     { name: 'sqlite', ok: db.value !== null && !db.stale, ms: 0, ...(db.value === null ? { error: dbErr } : db.stale ? { error: '이전 값' } : {}) },
     { name: 'git log', ok: git.value !== null && !git.stale, ms: 0, ...(git.value === null ? { error: gitErr } : git.stale ? { error: '이전 값' } : {}) },
     { name: '레인 성적표', ok: lanes !== null, ms: 0, ...(lanes ? {} : { error: '파일 없음' }) },
@@ -269,37 +247,35 @@ export async function collectTrading(deps: HubDeps): Promise<HubMode> {
   const alerts: HubAlert[] = [];
   let state: HubState = 'ok';
   const warn = (): void => { if (state === 'ok') state = 'warn'; };
+  // The go-live status job is reference only (live switching is not on the table): its health raises nothing.
   for (const t of timers) {
+    if (t.file === GO_LIVE_FILE) continue;
     const at = fileAt[t.file];
-    if (!present[t.file]) { alerts.push({ level: 'warn', text: `${t.label} 상태 파일 없음 (${t.file})` }); warn(); continue; }
+    if (!present[t.file]) { alerts.push({ level: 'warn', text: `${t.label} 기록 없음` }); warn(); continue; }
     if (at && now - Date.parse(at) > STALE_FACTOR * t.periodMs) { alerts.push({ level: 'warn', text: `${t.label} 상태 오래됨 · ${agoFrom(at, now)} (주기 ${Math.round(t.periodMs / 60_000)}분)`, at }); warn(); }
     if (t.u.active !== 'missing' && t.u.active !== 'active') { alerts.push({ level: 'warn', text: `타이머 ${t.label} ${UNIT_STATE_KO[t.u.active]}` }); warn(); }
     if (t.svc.result && t.svc.result !== 'success') { alerts.push({ level: 'warn', text: `${t.label} 마지막 실행 ${t.svc.result}${t.svc.exitedAt ? ` · ${fmtKst(t.svc.exitedAt)}` : ''}` }); warn(); }
   }
-  // ── the two bots: :8830 alerts pass through (snapshot/stale notes included); ver2 down / live / verify failures ──
+  // ── the two bots: :8830 alerts pass through; ver2 down / live / verify failures ──
   for (const a of room.view.alerts) { alerts.push(a); if (a.level !== 'info') warn(); }
   if (room.view.workstreams.some((w) => w.id === 'adaptive' && w.state === 'warn')) { alerts.push({ level: 'warn', text: '어댑티브 라이브 플래그 켜짐 — 페이퍼 전용 원칙 확인' }); warn(); }
-  if (!v2.ok) { alerts.push({ level: 'warn', text: `ver2 페이퍼 엔진 :8771 응답 없음 · ${v2.error ?? '오류'}`, hint: 'cblabx-paper 상태 확인 (여기서는 읽기만)' }); warn(); }
+  if (!v2.ok) { alerts.push({ level: 'warn', text: `ver2 페이퍼 엔진 응답 없음 · ${v2.error ?? '오류'}` }); warn(); }
   else {
     if (v2.live === true) { alerts.push({ level: 'bad', text: 'ver2 페이퍼 엔진이 LIVE=true 로 응답 — 모의 전용이어야 함' }); state = 'warn'; }
     if ((v2.errors ?? 0) > 0) alerts.push({ level: 'info', text: `ver2 페이퍼 엔진 오류 ${fmtInt(v2.errors!)}건${v2.lastError ? ` · ${v2.lastError}` : ''}` });
     const lastPoll = kstToIso(v2.lastPollKst);
     if (lastPoll && now - Date.parse(lastPoll) > 10 * 60_000) { alerts.push({ level: 'warn', text: `ver2 페이퍼 마지막 폴 ${agoFrom(lastPoll, now)} — 루프 멈춤 의심`, at: lastPoll }); warn(); }
   }
-  if (!ledger.ok) { alerts.push({ level: 'warn', text: `ver2 원장 :8793 응답 없음 · ${ledger.error ?? '오류'}`, hint: 'cblabx-ledger 상태 확인 (여기서는 읽기만)' }); warn(); }
+  if (!ledger.ok) { alerts.push({ level: 'warn', text: `ver2 원장 응답 없음 · ${ledger.error ?? '오류'}` }); warn(); }
   else {
     if (ledger.verify && ledger.verify.ok !== true) { alerts.push({ level: 'bad', text: `ver2 원장 해시 체인 검증 실패 · ${ledger.verify.msg || '사유 미상'}` }); state = 'warn'; }
     for (const w of ledger.verify?.warnings.slice(0, 3) ?? []) alerts.push({ level: 'info', text: `원장 검증 경고 · ${w}` });
-    if (ledger.engineReady === false) alerts.push({ level: 'info', text: 'ver2 원장: 엔진 준비 전 (engine_ready=false)' });
+    if (ledger.engineReady === false) alerts.push({ level: 'info', text: 'ver2 원장: 엔진 준비 전' });
   }
-  if (db.value === null) alerts.push({ level: 'info', text: `웨이브·펌프 DB ${db.error ?? 'sqlite 조회 불가'}` });
-  if (gl) {
-    if (glReady?.auto !== true) alerts.push({ level: 'info', text: `라이브 전환 미완 · 체크 ${passed}/${checks.length} 통과`, at: fileAt['go_live_status.json'] ?? null });
-    if (t2 && t2.passed !== true) alerts.push({ level: 'info', text: `T2 섀도 게이트 미통과 · 순환 ${fmtInt(num(t2.cycles) ?? 0)} · 닫힘→보유 ${num(t2.collapsed_frac) === null ? '—' : fmtPct(num(t2.collapsed_frac)! * 100)}` });
-    if (t2v3 && t2v3.passed !== true) { const failing = isObj(t2v3.items) ? Object.entries(t2v3.items).filter(([, v]) => isObj(v) && v.ok === false).map(([k]) => k) : []; alerts.push({ level: 'info', text: `T2 v3 섀도 게이트 미통과${failing.length ? ` · 미달 ${failing.join(', ')}` : ''}` }); }
-    const unknown = num(gl.unknown_orders); if (unknown !== null && unknown > 0) { alerts.push({ level: 'warn', text: `모르는 주문 ${unknown}건` }); warn(); }
-    const pauses = arr(gl.pauses); if (pauses.length) { alerts.push({ level: 'warn', text: `라이브 멈춤 ${pauses.length}건` }); warn(); }
-  } else alerts.push({ level: 'warn', text: 'go_live_status.json 없음 — 체크리스트 확인 불가' });
+  if (db.value === null) alerts.push({ level: 'info', text: '웨이브·펌프 기록을 지금 읽지 못함' });
+  const unknownOrders = gl ? num(gl.unknown_orders) : null;
+  if (unknownOrders !== null && unknownOrders > 0) { alerts.push({ level: 'warn', text: `모르는 주문 ${unknownOrders}건` }); warn(); }
+  const pauses = gl ? arr(gl.pauses) : []; if (pauses.length) { alerts.push({ level: 'warn', text: `라이브 멈춤 ${pauses.length}건` }); warn(); }
   if (lanes?.verdictAt && now - Date.parse(lanes.verdictAt) > 7 * DAY_MS) alerts.push({ level: 'info', text: `돈 판정표(수기) ${agoFrom(lanes.verdictAt, now)} — 갱신 검토`, at: lanes.verdictAt });
   if (room.view.via === 'none' && !v2.ok && !ledger.ok && !gl && !maker && !desk && !lanes) state = 'unknown';
 
@@ -307,29 +283,42 @@ export async function collectTrading(deps: HubDeps): Promise<HubMode> {
   const pN = paper ? num(paper.n) : null, pMed = paper ? num(paper.median) : null, pWin = paper ? num(paper.win) : null;
   const tMed = transfer ? num(transfer.median) : null, tWin = transfer ? num(transfer.win) : null;
   const openN = v2.open.length;
-  const roomWord = room.view.via === 'live' ? `트레이딩룸 ${room.view.state ?? 'ok'}` : room.view.via === 'snapshot' ? `트레이딩룸 스냅샷${room.view.stale ? '(오래됨)' : ''}` : '트레이딩룸 응답 없음';
-  const ver2Word = v2.ok ? `ver2 페이퍼 ${v2.books.length}북 · 열린 ${openN}` : 'ver2 페이퍼 응답 없음';
+  const roomWord = room.view.via === 'live' ? `트레이딩룸 ${room.view.kpis[0]!.value}` : room.view.via === 'snapshot' ? `트레이딩룸 스냅샷${room.view.stale ? '(오래됨)' : ''}` : '트레이딩룸 데이터 없음';
+  const v2Net = sumOf(v2.books.map((b) => b.netPnl)), v2Trades = sumOf(v2.books.map((b) => b.nTrades)), v2Wins = sumOf(v2.books.map((b) => b.wins));
+  const v2Equity = sumOf(v2.books.map((b) => b.equity)), v2Start = sumOf(v2.books.map((b) => b.cashStart));
+  const v2Marked = v2Equity !== null && v2Start !== null ? v2Equity - v2Start : null;
+  const v2Win = v2Trades && v2Wins !== null ? (v2Wins / v2Trades) * 100 : null;
+  const verified = ledger.ok && ledger.verify?.ok === true;
   const headline = [
-    `${roomWord} · ${ver2Word}`,
-    gl ? (glReady?.auto === true ? '라이브 자동' : glReady?.smoke === true ? '라이브 전환 진행' : '라이브 전환 미완') : '출격 상태 미상',
-    gl ? `체크 ${passed}/${checks.length} 통과` : null,
-    paper ? `페이퍼 n=${pN === null ? '—' : fmtInt(pN)} 중앙값 ${signed(pMed)}${transfer ? ` (이송 ${signed(tMed)} 승 ${tWin === null ? '—' : fmtPct(tWin, 0)})` : ''}` : null,
-    wave && !wave.error ? `웨이브 ${signedInt(wave.pnl)}` : null,
+    v2.ok ? `ver2 페이퍼 ${usdSigned(v2Net)}` : 'ver2 페이퍼 데이터 없음',
+    v2.ok && v2Win !== null ? `승률 ${fmtPct(v2Win, 0)} (${fmtInt(v2Trades!)}건)` : null,
+    v2.ok ? `열린 ${openN}` : null,
+    verified ? '원장 검증 ✓' : null,
+    room.view.generatedAt ? `${roomWord} ${fmtKst(room.view.generatedAt).slice(6)}` : roomWord,
   ].filter(Boolean).join(' · ');
-  const nextCmd = gl ? text(gl.next_command, 160) : '';
-  const decision = nextCmd ? nextCmd : gl ? '다음 명령 없음 — 체크리스트의 실패 항목 확인' : '출격 준비 상태 파일 없음 — go-live-status 타이머 확인';
+  const firstProblem = sortAlerts(alerts).find((a) => a.level !== 'info');
+  const decision = firstProblem ? firstProblem.text : '조치 없음';
   const lastCommit = commits[0] ?? null;
-  const verifyKpi = !ledger.ok ? kpi('ver2 원장 검증', '응답 없음', { status: 'warn', hint: ledger.error ?? '' }) : kpi('ver2 원장 검증', ledger.verify ? (ledger.verify.ok === true ? '통과' : '실패') : '—', { status: ledger.verify?.ok === true ? 'ok' : ledger.verify ? 'bad' : 'info', hint: `레코드 ${ledger.records === null ? '—' : fmtInt(ledger.records)}` });
+  const verifyKpi = !ledger.ok ? kpi('ver2 원장 검증', NO_DATA, { status: 'info', hint: ledger.error ?? '' }) : kpi('ver2 원장 검증', ledger.verify ? (ledger.verify.ok === true ? '통과' : '실패') : NO_DATA, { status: ledger.verify?.ok === true ? 'ok' : ledger.verify ? 'bad' : 'info', hint: `레코드 ${ledger.records === null ? '—' : fmtInt(ledger.records)}` });
   const kpis: HubKpi[] = [
-    room.view.kpis[0]!,
-    kpi('ver2 페이퍼 북', v2.ok ? `${v2.books.length}` : '—', { unit: v2.ok ? '개' : undefined, status: v2.ok ? (v2.live === true ? 'bad' : 'ok') : 'warn', hint: v2.ok ? `열린 ${openN} · 체결 ${fmtInt(v2.books.reduce((n, b) => n + (b.nTrades ?? 0), 0))}` : (v2.error ?? '응답 없음') }),
+    kpi('ver2 페이퍼 손익', v2.ok && v2Net !== null ? usdSigned(v2Net) : NO_DATA, { status: !v2.ok || v2Net === null ? 'info' : v2.live === true ? 'bad' : v2Net > 0 ? 'ok' : 'info', hint: v2.ok ? `실현 · 평가 포함 ${usdSigned(v2Marked)} · 북 ${v2.books.length}개` : (v2.error ?? '') }),
+    kpi('ver2 승률', v2.ok && v2Win !== null ? fmtPct(v2Win, 0) : NO_DATA, { status: 'info', hint: v2.ok && v2Trades !== null ? `청산 ${fmtInt(v2Trades)}건 · 승 ${fmtInt(v2Wins ?? 0)}` : '' }),
+    kpi('ver2 열린 포지션', v2.ok ? String(openN) : NO_DATA, { status: 'info', hint: v2.ok && v2.lastPollKst ? `갱신 ${v2.lastPollKst.slice(5, 16)}` : '' }),
     verifyKpi,
-    kpi('체크 통과', gl ? `${passed}/${checks.length}` : '—', { status: !gl ? 'info' : passed === checks.length ? 'ok' : 'warn', hint: gl ? `실패 ${checks.length - passed}` : '파일 없음' }),
-    kpi('페이퍼 승률 · 중앙값', paper ? `${pWin === null ? '—' : fmtPct(pWin)} · ${signed(pMed)}` : '—', { status: pMed === null ? 'info' : pMed > 0 ? 'ok' : 'warn', hint: paper ? `n=${pN === null ? '—' : fmtInt(pN)} · 보유 ${fmtInt(num(desk?.hold_min) ?? 0)}분` : '' }),
-    kpi('이송 모드', transfer ? `${tWin === null ? '—' : fmtPct(tWin)} · ${signed(tMed)}` : '—', { status: tMed === null ? 'info' : tMed > 0 ? 'ok' : 'warn', hint: transfer ? `n=${fmtInt(num(transfer.n) ?? 0)}` : '' }),
-    kpi('웨이브 누적 PnL', wave && !wave.error ? signedInt(wave.pnl) : '—', { status: !wave || wave.error ? 'info' : wave.pnl >= 0 ? 'ok' : 'warn', hint: wave && !wave.error ? `매도 ${wave.sells} · 보충 ${fmtInt(wave.refills)}` : dbErr }),
-    kpi('레인 살았다/죽었다/수집중', lanes ? `${lanes.alive ?? '—'}/${lanes.dead ?? '—'}/${lanes.collecting ?? '—'}` : '—', { status: lanes ? ((lanes.alive ?? 0) > 0 ? 'ok' : 'warn') : 'info', hint: lanes?.date ? `성적표 ${lanes.date}` : '' }),
-    kpi('마지막 커밋', lastCommit?.at ? agoFrom(lastCommit.at, now) : '—', { status: lastCommit?.at && now - Date.parse(lastCommit.at) > 7 * DAY_MS ? 'warn' : 'info', hint: lastCommit ? lastCommit.subject.slice(0, 60) : (git.error ?? '') }),
+    room.view.kpis[0]!,
+    kpi('페이퍼 승률 · 중앙값', paper ? `${pWin === null ? '—' : fmtPct(pWin)} · ${signed(pMed)}` : NO_DATA, { status: pMed === null ? 'info' : pMed > 0 ? 'ok' : 'warn', hint: paper ? `n=${pN === null ? '—' : fmtInt(pN)} · 보유 ${fmtInt(num(desk?.hold_min) ?? 0)}분` : '' }),
+    kpi('이송 모드', transfer ? `${tWin === null ? '—' : fmtPct(tWin)} · ${signed(tMed)}` : NO_DATA, { status: tMed === null ? 'info' : tMed > 0 ? 'ok' : 'warn', hint: transfer ? `n=${fmtInt(num(transfer.n) ?? 0)}` : '' }),
+    kpi('웨이브 누적 PnL', wave && !wave.error ? signedInt(wave.pnl) : NO_DATA, { status: !wave || wave.error ? 'info' : wave.pnl >= 0 ? 'ok' : 'warn', hint: wave && !wave.error ? `매도 ${wave.sells} · 보충 ${fmtInt(wave.refills)}` : '' }),
+    kpi('레인 살았다/죽었다/수집중', lanes ? `${lanes.alive ?? '—'}/${lanes.dead ?? '—'}/${lanes.collecting ?? '—'}` : NO_DATA, { status: lanes ? ((lanes.alive ?? 0) > 0 ? 'ok' : 'warn') : 'info', hint: lanes?.date ? `성적표 ${lanes.date}` : '' }),
+  ];
+
+  // ── scoreboard: one line per bot, only what each one actually reports ──
+  const roomPnl = room.view.workstreams.filter((w) => w.pnl !== null).map((w) => `${w.label} ${w.pnl}`).join(' · ');
+  const scoreboard: TradingBotRow[] = [
+    { id: 'room', name: '트레이딩룸 SR/DCA', pnl: roomPnl || null, pnlTone: null, win: null, open: null, updated: room.view.generatedAt ? fmtKst(room.view.generatedAt) : null, note: room.view.via === 'none' ? null : `${room.view.via === 'live' ? '실시간' : '스냅샷'} · 봇이 손익을 합산해 보고하지 않음` },
+    { id: 'ver2', name: 'ver2 페이퍼', pnl: v2.ok && v2Net !== null ? usdSigned(v2Net) : null, pnlTone: v2.ok && v2Net ? (v2Net > 0 ? 'pos' : 'neg') : null, win: v2.ok && v2Win !== null ? `${fmtPct(v2Win, 0)} · ${fmtInt(v2Trades!)}건` : null, open: v2.ok ? String(openN) : null, updated: v2.ok && v2.lastPollKst ? v2.lastPollKst.slice(5, 16) : null, note: v2.ok ? [`실현 · 평가 포함 ${usdSigned(v2Marked)}`, verified ? `원장 검증 ✓ ${ledger.records === null ? '' : `${fmtInt(ledger.records)}건`}`.trim() : null].filter(Boolean).join(' · ') : null },
+    { id: 'desk', name: '데스크 페이퍼', pnl: pMed === null ? null : `중앙값 ${signed(pMed)}`, pnlTone: pMed ? (pMed > 0 ? 'pos' : 'neg') : null, win: pWin === null ? null : `${fmtPct(pWin, 0)}${pN === null ? '' : ` · ${fmtInt(pN)}건`}`, open: paper && num(paper.open) !== null ? fmtInt(num(paper.open)!) : null, updated: fileAt['live_desk.json'] ? fmtKst(fileAt['live_desk.json']) : null, note: null },
+    { id: 'wave', name: '웨이브 페이퍼', pnl: wave && !wave.error ? signedInt(wave.pnl) : null, pnlTone: wave && !wave.error && wave.pnl ? (wave.pnl > 0 ? 'pos' : 'neg') : null, win: null, open: wave && !wave.error && wave.posN !== null ? String(wave.posN) : null, updated: wave?.lastTs ? fmtKst(wave.lastTs) : null, note: wave && !wave.error ? `매도 ${wave.sells}` : null },
   ];
 
   // ── sections ──
@@ -344,18 +333,10 @@ export async function collectTrading(deps: HubDeps): Promise<HubMode> {
   const waveRows = wave?.recent.map((s) => [fmtKst(toIso(s.ts)), s.sym, s.gap === null ? '—' : fmtPct(s.gap, 2), s.size === null ? '—' : fmtUsd(s.size), s.pnl === null ? '—' : signed(s.pnl, 1, ''), s.venue || '—', s.note || '—']) ?? [];
   const lanesRows = laneRows(lanes);
   const commitRows = commits.map((c) => [fmtKst(c.at), c.subject || '—']);
-  const freshRows: [string, string][] = timers.flatMap((t): [string, string][] => {
+  const freshRows: [string, string][] = timers.filter((t) => t.file !== GO_LIVE_FILE).flatMap((t): [string, string][] => {
     const at = fileAt[t.file] ?? null;
-    return [[`${t.label} · ${t.file}`, present[t.file] ? `${fmtKst(at)} · ${at ? agoFrom(at, now) : '시각 미상'}` : '파일 없음'], [`${t.label} · 타이머`, t.u.active === 'missing' ? '정보 없음' : `${UNIT_STATE_KO[t.u.active]} · 마지막 ${fmtKst(t.u.lastRun)} · 다음 ${t.u.nextRun ? fmtKst(t.u.nextRun) : `+${Math.round(t.periodMs / 60_000)}분`} · ${t.svc.result ?? '—'}`]];
+    return [[`${t.label} · 기록`, present[t.file] ? `${fmtKst(at)} · ${at ? agoFrom(at, now) : '시각 미상'}` : '기록 없음'], [`${t.label} · 타이머`, t.u.active === 'missing' ? '정보 없음' : `${UNIT_STATE_KO[t.u.active]} · 마지막 ${fmtKst(t.u.lastRun)} · 다음 ${t.u.nextRun ? fmtKst(t.u.nextRun) : `+${Math.round(t.periodMs / 60_000)}분`} · ${t.svc.result ?? '—'}`]];
   });
-  const gateRows: [string, string][] = [];
-  if (t2) gateRows.push(['T2 섀도', `${t2.passed === true ? '통과' : '미통과'} · 순환 ${fmtInt(num(t2.cycles) ?? 0)} · 손익 중앙 ${num(t2.median_pnl_usd) === null ? '—' : fmtUsd(num(t2.median_pnl_usd)!)} · 순 중앙 ${signed(num(t2.median_net_pct))} · 닫힘→보유 ${num(t2.collapsed_frac) === null ? '—' : fmtPct(num(t2.collapsed_frac)! * 100)}`]);
-  if (t2v3) {
-    gateRows.push(['T2 v3 섀도', `${t2v3.passed === true ? '통과' : '미통과'} · 라운드 ${fmtInt(num(t2v3.n) ?? 0)}`]);
-    if (isObj(t2v3.items)) for (const [k, v] of Object.entries(t2v3.items).slice(0, 20)) if (isObj(v)) gateRows.push([`v3 · ${text(k, 30)}`, `${num(v.value) === null ? '—' : fmtNum(num(v.value)!, 2)} · ${v.ok === true ? '충족' : v.ok === false ? '미달' : '참고'}`]);
-  }
-  const ti = gl && isObj(gl.transfer_isolation) ? gl.transfer_isolation : null;
-  if (ti) gateRows.push(['이송 격리', `${ti.deployed === true ? '배치됨' : '미배치'} · ${text(ti.why, 160) || '—'}`]);
   const healthRows: [string, string][] = h ? [
     ['상태', str(h.state, 10) ?? '—'], ['단계', str(h.stage, 20) ?? '—'], ['생성', fmtKst(toIso(h.generated_at))],
     ['섀도 하트비트', num(hm.shadow_heartbeat_age_s) === null ? '—' : `${fmtNum(num(hm.shadow_heartbeat_age_s)!, 0)}s`], ['스냅샷 경과', num(hm.snapshot_age_h) === null ? '—' : `${fmtNum(num(hm.snapshot_age_h)!, 1)}h`],
@@ -366,24 +347,23 @@ export async function collectTrading(deps: HubDeps): Promise<HubMode> {
   const caveats = maker ? arr(maker.caveats).filter((c): c is string => typeof c === 'string').slice(0, 6).map((c) => text(c, 160)) : [];
 
   const sections: HubSection[] = [
-    sec.steps('라이브 전환', steps, { open: true, note: gl ? `출격 준비 ${fmtKst(fileAt['go_live_status.json'] ?? null)} 기준 · 체크 ${passed}/${checks.length}` : 'go_live_status.json 없음' }),
-    sec.table('체크리스트', ['그룹', '항목', '상태', '상세', '다음'], checklistRows(checks), { open: true, wrap: [3, 4], note: `실패 ${checks.length - passed} · 통과 ${passed}` }),
     sec.table('페이퍼 성적 (모드별)', ['출처', '모드', 'n', '중앙값', '승률', '체결 / 미체결', '메모'], paperRows(maker, desk), { open: true, num: [2, 3, 4], wrap: [6], note: [maker ? `메이커 ${fmtUsd(num(maker.size_usd) ?? 0)} · 대기 ${fmtInt(num(maker.wait_min) ?? 0)}분 · 보유 ${fmtInt(num(maker.hold_min) ?? 0)}분` : null, desk ? `데스크 ${fmtUsd(num(desk.size_usd) ?? 0)} · 보유 ${fmtInt(num(desk.hold_min) ?? 0)}분 · 열린 ${fmtInt(num(paper?.open) ?? 0)}` : null].filter(Boolean).join(' · ') }),
     sec.kv('드롭 사유 (라이브 데스크)', dropRows, { open: true, note: desk ? `${fmtKst(fileAt['live_desk.json'] ?? null)} 기준 · 모델에 없는 것: ${arr(desk.not_modeled).filter((x): x is string => typeof x === 'string').map((x) => text(x, 40)).join(', ') || '—'}` : '' }),
     sec.table('호가 탐침 후보', ['심볼', '종류', '경로', '표 순이익', '크기', '등급', '판정', '사유'], probedRows, { num: [3, 4], wrap: [2, 7], note: `탐침 ${probedRows.length} · 라이브 ${desk ? fmtInt(num(desk.n_live) ?? 0) : '—'}` }),
-    sec.table('웨이브 페이퍼 (최근 매도)', ['시각', '심볼', '갭', '크기', 'PnL', '매수처', '메모'], waveRows, { open: true, num: [2, 3, 4], wrap: [6], note: wave ? (wave.error ? `sqlite 조회 불가 (${wave.error})` : `누적 ${signedInt(wave.pnl)} · 매도 ${wave.sells} · 보충 ${fmtInt(wave.refills)} · 포지션 ${wave.posN ?? '—'} (재고 ${wave.posInv ?? '—'}) · 마지막 기록 ${fmtKst(wave.lastTs)}`) : dbErr }),
+    sec.table('웨이브 페이퍼 (최근 매도)', ['시각', '심볼', '갭', '크기', 'PnL', '매수처', '메모'], waveRows, { open: true, num: [2, 3, 4], wrap: [6], note: wave ? (wave.error ? '기록을 지금 읽지 못함' : `누적 ${signedInt(wave.pnl)} · 매도 ${wave.sells} · 보충 ${fmtInt(wave.refills)} · 포지션 ${wave.posN ?? '—'} (재고 ${wave.posInv ?? '—'}) · 마지막 기록 ${fmtKst(wave.lastTs)}`) : '' }),
     sec.table('레인 성적표', [...LANE_COLS], lanesRows, { wrap: [8], note: lanes ? `${lanes.date ?? ''} · 살았다 ${lanes.alive ?? '—'} · 죽었다 ${lanes.dead ?? '—'} · 수집중 ${lanes.collecting ?? '—'} · 돈 판정표 ${lanes.verdictAt ? `${fmtKst(lanes.verdictAt)} (${agoFrom(lanes.verdictAt, now)})` : '—'}${lanes.ledger ? ` · ${lanes.ledger}` : ''}` : '성적표 파일 없음' }),
     sec.table('최근 커밋', ['시각', '제목'], commitRows, { wrap: [1], note: commitRows.length ? `${TRADING_DIR} · ${commitRows.length}개` : gitErr }),
-    sec.kv('타이머 · 신선도', freshRows, { note: 'systemd --user 읽기 전용 · 각 2분 주기' }),
-    sec.kv('섀도 게이트 · 격리', gateRows),
+    sec.kv('타이머 · 신선도', freshRows, { note: '각 2분 주기' }),
     sec.kv('헬스 :8830', healthRows),
     sec.table('펌프 섀도 감지기', ['감지기', '변형', '이벤트', '완료', '적중', '적중률', '마지막'], mmpRows, { num: [2, 3, 4, 5], note: mmp ? (mmp.error ? `sqlite 조회 불가 (${mmp.error})` : `이벤트 ${fmtInt(mmp.n ?? 0)}`) : dbErr }),
   ];
   if (caveats.length) sections.push(sec.list('메이커 페이퍼 주의', caveats.map((c) => ({ text: c, level: 'info' as const }))));
 
-  const metrics: Record<string, HubMetricValue> = { '트레이딩룸': roomWord.replace('트레이딩룸 ', ''), 'ver2 북 · 열린': v2.ok ? `${v2.books.length} · ${openN}` : '—', '체크': gl ? `${passed}/${checks.length}` : '—', '페이퍼 중앙값': signed(pMed), '웨이브 PnL': wave && !wave.error ? signedInt(wave.pnl) : '—', '레인': lanes ? `${lanes.alive ?? '—'}/${lanes.dead ?? '—'}/${lanes.collecting ?? '—'}` : '—' };
+  const metrics: Record<string, HubMetricValue> = { '트레이딩룸': roomWord.replace('트레이딩룸 ', ''), 'ver2 북 · 열린': v2.ok ? `${v2.books.length} · ${openN}` : '—', '페이퍼 중앙값': signed(pMed), '웨이브 PnL': wave && !wave.error ? signedInt(wave.pnl) : '—', '레인': lanes ? `${lanes.alive ?? '—'}/${lanes.dead ?? '—'}/${lanes.collecting ?? '—'}` : '—' };
   const lastActivity = latestIso(lastCommit?.at ?? null, fileAt['live_desk.json'] ?? null, fileAt['maker_paper.json'] ?? null, wave?.lastTs ?? null, room.view.generatedAt, kstToIso(v2.lastPollKst), kstToIso(ledger.lastPollKst));
-  const tag = (h && str(h.stage, 20)?.toUpperCase()) || (desk && (num(desk.n_live) ?? 0) > 0 ? 'LIVE' : 'PAPER');
-  const trading: TradingMerged = { room: room.view, ver2: { paper: v2, ledger } };
-  return { id: 'trading', name: 'Trading Room', state, lastActivity, metrics, alerts: sortAlerts(alerts), links: [], sources, tag, page: page(headline, decision, kpis, sections), trading };
+  // The desk's "live candidates" count is not a trading mode: only a bot saying it is live can lift this badge.
+  const tag = v2.live === true || str(h?.stage, 20)?.toLowerCase() === 'live' || room.view.workstreams.some((w) => w.badge === 'LIVE') ? 'LIVE' : 'PAPER ONLY';
+  const trading: TradingMerged = { room: room.view, ver2: { paper: v2, ledger }, scoreboard };
+  const sourceNote = gl ? `라이브 전환 체크 ${passed}/${checks.length} · 참고용, 페이퍼 전용 운영` : undefined;
+  return { id: 'trading', name: 'Trading Room', state, lastActivity, metrics, alerts: sortAlerts(alerts), links: [], sources, ...(sourceNote ? { sourceNote } : {}), tag, page: page(headline, decision, kpis, sections), trading };
 }
