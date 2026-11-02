@@ -4,7 +4,8 @@ import type { StudioAgent } from '../../../shared/hub-types';
 /**
  * A crew member's face, drawn (no image assets): each account has its own head shape and colour so a glance tells
  * who is who — Claude a (round, antenna), b (visor), c (hexagon), Codex (terminal screen). The ring around it is the
- * state: a turning accent arc while working, a quiet solid ring when done, red when blocked, dotted grey when idle.
+ * state: a turning accent arc while working, a quiet solid ring when finished, red only when the owner is needed,
+ * amber when blocked or stopped, dotted grey when idle.
  */
 const FACES: Record<StudioAgent['account'], ReactElement> = {
   a: (
@@ -55,7 +56,8 @@ const FACES: Record<StudioAgent['account'], ReactElement> = {
 };
 
 export const agentName = (a: Pick<StudioAgent, 'account'>): string => (a.account === 'codex' ? 'Codex' : a.account === 'unknown' ? '에이전트' : `Claude ${a.account}`);
-export const AGENT_STATE_LABEL: Record<StudioAgent['state'], string> = { working: '작업 중', done: '완료', blocked: '막힘', idle: '대기' };
+export const AGENT_STATE_LABEL: Record<StudioAgent['state'], string> = { working: '작업 중', 'needs-owner': '승인 필요', blocked: '막힘', stopped: '중단됨', superseded: '이어받음', done: '완료', idle: '대기' };
+export const agentStateText = (a: Pick<StudioAgent, 'state' | 'successor'>): string => (a.state === 'superseded' && a.successor ? `이어받음 → ${a.successor}` : AGENT_STATE_LABEL[a.state]);
 
 export function AgentAvatar({ account, state, size = 56, title }: { account: StudioAgent['account']; state: StudioAgent['state']; size?: number; title?: string }) {
   return (

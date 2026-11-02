@@ -76,9 +76,9 @@ export function gateWord(status: string): { word: string; level: GateLevel } {
 /** The five known English `blocking_next_actions` → what the owner must do, in Korean; unknown lines stay as written. */
 export function blockerKo(text: string, episodeId: string): string {
   const t = text;
-  if (/typecast/i.test(t) && /api key/i.test(t) && /voice/i.test(t)) { const voice = /\(([^)]*)\)/.exec(t)?.[1]; return `Typecast API 키·Voice ID 설정 (.env: TYPECAST_API_KEY, TYPECAST_VOICE_ID)${voice ? ` — ${scrub(voice, 80)}` : ''}`; }
-  if (/typecast_tts\.py/i.test(t)) return `나레이션 생성: scripts/typecast_tts.py 실행 (episodes/${episodeId})`;
-  if (/re-?render/i.test(t)) return '나레이션(narration.wav)·Typecast 타임스탬프 포함 재렌더';
+  if (/typecast/i.test(t) && /api key/i.test(t) && /voice/i.test(t)) { const voice = /\(([^)]*)\)/.exec(t)?.[1]; return `Typecast API 키·Voice ID 설정${voice ? ` (${scrub(voice, 80)})` : ''}`; }
+  if (/typecast_tts\.py/i.test(t)) return `나레이션 생성 (${episodeId})`;
+  if (/re-?render/i.test(t)) return '나레이션·Typecast 타임스탬프 포함 재렌더';
   if (/loudness|subtitle|editorial/i.test(t)) return '라우드니스·자막 타이밍/넘침·최종 편집 검토';
   if (/human approval|approval before|explicit approval/i.test(t)) return '업로드 전 사람 승인 (자동 게시 금지)';
   return scrub(t, 200);
@@ -216,7 +216,11 @@ export async function collectVideo(deps: HubDeps): Promise<HubMode> {
     if (e.qa.techPass === false) alerts.push({ level: 'bad', text: `${e.id} · 렌더 기술 검사 실패` });
   }
   const age = lastActivity ? now - Date.parse(lastActivity) : null;
-  if (age !== null && age > IDLE_DAYS * DAY_MS) alerts.push({ level: 'info', text: `${fmtAgo(age)} 변경 없음` });
+  // Nobody is working on it: what it waits for is a to-do for when work resumes, not a fault.
+  if (age !== null && age > IDLE_DAYS * DAY_MS) {
+    for (const a of alerts) if (a.level === 'warn') a.level = 'info';
+    alerts.push({ level: 'info', text: `${fmtAgo(age)} 변경 없음` });
+  }
   const worst = alerts.some((a) => a.level === 'bad') ? 'bad' : alerts.some((a) => a.level === 'warn') ? 'warn' : null;
   const state: HubState = !any ? 'unknown' : worst ? 'warn' : age !== null && age > IDLE_DAYS * DAY_MS ? 'idle' : lastActivity ? 'ok' : 'unknown';
 

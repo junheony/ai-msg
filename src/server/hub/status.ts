@@ -14,8 +14,8 @@ import { collectQuant } from './quant';
 import { collectTrading } from './trading';
 import { collectUpdown } from './updown';
 import {
-  DAY_MS, DEFAULT_LINKS, HOUR_MS, HUB_CACHE_MS, HUB_TIMEOUTS, HUB_URLS, SECRET_FIELD_RE, STALLED_S, SYSTEMD_PROPS, agoFrom, bool, downMode, errorText, fmtAgo, fmtClock, fmtDuration, fmtInt, fmtKst, fmtNum, fmtUsd,
-  isObj, kpi, latestIso, num, objs, page, probe, scrub, sec, sortAlerts, str, stripSecrets, toIso, type HubDeps, type HubSelf, type HubSelfSeat,
+  DAY_MS, DEFAULT_LINKS, HOUR_MS, HUB_CACHE_MS, HUB_TIMEOUTS, HUB_URLS, LAST_GOOD_MS, SECRET_FIELD_RE, STALLED_S, SYSTEMD_PROPS, agoFrom, bool, downMode, errorText, fmtAgo, fmtClock, fmtDuration, fmtInt, fmtKst, fmtNum, fmtUsd,
+  isObj, kpi, latestIso, loopBudgetSignal, num, objs, page, probe, scrub, sec, sortAlerts, str, stripSecrets, toIso, withLastGood, type HubDeps, type HubSelf, type HubSelfSeat,
 } from './shared';
 import { collectGameStudioCached } from './gameStudio';
 import { collectStudioCached } from './studios';
@@ -33,9 +33,10 @@ const sessionTitle = (t: string, project: string): string => { const x = scrub(t
 const SEAT_STATUS_KO: Record<HubSelfSeat['status'], string> = { ok: '정상', stale: '이전 값', down: '응답 없음', login: '로그인 필요', cooldown: '쿨다운', unknown: '기록 없음' };
 const pctText = (v: number | null): string => (v === null ? '—' : `${v}%`);
 /** A seat is spent when any reported window is at 100 %. */
-const seatOut = (s: HubSelfSeat): boolean => [s.fiveHour, s.weekly, s.fable].some((v) => v !== null && v >= 100);
+/** Spent = its 5-hour or weekly window is full. The Fable quota is one model's: such a seat still runs every other model. */
+const seatOut = (s: HubSelfSeat): boolean => [s.fiveHour, s.weekly].some((v) => v !== null && v >= 100);
 /** Headroom = the fullest reported window; the best seat is the one with the most left among those that answer. */
-const seatUsed = (s: HubSelfSeat): number | null => { const v = [s.fiveHour, s.weekly, s.fable].filter((x): x is number => x !== null); return v.length ? Math.max(...v) : null; };
+const seatUsed = (s: HubSelfSeat): number | null => { const v = [s.fiveHour, s.weekly].filter((x): x is number => x !== null); return v.length ? Math.max(...v) : null; };
 
 function collectMsg(deps: HubDeps): HubMode {
   const self = deps.self();
@@ -57,8 +58,12 @@ function collectMsg(deps: HubDeps): HubMode {
   const out = seats.filter(seatOut);
   const login = seats.filter((s) => s.status === 'login');
   const cooling = seats.filter((s) => s.status === 'cooldown');
-  for (const s of out) alerts.push({ level: 'warn', text: `${s.label} 소진${s.fiveHour !== null && s.fiveHour >= 100 ? ' · 5시간 100%' : s.weekly !== null && s.weekly >= 100 ? ' · 주간 100%' : ' · Fable 100%'}`, hint: s.resetsAt ? `리셋 ${fmtKst(s.resetsAt)}` : s.weeklyResetsAt ? `주간 리셋 ${fmtKst(s.weeklyResetsAt)}` : undefined });
-  for (const s of login) alerts.push({ level: 'warn', text: `${s.label} 로그인 필요`, hint: s.id === 'x1' ? '터미널 모드 상단 칩 → Grok → 다시 로그인 (grok 로그인 창)' : '터미널 모드 상단 칩 → Gemini → 다시 로그인 (agy TUI, 끝나면 q)' });
+  // A spent seat or an expired login is a problem only when no other seat can take the work.
+  const seatLevel = best ? 'info' as const : 'warn' as const;
+  const fableOut = seats.filter((s) => !seatOut(s) && s.fable !== null && s.fable >= 100);
+  if (fableOut.length) alerts.push({ level: 'info', text: `Fable 한도 100% · ${fableOut.map((s) => s.label).join(', ')} — 다른 모델은 사용 가능` });
+  for (const s of out) alerts.push({ level: seatLevel, text: `${s.label} 소진${s.fiveHour !== null && s.fiveHour >= 100 ? ' · 5시간 100%' : ' · 주간 100%'}`, hint: s.resetsAt ? `리셋 ${fmtKst(s.resetsAt)}` : s.weeklyResetsAt ? `주간 리셋 ${fmtKst(s.weeklyResetsAt)}` : undefined });
+  for (const s of login) alerts.push({ level: seatLevel, text: `${s.label} 로그인 필요`, hint: s.id === 'x1' ? '터미널 모드 상단 칩 → Grok → 다시 로그인 (grok 로그인 창)' : '터미널 모드 상단 칩 → Gemini → 다시 로그인 (agy TUI, 끝나면 q)' });
   for (const s of cooling) alerts.push({ level: 'info', text: `${s.label} 쿨다운${s.resetsAt ? ` · ${fmtKst(s.resetsAt)}까지` : ''}` });
   if (seats.length && !answering.length && !login.length) alerts.push({ level: 'info', text: '좌석 사용량 응답 없음 — usage-deck 확인' });
 
@@ -82,7 +87,7 @@ function collectMsg(deps: HubDeps): HubMode {
     ...(seats.length ? [sec.table('좌석 사용량', ['좌석', '5시간', '주간', 'Fable 7d', '리셋', '상태'], seatRows, { open: true, num: [1, 2, 3], note: `사용한 비율 · 소진 ${out.length} · 로그인 필요 ${login.length} · 상세는 상단 칩/사용량 시트` })] : [sec.kv('사용량', [['좌석 사용량', '상단 칩/사용량 시트에서 확인']], { note: '이 페이지는 터미널 서버 자체 상태만 표시' })]),
     sec.kv('서버', [['호스트', deps.host], ['가동 시간', up], ['시작 시각', startedAt ? `${fmtKst(startedAt)} KST` : '—'], ['세션', sessions], ['진행 중 턴', String(turns)]], { open: !recent.length }),
   ];
-  const state: HubState = login.length || (out.length && !best) ? 'warn' : 'ok';
+  const state: HubState = (login.length || out.length) && !best ? 'warn' : 'ok';
   const sources: HubSource[] = [{ name: 'self', ok: true, ms: 0 }, ...(seats.length ? [{ name: '사용량', ok: answering.length > 0 || login.length > 0, ms: 0, ...(answering.length || login.length ? {} : { error: '응답 없음' }) }] : [])];
   return { id: 'msg', name: 'MSG 터미널', state, lastActivity: new Date(now).toISOString(), metrics, alerts: sortAlerts(alerts), links: [], sources, page: page(headline, decision, kpis, sections) };
 }
@@ -146,10 +151,36 @@ export function createHubStatus(deps: HubDeps, { cacheMs = HUB_CACHE_MS }: { cac
 /* ───────── real-world deps ───────── */
 
 export async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<unknown> {
-  const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' }, redirect: 'manual' });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json() as Promise<unknown>;
+  const budget = loopBudgetSignal(timeoutMs);
+  try {
+    const res = await fetch(url, { method: 'GET', signal: budget.signal, headers: { accept: 'application/json' }, redirect: 'manual' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json() as unknown;
+  } finally { budget.clear(); }
 }
+
+/** Children the hub may have starting or running at once. */
+export const SPAWN_LIMIT = 6;
+
+/**
+ * Starting a child blocks the event loop until it has exec'd (tens to hundreds of ms each on a loaded box). A pass needs
+ * dozens, and started all at once they froze the loop for 3 s+ with every probe in flight. The gate starts them one
+ * loop turn at a time, at most `limit` alive, so sockets are read between any two spawns.
+ */
+export function createSpawnGate(limit: number = SPAWN_LIMIT): <T>(start: (done: (v: T) => void) => void) => Promise<T> {
+  const queue: (() => void)[] = [];
+  let alive = 0, scheduled = false;
+  const pump = (): void => {
+    if (scheduled || alive >= limit || queue.length === 0) return;
+    scheduled = true;
+    setImmediate(() => { scheduled = false; if (alive < limit) queue.shift()?.(); pump(); });
+  };
+  return <T>(start: (done: (v: T) => void) => void): Promise<T> => new Promise<T>((resolve) => {
+    queue.push(() => { alive++; start((v) => { alive--; resolve(v); pump(); }); });
+    pump();
+  });
+}
+const spawnGate = createSpawnGate();
 
 const RENDER_DIR_RE = /^(render|renders|output|outputs|out|export|exports|final)$/i;
 const MEDIA_RE = /\.(mp4|mov|webm|mkv|m4v|mp3|wav|m4a|png|jpg|jpeg|gif)$/i;
@@ -179,8 +210,8 @@ export async function latestRenderIn(root: string, { maxDepth = 6, maxEntries = 
 }
 
 export function gitLastCommitIso(dir: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    execFile('git', ['-C', dir, 'log', '-1', '--format=%cI'], { timeout: 3000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (err, stdout) => {
+  return spawnGate<string | null>((resolve) => {
+    execFile('git', ['-C', dir, 'log', '-1', '--format=%cI'], { timeout: HUB_TIMEOUTS.default, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (err, stdout) => {
       if (err) return resolve(null);
       resolve(toIso(stdout.trim()));
     });
@@ -189,20 +220,72 @@ export function gitLastCommitIso(dir: string): Promise<string | null> {
 
 const UNIT_NAME_RE = /^[A-Za-z0-9:_.@-]+$/;
 
-/** `systemctl --user show <unit>` (read-only introspection, 3 s budget). Null when systemd/systemctl is unavailable. */
+const SYSTEMD_BATCH_WINDOW_MS = 15;
+const SYSTEMD_BATCH_MAX = 60;
+const SYSTEMD_RETRY_MS = 500;
+
+/** `systemctl show a b c` output: one blank-line separated block per unit, in argv order. Null when the blocks do not line up. */
+export function parseSystemdBlocks(stdout: string, units: string[]): Map<string, Record<string, string>> | null {
+  const blocks = stdout.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean);
+  if (blocks.length !== units.length) return null;
+  const out = new Map<string, Record<string, string>>();
+  blocks.forEach((block, i) => {
+    const props: Record<string, string> = {};
+    for (const line of block.split('\n')) { const at = line.indexOf('='); if (at > 0) props[line.slice(0, at)] = line.slice(at + 1).trim(); }
+    out.set(units[i]!, props);
+  });
+  return out;
+}
+
+/**
+ * Per-unit lookups asked for within a few ms share one `systemctl` child (a pass asks for 30+). The user bus sometimes
+ * refuses under load ("Transport endpoint is not connected"), so a failed batch is retried once and then answered from
+ * each unit's last good reading; only a unit with no reading at all comes back null.
+ */
+export function createSystemdShow(run: (units: string[]) => Promise<string | null>, clock: () => number = () => Date.now()): (unit: string) => Promise<Record<string, string> | null> {
+  let waiting = new Map<string, ((v: Record<string, string> | null) => void)[]>();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const good = new Map<string, { value: Record<string, string>; at: number }>();
+  const fallback = (unit: string): Record<string, string> | null => { const g = good.get(unit); return g && clock() - g.at <= LAST_GOOD_MS ? g.value : null; };
+  const showAll = async (units: string[]): Promise<Map<string, Record<string, string>> | null> => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, SYSTEMD_RETRY_MS));
+      const stdout = await run(units);
+      const parsed = stdout === null ? null : parseSystemdBlocks(stdout, units);
+      if (parsed) return parsed;
+    }
+    return null;
+  };
+  const flush = async (): Promise<void> => {
+    timer = null;
+    const batch = waiting;
+    waiting = new Map();
+    const parsed = await showAll([...batch.keys()]);
+    for (const [unit, callers] of batch) {
+      const props = parsed?.get(unit) ?? null;
+      if (props) good.set(unit, { value: props, at: clock() });
+      for (const resolve of callers) resolve(props ?? fallback(unit));
+    }
+  };
+  return (unit) => new Promise((resolve) => {
+    if (!waiting.has(unit) && waiting.size >= SYSTEMD_BATCH_MAX) { if (timer !== null) clearTimeout(timer); void flush(); }
+    const callers = waiting.get(unit);
+    if (callers) callers.push(resolve); else waiting.set(unit, [resolve]);
+    timer ??= setTimeout(() => { void flush(); }, SYSTEMD_BATCH_WINDOW_MS);
+  });
+}
+
+const runSystemctlShow = (units: string[]): Promise<string | null> => spawnGate<string | null>((resolve) => {
+  execFile('systemctl', ['--user', 'show', ...units, '--no-pager', '--timestamp=utc', '-p', SYSTEMD_PROPS.join(',')], { timeout: HUB_TIMEOUTS.default, maxBuffer: 4 * 1024 * 1024, env: { ...process.env, SYSTEMD_PAGER: '', LC_ALL: 'C' } }, (err, stdout) => {
+    resolve(err && !stdout ? null : String(stdout));
+  });
+});
+const showBatched = createSystemdShow(runSystemctlShow);
+
+/** `systemctl --user show <unit>` (read-only introspection, batched). Null when systemd/systemctl is unavailable. */
 export function systemdShowUser(unit: string): Promise<Record<string, string> | null> {
   if (!UNIT_NAME_RE.test(unit)) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    execFile('systemctl', ['--user', 'show', unit, '--no-pager', '--timestamp=utc', '-p', SYSTEMD_PROPS.join(',')], { timeout: 3000, env: { ...process.env, SYSTEMD_PAGER: '', LC_ALL: 'C' } }, (err, stdout) => {
-      if (err && !stdout) return resolve(null);
-      const out: Record<string, string> = {};
-      for (const line of String(stdout).split('\n')) {
-        const i = line.indexOf('=');
-        if (i > 0) out[line.slice(0, i)] = line.slice(i + 1).trim();
-      }
-      resolve(Object.keys(out).length ? out : null);
-    });
-  });
+  return showBatched(unit);
 }
 
 const EXEC_CMD_RE = /^[A-Za-z0-9_./-]+$/;
@@ -212,7 +295,7 @@ const EXEC_CMD_RE = /^[A-Za-z0-9_./-]+$/;
  */
 export function execReadOnly(cmd: string, args: string[], o: { timeoutMs: number; env?: Record<string, string>; stdin?: string }): Promise<string | null> {
   if (!EXEC_CMD_RE.test(cmd)) return Promise.resolve(null);
-  return new Promise((resolve) => {
+  return spawnGate<string | null>((resolve) => {
     const child = execFile(cmd, args, { timeout: o.timeoutMs, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, ...(o.env ?? {}), GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C.UTF-8' } }, (err, stdout) => {
       if (err) return resolve(null);
       resolve(String(stdout));
@@ -238,7 +321,7 @@ export async function readTailOf(file: string, maxBytes: number): Promise<string
 /** Everything a live server needs; tests build their own `HubDeps`. */
 export function liveHubDeps(opts: { home: string; host: string; self: () => HubSelf; links?: HubDeps['links']; studioDir?: string }): HubDeps {
   return {
-    fetchJson: fetchJsonWithTimeout,
+    fetchJson: withLastGood(fetchJsonWithTimeout),
     latestRender: (dir) => latestRenderIn(dir),
     countEntries: async (dir) => { try { return (await fs.readdir(dir)).filter((n) => !n.startsWith('.')).length; } catch { return null; } },
     gitLastCommit: gitLastCommitIso,

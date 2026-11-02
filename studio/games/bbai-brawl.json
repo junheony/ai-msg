@@ -106,7 +106,13 @@
     "brawl-web",
     "brawl-web-2",
     "brawl-web-3",
-    "brawl-unity"
+    "brawl-web-4",
+    "brawl-unity",
+    "brawl-sc-web",
+    "brawl-sc-hud",
+    "brawl-sc-unity",
+    "brawl-ground-fx",
+    "brawl-ground-unity"
   ],
   "approvals": [
     {
@@ -117,6 +123,6 @@
   ],
   "nextAction": {
     "text": "Unity 985b3bc Mac 재빌드 후 성능 게이트 재측정",
-    "owner": true
+    "owner": false
   }
 }

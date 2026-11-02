@@ -6,7 +6,7 @@
  * Honesty rules: a missing or malformed file is said so; a null count stays null (미공개/미수집), never 0; the bootstrap
  * status.json (placeholder) is never healthy. Nothing here writes, uploads or downloads.
  */
-import type { HubAlert, HubKpi, HubState, SfCalendar, SfCalendarDay, SfCalendarItem, SfChannel, SfClaudeAccount, SfDistCell, SfDistChannel, SfDistShort, SfDistUpload, SfDistribution, SfUploadState, SfFile, SfFileState, SfLedger, SfLedgerItem, SfLedgerStatus, SfLedgerType, SfPipeline, SfPlatformId, SfPlatformStatus, SfRoutineStatus, SfVideo, ShortsFactoryView } from '../../shared/hub-types';
+import type { HubAlert, HubKpi, HubState, SfBlocker, SfLongform, SfLongformItem, SfRoutineRow, SfCalendar, SfCalendarDay, SfCalendarItem, SfChannel, SfClaudeAccount, SfDistCell, SfDistChannel, SfDistShort, SfDistUpload, SfDistribution, SfUploadState, SfFile, SfFileState, SfLedger, SfLedgerItem, SfLedgerStatus, SfLedgerType, SfPipeline, SfPlatformId, SfPlatformStatus, SfRoutineStatus, SfVideo, ShortsFactoryView } from '../../shared/hub-types';
 import { SF_ACCOUNT_STATES, SF_LEDGER_STATUSES, SF_PLATFORMS, SF_UPLOAD_STATES } from '../../shared/hub-types';
 import { DAY_MS, HOUR_MS, HUB_TIMEOUTS, agoFrom, arr, fmtClock, fmtDate, fmtInt, isObj, kpi, num, objs, scrub, slowCache, sortAlerts, str, toIso, type HubDeps, type SlowResult } from './shared';
 
@@ -31,6 +31,7 @@ interface StatusRaw {
   /** null = the file does not carry a gate_failures array (nothing is known, not "none"). */
   gateFailures: string[] | null; queueDepth: number | null; scheduled: SchedRow[]; published: SchedRow[]; notes: string[];
   distribution: SfDistribution | null;
+  routines: SfRoutineRow[]; longform: SfLongform | null; blockers: SfBlocker[];
 }
 interface ChannelsRaw { generatedAt: string | null; plannedTotal: number; channels: SfChannel[] }
 interface HistRow { at: string; atMs: number; channelId: string | null; source: 'collector' | 'user_reference'; videos: { id: string; views: number | null }[]; mapping: string | null }
@@ -93,10 +94,53 @@ export function parseStatus(text: string | null, nowMs: number): { raw: StatusRa
     published: schedRows(obj.published),
     notes: lines(obj.notes, 20),
     distribution: parseDistribution(obj.distribution),
+    routines: parseRoutines(obj.routines),
+    longform: parseLongform(obj.longform),
+    blockers: parseBlockers(obj.blockers),
   };
   let f = withAge(file, SF_STALE_MS.status, nowMs);
   if (raw.placeholder && f.state !== 'malformed') f = { ...f, state: 'placeholder', note: f.state === 'stale' ? `자리표시자 · ${f.note}` : '자리표시자 · 루틴이 아직 쓰지 않음' };
   return { raw, file: f };
+}
+
+/* ───────── routines · longform · blockers (golf-shorts scripts/push_dashboard_status.py) ───────── */
+
+export function parseRoutines(v: unknown): SfRoutineRow[] {
+  return objs(v).slice(0, 12).flatMap((r) => {
+    const id = str(r.id, 40); const name = line(r.name) ?? id; if (!id || !name) return [];
+    const s = str(r.status, 20);
+    const status: SfRoutineStatus = s === null ? 'unknown' : (ROUTINE_STATUS as readonly string[]).includes(s) ? (s as SfRoutineStatus) : 'invalid';
+    return [{ id, name, schedule: line(r.schedule), lastRunAt: toIso(r.last_run_at), status, note: line(r.note) }];
+  });
+}
+function longformItems(v: unknown): SfLongformItem[] {
+  return objs(v).slice(0, 60).flatMap((r) => {
+    const id = str(r.id, 80); if (!id) return [];
+    const d = num(r.duration_s);
+    return [{ id, channelName: line(r.channel_name) ?? str(r.channel, 64), title: line(r.title), url: httpOrNull(r.url), state: str(r.state, 20), at: toIso(r.published_at ?? r.ready_at ?? r.at), durationS: d !== null && d >= 0 ? Math.round(d) : null, plan: line(r.plan) }];
+  });
+}
+const DONE_RE = /^(done|완료|게시|posted|uploaded|ok|✅|x)$/i;
+export function parseLongform(v: unknown): SfLongform | null {
+  if (!isObj(v)) return null;
+  const queue = objs(v.queue).slice(0, 60).flatMap((r) => {
+    const text = typeof r.text === 'string' ? line(r.text) : line(Object.values(r).filter((x) => typeof x === 'string' && x.trim()).join(' · '));
+    if (!text) return [];
+    const done = r.done === true || Object.values(r).some((x) => typeof x === 'string' && DONE_RE.test(x.trim()));
+    return [{ text, done }];
+  });
+  const p = isObj(v.progress) ? v.progress : null;
+  return {
+    targetPerDay: count(v.target_per_day), doneToday: count(v.done_today),
+    published: longformItems(v.published), pending: longformItems(v.pending), queue,
+    progress: p ? { file: baseName(p.file), updatedAt: toIso(p.updated_at), lines: lines(p.lines, 10) } : null,
+  };
+}
+export function parseBlockers(v: unknown): SfBlocker[] {
+  return objs(v).slice(0, 40).flatMap((b) => {
+    const text = line(b.text); if (!text || b.resolved_at) return [];
+    return [{ id: str(b.id, 60) ?? text.slice(0, 20), text, scope: line(b.scope), owner: str(b.owner, 12), since: str(b.since, 25) }];
+  });
 }
 
 /* ───────── distribution: status.json `distribution` (golf-shorts scripts/dist.py) ───────── */
@@ -109,6 +153,12 @@ function countsOf(v: unknown): Record<SfUploadState, number> {
   const o = isObj(v) ? v : {}; const c = zeroCounts();
   for (const k of SF_UPLOAD_STATES) c[k] = count(o[k]) ?? 0;
   return c;
+}
+function setupOf(v: unknown): Record<string, boolean> | null {
+  if (!isObj(v)) return null;
+  const out: Record<string, boolean> = {};
+  for (const [k, x] of Object.entries(v).slice(0, 20)) if (ID_RE.test(k) && typeof x === 'boolean') out[k] = x;
+  return Object.keys(out).length ? out : null;
 }
 /** Tolerant: anything unexpected is dropped, never thrown. Platform ids are short slugs; text is scrubbed like every other line. */
 export function parseDistribution(v: unknown): SfDistribution | null {
@@ -123,7 +173,7 @@ export function parseDistribution(v: unknown): SfDistribution | null {
     const cells: Record<string, SfDistCell> = {};
     for (const pid of pids) {
       const x = isObj(raw[pid]) ? raw[pid] : {};
-      cells[pid] = { accountState: pick(x.account_state, SF_ACCOUNT_STATES, 'none'), handle: str(x.handle, 80), url: httpOrNull(x.url), blockers: lines(x.blockers, 6), counts: countsOf(x.counts), views: count(x.views) };
+      cells[pid] = { accountState: pick(x.account_state, SF_ACCOUNT_STATES, 'none'), handle: str(x.handle, 80), url: httpOrNull(x.url), blockers: lines(x.blockers, 6), counts: countsOf(x.counts), views: count(x.views), setup: setupOf(x.setup), setupNote: line(x.setup_note) };
     }
     return [{ id, name, lang: str(c.lang, 8), youtubeChannelId: str(c.youtube_channel_id, 64), publishKst: str(c.publish_kst, 5), cells }];
   });
@@ -141,7 +191,8 @@ export function parseDistribution(v: unknown): SfDistribution | null {
     return [{ id, channel, title: line(r.title), batch: str(r.batch, 40), platforms: platformsOut }];
   });
   const blockers = objs(v.blockers).slice(0, 60).flatMap((b) => { const text = line(b.text); const platform = str(b.platform, 40); return text && platform ? [{ channel: line(b.channel) ?? '—', platform, text }] : []; });
-  return { platforms, channels, totals, shorts, shortsTotal: count(v.shorts_total) ?? shorts.length, blockers, updatedAt: toIso(v.updated_at) };
+  const setupFields = arr(v.setup_fields).map((k) => str(k, 40)).filter((k): k is string => k !== null && ID_RE.test(k)).slice(0, 20);
+  return { platforms, channels, totals, shorts, shortsTotal: count(v.shorts_total) ?? shorts.length, blockers, setupFields, updatedAt: toIso(v.updated_at) };
 }
 
 /** YouTube views the collector already has (channels.json videos) fill per-short and per-cell views the ledger left null. */
@@ -390,9 +441,18 @@ export function buildShortsView(input: { status: string | null; channels: string
   const sa = fileAlert(st.file, '루틴이 아직 status.json 을 쓰지 않았다'); if (sa) alerts.push(sa);
   if (st.file.state === 'placeholder') alerts.push({ level: 'warn', text: '루틴 상태 미보고 · status.json 자리표시자', hint: 'SCHEMA.md 의 routine 블록부터 채운다' });
   const ca = fileAlert(ch.file, 'collect_youtube.py 를 한 번 실행하면 채워진다'); if (ca) alerts.push(ca);
-  if (routine.status === 'failed') alerts.push({ level: 'bad', text: '루틴 실패', at: routine.lastRunAt ?? undefined, hint: routine.logTail.at(-1) ?? '로그 꼬리 없음' });
+  const mainNote = st.raw?.routines?.[0]?.note ?? null;
+  if (routine.status === 'failed') alerts.push({ level: 'bad', text: '루틴 실패', at: routine.lastRunAt ?? undefined, hint: routine.logTail.at(-1) ?? mainNote ?? '로그 꼬리 없음' });
   else if (routine.status === 'invalid') alerts.push({ level: 'warn', text: 'routine.status 형식 오류', hint: 'ok · failed · running 중 하나여야 한다' });
   else if (routine.status === 'running') { const ms = validMs(routine.lastRunAt); if (ms === null || nowMs - ms > SF_STALE_MS.running) alerts.push({ level: 'warn', text: '루틴 실행 중 표시가 6시간 넘게 그대로', at: routine.lastRunAt ?? undefined }); }
+  const routines = st.raw?.routines ?? [];
+  for (const r of routines.slice(1)) {
+    if (r.status === 'failed') alerts.push({ level: 'bad', text: `${r.name} 루틴 실패`, at: r.lastRunAt ?? undefined, hint: r.note ?? undefined });
+    else if (r.status === 'running') { const ms = validMs(r.lastRunAt); if (ms !== null && nowMs - ms > SF_STALE_MS.running) alerts.push({ level: 'warn', text: `${r.name} 실행 중 표시가 6시간 넘게 그대로`, at: r.lastRunAt ?? undefined }); }
+  }
+  const blockers = st.raw?.blockers ?? [];
+  const mine = blockers.filter((b) => b.owner === 'user');
+  if (mine.length) alerts.push({ level: 'info', text: `사람 손이 필요한 막힘 ${mine.length}건`, hint: mine[0]?.text });
   if (pipeline.gateFailures === null) { if (st.raw && st.file.state !== 'placeholder') alerts.push({ level: 'warn', text: '게이트 실패 미보고', hint: 'status.json 에 gate_failures 배열이 없다' }); }
   else if (pipeline.gateFailures.length) alerts.push({ level: 'warn', text: `게이트 실패 ${pipeline.gateFailures.length}건`, hint: pipeline.gateFailures[0] });
   for (const c of channels.filter((c) => c.collection.error).slice(0, SF_LIMITS.channelAlerts)) alerts.push({ level: 'warn', text: `${c.name} 수집 실패 · 이전 값 유지`, at: c.collection.lastAttemptAt ?? undefined, hint: c.collection.error ?? undefined });
@@ -431,6 +491,7 @@ export function buildShortsView(input: { status: string | null; channels: string
     kpi('총 조회 합', views.sum === null ? '미공개' : fmtInt(views.sum), { status: views.sum === null ? 'info' : undefined, hint: pub(views, '공개 수집 응답에 없음 · 부분 합산 안 함') }),
     kpi('최신 영상 조회 합', latest.sum === null ? '미수집' : fmtInt(latest.sum), { status: latest.sum === null ? 'info' : undefined, hint: n === 0 ? 'channels.json 없음' : `${latest.n}/${n} 채널 · 채널당 최신 1편` }),
     kpi('루틴', ROUTINE_KO[routine.status], { status: routine.status === 'ok' ? 'ok' : routine.status === 'failed' ? 'bad' : 'warn', hint: routine.lastRunAt ? `${agoFrom(routine.lastRunAt, nowMs)} 실행` : '실행 기록 없음' }),
+    ...(st.raw?.longform ? [kpi('롱폼 오늘', st.raw.longform.doneToday === null ? '미보고' : String(st.raw.longform.doneToday), { unit: st.raw.longform.targetPerDay ? `/${st.raw.longform.targetPerDay}` : undefined, status: st.raw.longform.doneToday !== null && st.raw.longform.targetPerDay !== null && st.raw.longform.doneToday >= st.raw.longform.targetPerDay ? 'ok' : 'info', hint: `게시 ${st.raw.longform.published.length} · 대기 ${st.raw.longform.pending.length}` })] : []),
     kpi('대기열', pipeline.queueDepth === null ? '미보고' : String(pipeline.queueDepth), { status: pipeline.queueDepth === null ? 'warn' : undefined, hint: pipeline.lastRender.file ? `마지막 렌더 ${agoFrom(pipeline.lastRender.at, nowMs)}` : '렌더 기록 없음' }),
     kpi('디스크 /', disk.usedPct === null ? '측정 불가' : String(disk.usedPct), { unit: disk.usedPct === null ? undefined : '%', status: disk.usedPct === null ? 'warn' : disk.usedPct > 95 ? 'bad' : disk.usedPct > 90 ? 'warn' : 'ok', hint: disk.note ?? (disk.usedPct !== null && disk.usedPct > 90 ? '95% 넘으면 주의' : undefined) }),
     kpi('Claude', claude.picked ? `계정 ${claude.picked}` : claude.state === 'ok' ? '선택됨' : claude.state === 'warn' ? '후보 없음' : '확인 불가', { status: claude.state === 'ok' ? 'ok' : 'warn', hint: claude.summary }),
@@ -444,7 +505,7 @@ export function buildShortsView(input: { status: string | null; channels: string
   return {
     state, headline, decision, kpis, alerts: sorted,
     files: { status: st.file, channels: ch.file, history: { name: 'history.jsonl', state: input.history === null ? 'missing' : 'fresh', at: hist.rows.at(-1)?.at ?? null, note: input.history === null ? '파일 없음' : null, rows: hist.rows.length, skipped: hist.skipped } },
-    plannedTotal, liveCount, channels, calendar, pipeline, notes: st.raw?.notes ?? [], unmappedReference, ledger, distribution: withYoutubeViews(st.raw?.distribution ?? null, channels), generatedAt: new Date(nowMs).toISOString(),
+    plannedTotal, liveCount, channels, calendar, pipeline, notes: st.raw?.notes ?? [], unmappedReference, ledger, distribution: withYoutubeViews(st.raw?.distribution ?? null, channels), routines, longform: st.raw?.longform ?? null, blockers, generatedAt: new Date(nowMs).toISOString(),
   };
 }
 

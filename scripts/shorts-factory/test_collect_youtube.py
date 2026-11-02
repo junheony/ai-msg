@@ -221,17 +221,17 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual((c2["videos"], c2["last_success_at"]), ([], None))
         self.assertTrue(c2["error"].startswith("exit: yt-dlp exit 1"))
         self.assertEqual(c2["platforms"]["youtube"]["status"], "none")
-        self.assertEqual(sum(1 for r in rows if r["source"] == "collector"), 6)
+        self.assertEqual(sum(1 for r in rows if r["source"] == "collector"), len(cy.CHANNELS) - 1)
         self.assertEqual(sum(1 for r in rows if r["source"] == "user_reference"), 7)
         self.assertEqual(next(r for r in rows if r["videos"][0]["id"] == "h1yhOEI46fg" and r["source"] == "user_reference")["channel_id"], CH1)
-        # sleeps between channels (6) + retries for CH2 (2) — no sleep before the first call
-        self.assertEqual(sleeper.n, 6 + 2)
+        # sleeps between channels (n-1) + retries for CH2 (2) — no sleep before the first call
+        self.assertEqual(sleeper.n, len(cy.CHANNELS) - 1 + 2)
         self.assertFalse(any(f.startswith(".tmp-") for f in os.listdir(self.out)))
         # next run: only CH1, which now times out → its numbers stay, the other six entries stay, history gains nothing
         code2, _, _ = self.run_collector({f"{CH1}/shorts": [("timeout",)]}, channel=[CH1])
         self.assertEqual(code2, 1)
         ch2, rows2 = self.read()
-        self.assertEqual(len(ch2["channels"]), 7)
+        self.assertEqual(len(ch2["channels"]), len(cy.CHANNELS))
         c1 = next(c for c in ch2["channels"] if c["id"] == CH1)
         self.assertEqual(c1["videos"][0]["views"], 2300)
         self.assertEqual(c1["last_success_at"], ch["channels"][0]["last_success_at"])
@@ -287,6 +287,28 @@ class Cli(unittest.TestCase):
             with open(p, encoding="utf-8") as f:
                 self.assertEqual(f.read(), "two")
             self.assertEqual(os.listdir(d), ["x.json"])
+
+
+class PlanChannels(unittest.TestCase):
+    def test_merges_new_youtube_channels_from_platform_accounts(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual([c["id"] for c in cy.plan_channels(d)], [c["id"] for c in cy.CHANNELS])  # no file → plan unchanged
+            new_id = "UC" + "x" * 22
+            doc = {"channels": [
+                {"name": "새 채널", "lang": "ko", "platforms": {"youtube": {"channel_id": new_id}}},
+                {"name": "dup", "platforms": {"youtube": {"channel_id": cy.CHANNELS[0]["id"]}}},
+                {"name": "bad", "platforms": {"youtube": {"channel_id": "not-a-channel"}}},
+                "junk",
+            ]}
+            with open(os.path.join(d, "platform_accounts.json"), "w", encoding="utf-8") as f:
+                json.dump(doc, f)
+            plan = cy.plan_channels(d)
+            self.assertEqual(len(plan), len(cy.CHANNELS) + 1)
+            self.assertEqual(plan[-1]["id"], new_id)
+            self.assertEqual(plan[-1]["name"], "새 채널")
+            with open(os.path.join(d, "platform_accounts.json"), "w", encoding="utf-8") as f:
+                f.write("{broken")
+            self.assertEqual(len(cy.plan_channels(d)), len(cy.CHANNELS))
 
 
 if __name__ == "__main__":

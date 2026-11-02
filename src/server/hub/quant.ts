@@ -1,25 +1,30 @@
 /**
- * QUANT as a work environment: the friends' 빗썸 RE accounts as cards (7일 순익, 어제, 상위 심볼, 수집 상태, 자본 스파크)
+ * QUANT as a work environment: dynamically discovered exchange accounts as cards (7일 순익, 어제, 상위 심볼, 수집 상태, 자본 스파크)
  * from the friends snapshot (~/.local/state, 30-min timer), the paper units as cards (systemd + fills tail + the
  * 24h A/B score of qa_dash), equity/daily charts, and the qa_dash "red tiles" grouped by reason instead of listed as a
  * wall. Paths never leave (`scrub`), `_src`/`src` records are never copied, every list is bounded.
  */
 import path from 'node:path';
 import type { HubAlert, HubCardItem, HubChartSeries, HubKpi, HubLevel, HubMetricValue, HubMode, HubSection, HubSource, HubState } from '../../shared/hub-types';
-import { DAY_MS, HOUR_MS, HUB_TIMEOUTS, HUB_URLS, SLOW_CACHE_MS, UNIT_STATE_KO, agoFrom, arr, downMode, fmtDate, fmtInt, fmtKrw, fmtKst, fmtNum, isObj, kpi, latestIso, num, objs, page, probe, scrub, sec, showUnit, slowCache, sortAlerts, str, toIso, unitInfo, type HubDeps, type UnitInfo } from './shared';
+import { DAY_MS, HOUR_MS, HUB_TIMEOUTS, HUB_URLS, SLOW_CACHE_MS, UNIT_STATE_KO, agoFrom, arr, downMode, fmtDate, fmtInt, fmtKrw, fmtKst, fmtNum, isObj, kpi, latestIso, num, objs, page, scrub, sec, showUnit, slowCache, sortAlerts, str, toIso, unitInfo, type HubDeps, type UnitInfo } from './shared';
 
 /* ───────── qa_dash snapshot (:8810) ───────── */
 
-interface Tile { label: string; value: unknown; unit: string; fmt: string; status: string; note: string }
-interface Section { id: string; title: string; kind: string; asof: string | null; note: string; items: Tile[]; columns: { key: string; label: string; fmt: string }[]; rows: Record<string, unknown>[]; x: string[]; series: { name: string; values: (number | null)[] }[]; unit: string; body: string }
-interface Tab { tab: string; title: string; sections: Section[] }
+interface Tile { label: string; value: unknown; unit: string; fmt: string; status: string; note: string; reason: string }
+interface Section { account: string; exchange: string; id: string; title: string; kind: string; asof: string | null; note: string; items: Tile[]; columns: { key: string; label: string; fmt: string }[]; rows: Record<string, unknown>[]; x: string[]; series: { name: string; values: (number | null)[] }[]; unit: string; body: string }
+interface Account { key: string; label: string; snapshotName: string; exchange: string; collectorState: string; lastCollectedAt: string | null; hasData: boolean | null; reason: string }
+interface Tab { tab: string; title: string; exchange: string; accounts: Account[]; sections: Section[] }
 
 export function parseSnapshot(data: Record<string, unknown>): Tab[] {
   return objs(data.tabs).map((t) => ({
-    tab: str(t.tab, 40) ?? '?', title: scrub(t.title, 80) || '?',
+    tab: str(t.tab, 40) ?? '?', title: scrub(t.title, 80) || '?', exchange: scrub(t.exchange, 20),
+    accounts: objs(t.accounts).slice(0, 60).flatMap((a): Account[] => {
+      const key = scrub(a.key, 80);
+      return key ? [{ key, label: scrub(a.label, 80) || key, snapshotName: scrub(a.snapshot_name, 80), exchange: scrub(a.exchange, 20) || scrub(t.exchange, 20), collectorState: scrub(a.collector_state, 40), lastCollectedAt: toIso(a.last_collected_at), hasData: typeof a.has_data === 'boolean' ? a.has_data : null, reason: scrub(a.reason, 300) }] : [];
+    }),
     sections: objs(t.sections).map((s): Section => ({
-      id: str(s.id, 60) ?? '?', title: scrub(s.title, 100) || '?', kind: str(s.kind, 20) ?? 'text', asof: toIso(s.asof), note: scrub(s.note, 200),
-      items: objs(s.items).map((it) => ({ label: scrub(it.label, 80), value: it.value, unit: str(it.unit, 10) ?? '', fmt: str(it.fmt, 10) ?? '', status: str(it.status, 10) ?? '', note: scrub(it.note, 160) })),
+      account: scrub(s.account, 80), exchange: scrub(s.exchange, 20), id: str(s.id, 60) ?? '?', title: scrub(s.title, 100) || '?', kind: str(s.kind, 20) ?? 'text', asof: toIso(s.asof), note: scrub(s.note, 200),
+      items: objs(s.items).map((it) => ({ label: scrub(it.label, 80), value: it.value, unit: str(it.unit, 10) ?? '', fmt: str(it.fmt, 10) ?? '', status: str(it.status, 10) ?? '', note: scrub(it.note, 160), reason: scrub(it.reason, 300) })),
       columns: Array.isArray(s.columns) ? s.columns.map((c) => (isObj(c) ? { key: str(c.key, 40) ?? '', label: scrub(c.label, 40) || str(c.key, 40) || '', fmt: str(c.fmt, 10) ?? '' } : { key: String(c), label: String(c), fmt: '' })) : [],
       rows: objs(s.rows), x: Array.isArray(s.x) ? s.x.map((v) => scrub(v, 30)) : [], unit: str(s.unit, 10) ?? '',
       series: objs(s.series).map((se) => ({ name: scrub(se.name, 40), values: Array.isArray(se.values) ? se.values.map((v) => num(v)) : [] })),
@@ -59,10 +64,6 @@ function tableSection(s: Section, o: { open?: boolean; title?: string; note?: st
 const FRIENDS_FILE = '.local/state/friends_snapshot.json';
 const INFRA_DIR = 'quant_analyzer/results/daily';
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-/** The three friends' 빗썸 accounts (snapshot name → display name; the archive's `범수동생계정3`). */
-const FRIENDS: { key: string; label: string }[] = [{ key: '빗썸1', label: '빗썸1' }, { key: '빗썸2', label: '빗썸2' }, { key: '범수3', label: '범수동생계정3' }];
-const FRIEND_KEYS = new Set(FRIENDS.map((f) => f.key));
-
 interface EqPt { d: string; total: number }
 interface DayRow { d: string; turn: number | null; fee: number | null; net: number | null; fills: number | null; netBp: number | null; top: [string, number][] }
 interface Gauge { turn: number | null; net: number | null; netBp: number | null; days: number | null }
@@ -77,7 +78,7 @@ export function parseFriends(data: unknown): Friends | null {
   const eqAll = isObj(data.equity) ? data.equity : {};
   const dayAll = isObj(data.daily) ? data.daily : {};
   const gAll = isObj(data.gauge) ? data.gauge : {};
-  const names = [...new Set([...arr(data.accts), ...Object.keys(eqAll), ...Object.keys(dayAll)].map((v) => str(v, 30)).filter((v): v is string => v !== null))].slice(0, 12);
+  const names = [...new Set([...arr(data.accts), ...Object.keys(eqAll), ...Object.keys(dayAll), ...Object.keys(gAll)].map((v) => str(v, 30)).filter((v): v is string => v !== null))].slice(0, 60);
   const accts = names.map((name): Friend => {
     const equity = objs(eqAll[name]).map((p) => ({ d: str(p.d, 10) ?? '', total: num(p.total) })).filter((p): p is EqPt => DATE_RE.test(p.d) && p.total !== null).sort(byDate).slice(-400);
     const dd = isObj(dayAll[name]) ? dayAll[name] : {};
@@ -105,6 +106,75 @@ function friendsOf(deps: HubDeps): ReturnType<FriendsCache> {
     friendsCache.set(deps, c);
   }
   return c();
+}
+
+/** Parse only a Python literal assignment. The collector script is never imported or executed. */
+export const ACCOUNT_METADATA_PY = `import ast,json,sys
+with open(sys.argv[1], "rb") as f:
+    source=f.read(131073)
+if len(source)>131072: raise ValueError("metadata source too large")
+rows=[]
+for node in ast.parse(source).body:
+    if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=="ACCTS" for t in node.targets):
+        value=ast.literal_eval(node.value)
+        if not isinstance(value,(list,tuple)): break
+        for row in value[:60]:
+            if isinstance(row,(list,tuple)) and len(row)==4 and all(isinstance(v,str) for v in row):
+                rows.append({"name":row[0][:80],"label":row[2][:80],"exchange":row[3][:20]})
+        break
+print(json.dumps(rows,ensure_ascii=False))
+`;
+interface AccountMetadata { name: string; label: string; exchange: string }
+const metadataCache = new WeakMap<HubDeps, ReturnType<typeof slowCache<AccountMetadata[]>>>();
+async function accountMetadataOf(deps: HubDeps): Promise<AccountMetadata[]> {
+  if (!deps.exec) return [];
+  let cache = metadataCache.get(deps);
+  if (!cache) {
+    cache = slowCache(SLOW_CACHE_MS.quant, async () => {
+      const result = await deps.exec!('python3', ['-I', '-c', ACCOUNT_METADATA_PY, path.join(deps.home, 'arbitrage-nexus/scripts/friends_snapshot.py')], { timeoutMs: 2000 });
+      if (result === null) return [];
+      return objs(JSON.parse(result)).slice(0, 60).map((r) => ({ name: scrub(r.name, 80), label: scrub(r.label, 80), exchange: scrub(r.exchange, 20) }));
+    }, deps.now);
+    metadataCache.set(deps, cache);
+  }
+  return (await cache()).value ?? [];
+}
+
+/** Snapshot identities win over friend display aliases; no fixed account registry. */
+export function accountsOf(tabs: Tab[], friends: Friends | null, sourceMetadata: AccountMetadata[] = []): (Account & { friend: Friend | null; sections: Section[] })[] {
+  const registry: Account[] = [];
+  for (const account of tabs.flatMap((t) => t.accounts)) {
+    if (!registry.some((a) => a.key === account.key || (!!a.snapshotName && a.snapshotName === account.snapshotName))) registry.push(account);
+  }
+  const matched = new Set<Account>();
+  const result: (Account & { friend: Friend | null; sections: Section[] })[] = (friends?.accts ?? []).flatMap((friend) => {
+    const metadata = registry.find((a) => [a.snapshotName, a.key, a.label].includes(friend.name));
+    if (metadata && matched.has(metadata)) return [];
+    if (metadata) matched.add(metadata);
+    const origin = sourceMetadata.find((m) => m.name === friend.name);
+    const a = metadata ?? { key: friend.name, label: origin?.label || friend.name, snapshotName: friend.name, exchange: origin?.exchange || (/^업비트/.test(friend.name) ? 'upbit' : /^빗썸/.test(friend.name) ? 'bithumb' : ''), collectorState: '', lastCollectedAt: null, hasData: null, reason: '' };
+    return [{ ...a, friend, sections: tabs.flatMap((t) => t.sections).filter((s) => s.account === a.key) }];
+  });
+  for (const a of registry) if (!matched.has(a)) result.push({ ...a, friend: null as Friend | null, sections: tabs.flatMap((t) => t.sections).filter((s) => s.account === a.key) });
+  return result.slice(0, 60);
+}
+
+const snapshotCache = new WeakMap<HubDeps, ReturnType<typeof slowCache<Record<string, unknown>>>>();
+/** Cache locally: preserve the last valid snapshot across a transient failure, without changing shared transport. */
+async function snapshotOf(deps: HubDeps) {
+  let cache = snapshotCache.get(deps);
+  if (!cache) {
+    cache = slowCache(SLOW_CACHE_MS.quant, async () => {
+      const data = await deps.fetchJson(HUB_URLS.quant, HUB_TIMEOUTS.default);
+      if (!isObj(data) || !Array.isArray(data.tabs)) throw new SyntaxError('JSON snapshot schema invalid');
+      return data;
+    }, deps.now);
+    snapshotCache.set(deps, cache);
+  }
+  const start = deps.now();
+  const result = await cache();
+  const source: HubSource = { name: 'snapshot.json', ok: result.value !== null && !result.stale, ms: Math.max(0, deps.now() - start), ...(result.error ? { error: result.error } : {}) };
+  return { data: result.value, source, stale: result.stale, at: result.at };
 }
 
 /* ───────── infra watch (09:00 daily, per-account collector health) ───────── */
@@ -185,7 +255,7 @@ export async function collectQuant(deps: HubDeps): Promise<HubMode> {
   const links = [{ label: '열기', href: '/hub/p/quant/', embed: true }];
   const now = deps.now();
   const t0 = now;
-  const [{ data, source }, fr] = await Promise.all([probe(deps, 'snapshot.json', HUB_URLS.quant, HUB_TIMEOUTS.default), friendsOf(deps).catch(() => ({ value: null, at: null, stale: true, error: '오류' }))]);
+  const [{ data, source, stale: snapshotStale, at: snapshotAt }, fr, accountMetadata] = await Promise.all([snapshotOf(deps), friendsOf(deps).catch(() => ({ value: null, at: null, stale: true, error: '오류' })), accountMetadataOf(deps).catch(() => [])]);
   const friendsSrc: HubSource = { name: 'friends_snapshot.json', ok: fr.value !== null && !fr.stale, ms: Math.max(0, deps.now() - t0), ...(fr.error ? { error: fr.error } : fr.value === null ? { error: '파일 없음' } : {}) };
   const snap = isObj(data) ? data : null;
   if (!snap && !fr.value) return { ...downMode('quant', 'QUANT', source, links), sources: [source, friendsSrc] };
@@ -215,37 +285,53 @@ export async function collectQuant(deps: HubDeps): Promise<HubMode> {
   const stoppedDate = latestIso(...sgStopped.map(stoppedAt));
 
   /* ── accounts ── */
-  const accts = FRIENDS.map((f) => friends?.accts.find((a) => a.name === f.key) ?? null);
-  const have = accts.filter((a): a is Friend => a !== null);
+  const accounts = accountsOf(tabs, friends, accountMetadata);
+  const have = accounts.filter((a) => a.hasData !== false).flatMap((a) => a.friend ? [a.friend] : []);
+  const labelOf = (name: string) => accounts.find((a) => a.friend?.name === name)?.label ?? name;
   const yRow = (a: Friend): DayRow | undefined => a.daily.find((d) => d.d === yday);
   const week = (a: Friend): DayRow[] => a.daily.filter((d) => d.d >= weekFrom && d.d <= yday);
-  const net7 = (a: Friend): number | null => a.gauge?.net ?? (week(a).length ? week(a).reduce((s, d) => s + (d.net ?? 0), 0) : null);
-  const turn7 = (a: Friend): number | null => a.gauge?.turn ?? (week(a).length ? week(a).reduce((s, d) => s + (d.turn ?? 0), 0) : null);
+  const net7 = (a: Friend): number | null => a.gauge?.net ?? (week(a).some((d) => d.net !== null) ? week(a).reduce((s, d) => s + (d.net ?? 0), 0) : null);
+  const turn7 = (a: Friend): number | null => a.gauge?.turn ?? (week(a).some((d) => d.turn !== null) ? week(a).reduce((s, d) => s + (d.turn ?? 0), 0) : null);
   const sum = (xs: (number | null)[]): number | null => (xs.some((x) => x !== null) ? xs.reduce<number>((s, x) => s + (x ?? 0), 0) : null);
-  const sumNet7 = sum(have.map(net7));
-  const sumTurn7 = sum(have.map(turn7));
+  const values = (fromFriend: (a: Friend) => number | null, label: RegExp): (number | null)[] => accounts.map((a) => {
+    if (a.hasData === false) return null;
+    const friendValue = a.friend ? fromFriend(a.friend) : null;
+    if (friendValue !== null) return friendValue;
+    return num(a.sections.filter((s) => s.kind === 'tiles').flatMap((s) => s.items).find((t) => label.test(t.label))?.value);
+  });
+  const sumNet7 = sum(values(net7, /^7일 순익(?!.*bp)/));
+  const sumTurn7 = sum(values(turn7, /^7일 회전/));
   const bp7 = sumNet7 !== null && sumTurn7 ? (sumNet7 / sumTurn7) * 1e4 : null;
-  const sumYNet = sum(have.map((a) => yRow(a)?.net ?? null));
-  const sumYFills = sum(have.map((a) => yRow(a)?.fills ?? null));
-  const equityNow = sum(have.map((a) => a.equity[a.equity.length - 1]?.total ?? null));
+  const sumYNet = sum(values((a) => yRow(a)?.net ?? null, /^어제 순익/));
+  const sumYFills = sum(values((a) => yRow(a)?.fills ?? null, /^어제 체결/));
+  const equityNow = sum(values((a) => a.equity[a.equity.length - 1]?.total ?? null, /^현재 자본/));
   const negY = have.filter((a) => (yRow(a)?.net ?? 0) < 0);
   const infraOf = (a: Friend): { ok: boolean; text: string } | null => infra?.accts[a.name] ?? null;
   const infraStale = infra !== null && infra.date < yday;
   const lagging = have.filter((a) => infra !== null && !infraStale && infraOf(a) !== null && !infraOf(a)!.ok);
 
-  const cards: HubCardItem[] = FRIENDS.map((f, i) => {
-    const a = accts[i];
-    if (!a) return { title: f.label, badge: '빗썸 현물', state: 'unknown', sub: '스냅샷에 계정 없음', rows: [] };
+  const cards: HubCardItem[] = accounts.map((f) => {
+    const a = f.hasData === false || !(f.friend?.equity.length || f.friend?.daily.length || f.friend?.gauge) ? null : f.friend;
+    const badge = f.exchange === 'bithumb' ? '빗썸' : f.exchange === 'upbit' ? '업비트' : f.exchange || '거래소 미보고';
+    const tiles = f.sections.filter((s) => s.kind === 'tiles').flatMap((s) => s.items).map((t) => f.hasData === false ? { ...t, value: null } : t);
+    const reason = f.reason || tiles.find((t) => t.value == null && t.reason)?.reason || '계정 수치가 제공되지 않음';
+    if (!a) return {
+      title: f.label, badge, state: f.hasData === false ? 'unknown' : tiles.some((t) => t.value != null) ? 'ok' : 'unknown',
+      sub: f.hasData === false ? '데이터 없음' : `스냅샷 기준 ${fmtKst(f.sections.find((s) => s.asof)?.asof ?? null)}`,
+      rows: tiles.length ? tiles.slice(0, f.hasData === false ? 7 : 18).map((t) => ({ label: t.label, value: tileText(t), ...(t.value == null ? { status: 'info' as const } : ['ok', 'warn', 'bad'].includes(t.status) ? { status: t.status as 'ok' | 'warn' | 'bad' } : {}) })) : [{ label: '7일 순익', value: '—', status: 'info' }, { label: '현재 자본', value: '—', status: 'info' }],
+      note: f.hasData === false || !tiles.length || tiles.some((t) => t.value == null) ? reason : undefined,
+    };
     const first = a.equity[0], last = a.equity[a.equity.length - 1];
     const y = yRow(a);
     const n7 = net7(a), b7 = a.gauge?.netBp ?? (n7 !== null && turn7(a) ? (n7 / turn7(a)!) * 1e4 : null);
     const top = new Map<string, number>();
     for (const d of week(a)) for (const [sym, pnl] of d.top) top.set(sym, (top.get(sym) ?? 0) + pnl);
     const topList = [...top.entries()].sort((x, y2) => y2[1] - x[1]).slice(0, 3).map(([s, v]) => `${s} ${fmtWon(v)}`).join(' · ');
-    const health = infraOf(a);
+    const health = f.collectorState ? { ok: f.collectorState === 'active', text: `${f.collectorState}${f.lastCollectedAt ? ` · ${fmtKst(f.lastCollectedAt)}` : ''}` } : infraOf(a);
+    const healthStale = !f.collectorState && infraStale;
     const state: HubCardItem['state'] = (health && !health.ok) || (y && (y.net ?? 0) < 0) ? 'warn' : y ? 'ok' : 'idle';
     return {
-      title: f.label, badge: '빗썸 현물', state,
+      title: f.label, badge, state,
       sub: first && last ? `SEED ${fmtKrw(first.total)} → ${fmtKrw(last.total)} (${first.total > 0 ? `${last.total >= first.total ? '+' : ''}${fmtNum(((last.total - first.total) / first.total) * 100, 0)}%` : '—'}) · 원가 기준 · ${first.d.slice(5)}~${last.d.slice(5)}` : '자본 이력 없음',
       rows: [
         { label: '7일 순익', value: n7 === null ? '—' : `${fmtWon(n7)}${b7 !== null ? ` (${fmtBp(b7)})` : ''}`, status: signStatus(n7) },
@@ -254,7 +340,7 @@ export async function collectQuant(deps: HubDeps): Promise<HubMode> {
         { label: '어제 체결', value: y?.fills === null || y?.fills === undefined ? '—' : `${fmtInt(y.fills)}건` },
         { label: '어제 수수료', value: y?.fee === null || y?.fee === undefined ? '—' : `${fmtInt(y.fee)}원` },
         { label: '상위 심볼 7일', value: topList || '—' },
-        { label: '수집 상태', value: health ? `${health.text}${infraStale ? ` (${infra!.date.slice(5)} 보고)` : ''}` : '보고 없음', status: health ? (health.ok && !infraStale ? 'ok' : 'warn') : 'info' },
+        { label: '수집 상태', value: health ? `${health.text}${healthStale ? ` (${infra!.date.slice(5)} 보고)` : ''}` : '보고 없음', status: health ? (health.ok && !healthStale ? 'ok' : 'warn') : 'info' },
       ],
       spark: { values: a.equity.slice(-60).map((p) => Math.round(p.total / 1e6) / 100), label: '자본(원가) 60일', unit: '억' },
       note: '전략 추정: RE/IOC 메이커 회전 (역공학 — 라이브 전략 기록 없음) · 코인·OTC 는 평균매수가(원가) 평가',
@@ -265,14 +351,14 @@ export async function collectQuant(deps: HubDeps): Promise<HubMode> {
   const equityChart = ((): HubSection | null => {
     if (!have.length) return null;
     const dates = [...new Set(have.flatMap((a) => a.equity.slice(-90).map((p) => p.d)))].sort().slice(-90);
-    const series: HubChartSeries[] = have.map((a) => { const m = new Map(a.equity.map((p) => [p.d, p.total])); return { name: FRIENDS.find((f) => f.key === a.name)?.label ?? a.name, values: dates.map((d) => { const v = m.get(d); return v === undefined ? null : Math.round(v / 1e6) / 100; }) }; });
+    const series: HubChartSeries[] = have.map((a) => { const m = new Map(a.equity.map((p) => [p.d, p.total])); return { name: labelOf(a.name), values: dates.map((d) => { const v = m.get(d); return v === undefined ? null : Math.round(v / 1e6) / 100; }) }; });
     return sec.chart('자본 추이 (원가 기준, 억)', dates.map((d) => d.slice(5)), series, { unit: '억', open: true, note: `하루 첫 잔고 스냅샷 · 코인·OTC 는 평균매수가 평가(시장가 아님) · 최근 ${dates.length}일` });
   })();
   const dailyChart = ((): HubSection | null => {
     if (!have.length) return null;
     const dates = [...new Set(have.flatMap((a) => a.daily.map((d) => d.d)))].filter((d) => d < today).sort().slice(-30);
     if (!dates.length) return null;
-    const series: HubChartSeries[] = have.map((a) => { const m = new Map(a.daily.map((d) => [d.d, d.net])); return { name: FRIENDS.find((f) => f.key === a.name)?.label ?? a.name, values: dates.map((d) => m.get(d) ?? null), style: 'bar' }; });
+    const series: HubChartSeries[] = have.map((a) => { const m = new Map(a.daily.map((d) => [d.d, d.net])); return { name: labelOf(a.name), values: dates.map((d) => m.get(d) ?? null), style: 'bar' }; });
     return sec.chart('일별 순익 (원) 30일', dates.map((d) => d.slice(5)), series, { unit: '원', zero: true, open: true, note: `수수료 차감 후 · 오늘(${today.slice(5)}) 부분일 제외` });
   })();
 
@@ -332,7 +418,7 @@ export async function collectQuant(deps: HubDeps): Promise<HubMode> {
   const choiAsof = tabs.find((t) => t.tab === 'choi')?.sections.find((s) => s.id === 'hedge_tiles')?.asof ?? null;
   const fresh: [string, string][] = [
     ['friends_snapshot (30분 타이머)', friends ? `${fmtKst(friends.ts)} · ${agoFrom(friends.ts, now)}${fr.stale ? ' · 캐시(갱신 실패)' : ''}` : `없음${fr.error ? ` · ${fr.error}` : ''}`],
-    ['qa_dash snapshot (5분 타이머)', genAt ? `${fmtKst(genAt)} · ${agoFrom(genAt, now)}` : `없음${source.error ? ` · ${source.error}` : ''}`],
+    ['qa_dash snapshot (5분 타이머)', genAt ? `${fmtKst(genAt)} · ${agoFrom(genAt, now)}${snapshotStale ? ' · 이전 값(갱신 실패)' : ''}` : `없음${source.error ? ` · ${source.error}` : ''}`],
     ['S 가드 24h 스코어', scoreAsof ? `${fmtKst(scoreAsof)} · ${agoFrom(scoreAsof, now)}` : '—'],
     ['RE 3계정 아카이브', reAsof ? `${fmtKst(reAsof)} (07-07~13 구간)` : '—'],
     ['최O용 헷지 분석', choiAsof ? fmtKst(choiAsof) : '—'],
@@ -343,21 +429,22 @@ export async function collectQuant(deps: HubDeps): Promise<HubMode> {
   /* ── alerts / state ── */
   const errors = (Array.isArray(snap?.errors) ? snap!.errors : []).filter((e): e is string => typeof e === 'string').slice(0, 5).map((e) => scrub(e));
   const alerts: HubAlert[] = errors.map((e) => ({ level: 'warn' as const, text: `qa_dash 오류: ${e}` }));
-  for (const u of failed) alerts.push({ level: 'bad', text: `${u.unit} 실패 (${u.info.result ?? 'failed'})${u.info.exitedAt ? ` · ${fmtKst(u.info.exitedAt)}` : ''}`, hint: '로그 확인 후 재시작/폐기 결정', at: u.info.exitedAt });
+  for (const u of failed) alerts.push({ level: u.info.exitedAt && now - Date.parse(u.info.exitedAt) > 3 * DAY_MS ? 'warn' : 'bad', text: `${u.unit} 실패 (${u.info.result ?? 'failed'})${u.info.exitedAt ? ` · ${fmtKst(u.info.exitedAt)}` : ''}`, hint: '로그 확인 후 재시작/폐기 결정', at: u.info.exitedAt });
+  if (snapshotStale && snap) alerts.push({ level: 'warn', text: `qa_dash 갱신 실패 · ${source.error ?? '오류'} · 이전 값 ${fmtKst(snapshotAt ? new Date(snapshotAt).toISOString() : genAt)}` });
   if (!snap) alerts.push({ level: 'warn', text: `qa_dash 응답 없음 · ${source.error ?? '오류'}` });
-  if (!friends) alerts.push({ level: 'warn', text: `friends_snapshot 없음${friendsSrc.error ? ` · ${friendsSrc.error}` : ''} — 계정 카드·자본 차트 생략`, hint: 'friends-snapshot.timer (30분) 확인' });
+  if (!friends) alerts.push({ level: 'warn', text: `friends_snapshot 없음${friendsSrc.error ? ` · ${friendsSrc.error}` : ''} — 계정 수치는 qa_dash 기준`, hint: 'friends-snapshot.timer (30분) 확인' });
   else if (friends.ts && now - Date.parse(friends.ts) > 2 * HOUR_MS) alerts.push({ level: 'warn', text: `friends_snapshot ${agoFrom(friends.ts, now)} — 30분 타이머 지연`, at: friends.ts });
   if (genAt && now - Date.parse(genAt) > DAY_MS) alerts.push({ level: 'warn', text: `qa_dash 스냅샷 ${agoFrom(genAt, now)} 생성`, at: genAt });
   if (lagging.length) alerts.push({ level: 'warn', text: `계정 수집 지연: ${lagging.map((a) => `${a.name} ${infraOf(a)!.text}`).join(' · ')}`, hint: `infra watch ${infra!.date}` });
   if (infra && infraStale) alerts.push({ level: 'warn', text: `infra watch 보고 ${infra.date} 이후 없음 — 수집 상태 미상` });
   if (sgStopped.length) alerts.push({ level: 'info', text: `페이퍼 A/B 유닛 ${sgStopped.length}개 정지${stoppedDate ? ` ${Math.floor((now - Date.parse(stoppedDate)) / DAY_MS)}일 (${fmtKst(stoppedDate)})` : ''} — 재개/폐기 미결`, at: stoppedDate });
-  for (const a of negY) alerts.push({ level: 'info', text: `${FRIENDS.find((f) => f.key === a.name)?.label ?? a.name} 어제 순익 ${fmtWon(yRow(a)!.net!)}`, hint: `상위 심볼: ${yRow(a)!.top.map(([s, v]) => `${s} ${fmtWon(v)}`).join(' · ') || '—'}` });
-  const state: HubState = alerts.some((a) => a.level === 'bad' || a.level === 'warn') ? 'warn' : friends ? 'ok' : 'unknown';
+  for (const a of negY) alerts.push({ level: 'info', text: `${labelOf(a.name)} 어제 순익 ${fmtWon(yRow(a)!.net!)}`, hint: `상위 심볼: ${yRow(a)!.top.map(([s, v]) => `${s} ${fmtWon(v)}`).join(' · ') || '—'}` });
+  const state: HubState = alerts.some((a) => a.level === 'bad' || a.level === 'warn') ? 'warn' : accounts.length ? 'ok' : 'unknown';
   const lastActivity = latestIso(friends?.ts ?? null, genAt);
 
   /* ── page ── */
   const headline = [
-    `친구 계정 ${have.length}`,
+    `계정 ${accounts.length}`,
     sumNet7 !== null ? `7일 순익 ${fmtWon(sumNet7)}${bp7 !== null ? ` (${fmtBp(bp7)})` : ''}` : '7일 순익 —',
     equityNow !== null ? `자본(원가) ${fmtKrw(equityNow)}` : '',
     sgStopped.length ? `라이브 페이퍼 유닛 ${sgStopped.length} 정지${stoppedDate ? `(${fmtDate(stoppedDate).slice(5)})` : ''}` : running.length ? `페이퍼 유닛 가동 ${running.length}/${known.length}` : '',
@@ -375,24 +462,22 @@ export async function collectQuant(deps: HubDeps): Promise<HubMode> {
     kpi('7일 평균 bp', bp7 === null ? '—' : fmtBp(bp7), { status: signStatus(bp7), hint: sumTurn7 !== null ? `회전 ${fmtKrw(sumTurn7)}` : '회전 가중' }),
     kpi('어제 순익', sumYNet === null ? '—' : fmtWon(sumYNet), { status: signStatus(sumYNet), hint: yday }),
     kpi('총 자본 (원가)', equityNow === null ? '—' : fmtKrw(equityNow), { status: 'info', hint: '코인·OTC 평균매수가 평가' }),
-    kpi('어제 체결 수', sumYFills === null ? '—' : fmtInt(sumYFills), { hint: `${have.length}계정 합` }),
+    kpi('어제 체결 수', sumYFills === null ? '—' : fmtInt(sumYFills), { hint: `전체 ${accounts.length}계정 중 값이 있는 계정 합` }),
     kpi('페이퍼 유닛 가동', known.length ? `${running.length}/${known.length}` : '—', { status: failed.length ? 'bad' : sgStopped.length ? 'warn' : 'ok', hint: failed.length ? `실패 ${failed.map((u) => u.unit).join('·')}` : sgStopped.length ? `정지 ${sgStopped.length}` : '' }),
     kpi('스냅샷 신선도', friends?.ts ? agoFrom(friends.ts, now) : '—', { status: !friends ? 'bad' : friends.ts && now - Date.parse(friends.ts) > 2 * HOUR_MS ? 'warn' : 'ok', hint: `qa_dash ${genAt ? agoFrom(genAt, now) : '없음'}` }),
   ];
   const sections: HubSection[] = [];
-  if (friends) sections.push(sec.cards('계정 (친구 3)', cards, { cols: 3, open: true, note: `7일 = ${weekFrom.slice(5)}~${yday.slice(5)} · 순익은 수수료 후 · 자본은 원가 기준 · 스냅샷 ${fmtKst(friends.ts)}` }));
-  else sections.push(sec.text('계정 (친구 3)', `friends_snapshot 이 없어 계정 카드를 만들 수 없음${fr.error ? ` (${fr.error})` : ''}. 30분 타이머(friends-snapshot.timer) 와 상태 폴더를 확인.`, { open: true, note: '계정 카드 · 자본 추이 · 일별 순익 생략' }));
+  if (accounts.length) sections.push(sec.cards(`계정 (${accounts.length})`, cards, { cols: 3, open: true, note: `7일 = ${weekFrom.slice(5)}~${yday.slice(5)} · 순익은 수수료 후 · 자본은 원가 기준 · 스냅샷 ${fmtKst(friends?.ts ?? genAt)} · 합계는 값이 있는 계정만` }));
+  else sections.push(sec.text('계정 (0)', `등록된 계정 정보 없음: friends_snapshot 및 qa_dash accounts 확인${fr.error ? ` (${fr.error})` : ''}. 30분 타이머(friends-snapshot.timer) 와 상태 폴더를 확인.`, { open: true, note: '계정 카드 · 자본 추이 · 일별 순익 생략' }));
   if (unitCards.length) sections.push(sec.cards('라이브 페이퍼 유닛', unitCards, { cols: 3, open: true, note: `systemd --user 읽기 전용${scoreAsof ? ` · 24h 스코어 기준 ${fmtKst(scoreAsof)}` : ''} · 정지 = 주의, 실패 = 장애` }));
   if (equityChart) sections.push(equityChart);
   if (dailyChart) sections.push(dailyChart);
   if (sgTable) sections.push(tableSection(sgTable, { title: '24h A/B 스코어 (창 × 유닛)', open: false }));
-  const others = (friends?.accts ?? []).filter((a) => !FRIEND_KEYS.has(a.name) && a.gauge).slice(0, 6);
-  if (others.length) sections.push(sec.table('기타 계정 7일', ['계정', '회전', '순익', 'bp', '어제 순익'], others.map((a) => [a.name, a.gauge!.turn === null ? '—' : fmtKrw(a.gauge!.turn), a.gauge!.net === null ? '—' : fmtWon(a.gauge!.net), a.gauge!.netBp === null ? '—' : fmtBp(a.gauge!.netBp), yRow(a)?.net === null || yRow(a)?.net === undefined ? '—' : fmtWon(yRow(a)!.net!)]), { num: [1, 2, 3, 4], note: '친구 3계정 외 (합산하지 않음)' }));
   sections.push(sec.list('표시 색이 붉은 타일 — 이유별', redItems, { open: groups.other.length > 0, note: snap ? `qa_dash 붉은/노란 타일 ${redN} (bad ${badN} · warn ${warnN}) — 전부 의도된 상태의 표시이며 장애 ${groups.other.length}` : 'qa_dash 응답 없음' }));
   sections.push(sec.kv('스냅샷 · 소스 신선도', fresh));
   sections.push(sec.raw('원본 보기 (qa_dash)', '/hub/p/quant/', { embed: true, note: '읽기 전용 프록시 · RE 아카이브·최O용 헷지 탭은 여기서' }));
 
-  const metrics: Record<string, HubMetricValue> = { '7일 순익': sumNet7 === null ? '—' : fmtWon(sumNet7), '어제': sumYNet === null ? '—' : fmtWon(sumYNet), '유닛 가동': known.length ? `${running.length}/${known.length}` : '—' };
+  const metrics: Record<string, HubMetricValue> = { '계정': accounts.length, '7일 순익': sumNet7 === null ? '—' : fmtWon(sumNet7), '어제': sumYNet === null ? '—' : fmtWon(sumYNet), '유닛 가동': known.length ? `${running.length}/${known.length}` : '—' };
   if (lastActivity) metrics['생성'] = agoFrom(lastActivity, now);
   return { id: 'quant', name: 'QUANT', state, lastActivity, metrics, alerts: sortAlerts(alerts), links, sources: [source, friendsSrc], page: page(headline, decision, kpis, sections) };
 }

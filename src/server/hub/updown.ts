@@ -204,7 +204,9 @@ export async function collectUpdown(deps: HubDeps): Promise<HubMode> {
     (async () => { const t0 = deps.now(); const r = await cachedDb(deps)(); return { ...r, error: r.error === null ? null : lastReason.get(deps) ?? r.error, ms: deps.now() - t0 }; })(),
   ]);
   const dbSource: HubSource = { name: DB_SOURCE, ok: db.error === null && db.value !== null, ms: db.ms, ...(db.error !== null ? { error: db.error } : db.value === null ? { error: '응답 없음' } : {}) };
-  const sources = [prod.source, staging.source, board.source, dbSource];
+  // Staging is stopped on purpose between test runs: a refused connection there means 꺼짐, not a fault. A timeout still counts.
+  const stagingOff = staging.source.error === '연결 실패';
+  const sources: HubSource[] = [prod.source, stagingOff ? { ...staging.source, off: true, error: '꺼짐' } : staging.source, board.source, dbSource];
   const p = isObj(prod.data) ? prod.data : null;
   const sData = isObj(staging.data) ? staging.data : null;
   const fleet = isObj(board.data) && isObj(board.data.board) ? objs(board.data.board.fleet).slice(0, MAX_BRAINS) : null;
@@ -226,7 +228,8 @@ export async function collectUpdown(deps: HubDeps): Promise<HubMode> {
   if (!p) { alerts.push({ level: 'bad', text: `프로덕션 응답 없음 · ${prod.source.error ?? '오류'}` }); worst('down'); }
   else if (p.ok !== true) { alerts.push({ level: 'bad', text: '앱 상태 비정상' }); worst('down'); }
   if (dbFlag === false) { alerts.push({ level: 'bad', text: '앱 DB 연결 끊김' }); worst('down'); }
-  if (!sData) { alerts.push({ level: 'warn', text: `스테이징 응답 없음 · ${staging.source.error ?? '오류'}` }); worst('warn'); }
+  if (stagingOff) alerts.push({ level: 'info', text: '스테이징 꺼짐' });
+  else if (!sData) { alerts.push({ level: 'warn', text: `스테이징 응답 없음 · ${staging.source.error ?? '오류'}` }); worst('warn'); }
   else if (sData.ok !== true || sData.db === false) { alerts.push({ level: 'warn', text: `스테이징 ${stagingText}` }); worst('warn'); }
   if (!fleet) { alerts.push({ level: 'warn', text: `board API 응답 없음 · ${board.source.error ?? '오류'}` }); worst('warn'); }
   if (!rec) { alerts.push({ level: 'warn', text: TUNNEL_NOTE, hint: `psql ${db.error ?? '응답 없음'} — bbai-lab-tunnel.service 확인` }); worst('warn'); }
@@ -356,7 +359,7 @@ export async function collectUpdown(deps: HubDeps): Promise<HubMode> {
   }
   const envRows: [string, string][] = [
     ['프로덕션 :3090', p ? `${p.ok === true ? '정상' : '비정상'} · DB ${dbFlag === null ? '미확인' : dbFlag ? '연결됨' : '끊김'} · 헬스 ${fmtKst(toIso(p.ts))} · ${prod.source.ms} ms` : `응답 없음 · ${prod.source.error ?? '오류'}`],
-    ['스테이징 :3198', sData ? `${stagingText} · 헬스 ${fmtKst(toIso(sData.ts))} · ${staging.source.ms} ms` : `응답 없음 · ${staging.source.error ?? '오류'}`],
+    ['스테이징 :3198', sData ? `${stagingText} · 헬스 ${fmtKst(toIso(sData.ts))} · ${staging.source.ms} ms` : stagingOff ? '꺼짐' : `응답 없음 · ${staging.source.error ?? '오류'}`],
     ['보드 API', fleet ? `정상 · 브레인 ${fleet.length} · ${board.source.ms} ms` : `응답 없음 · ${board.source.error ?? '오류'}`],
     ['DB 터널', rec ? `${db.stale ? `불안정 (${db.error ?? '오류'}) · 캐시` : '정상 ·'} ${agoFrom(db.at ? new Date(db.at).toISOString() : null, now)} 조회 · ${db.ms} ms` : `끊김 · ${db.error ?? '응답 없음'}`],
   ];

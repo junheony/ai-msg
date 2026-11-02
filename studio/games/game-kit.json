@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "id": "game-kit",
+  "title": "BBAI Game Kit",
+  "titleKo": "비비에이아이 게임 킷 · 공용 엔진",
+  "genre": "공용 엔진",
+  "engine": "TypeScript",
+  "status": "building",
+  "cover": "~/jobs/game-kit/shots/theme-a-home.png",
+  "repos": [
+    {
+      "label": "킷 · 원격 미연결",
+      "path": "~/bbai-codex/game-kit",
+      "branch": "main"
+    }
+  ],
+  "stages": [
+    {
+      "id": "concept",
+      "evidence": [
+        "~/bbai-codex/game-kit/API.md"
+      ]
+    },
+    {
+      "id": "assets",
+      "evidence": []
+    },
+    {
+      "id": "build",
+      "evidence": [
+        "~/bbai-codex/game-kit/dist/index.js"
+      ]
+    },
+    {
+      "id": "test",
+      "evidence": [
+        "~/jobs/game-kit/REPORT.md"
+      ]
+    },
+    {
+      "id": "preview",
+      "evidence": []
+    },
+    {
+      "id": "approval",
+      "evidence": []
+    },
+    {
+      "id": "release",
+      "evidence": []
+    }
+  ],
+  "artifacts": {
+    "screenshots": [
+      "~/jobs/game-kit/shots/*.png"
+    ],
+    "builds": []
+  },
+  "tests": [
+    {
+      "label": "단위 153개 통과 · 실기기·실제 Workers 미검증",
+      "path": "~/jobs/game-kit/REPORT.md"
+    }
+  ],
+  "preview": [],
+  "jobs": [
+    "game-kit"
+  ],
+  "approvals": [],
+  "nextAction": {
+    "text": "실기기 소리·AdMob·Workers 검증, 데모 폰트 OFL 허용 검토",
+    "owner": false
+  }
+}

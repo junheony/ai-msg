@@ -1,0 +1,126 @@
+{
+  "capturedAt": "2026-11-01T17:52:31.771Z",
+  "base": "http://127.0.0.1:9412",
+  "scenario": "error",
+  "browser": {
+    "version": "153.0.8010.12",
+    "executablePath": "/home/max/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell"
+  },
+  "nature": "Production built App and Rising parser with explicitly synthetic Rising data; remaining stats use live local records. Fixture label added only for capture.",
+  "manifest": {
+    "preview": "brief10-live-read-only",
+    "ui": "dist/ui/index.html",
+    "modes": [
+      "yapping",
+      "quant"
+    ],
+    "shell": "empty fixture; no real sessions/accounts",
+    "rising": "SYNTHETIC FIXTURE: error",
+    "upstreamReads": [
+      "http://127.0.0.1:8810/api/snapshot.json"
+    ],
+    "startedAt": 1793555467954
+  },
+  "results": [
+    {
+      "size": "desktop",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "assertions": {
+        "noPageErrors": true,
+        "noConsoleErrors": true,
+        "noBlockedRequests": true,
+        "noHorizontalOverflow": true,
+        "localStatsPresent": true,
+        "sourceCollapsed": true,
+        "safeLinks": true,
+        "singleLineText": true,
+        "explicitTimeout": true,
+        "noStaleRows": true,
+        "fixtureLabel": true,
+        "headingNotOccluded": true
+      },
+      "text": "Rising\n빠르게 확산되는 게시물\n\n데이터 없음 · 시간 초과",
+      "ranks": [],
+      "links": [],
+      "singleLineText": true,
+      "missingReason": "데이터 없음 · 시간 초과",
+      "localCaps": 4,
+      "sourceCollapsed": true,
+      "overflow": {
+        "viewport": 1440,
+        "document": 1440,
+        "body": 1440,
+        "hub": 1368,
+        "hubClient": 1368
+      },
+      "firstCaptureHeading": {
+        "top": 687.1875,
+        "bottom": 718.546875,
+        "stickyBottom": 123,
+        "visible": true
+      },
+      "screenshots": [
+        {
+          "file": "brief10b-rising-error-desktop.png",
+          "offset": 595
+        }
+      ],
+      "errors": [],
+      "consoleErrors": [],
+      "blockedRequests": []
+    },
+    {
+      "size": "mobile",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "assertions": {
+        "noPageErrors": true,
+        "noConsoleErrors": true,
+        "noBlockedRequests": true,
+        "noHorizontalOverflow": true,
+        "localStatsPresent": true,
+        "sourceCollapsed": true,
+        "safeLinks": true,
+        "singleLineText": true,
+        "explicitTimeout": true,
+        "noStaleRows": true,
+        "fixtureLabel": true,
+        "headingNotOccluded": true
+      },
+      "text": "Rising\n빠르게 확산되는 게시물\n\n데이터 없음 · 시간 초과",
+      "ranks": [],
+      "links": [],
+      "singleLineText": true,
+      "missingReason": "데이터 없음 · 시간 초과",
+      "localCaps": 4,
+      "sourceCollapsed": true,
+      "overflow": {
+        "viewport": 390,
+        "document": 390,
+        "body": 390,
+        "hub": 390,
+        "hubClient": 390
+      },
+      "firstCaptureHeading": {
+        "top": 479.984375,
+        "bottom": 511.34375,
+        "stickyBottom": 147.109375,
+        "visible": true
+      },
+      "screenshots": [
+        {
+          "file": "brief10b-rising-error-mobile.png",
+          "offset": 1706
+        }
+      ],
+      "errors": [],
+      "consoleErrors": [],
+      "blockedRequests": []
+    }
+  ]
+}

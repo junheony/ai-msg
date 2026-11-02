@@ -99,7 +99,7 @@ describe('TradingHome', () => {
     const none = merged({ room: buildRoom({ status: null, snapshot: null, statusError: '연결 실패' }, BOT_NOW) });
     cleanup();
     render(<TradingHome t={none} now={BOT_NOW} />);
-    expect(txt(screen.getByTestId('tr-room'))).toContain(':8830 /api/status 응답 없음');
+    expect(txt(screen.getByTestId('tr-room'))).toContain('트레이딩룸 봇 응답 없음');
     expect(within(screen.getByTestId('tr-workstreams')).getAllByRole('article')).toHaveLength(3); // three unknown cards, still apart
   });
   it('flags a LIVE paper engine and a failed verify in red', () => {

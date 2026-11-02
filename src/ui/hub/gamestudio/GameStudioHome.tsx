@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { GameStudio, StudioAgent, StudioArtifact, StudioEvent, StudioGame, StudioStage } from '../../../shared/hub-types';
 import { ExternalIcon } from '../HubIcons';
 import { relTime } from '../time';
-import { AGENT_STATE_LABEL, AgentAvatar, agentName } from './AgentAvatar';
+import { AgentAvatar, agentName, agentStateText } from './AgentAvatar';
 import './game-studio.css';
 
 /**
@@ -44,7 +44,7 @@ function Summary({ s }: { s: GameStudio['summary'] }) {
     <p className="gs-summary" data-testid="gs-lobby">
       <span className={s.working ? 'on' : ''}>작업 중 <b>{s.working}</b></span>
       <span className={s.owner ? 'owner' : ''}>오너 확인 <b>{s.owner}</b></span>
-      <span className={s.blocked ? 'bad' : ''}>막힘 <b>{s.blocked}</b></span>
+      <span className={s.blocked ? 'warn' : ''}>막힘 <b>{s.blocked}</b></span>
       <span>출시 <b>{s.released}</b></span>
       <span>게임 <b>{s.games}</b></span>
     </p>
@@ -59,33 +59,41 @@ const taskOf = (a: StudioAgent): string => {
   return cut || t;
 };
 
-/** One party member: the face and a state word; the rest (game, task, last line, job, time) shows on hover/focus. */
+/** One party member: the face, the job, its state and game; the rest (who, task, last line, time) shows on hover/focus. */
 function Member({ a, now }: { a: StudioAgent; now: number }) {
   const tip = `gs-tip-${a.job}`;
   return (
     <li className={`gs-member st-${a.state}`} data-testid="gs-agent">
       <button type="button" className="gs-member-btn" aria-describedby={tip}>
         <AgentAvatar account={a.account} state={a.state} size={48} />
-        <span className="gs-member-name">{agentName(a)}</span>
-        <span className="gs-member-state">{AGENT_STATE_LABEL[a.state]}</span>
+        <span className="gs-member-name">{a.job}</span>
+        <span className="gs-member-state"><b>{agentStateText(a)}</b>{a.gameTitle ? <span className="gs-member-game"> · {a.gameTitle}</span> : null}</span>
       </button>
       <div className="gs-tip" role="tooltip" id={tip}>
         <p className="gs-tip-game">{agentName(a)}{a.gameTitle ? ` · ${a.gameTitle}` : ''}</p>
         <p className="gs-tip-task">{taskOf(a)}</p>
-        <p className="gs-tip-line">{a.state === 'blocked' && a.reason ? a.reason : a.line ?? '로그 기록 없음'}</p>
+        <p className="gs-tip-line">{(a.state === 'blocked' || a.state === 'stopped' || a.state === 'needs-owner') && a.reason ? a.reason : a.line ?? '로그 기록 없음'}</p>
         <p className="gs-tip-meta">{a.job} · {a.lineAt ? `마지막 로그 ${relTime(a.lineAt, now)}` : '로그 없음'}</p>
       </div>
     </li>
   );
 }
 
+/** Finished work folds under 지난 작업; so does an idle job with no sign of life for hours. Live, asking and blocked stay out. */
+const IDLE_PAST_MS = 3 * 60 * 60_000;
+const isPast = (a: StudioAgent, now: number): boolean => a.state === 'done' || a.state === 'superseded' || a.state === 'stopped' || (a.state === 'idle' && !!a.lineAt && now - Date.parse(a.lineAt) > IDLE_PAST_MS);
+
 function Party({ agents, others, now }: { agents: StudioAgent[]; others: GameStudio['others']; now: number }) {
+  const [showPast, setShowPast] = useState(false);
+  const current = agents.filter((a) => !isPast(a, now));
+  const past = agents.filter((a) => isPast(a, now));
   return (
     <section className="gs-party" aria-label="파티">
-      {agents.length === 0 ? <p className="gs-muted">연결된 에이전트 없음</p> : (
-        <ul className="gs-members">{agents.map((a) => <Member key={a.job} a={a} now={now} />)}</ul>
-      )}
+      {current.length > 0 ? <ul className="gs-members">{current.map((a) => <Member key={a.job} a={a} now={now} />)}</ul>
+        : <p className="gs-muted">{agents.length === 0 ? '연결된 에이전트 없음' : '지금 작업 중인 에이전트 없음'}</p>}
+      {past.length > 0 && <button type="button" className="gs-link-btn gs-past-btn" aria-expanded={showPast} onClick={() => setShowPast((v) => !v)}>지난 작업 ({past.length})</button>}
       {others.count > 0 && <p className="gs-others" title={others.names.join(', ')}>다른 프로젝트 에이전트 {others.count}</p>}
+      {showPast && <ul className="gs-members gs-members-past" data-testid="gs-past">{past.map((a) => <Member key={a.job} a={a} now={now} />)}</ul>}
     </section>
   );
 }
@@ -93,31 +101,32 @@ function Party({ agents, others, now }: { agents: StudioAgent[]; others: GameStu
 /* ───────── cartridge ───────── */
 
 /** Where the game is, in plain Korean: "오너 승인 기다리는 중", "빌드에서 막힘", "출시 완료". */
-function statusLine(stages: StudioStage[]): string {
+function statusLine(stages: StudioStage[], ownerCall: boolean): string {
   const cur = stages.find((s) => s.state === 'active' || s.state === 'blocked');
   if (!cur) return stages.every((s) => s.state === 'done') ? '모든 단계 완료' : '기록 없음';
   if (cur.state === 'blocked') return `${cur.label}에서 막힘`;
-  return cur.id === 'approval' ? '오너 승인 기다리는 중' : `${cur.label} 진행 중`;
+  if (cur.id === 'approval') return ownerCall ? '오너 승인 기다리는 중' : '승인 요청 전';
+  return `${cur.label} 진행 중`;
 }
 
-function QuestTrack({ stages }: { stages: StudioStage[] }) {
+function QuestTrack({ stages, ownerCall }: { stages: StudioStage[]; ownerCall: boolean }) {
   const done = stages.filter((s) => s.state === 'done').length;
   const cur = stages.find((s) => s.state === 'active' || s.state === 'blocked');
   return (
-    <div className={`gs-quest${cur?.state === 'blocked' ? ' bad' : ''}`}>
+    <div className={`gs-quest${cur?.state === 'blocked' ? ' warn' : ''}`}>
       <ol className="gs-track" aria-label={`퀘스트 ${done}/${stages.length}${cur ? ` · 지금 ${cur.label}` : ''}`}>
         {stages.map((s) => (
           <li key={s.id} className={`gs-dot ${s.state}`} title={`${s.label} · ${STAGE_STATE[s.state]}`} aria-label={`${s.label} ${STAGE_STATE[s.state]}`} />
         ))}
       </ol>
-      <p className="gs-quest-now"><b>{statusLine(stages)}</b> <span>{done}/{stages.length}</span></p>
+      <p className="gs-quest-now"><b>{statusLine(stages, ownerCall)}</b> <span>{done}/{stages.length}</span></p>
     </div>
   );
 }
 
 function Cartridge({ g, now, onOpen }: { g: StudioGame; now: number; onOpen: (a: StudioArtifact) => void }) {
   const blocked = g.stages.some((s) => s.state === 'blocked');
-  const ownerCall = !!g.nextAction?.owner || g.approvals.some((a) => a.state === 'pending');
+  const ownerCall = !!g.nextAction?.owner;
   return (
     <article className={`gs-cart${blocked ? ' is-blocked' : ''}`} data-testid="gs-cart">
       <div className={`gs-cart-art${g.cover ? '' : ' empty'}`}>
@@ -133,7 +142,7 @@ function Cartridge({ g, now, onOpen }: { g: StudioGame; now: number; onOpen: (a:
           <h3>{g.title}{g.version && !g.title.includes(g.version) ? <span className="gs-ver">v{g.version}</span> : null}</h3>
           {g.play && <a className="gs-btn play" href={g.play.href} target="_blank" rel="noopener noreferrer"><span aria-hidden="true">▶</span> 플레이</a>}
         </div>
-        <QuestTrack stages={g.stages} />
+        <QuestTrack stages={g.stages} ownerCall={ownerCall} />
         {g.nextAction && (
           <p className={`gs-next${ownerCall ? ' owner' : ''}`} data-testid="gs-next">
             <span className="gs-next-k">{ownerCall ? '오너 OK 필요' : blocked ? '막힘 해결' : '다음 행동'}</span>
@@ -222,7 +231,7 @@ function QuestLog({ feed, now }: { feed: StudioEvent[]; now: number }) {
       {feed.length === 0 ? <p className="gs-muted">기록 없음</p> : (
         <ol className="gs-feed">
           {shown.map((e, i) => (
-            <li key={i} className={e.level === 'bad' ? 'bad' : ''}>
+            <li key={i} className={e.level === 'bad' || e.level === 'warn' ? e.level : ''}>
               <span className="gs-feed-t" title={e.text}>{e.text}</span>
               <time dateTime={e.at} title={`${kst(e.at)} KST`}>{relTime(e.at, now)}</time>
             </li>

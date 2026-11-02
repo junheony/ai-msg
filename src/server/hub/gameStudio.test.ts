@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { resolveHubFile } from './files';
-import { collectGameStudio, collectGameStudioCached, deriveStages, expandPath, lastHumanLine, parseAccount, parseBriefTitle, parseManifest, parseReportStatus, resolveGlob, scrubLine, studioAllow, studioFileRoots, studioFileUrl } from './gameStudio';
+import { collectGameStudio, collectGameStudioCached, deriveStages, expandPath, lastHumanLine, parseAccount, parseBriefTitle, parseManifest, parseReportStatus, reportNeedsOwner, resolveGlob, scrubLine, studioAllow, studioFileRoots, studioFileUrl } from './gameStudio';
 import type { HubDeps } from './shared';
 
 const NOW = Date.parse('2026-11-01T03:00:00Z'); // 12:00 KST
@@ -82,6 +82,19 @@ describe('parsers', () => {
     expect(parseReportStatus('x\n**STATUS: BLOCKED: limit**')).toEqual({ status: 'blocked', reason: 'limit' });
     expect(parseReportStatus('no status here')).toEqual({ status: null, reason: null });
     expect(parseReportStatus(null)).toEqual({ status: null, reason: null });
+  });
+  it('reportNeedsOwner reads the STATUS line and owner-needed headings or labels, not prose', () => {
+    expect(reportNeedsOwner('x\nSTATUS: BLOCKED: needs owner decision on the licence')).toBe(true);
+    expect(reportNeedsOwner('x\nSTATUS: BLOCKED: 공개 범위 승인 대기')).toBe(true);
+    expect(reportNeedsOwner('## Owner needed\n- pick a licence\n\nSTATUS: BLOCKED: stuck')).toBe(true);
+    expect(reportNeedsOwner('- **오너 결정 필요:** 폰트 교체\nSTATUS: BLOCKED: stuck')).toBe(true);
+    // the words in passing, a negation, or an empty section are no request
+    expect(reportNeedsOwner('input ownership retained; 승인된 자산은 그대로 보존\nowner decision was made last week\nSTATUS: BLOCKED: gate unmet')).toBe(false);
+    expect(reportNeedsOwner('x\nSTATUS: BLOCKED: gate unmet, no owner action needed')).toBe(false);
+    expect(reportNeedsOwner('x\nSTATUS: BLOCKED: 오너 승인 불필요, 게이트 미달')).toBe(false);
+    expect(reportNeedsOwner('## Owner needed\nNone.\n\nSTATUS: BLOCKED: stuck')).toBe(false);
+    expect(reportNeedsOwner('Owner needed: none\nSTATUS: BLOCKED: stuck')).toBe(false);
+    expect(reportNeedsOwner(null)).toBe(false);
   });
   it('parseBriefTitle takes the first heading', () => {
     expect(parseBriefTitle('intro\n# 브롤 웹 3차 — QA\nbody')).toBe('브롤 웹 3차 — QA');
@@ -257,6 +270,95 @@ describe('collectGameStudio', () => {
     const s = g.games[0]!.stages.find((x) => x.id === 'approval')!;
     expect(s.state).toBe('blocked');
     expect(g.summary.blocked).toBe(1);
+  });
+  /** The fixture's brawl game with `jobs` (and optional mtimes / REPORT text) in place of its two agents. */
+  const withJobs = (jobs: Record<string, { report?: string; ago?: number; pid?: string; brief?: string }>): Fx => {
+    const fx = studioFx();
+    const m = { ...MANIFEST, jobs: Object.keys(jobs).filter((j) => !/-cx$/.test(j)) };
+    fx.files!['/repo/studio/games/brawl.json'] = JSON.stringify(m);
+    for (const k of Object.keys(fx.files!)) if (/^jobs\/brawl-(qa|art)\//.test(k) && !k.endsWith('REPORT.md')) delete fx.files![k];
+    delete fx.files!['jobs/brawl-art/REPORT.md'];
+    for (const k of Object.keys(fx.mtimes!)) if (/^jobs\/brawl-art\/|brawl-qa\/run/.test(k)) delete fx.mtimes![k];
+    delete fx.mtimes!['/proc/4242'];
+    fx.dirs!.jobs = Object.keys(jobs);
+    for (const [j, v] of Object.entries(jobs)) {
+      if (v.report !== undefined) { fx.files![`jobs/${j}/REPORT.md`] = v.report; fx.mtimes![`jobs/${j}/REPORT.md`] = NOW - (v.ago ?? 30) * MIN; }
+      fx.files![`jobs/${j}/run.log`] = 'x'; fx.mtimes![`jobs/${j}/run.log`] = NOW - (v.ago ?? 30) * MIN;
+      if (v.brief) fx.files![`jobs/${j}/BRIEF.md`] = v.brief;
+      if (v.pid) { fx.files![`jobs/${j}/pid.txt`] = v.pid; fx.mtimes![`/proc/${v.pid}`] = NOW; }
+    }
+    return fx;
+  };
+  const collect = (fx: Fx) => collectGameStudio(deps(fx), { studioDir: '/repo/studio' });
+  const states = (g: Awaited<ReturnType<typeof collect>>) => Object.fromEntries(g.agents.map((a) => [a.job, a.successor ? `${a.state}>${a.successor}` : a.state]));
+  const BLOCKED = 'x\nSTATUS: BLOCKED: gate unmet';
+
+  it('leads with live jobs: a live pid before a moving log, whatever an older REPORT says', async () => {
+    const g = await collect(withJobs({ 'old-b': { report: BLOCKED, ago: 30 }, moving: { ago: 1 }, 'live-1': { report: BLOCKED, ago: 400, pid: '51' }, 'old-d': { report: 'STATUS: DONE', ago: 20 } }));
+    expect(g.agents.map((a) => [a.job, a.state])).toEqual([['live-1', 'working'], ['moving', 'working'], ['old-b', 'blocked'], ['old-d', 'done']]);
+    expect(g.summary.working).toBe(2);
+  });
+  it('a job whose final REPORT is in stops counting as working while its log settles', async () => {
+    expect(states(await collect(withJobs({ fin: { report: 'STATUS: DONE', ago: 2 } })))).toEqual({ fin: 'done' });
+    // a pid-less re-run with a stale REPORT is still at work
+    const fx = withJobs({ rerun: { report: 'STATUS: DONE', ago: 2 } }); fx.mtimes!['jobs/rerun/REPORT.md'] = NOW - 500 * MIN;
+    expect(states(await collect(fx))).toEqual({ rerun: 'working' });
+  });
+  it('supersedes a BLOCKED job by name-N, by -cx (auto-linked), and by a newer job naming it as the previous step', async () => {
+    expect(states(await collect(withJobs({ web: { report: BLOCKED, ago: 500 }, 'web-2': { report: BLOCKED, ago: 300 }, 'web-3': { report: 'STATUS: DONE', ago: 100 } })))).toEqual({ 'web-3': 'done', web: 'superseded>web-2', 'web-2': 'superseded>web-3' });
+    const cx = await collect(withJobs({ kit: { report: BLOCKED, ago: 60 }, 'kit-cx': { ago: 1, pid: '52' } }));
+    expect(states(cx)).toEqual({ 'kit-cx': 'working', kit: 'superseded>kit-cx' });
+    expect(cx.games.find((x) => x.id === 'brawl')!.jobs).toContain('kit-cx');
+    const named = await collect(withJobs({ perf: { report: BLOCKED, ago: 500 }, tune: { report: 'STATUS: DONE', ago: 100, brief: '# t\nRead ~/jobs/perf/REPORT.md first: it holds the previous measurements.' } }));
+    expect(states(named)).toEqual({ tune: 'done', perf: 'superseded>tune' });
+  });
+  it('does not treat a parallel or keep-away mention, an older job, or a lower number as a successor', async () => {
+    expect(states(await collect(withJobs({ perf: { report: BLOCKED, ago: 500 }, tune: { report: 'STATUS: DONE', ago: 100, brief: '# t\nDo NOT touch the previous ~/jobs/perf run.\nParallel job perf continues there.' } })))).toEqual({ tune: 'done', perf: 'stopped' });
+    expect(states(await collect(withJobs({ perf: { report: BLOCKED, ago: 30 }, 'perf-tool': { report: 'STATUS: DONE', ago: 10, brief: '# t\nprevious perf-toolbox' } })))).toEqual({ perf: 'blocked', 'perf-tool': 'done' });
+    expect(states(await collect(withJobs({ 'a-2': { report: BLOCKED, ago: 30 }, a: { report: 'STATUS: DONE', ago: 10 } })))).toEqual({ 'a-2': 'blocked', a: 'done' });
+  });
+  it('an unanswered BLOCKED: 막힘 under 3 h (track held, amber feed), then 중단됨 (track free, no alarm)', async () => {
+    const fresh = await collect(withJobs({ solo: { report: BLOCKED, ago: 179 } }));
+    expect(states(fresh)).toEqual({ solo: 'blocked' });
+    expect(fresh.summary.blocked).toBe(1);
+    expect(fresh.feed.find((e) => e.kind === 'report')).toMatchObject({ level: 'warn', text: expect.stringContaining('막힘 보고: gate unmet') });
+    const old = await collect(withJobs({ solo: { report: BLOCKED, ago: 181 } }));
+    expect(states(old)).toEqual({ solo: 'stopped' });
+    expect(old.agents[0]!.reason).toBe('gate unmet');
+    expect(old.summary.blocked).toBe(0);
+    expect(old.games.find((x) => x.id === 'brawl')!.stages.some((s) => s.state === 'blocked')).toBe(false);
+    expect(old.feed.find((e) => e.kind === 'report')).toMatchObject({ level: 'info', text: expect.stringContaining('중단됨: gate unmet') });
+  });
+  it('a superseded job counts for nothing: no 막힘, no red, the feed names who took over', async () => {
+    const g = await collect(withJobs({ web: { report: BLOCKED, ago: 400 }, 'web-2': { report: 'STATUS: DONE', ago: 300 } }));
+    expect(g.summary.blocked).toBe(0);
+    const line = g.feed.find((e) => e.kind === 'report' && e.job === 'web')!;
+    expect(line.level).toBe('info');
+    expect(line.text).toContain('이어받음 → web-2');
+    expect(JSON.stringify(g)).not.toContain('REPORT.md');
+  });
+  it('needs-owner: the only red, the game next move, however old; a successor still takes it over', async () => {
+    const ask = 'x\nSTATUS: BLOCKED: owner decision on the licence';
+    const g = await collect(withJobs({ solo: { report: ask, ago: 900 } }));
+    expect(states(g)).toEqual({ solo: 'needs-owner' });
+    expect(g.games.find((x) => x.id === 'brawl')!.nextAction).toEqual({ text: 'solo: owner decision on the licence', owner: true });
+    expect(g.summary).toMatchObject({ owner: 1, blocked: 0 });
+    expect(g.feed.find((e) => e.kind === 'report')).toMatchObject({ level: 'bad', text: expect.stringContaining('승인 필요') });
+    expect(states(await collect(withJobs({ solo: { report: ask, ago: 900 }, 'solo-2': { report: 'STATUS: DONE', ago: 10 } })))).toEqual({ 'solo-2': 'done', solo: 'superseded>solo-2' });
+  });
+  it('오너 확인 counts only a reached pending approval or an asking agent, not a manifest flag or a far-off approval', async () => {
+    const manifest = (over: object) => JSON.stringify({ id: 'one', title: 'One', stages: [{ id: 'concept', evidence: ['~/nope.md'] }], ...over });
+    const run = async (over: object) => { const g = await collect({ files: { '/repo/studio/games/one.json': manifest(over) }, dirs: { '/repo/studio/games': ['one.json'] } }); return { next: g.games[0]!.nextAction, owner: g.summary.owner }; };
+    expect(await run({ nextAction: { text: '계획 결정', owner: true } })).toEqual({ next: { text: '계획 결정', owner: false }, owner: 0 });
+    expect(await run({ approvals: [{ what: '공개', state: 'pending' }] })).toEqual({ next: { text: '콘셉트 단계 진행', owner: false }, owner: 0 });
+    // a pending approval the track has reached, unless the manifest says the next move is not the owner's yet
+    const fx = studioFx();
+    const reached = await collect(fx);
+    expect(reached.games[0]!.nextAction?.owner).toBe(true);
+    fx.files!['/repo/studio/games/brawl.json'] = JSON.stringify({ ...MANIFEST, nextAction: { text: '재측정', owner: false } });
+    const putOff = await collect(fx);
+    expect(putOff.games[0]!.nextAction).toEqual({ text: '재측정', owner: false });
+    expect(putOff.summary.owner).toBe(0);
   });
   it('stays within its stat budget and the cached call never throws', async () => {
     const stats = { n: 0 };
